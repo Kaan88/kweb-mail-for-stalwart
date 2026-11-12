@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}</style>
+<title>kweb mail for Android</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap">
+<style>
+/* Layout: a quiet review sheet. Brand header, a wrapping wall of phone screens with captions, then the scope table. */
+:root{
+  --bg:#f6f4f5; --fg:#1b1d2a; --muted:#666a7b; --line:#e2dfe3; --card:#ffffff;
+  --brand:#c8234a; --brand-fg:#ffffff; --tint:#fde4ea; --tint-fg:#8c1733;
+  --p-bg:#ffffff; --p-surface:#f5f2f4; --p-line:#ebe7ea; --bezel:#1b1d2a;
+  --ok:#1f7a4d; --ok-bg:#dff3e8; --warn:#8a5a00; --warn-bg:#fbecc8;
+  --ev2:#2f6fb5; --ev3:#7a55b8;
+  --page:"Figtree",system-ui,sans-serif; --ui:"Roboto",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#111219; --fg:#eceef4; --muted:#9a9fb2; --line:#2a2c3a; --card:#191b25;
+  --brand:#f0577a; --brand-fg:#16070c; --tint:#4a1424; --tint-fg:#ffd5df;
+  --p-bg:#15161f; --p-surface:#1f212d; --p-line:#2a2c3a; --bezel:#05060a;
+  --ok:#6fd3a0; --ok-bg:#143325; --warn:#f0c264; --warn-bg:#3a2c0a;
+  --ev2:#7fb2ea; --ev3:#b79bea; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111219; --fg:#eceef4; --muted:#9a9fb2; --line:#2a2c3a; --card:#191b25;
+  --brand:#f0577a; --brand-fg:#16070c; --tint:#4a1424; --tint-fg:#ffd5df;
+  --p-bg:#15161f; --p-surface:#1f212d; --p-line:#2a2c3a; --bezel:#05060a;
+  --ok:#6fd3a0; --ok-bg:#143325; --warn:#f0c264; --warn-bg:#3a2c0a;
+  --ev2:#7fb2ea; --ev3:#b79bea; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 var(--page);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 64px}
+.wrap{max-width:1160px;margin:0 auto;display:flex;flex-direction:column;gap:44px}
+header{display:flex;flex-direction:column;gap:14px}
+.lockup{height:44px;width:auto;align-self:flex-start}
+h1{font-size:30px;line-height:1.15;font-weight:700;margin:0;text-wrap:balance}
+h2{font-size:20px;font-weight:700;margin:0 0 4px;text-wrap:balance}
+p{margin:0;max-width:66ch}
+.lede{color:var(--muted)}
+section{display:flex;flex-direction:column;gap:18px}
+.wall{display:flex;flex-wrap:wrap;gap:40px 30px;justify-content:center}
+figure{margin:0;width:300px;max-width:100%;display:flex;flex-direction:column;gap:12px}
+figcaption{font-size:14px;line-height:1.45;color:var(--muted)}
+figcaption b{display:block;color:var(--fg);font-size:15px}
+
+/* phone */
+.phone{height:630px;border:8px solid var(--bezel);border-radius:36px;background:var(--p-bg);overflow:hidden;
+  display:flex;flex-direction:column;font:13px/1.35 var(--ui);color:var(--fg);position:relative}
+.sb{display:flex;justify-content:space-between;padding:8px 20px 4px;font-size:11px;font-weight:500;flex:none}
+.body{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.bar{display:flex;align-items:center;gap:14px;padding:8px 14px;flex:none}
+.bar .t{flex:1;font-size:16px;font-weight:500}
+.search{margin:6px 12px;background:var(--p-surface);border-radius:24px;padding:9px 12px;display:flex;align-items:center;gap:10px;color:var(--muted);flex:none}
+.search span{flex:1}
+.av{width:34px;height:34px;border-radius:50%;background:var(--tint);color:var(--tint-fg);display:grid;place-items:center;font-weight:700;font-size:13px;flex:none}
+.av.s{width:26px;height:26px;font-size:11px}
+.chips{display:flex;gap:6px;padding:4px 12px 8px;flex:none}
+.chip{border:1px solid var(--p-line);border-radius:16px;padding:4px 10px;font-size:12px;color:var(--muted);white-space:nowrap}
+.chip.on{background:var(--tint);color:var(--tint-fg);border-color:transparent;font-weight:500}
+.row{display:flex;gap:10px;padding:9px 14px;align-items:flex-start}
+.row .m{flex:1;min-width:0}
+.row .top{display:flex;justify-content:space-between;gap:8px}
+.row .who,.row .sub,.row .pre{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .when{font-size:11px;color:var(--muted);flex:none}
+.row .pre{color:var(--muted)}
+.row.un .who,.row.un .sub{font-weight:700}
+.row.un .when{color:var(--brand);font-weight:700}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--brand);display:inline-block;margin-right:5px}
+.nav{display:flex;border-top:1px solid var(--p-line);flex:none;padding:6px 0 10px;background:var(--p-bg)}
+.nav div{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--muted);position:relative}
+.nav .on{color:var(--tint-fg);font-weight:700}
+.nav .on .pill{background:var(--tint)}
+.pill{padding:3px 16px;border-radius:14px;display:grid;place-items:center}
+.badge{position:absolute;top:-2px;left:calc(50% + 6px);background:var(--brand);color:var(--brand-fg);font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px}
+.fab{position:absolute;right:14px;bottom:74px;background:var(--brand);color:var(--brand-fg);border-radius:16px;padding:12px 16px;display:flex;gap:8px;align-items:center;font-weight:500;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.pad{padding:4px 16px;display:flex;flex-direction:column;gap:10px}
+.subj{font-size:19px;line-height:1.25;font-weight:500}
+.mail p{font-size:13.5px;line-height:1.5;max-width:none}
+.att{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--p-line);border-radius:10px;padding:7px 10px;align-self:flex-start}
+.att small{color:var(--muted)}
+.acts{display:flex;gap:8px;padding:10px 12px 14px;margin-top:auto;flex:none}
+.btn{flex:1;border:1px solid var(--p-line);border-radius:20px;padding:8px 6px;display:flex;justify-content:center;align-items:center;gap:6px;font-weight:500;font-size:12.5px}
+.btn.p{background:var(--brand);color:var(--brand-fg);border-color:transparent}
+.fld{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--p-line)}
+.fld label{color:var(--muted);width:44px;flex:none}
+.tok{background:var(--tint);color:var(--tint-fg);border-radius:14px;padding:3px 9px;font-weight:500}
+.sug{margin:0 12px;border:1px solid var(--p-line);border-radius:12px;background:var(--p-surface)}
+.shade{background:var(--p-surface);flex:1;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0}
+.clock{font-size:34px;font-weight:400;padding:6px 8px 0}
+.clock small{display:block;font-size:12px;color:var(--muted)}
+.n{background:var(--p-bg);border-radius:18px;padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.n .h{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.n .h svg{width:14px;height:14px;border-radius:4px}
+.n b{font-weight:700}
+.n .a{display:flex;gap:16px;color:var(--brand);font-weight:700;font-size:12.5px;padding-top:3px}
+.n.gone{background:transparent;border:1.5px dashed var(--p-line);color:var(--muted)}
+.n.quiet{flex-direction:row;align-items:center;gap:8px;font-size:11.5px;color:var(--muted);margin-top:auto;padding:8px 12px}
+.week{display:flex;padding:2px 10px 8px;flex:none}
+.week div{flex:1;text-align:center;font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:4px;align-items:center}
+.week b{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:13px;color:var(--fg);font-weight:500}
+.week .on b{background:var(--brand);color:var(--brand-fg)}
+.day{padding:10px 16px 2px;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ev{margin:3px 12px;border-radius:10px;background:var(--p-surface);padding:8px 10px;border-left:4px solid var(--brand)}
+.ev.b{border-left-color:var(--ev2)} .ev.c{border-left-color:var(--ev3)}
+.ev small{display:block;color:var(--muted)}
+.let{padding:8px 16px 0;font-size:12px;font-weight:700;color:var(--brand)}
+.set{display:flex;gap:12px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--p-line)}
+.set .m{flex:1;min-width:0}
+.set small{display:block;color:var(--muted)}
+.st{font-size:11px;font-weight:700;border-radius:10px;padding:2px 8px;background:var(--ok-bg);color:var(--ok);flex:none}
+.sw{width:34px;height:20px;border-radius:10px;background:var(--brand);position:relative;flex:none}
+.sw::after{content:"";position:absolute;right:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--brand-fg)}
+
+/* scope table */
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14.5px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
+.ph{font-size:12px;font-weight:700;border-radius:10px;padding:2px 9px;white-space:nowrap}
+.ph.a{background:var(--tint);color:var(--tint-fg)} .ph.b{background:var(--ok-bg);color:var(--ok)}
+.ph.c{background:var(--warn-bg);color:var(--warn)} .ph.d{border:1px solid var(--line);color:var(--muted)}
+.build{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px 32px}
+.build div{min-width:0;font-size:15px}
+.build b{display:block}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="arch" viewBox="0 0 24 24"><path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4"/></symbol>
+  <symbol id="del" viewBox="0 0 24 24"><path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24"><path d="M12 5v.01M12 12v.01M12 19v.01"/></symbol>
+  <symbol id="find" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="mail" viewBox="0 0 24 24"><path d="M4 6h16v12H4zM4 7l8 6 8-6"/></symbol>
+  <symbol id="cal" viewBox="0 0 24 24"><path d="M5 6h14v14H5zM5 10h14M9 4v4M15 4v4"/></symbol>
+  <symbol id="ppl" viewBox="0 0 24 24"><circle cx="12" cy="9" r="4"/><path d="M5 20c1-4 4-5 7-5s6 1 7 5"/></symbol>
+  <symbol id="pen" viewBox="0 0 24 24"><path d="M5 19l1-4L16 5l3 3L9 18z"/></symbol>
+  <symbol id="clip" viewBox="0 0 24 24"><path d="M8 12l6-6a3 3 0 014 4l-8 8a5 5 0 01-7-7l7-7"/></symbol>
+  <symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="re" viewBox="0 0 24 24"><path d="M10 7l-5 5 5 5M5 12h9a5 5 0 015 5v1"/></symbol>
+  <symbol id="fw" viewBox="0 0 24 24"><path d="M14 7l5 5-5 5M19 12h-9a5 5 0 00-5 5v1"/></symbol>
+  <symbol id="ok" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="ward" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="16" fill="#c8234a" stroke="none"/><path d="M24 17v30M24 33l15-16M29 28l12 19" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div class="wrap">
+<header>
+  <svg class="lockup" viewBox="0 0 218 64" role="img" aria-label="kweb mail"><rect x="4" y="4" width="56" height="56" rx="16" fill="var(--brand)"/><path d="M24 17v30M24 33l15-16M29 28l12 19" stroke="var(--brand-fg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/><g transform="translate(80 0)"><path d="M0 8v48M0 41l15-15M6 36l11 20M26 26l6.5 30 6.5-22 6.5 22 6.5-30M62 41h30a15 15 0 1 0-4.4 10.6M101 8v48M101 41a15 15 0 1 0 30 0 15 15 0 1 0-30 0" stroke="var(--fg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g></svg>
+  <h1>kweb mail for Android</h1>
+  <p class="lede">First design pass and feature scope. Seven screens in the Ward colours, in light and dark. All names and messages are examples.</p>
+</header>
+
+<section>
+<h2>Screens</h2>
+<div class="wall">
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="search"><svg class="i"><use href="#find"/></svg><span>Search mail</span><div class="av s">K</div></div>
+  <div class="chips"><span class="chip on">Inbox</span><span class="chip">Unread</span><span class="chip">Flagged</span><span class="chip">Files</span></div>
+  <div class="row un"><div class="av">M</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Merve Aydın</span><span class="when">09:38</span></div><div class="sub">Revised offer for the workshop</div><div class="pre">Hi, I've attached the updated numbers we talked about…</div></div></div>
+  <div class="row un"><div class="av">H</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Hetzner</span><span class="when">09:12</span></div><div class="sub">Invoice for October is ready</div><div class="pre">Your invoice R0098241 is available in the console.</div></div></div>
+  <div class="row un"><div class="av">D</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Deniz, Okan · 4</span><span class="when">08:55</span></div><div class="sub">Saturday plans</div><div class="pre">Okan: works for me, I'll bring the projector.</div></div></div>
+  <div class="row"><div class="av">G</div><div class="m"><div class="top"><span class="who">GitHub</span><span class="when">Yesterday</span></div><div class="sub">[postern] Release v0.2.1 published</div><div class="pre">Sign-in gateways, session reset, neutral wording.</div></div></div>
+  <div class="row"><div class="av">S</div><div class="m"><div class="top"><span class="who">Selin Kaya</span><span class="when">Yesterday</span></div><div class="sub">Re: Photos from the trip</div><div class="pre">These are great. Can you send the full-size ones?</div></div></div>
+  <div class="row"><div class="av">T</div><div class="m"><div class="top"><span class="who">THY Miles&amp;Smiles</span><span class="when">Mon</span></div><div class="sub">Your booking confirmation</div><div class="pre">Ankara (ESB) to Izmir (ADB), 21 November.</div></div></div>
+  <div class="row"><div class="av">A</div><div class="m"><div class="top"><span class="who">Ayşe Demir</span><span class="when">Sun</span></div><div class="sub">Worksheet for grade 3</div><div class="pre">Could you check page two before I print it?</div></div></div>
+  <div class="fab"><svg class="i"><use href="#pen"/></svg>Compose</div>
+  <div class="nav" style="margin-top:auto"><div class="on"><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
+</div></div>
+<figcaption><b>Inbox</b>Threads, with unread marked by weight and a crimson dot. Swipe right to archive, left to delete. The chips filter in place; folders open from the account avatar.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><svg class="i"><use href="#back"/></svg><span class="t"></span><svg class="i"><use href="#arch"/></svg><svg class="i"><use href="#del"/></svg><svg class="i"><use href="#more"/></svg></div>
+  <div class="pad mail">
+    <div class="subj">Revised offer for the workshop</div>
+    <div class="row" style="padding:4px 0"><div class="av">M</div><div class="m"><div class="top"><span class="who"><b>Merve Aydın</b></span><span class="when">09:38</span></div><div class="pre">to me</div></div></div>
+    <p>Hi,</p>
+    <p>I've attached the updated numbers we talked about on Tuesday. The room is confirmed for the 21st, and catering is now included in the price.</p>
+    <p>If this works for you, I'll send the contract tomorrow morning.</p>
+    <p>Best,<br>Merve</p>
+    <div class="att"><svg class="i"><use href="#clip"/></svg><span>Offer-2026.pdf<br><small>184 KB</small></span></div>
+  </div>
+  <div class="acts"><div class="btn p"><svg class="i"><use href="#re"/></svg>Reply</div><div class="btn">Reply all</div><div class="btn"><svg class="i"><use href="#fw"/></svg>Forward</div></div>
+</div></div>
+<figcaption><b>Message</b>Opening it marks it read on the server, which clears its notification on every device. HTML mail renders in a sandboxed view with remote images off until you allow them.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:42</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><svg class="i"><use href="#x"/></svg><span class="t">New message</span><svg class="i"><use href="#clip"/></svg><span class="btn p" style="flex:none;padding:6px 16px">Send</span></div>
+  <div class="fld"><label>From</label><span>you@kweb.ovh ▾</span></div>
+  <div class="fld"><label>To</label><span class="tok">Merve Aydın</span><span>sel|</span></div>
+  <div class="sug"><div class="row"><div class="av s">S</div><div class="m"><div class="who"><b>Sel</b>in Kaya</div><div class="pre">selin@example.org</div></div></div></div>
+  <div class="fld"><label>Subject</label><span>Re: Revised offer for the workshop</span></div>
+  <div class="pad mail" style="padding-top:12px"><p>Hi Merve,</p><p>This works. Please send the contract over.</p><p style="color:var(--muted)">Kaan</p></div>
+  <div class="n quiet" style="margin:auto 12px 14px;background:var(--p-surface)"><svg class="i"><use href="#ok"/></svg>Draft saved to the server · 09:42</div>
+</div></div>
+<figcaption><b>Compose</b>Recipients complete from your Stalwart address book. Drafts are saved to the server, so you can finish one on the desktop. After Send, a 10-second Undo bar holds the message back.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body"><div class="shade">
+  <div class="clock">9:41<small>Thursday, 12 November</small></div>
+  <div class="n"><div class="h"><svg><use href="#ward"/></svg>kweb mail · Merve Aydın · now</div><b>Revised offer for the workshop</b><span>Hi, I've attached the updated numbers we talked about on Tuesday…</span><div class="a"><span>Archive</span><span>Mark read</span><span>Reply</span></div></div>
+  <div class="n"><div class="h"><svg><use href="#ward"/></svg>kweb mail · Hetzner · 29 min</div><b>Invoice for October is ready</b><span>Your invoice R0098241 is available.</span></div>
+  <div class="n gone"><div class="h">Deniz, Okan · Saturday plans</div><span>Read on another device at 09:40. Removed here about a second later, without a sound.</span></div>
+  <div class="n"><div class="h"><svg><use href="#ward"/></svg>kweb mail · Reminder</div><b>Dentist in 15 minutes</b><span>10:00 – 10:45 · Çankaya</span><div class="a"><span>Snooze 10 min</span><span>Open</span></div></div>
+  <div class="n quiet"><svg class="i"><use href="#ok"/></svg>kweb mail · Connected · silent</div>
+</div></div></div>
+<figcaption><b>Notifications</b>One per message, grouped per account, with actions that work without opening the app. The dashed card shows what happens to mail you read elsewhere. The silent "Connected" entry is what keeps the live connection alive; it can be hidden in Android's settings.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><span class="t">Delivery check</span><svg class="i"><use href="#more"/></svg></div>
+  <div class="set"><div class="m">Connection to mail.kweb.ovh<small>Last push 12 seconds ago</small></div><span class="st">Live</span></div>
+  <div class="set"><div class="m">Notification permission<small>Mail and reminders may alert</small></div><span class="st">Allowed</span></div>
+  <div class="set"><div class="m">Battery optimisation<small>Android may not pause the app</small></div><span class="st">Exempt</span></div>
+  <div class="set"><div class="m">Safety check<small>Every 15 minutes · last at 09:30</small></div><span class="st">On time</span></div>
+  <div class="set"><div class="m">Sign-in<small>Token renews by itself · no password stored</small></div><span class="st">Valid</span></div>
+  <div class="day">What to show</div>
+  <div class="set"><div class="m">New mail in Inbox</div><span class="sw"></span></div>
+  <div class="set"><div class="m">Calendar and task reminders</div><span class="sw"></span></div>
+  <div class="set"><div class="m">Remove when read elsewhere</div><span class="sw"></span></div>
+  <div class="acts"><div class="btn p">Send a test notification</div></div>
+</div></div>
+<figcaption><b>Delivery check</b>The screen that answers "will I get my notifications?". Each row is a real test, and a failed one says what to change and opens the right Android setting.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><span class="t">November 2026</span><svg class="i"><use href="#find"/></svg><span class="chip on">Today</span></div>
+  <div class="week"><div>M<b>9</b></div><div>T<b>10</b></div><div>W<b>11</b></div><div class="on">T<b>12</b></div><div>F<b>13</b></div><div>S<b>14</b></div><div>S<b>15</b></div></div>
+  <div class="day">Today · Thu 12</div>
+  <div class="ev"><b>Dentist</b><small>10:00 – 10:45 · Çankaya · reminder 15 min before</small></div>
+  <div class="ev b"><b>Department meeting</b><small>14:30 – 15:30 · Room 204 · 6 guests</small></div>
+  <div class="day">Fri 13</div>
+  <div class="ev c"><b>Workshop offer: reply to Merve</b><small>Task · due 12:00</small></div>
+  <div class="day">Sat 14</div>
+  <div class="ev b"><b>Board games at Deniz's</b><small>19:00 – 23:00 · invited by Deniz · Going</small></div>
+  <div class="day">Sat 21</div>
+  <div class="ev"><b>Flight ESB → ADB</b><small>07:55 – 09:10</small></div>
+  <div class="fab" style="padding:12px"><svg class="i"><use href="#plus"/></svg></div>
+  <div class="nav" style="margin-top:auto"><div><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div class="on"><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
+</div></div>
+<figcaption><b>Calendar</b>An agenda with a week strip, showing events and tasks from every calendar on the server. Invitations can be answered here or from the mail that carried them.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="search"><svg class="i"><use href="#find"/></svg><span>Search contacts</span></div>
+  <div class="let">A</div>
+  <div class="row"><div class="av">A</div><div class="m"><div class="who">Ayşe Demir</div><div class="pre">ayse@example.org · school</div></div></div>
+  <div class="let">D</div>
+  <div class="row"><div class="av">D</div><div class="m"><div class="who">Deniz Arslan</div><div class="pre">deniz@example.org</div></div></div>
+  <div class="let">M</div>
+  <div class="row"><div class="av">M</div><div class="m"><div class="who">Merve Aydın</div><div class="pre">merve@example.org · +90 312 555 01 42</div></div></div>
+  <div class="let">O</div>
+  <div class="row"><div class="av">O</div><div class="m"><div class="who">Okan Yıldız</div><div class="pre">okan@example.org</div></div></div>
+  <div class="let">S</div>
+  <div class="row"><div class="av">S</div><div class="m"><div class="who">Selin Kaya</div><div class="pre">selin@example.org</div></div></div>
+  <div class="fab" style="padding:12px"><svg class="i"><use href="#plus"/></svg></div>
+  <div class="nav" style="margin-top:auto"><div><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div class="on"><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
+</div></div>
+<figcaption><b>Contacts</b>Your Stalwart address books. Tapping a contact shows their details and recent mail with them; the same list feeds recipient completion.</figcaption>
+</figure>
+
+</div>
+</section>
+
+<section>
+<h2>Scope against Stalwart 1.1</h2>
+<p class="lede">Every row is something Stalwart 1.1.0 advertises over JMAP. Phase 1 is the app you can use daily; later phases add to it without changing its structure.</p>
+<div class="scroll"><table>
+<tr><th>Area</th><th>Stalwart capability</th><th>What the app does with it</th><th>Phase</th></tr>
+<tr><td>Sign-in</td><td>OAuth 2.0 with PKCE, passkeys<br><code>jmap:core</code></td><td>Sign in through the browser, as Postern does. Only a renewable token is kept, in the Android Keystore.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Mail</td><td>JMAP Mail<br><code>jmap:mail</code></td><td>Folders, threads, read, flag, move, archive, delete, spam, server-side search, attachments. Recent mail cached for offline reading.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Sending</td><td>Submission, identities<br><code>jmap:submission</code></td><td>Compose, reply, forward, drafts on the server, choice of sender address, undo send.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Push</td><td>EventSource, WebSocket, Web Push, Email Push<br><code>jmap:websocket</code> <code>jmap:emailpush</code> <code>jmap:webpush-vapid</code></td><td>Live connection for new mail and for removing notifications read elsewhere. Web Push through UnifiedPush as an optional second route.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Reminders</td><td>Calendar alerts<br><code>CalendarAlert</code></td><td>Event and task reminders as notifications, fired by the server.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Storage</td><td>Quotas<br><code>jmap:quota</code></td><td>Used and free space in Settings, with a warning when nearly full.</td><td><span class="ph a">1</span></td></tr>
+<tr><td>Calendar</td><td>JMAP Calendars<br><code>jmap:calendars</code></td><td>Agenda and day views, create and edit events, repeat rules, answer invitations, tasks list.</td><td><span class="ph b">2</span></td></tr>
+<tr><td>Contacts</td><td>JMAP Contacts<br><code>jmap:contacts</code></td><td>List, view, edit. Recipient completion already reads them in phase 1.</td><td><span class="ph b">2</span></td></tr>
+<tr><td>Away message</td><td>Vacation response<br><code>jmap:vacationresponse</code></td><td>One switch with dates and text.</td><td><span class="ph b">2</span></td></tr>
+<tr><td>Shared mailboxes</td><td>Sharing, principals<br><code>jmap:principals</code> <code>jmap:mail:share</code></td><td>Mailboxes and calendars shared with you appear and work. Managing who you share with stays in Bulwark.</td><td><span class="ph c">3</span></td></tr>
+<tr><td>Files</td><td>JMAP File Storage<br><code>jmap:filenode</code></td><td>Browse, download, upload, attach from server files.</td><td><span class="ph c">3</span></td></tr>
+<tr><td>Filters</td><td>Sieve scripts<br><code>jmap:sieve</code></td><td>Left to Bulwark. A rule editor on a phone is a lot of work for something done rarely.</td><td><span class="ph d">Not planned</span></td></tr>
+<tr><td>Encryption</td><td>S/MIME and OpenPGP (server-side)</td><td>Stalwart's encryption gateway and at-rest encryption keep working untouched. No key handling in the app.</td><td><span class="ph d">Not planned</span></td></tr>
+<tr><td>Extras</td><td>Object metadata, blob management<br><code>jmap:metadata</code> <code>jmap:blob</code></td><td>Used internally where they save requests; nothing to show.</td><td><span class="ph d">Not planned</span></td></tr>
+</table></div>
+</section>
+
+<section>
+<h2>How it is put together</h2>
+<div class="build">
+  <div><b>Rust core</b>JMAP sync, the local cache, sending, and the rule that decides which notifications should exist. Shared with nothing on screen, tested on the desktop.</div>
+  <div><b>Kotlin shell</b>Jetpack Compose screens, the connection service, Android notifications and their actions. It asks the core what to show and never talks to the server itself.</div>
+  <div><b>The bridge</b>UniFFI generates the Kotlin bindings from the Rust interface, so the two sides cannot drift apart.</div>
+</div>
+</section>
+</div>
