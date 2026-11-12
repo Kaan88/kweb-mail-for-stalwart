@@ -1,11 +1,13 @@
 <p align="center"><img src="branding/ward/png/ward-128.png" width="96" alt=""></p>
 
-<h1 align="center">kweb mail for Android</h1>
+<h1 align="center">kweb mail for Stalwart</h1>
 
-<p align="center">A simple native mail client for a <b>Stalwart</b> server.<br>
+<p align="center">A simple native Android mail client for <b>Stalwart</b> servers.<br>
 Rust core, Kotlin interface, notifications that clear themselves when mail is read elsewhere.</p>
 
 ---
+
+Built for and tested against Stalwart only. It speaks JMAP and nothing else: no IMAP, POP3 or SMTP. Other JMAP servers are not checked and may not work.
 
 **Status: planning.** No code yet.
 

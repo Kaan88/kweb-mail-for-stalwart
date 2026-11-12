@@ -21,7 +21,8 @@ Design and scope were agreed from [design/mockups.html](design/mockups.html).
 | Core language | Rust | Chosen by Kaan. Sync, cache and notification rules are testable on the desktop. |
 | Interface | Kotlin, Jetpack Compose | Android's first-class toolkit; services and notifications are Kotlin APIs. |
 | Bridge | UniFFI | Generates the Kotlin bindings from the Rust interface. |
-| Server | Stalwart 1.1 or later, JMAP only | No IMAP or SMTP code. |
+| Name | "kweb mail for Stalwart"; "kweb mail" under the icon | It says what the app works with. "Stalwart" is only used descriptively: no Stalwart logo, and the README says the project is independent. |
+| Server | Stalwart 1.1 or later, JMAP only | No IMAP, POP3 or SMTP code. Other JMAP servers are not tested, so the core may rely on Stalwart's own behaviour (server-fired calendar alerts, its OAuth client registration). |
 | Push transport | The app's own JMAP EventSource connection, held by a foreground service | No relay, no Google services, about 1 s delay. Same design as Postern. |
 | Sign-in | OAuth 2.0 authorization code with PKCE in the browser | Passkeys work; no password is stored. Ported from Postern. |
 | Accounts | One in phase 1 | Keeps the first version small. The data model keys everything by account so more can follow. |
@@ -172,5 +173,5 @@ Postern (MIT, same author) already has, in Rust: the OAuth flow with client regi
 ## Open questions
 
 1. Which phone and Android version is the target? It sets the minimum SDK (proposed: Android 10, API 29) and how much the battery risk matters.
-2. App name and package id. Proposed: "kweb mail", `ovh.kweb.mail`.
+2. Package id. Proposed: `ovh.kweb.mail`.
 3. Licence, if the repository is ever made public.
