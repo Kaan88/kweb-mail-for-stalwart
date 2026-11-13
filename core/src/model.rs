@@ -67,6 +67,26 @@ pub enum Action {
     },
 }
 
+/// A calendar or task reminder the server fired. Times stay as the server gives them: the
+/// host has the time zone database and the user's locale, so it does the formatting.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Reminder {
+    pub event_id: String,
+    pub alert_id: String,
+    /// A task (due time) and not an event (start time).
+    pub is_task: bool,
+    /// Empty when the details could not be fetched; the host then shows a generic text.
+    pub title: String,
+    pub location: String,
+    /// When this occurrence starts (or the task is due), as a JSCalendar local date-time
+    /// like `2026-11-12T10:00:00`. `None` when unknown.
+    pub local_start: Option<String>,
+    /// IANA zone `local_start` is in. `None` is a floating time: the same wall-clock time
+    /// wherever the phone is.
+    pub time_zone: Option<String>,
+    pub all_day: bool,
+}
+
 /// The state of the live connection, for the "Connected" entry and the Delivery check screen.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ConnectionStatus {

@@ -27,6 +27,11 @@ pub fn is_cannot_calculate_changes(e: &Error) -> bool {
     matches!(e, Error::Temporary { msg } if msg.starts_with(CANNOT_CALCULATE_PREFIX))
 }
 
+/// A 401 seen by code that does not go through jmap-client (the plain calendar request).
+pub(super) fn unauthorized(detail: impl std::fmt::Display) -> Error {
+    Error::temporary(format!("{UNAUTHORIZED_PREFIX}{detail}"))
+}
+
 #[derive(Debug, PartialEq)]
 enum Kind {
     Unauthorized,

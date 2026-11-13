@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- WorkManager adds ACCESS_NETWORK_STATE, WAKE_LOCK and its own boot and foreground
+         permissions through manifest merging. -->
 
     <application
         android:name=".KwebApp"
@@ -12,12 +19,38 @@
         android:theme="@style/Theme.KwebMail">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Holds the live connection to the user's own mail server. -->
+        <service
+            android:name=".background.PushService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the user's own JMAP EventSource connection to their mail server open so new mail and changes made on other devices are notified within seconds, without Google services or a relay server." />
+        </service>
+
+        <!-- Buttons and swipes of notifications, and the end of a reminder snooze. -->
+        <receiver
+            android:name=".background.ActionReceiver"
+            android:exported="false" />
+
+        <!-- System broadcasts reach a receiver that is not exported. -->
+        <receiver
+            android:name=".background.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

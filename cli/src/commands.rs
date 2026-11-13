@@ -5,7 +5,7 @@ use std::{process, sync::Arc, thread};
 
 use kweb_core::{
     ffi::{Core, Shade},
-    model::{Account, Action, ConnectionStatus, MessageHeader},
+    model::{Account, Action, ConnectionStatus, MessageHeader, Reminder},
     notify::Plan,
     push::Listener,
 };
@@ -177,9 +177,11 @@ impl Listener for Printer {
         println!("cache changed");
     }
 
-    fn calendar_alert(&self, event_id: String, alert_id: String, recurrence_id: Option<String>) {
-        let again = recurrence_id.map(|r| format!(", occurrence {r}")).unwrap_or_default();
-        println!("calendar alert: event {event_id}, alert {alert_id}{again}");
+    fn reminder(&self, reminder: Reminder) {
+        let kind = if reminder.is_task { "task" } else { "event" };
+        let title = if reminder.title.is_empty() { "(no details)" } else { &reminder.title };
+        let when = reminder.local_start.as_deref().unwrap_or("time unknown");
+        println!("reminder: {kind} \"{title}\" at {when} [{}]", reminder.event_id);
     }
 }
 

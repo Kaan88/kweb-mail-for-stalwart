@@ -6,7 +6,12 @@ mod commands;
 mod secrets;
 mod timefmt;
 
-use std::{path::PathBuf, process::ExitCode, sync::Arc};
+use std::{
+    fs::{File, TryLockError},
+    path::{Path, PathBuf},
+    process::ExitCode,
+    sync::Arc,
+};
 
 use args::Command;
 use kweb_core::ffi::Core;
@@ -25,7 +30,7 @@ fn main() -> ExitCode {
         println!("{}", args::USAGE);
         return ExitCode::SUCCESS;
     }
-    match open_core().and_then(|core| commands::run(&core, command)) {
+    match run(command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("kweb: {message}");
@@ -34,10 +39,28 @@ fn main() -> ExitCode {
     }
 }
 
-fn open_core() -> Result<Arc<Core>, String> {
+fn run(command: Command) -> Result<(), String> {
     let dir = args::data_dir(|name| std::env::var(name).ok(), cfg!(windows))
         .ok_or("cannot tell where to keep data: set KWEB_HOME")?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // Kept until the process ends.
+    let _only_watcher = if command == Command::Watch { Some(watch_lock(&dir)?) } else { None };
+    commands::run(&open_core(&dir)?, command)
+}
+
+/// Two watchers on one cache take each mail from each other: whichever runs the notification
+/// rule first prints the line, and the other stays silent. So only one may run.
+fn watch_lock(dir: &Path) -> Result<File, String> {
+    let path = dir.join("watch.lock");
+    let file = File::create(&path).map_err(|e| format!("cannot create {}: {e}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(TryLockError::WouldBlock) => Err("another kweb watch is already running; stop it first".into()),
+        Err(TryLockError::Error(e)) => Err(format!("cannot lock {}: {e}", path.display())),
+    }
+}
+
+fn open_core(dir: &Path) -> Result<Arc<Core>, String> {
     let db: PathBuf = dir.join("cache.db");
     let secrets = FileSecrets::new(dir.join("secrets.json"));
     Core::new(db.to_string_lossy().into_owned(), Arc::new(secrets)).map_err(|e| e.to_string())

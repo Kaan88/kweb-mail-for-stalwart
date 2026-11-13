@@ -21,9 +21,19 @@ use std::time::Duration;
 
 pub struct Store {
     conn: Mutex<Connection>,
+    /// See [`Store::pass_lock`].
+    pass: tokio::sync::Mutex<()>,
 }
 
 impl Store {
+    /// Held for the length of one pass (send queued actions, sync, run the notification
+    /// rule). The live connection and the 15-minute check share one cache; if two passes
+    /// ran at once, both would read "not shown yet" and the same mail would be announced
+    /// twice, or announced to the one nobody is listening to.
+    pub fn pass_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.pass
+    }
+
     pub fn open(path: &Path) -> Result<Store> {
         let conn = Connection::open(path)?;
         // WAL lets the UI read while sync writes. The pragma answers with a row.
@@ -41,7 +51,7 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&mut conn, schema::MIGRATIONS)?;
-        Ok(Store { conn: Mutex::new(conn) })
+        Ok(Store { conn: Mutex::new(conn), pass: tokio::sync::Mutex::new(()) })
     }
 
     /// The schema version of the open database.

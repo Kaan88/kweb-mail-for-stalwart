@@ -16,7 +16,7 @@ use crate::{
     actions,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
     jmap::Connection,
-    model::{Account, Action, ConnectionStatus, Mailbox, MessageHeader},
+    model::{Account, Action, ConnectionStatus, Mailbox, MessageHeader, Reminder},
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
     secrets::SecretStore,
@@ -300,7 +300,7 @@ impl Listener for Silent {
     fn status(&self, _: ConnectionStatus) {}
     fn notifications(&self, _: Plan) {}
     fn cache_changed(&self) {}
-    fn calendar_alert(&self, _: String, _: String, _: Option<String>) {}
+    fn reminder(&self, _: Reminder) {}
 }
 
 #[cfg(test)]

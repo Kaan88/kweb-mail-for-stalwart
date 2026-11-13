@@ -1,4 +1,105 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">kweb mail</string>
+
+    <!-- Shared -->
+    <string name="back">Back</string>
+    <string name="cancel">Cancel</string>
+    <string name="more_options">More options</string>
+    <string name="sign_out">Sign out</string>
+
+    <!-- Sign-in -->
+    <string name="signin_tagline">A mail client for your Stalwart server</string>
+    <string name="signin_server_label">Server address</string>
+    <string name="signin_server_hint">For example mail.example.com</string>
+    <string name="signin_button">Sign in</string>
+    <string name="signin_contacting">Contacting the server…</string>
+    <string name="signin_waiting">The browser is open. Finish signing in there, then come back to this app.</string>
+    <string name="signin_error_invalid_address">That is not a valid server address. Use the host name, for example mail.example.com.</string>
+    <string name="signin_error_no_oauth">This server does not support signing in with OAuth.</string>
+    <string name="signin_error_unreachable">The server did not answer. Check the address and your connection.</string>
+    <string name="signin_error_no_answer">The browser did not come back within five minutes. Try again.</string>
+    <string name="signin_error_refused">The sign-in was refused.</string>
+    <string name="signin_error_no_browser">No browser was found to open the sign-in page.</string>
+    <string name="signin_error_other">Sign-in failed: %1$s</string>
+
+    <!-- Inbox -->
+    <string name="inbox_title">Inbox</string>
+    <string name="inbox_empty">No mail yet</string>
+    <string name="inbox_first_sync">The first sync is running. Your mail will appear here in a moment.</string>
+    <string name="inbox_yesterday">Yesterday</string>
+    <string name="inbox_no_subject">(no subject)</string>
+    <string name="inbox_unknown_sender">(unknown sender)</string>
+    <string name="inbox_row_actions">Show actions</string>
+    <string name="inbox_action_failed">That did not work. Try again.</string>
+    <string name="inbox_read_failed">The mail on this phone could not be read.</string>
+    <string name="action_mark_unread">Mark unread</string>
+    <plurals name="unread_count">
+        <item quantity="one">%d unread message</item>
+        <item quantity="other">%d unread messages</item>
+    </plurals>
+
+    <!-- Delivery check -->
+    <string name="delivery_check_title">Delivery check</string>
+    <string name="delivery_connection_title">Connection to %1$s</string>
+    <string name="delivery_connection_title_unknown">Connection to your server</string>
+    <string name="delivery_connecting">Connecting…</string>
+    <string name="delivery_server_refused">The server no longer accepts this sign-in</string>
+    <string name="delivery_start_failed">Android did not let the connection start: %1$s</string>
+    <plurals name="last_push_seconds">
+        <item quantity="one">Last push %d second ago</item>
+        <item quantity="other">Last push %d seconds ago</item>
+    </plurals>
+    <plurals name="last_push_minutes">
+        <item quantity="one">Last push %d minute ago</item>
+        <item quantity="other">Last push %d minutes ago</item>
+    </plurals>
+    <plurals name="last_push_hours">
+        <item quantity="one">Last push %d hour ago</item>
+        <item quantity="other">Last push %d hours ago</item>
+    </plurals>
+    <plurals name="last_push_days">
+        <item quantity="one">Last push %d day ago</item>
+        <item quantity="other">Last push %d days ago</item>
+    </plurals>
+    <string name="delivery_notifications_title">Notification permission</string>
+    <string name="delivery_notifications_detail">Mail and reminders may alert</string>
+    <string name="delivery_battery_title">Battery optimisation</string>
+    <string name="delivery_battery_detail">Android may not pause the app</string>
+    <string name="delivery_safety_title">Safety check</string>
+    <string name="delivery_safety_detail">Every 15 minutes · last at %1$s</string>
+    <string name="delivery_safety_never">Every 15 minutes · none has run yet</string>
+    <string name="delivery_safety_failed">The last check failed: %1$s</string>
+    <string name="delivery_sign_in_title">Sign-in</string>
+    <string name="delivery_sign_in_detail">Token renews by itself · no password stored</string>
+
+    <string name="pill_live">Live</string>
+    <string name="pill_connecting">Connecting</string>
+    <string name="pill_offline">Offline</string>
+    <string name="pill_sign_in_needed">Sign-in needed</string>
+    <string name="pill_allowed">Allowed</string>
+    <string name="pill_off">Off</string>
+    <string name="pill_exempt">Exempt</string>
+    <string name="pill_not_exempt">Not exempt</string>
+    <string name="pill_on_time">On time</string>
+    <string name="pill_late">Late</string>
+    <string name="pill_valid">Valid</string>
+
+    <string name="delivery_hint_retry">Tap to try again</string>
+    <string name="delivery_hint_sign_in">Tap to sign in again</string>
+    <string name="delivery_hint_notifications">Tap to allow notifications</string>
+    <string name="delivery_hint_battery">Tap to let the app run in the background</string>
+    <string name="delivery_hint_check">Tap to run a check now</string>
+    <string name="delivery_check_queued">A check will run as soon as there is a network</string>
+
+    <string name="delivery_what_to_show">What to show</string>
+    <string name="delivery_show_mail">New mail in Inbox</string>
+    <string name="delivery_show_reminders">Calendar and task reminders</string>
+    <string name="delivery_remove_elsewhere">Remove when read elsewhere</string>
+    <string name="delivery_send_test">Send a test notification</string>
+    <string name="delivery_test_off">Notifications are off for this app, so nothing was shown</string>
+
+    <string name="sign_out_title">Sign out?</string>
+    <string name="sign_out_text">This removes your mail from this phone and stops notifications. Your mail stays on the server.</string>
+    <string name="delivery_sign_out_failed">Signing out did not work. Try again.</string>
 </resources>

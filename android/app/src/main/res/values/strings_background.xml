@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Texts of the background half: channels, notifications and their actions. -->
+<resources>
+    <string name="channel_mail">Mail</string>
+    <string name="channel_mail_description">New mail in your Inbox</string>
+    <string name="channel_reminders">Reminders</string>
+    <string name="channel_reminders_description">Calendar and task reminders</string>
+    <string name="channel_connection">Connection</string>
+    <string name="channel_connection_description">Silent entry that keeps the live connection to your server running</string>
+
+    <string name="connection_connecting">Connecting…</string>
+    <string name="connection_connected">Connected</string>
+    <string name="connection_offline">Offline: %1$s</string>
+    <string name="connection_sign_in_needed">Sign-in needed</string>
+    <string name="connection_checking">Checking for new mail…</string>
+
+    <string name="action_archive">Archive</string>
+    <string name="action_mark_read">Mark read</string>
+    <string name="action_snooze">Snooze 10 min</string>
+    <string name="action_open">Open</string>
+
+    <plurals name="mail_summary">
+        <item quantity="one">%d new message</item>
+        <item quantity="other">%d new messages</item>
+    </plurals>
+
+    <string name="reminder_event_generic">Event reminder</string>
+    <string name="reminder_task_generic">Task reminder</string>
+    <string name="reminder_text_with_location">%1$s · %2$s</string>
+
+    <string name="test_title">Test notification</string>
+    <string name="test_text">If you can read this, mail notifications can reach you.</string>
+</resources>

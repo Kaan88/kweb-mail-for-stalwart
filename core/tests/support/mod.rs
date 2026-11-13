@@ -6,12 +6,13 @@
 //! The control methods on `MockServer` stand in for "another device" (they change mail and
 //! cause push events) or for server trouble (expired tokens, a dead stream, an outage).
 
+mod calendar;
 mod oauth;
 mod state;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
+use calendar::Calendar;
 use oauth::Oauth;
 use state::{resolve_refs, Mail, StreamMsg};
 
@@ -42,6 +44,9 @@ pub const JUNK_ID: &str = "mb6";
 struct Shared {
     base: String,
     mail: Mutex<Mail>,
+    calendar: Mutex<Calendar>,
+    /// How long `CalendarEvent/get` takes to answer, in milliseconds.
+    calendar_delay_ms: AtomicU64,
     oauth: Mutex<Oauth>,
     down: AtomicBool,
     /// Requests by path ("/jmap") and, for JMAP calls, by method name ("Email/get").
@@ -81,6 +86,8 @@ impl MockServer {
         let shared = Arc::new(Shared {
             base,
             mail: Mutex::new(Mail::new(tx.clone())),
+            calendar: Mutex::new(Calendar::default()),
+            calendar_delay_ms: AtomicU64::new(0),
             oauth: Mutex::new(Oauth::new()),
             down: AtomicBool::new(false),
             counts: Mutex::new(HashMap::new()),
@@ -183,6 +190,38 @@ impl MockServer {
 
     fn edit(&self, id: &str, f: impl FnOnce(&mut state::Email)) {
         assert!(self.shared.mail().update_email(id, f), "no message '{id}'");
+    }
+
+    // ---- calendar ----------------------------------------------------------------------
+
+    /// Stores a JSCalendar Event or Task (`@type` defaults to "Event") and returns its id.
+    /// Nothing is pushed: the server only pushes when an alarm fires, see `fire_alert`.
+    pub fn add_event(&self, event: Value) -> String {
+        self.shared.calendar.lock().unwrap().add(event)
+    }
+
+    /// The event is deleted: `CalendarEvent/get` reports it in `notFound`.
+    pub fn remove_event(&self, id: &str) {
+        assert!(self.shared.calendar.lock().unwrap().remove(id), "no event '{id}'");
+    }
+
+    /// The alarm fires: a `CalendarAlert` goes out on every open stream that asked for that
+    /// type. The event need not exist (it may have been deleted since).
+    pub fn fire_alert(&self, event_id: &str, alert_id: &str, recurrence_id: Option<&str>) {
+        let uid = self.shared.calendar.lock().unwrap().uid_of(event_id).unwrap_or_else(|| format!("uid-{event_id}"));
+        let data = json!({
+            "accountId": ACCOUNT_ID,
+            "calendarEventId": event_id,
+            "uid": uid,
+            "recurrenceId": recurrence_id,
+            "alertId": alert_id,
+        });
+        let _ = self.shared.tx.send(StreamMsg::CalendarAlert { data });
+    }
+
+    /// Makes `CalendarEvent/get` slow, to show that nothing else waits for it.
+    pub fn set_calendar_delay(&self, delay: Duration) {
+        self.shared.calendar_delay_ms.store(delay.as_millis() as u64, Ordering::SeqCst);
     }
 
     // ---- trouble ---------------------------------------------------------------------
@@ -522,13 +561,17 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
         return problem(StatusCode::BAD_REQUEST, "notRequest", "using and methodCalls are required");
     };
 
+    if calls.iter().any(|c| c[0] == "CalendarEvent/get") {
+        let delay = s.calendar_delay_ms.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
     let mut responses: Vec<(String, Value, String)> = Vec::new();
     for call in calls {
         let (Some(name), Some(args), Some(call_id)) = (call[0].as_str(), call.get(1), call[2].as_str()) else {
             return problem(StatusCode::BAD_REQUEST, "notRequest", "a method call must be [name, arguments, id]");
         };
         s.count(name);
-        let result = resolve_refs(args, &responses).and_then(|args| s.mail().call(name, &args));
+        let result = resolve_refs(args, &responses).and_then(|args| call_method(&s, name, &args));
         responses.push(match result {
             Ok(v) => (name.to_string(), v, call_id.to_string()),
             Err(e) => {
@@ -543,6 +586,14 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
             "sessionState": state::SESSION_STATE,
         }),
     )
+}
+
+/// Calendar methods are answered from the calendar, everything else from the mail.
+fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Value, state::MethodError> {
+    if name == "CalendarEvent/get" {
+        return s.calendar.lock().unwrap().get(args);
+    }
+    s.mail().call(name, args)
 }
 
 // ---- EventSource ------------------------------------------------------------------------
@@ -635,6 +686,16 @@ async fn stream_step(mut st: StreamState) -> Option<(Result<Bytes, Infallible>, 
                     let frame = format!("event: state\nid: {id}\ndata: {data}\n\n");
                     st.done = st.close_after_state;
                     return Some((Ok(Bytes::from(frame)), st));
+                }
+                Ok(StreamMsg::CalendarAlert { data }) => {
+                    if st.types.as_ref().is_some_and(|t| !t.iter().any(|t| t == "CalendarAlert")) {
+                        continue;
+                    }
+                    // jmap-client tells this event from a state change by its name.
+                    return Some((Ok(Bytes::from(format!("event: calendarAlert
+data: {data}
+
+"))), st));
                 }
                 Ok(StreamMsg::Drop) | Err(broadcast::error::RecvError::Closed) => return None,
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,

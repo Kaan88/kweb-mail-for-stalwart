@@ -15,7 +15,7 @@ use tokio::{
 use super::{now_secs, pass, Deps, Listener, Timing};
 use crate::{
     jmap::{is_unauthorized, Connection, Event, EventStream},
-    model::ConnectionStatus,
+    model::{ConnectionStatus, Reminder},
     notify::OnScreen,
     Error, Result,
 };
@@ -108,7 +108,7 @@ impl Runner {
 
     async fn session_inner(&self, health: &mut Health) -> Result<Infallible> {
         let mut token = self.deps.tokens.access_token().await?;
-        let mut conn = Connection::connect(&self.deps.account.server_url, &token.token).await?;
+        let mut conn = Arc::new(Connection::connect(&self.deps.account.server_url, &token.token).await?);
         // A pass before the stream (it finds the Inbox and the mail already there) and one
         // after (whatever changed between the first pass and the stream being armed).
         self.pass(&conn).await?;
@@ -130,8 +130,8 @@ impl Runner {
                 Next::Item(Some(Err(e))) => return Err(e),
                 Next::Item(Some(Ok(event))) => {
                     rearm_at = Instant::now() + self.deps.timing.rearm_after;
-                    if self.on_event(event) {
-                        self.settle(&mut stream).await?;
+                    if self.on_event(event, &conn) {
+                        self.settle(&mut stream, &conn).await?;
                         self.pass(&conn).await?;
                     }
                 }
@@ -144,7 +144,7 @@ impl Runner {
                 }
                 Next::Renew => {
                     token = self.deps.tokens.access_token().await?;
-                    conn = Connection::connect(&self.deps.account.server_url, &token.token).await?;
+                    conn = Arc::new(Connection::connect(&self.deps.account.server_url, &token.token).await?);
                     stream = conn.events().await?;
                     rearm_at = Instant::now() + self.deps.timing.rearm_after;
                     self.pass(&conn).await?;
@@ -159,20 +159,39 @@ impl Runner {
     }
 
     /// Handles one event. True when a pass is due.
-    fn on_event(&self, event: Event) -> bool {
+    fn on_event(&self, event: Event, conn: &Arc<Connection>) -> bool {
         self.reporter.set(ConnectionStatus::Live { last_event_at: now_secs() });
         match event {
             Event::StateChange { .. } => true,
+            // An alert needs no pass: the server fired it, the cache has nothing to do with it.
             Event::CalendarAlert { event_id, alert_id, recurrence_id } => {
-                self.deps.listener.calendar_alert(event_id, alert_id, recurrence_id);
+                self.announce_reminder(conn, event_id, alert_id, recurrence_id);
                 false
             }
         }
     }
 
+    /// Fetches the details in a task of its own, so a slow server cannot hold up mail. If the
+    /// fetch fails (offline, a 401, the event deleted meanwhile) the reminder goes out with the
+    /// ids alone: the host shows a generic text, which beats no reminder at all.
+    fn announce_reminder(
+        &self,
+        conn: &Arc<Connection>,
+        event_id: String,
+        alert_id: String,
+        recurrence_id: Option<String>,
+    ) {
+        let conn = conn.clone();
+        let listener = self.deps.listener.clone();
+        tokio::spawn(async move {
+            let details = conn.reminder(&event_id, &alert_id, recurrence_id.as_deref()).await;
+            listener.reminder(details.unwrap_or_else(|_| bare_reminder(event_id, alert_id)));
+        });
+    }
+
     /// Lets a burst of state changes settle, so it costs one pass. The window is fixed from
     /// the first event: a steady trickle must not keep the pass from ever running.
-    async fn settle(&self, stream: &mut EventStream) -> Result<()> {
+    async fn settle(&self, stream: &mut EventStream, conn: &Arc<Connection>) -> Result<()> {
         let until = Instant::now() + self.deps.timing.settle;
         loop {
             tokio::select! {
@@ -180,7 +199,7 @@ impl Runner {
                     None => return Err(Error::temporary("push stream closed")),
                     Some(Err(e)) => return Err(e),
                     Some(Ok(event)) => {
-                        self.on_event(event);
+                        self.on_event(event, conn);
                     }
                 },
                 _ = sleep_until(until) => return Ok(()),
@@ -225,6 +244,20 @@ impl Runner {
             _ = sleep(wait) => {}
             _ = self.wake.notified() => health.ok(),
         }
+    }
+}
+
+/// A reminder that only knows which alert fired.
+fn bare_reminder(event_id: String, alert_id: String) -> Reminder {
+    Reminder {
+        event_id,
+        alert_id,
+        is_task: false,
+        title: String::new(),
+        location: String::new(),
+        local_start: None,
+        time_zone: None,
+        all_day: false,
     }
 }
 

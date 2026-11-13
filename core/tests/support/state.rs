@@ -20,6 +20,10 @@ pub enum StreamMsg {
         id: u64,
         changed: Value,
     },
+    /// A `CalendarAlert` push object: accountId, calendarEventId, uid, recurrenceId, alertId.
+    CalendarAlert {
+        data: Value,
+    },
     /// Close the connection from the server side.
     Drop,
 }

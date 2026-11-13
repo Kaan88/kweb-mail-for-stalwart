@@ -7,6 +7,7 @@
 //! token expired, renew it) and [`is_cannot_calculate_changes`] (do a full resync). Both
 //! arrive as `Error::Temporary`; every other network or server problem does too.
 
+mod calendar;
 mod convert;
 mod errors;
 
@@ -80,6 +81,8 @@ pub type EventStream = Pin<Box<dyn Stream<Item = Result<Event>> + Send>>;
 /// One authenticated JMAP session. Cheap to share behind an Arc.
 pub struct Connection {
     client: Client,
+    /// For the requests jmap-client has no methods for (calendars).
+    http: reqwest::Client,
     account_id: String,
 }
 
@@ -102,7 +105,8 @@ impl Connection {
         let account_id = mail_account(&client)?;
         // jmap-client defaults to an arbitrary primary account; pin it to the mail one.
         client.set_default_account_id(account_id.clone());
-        Ok(Connection { client, account_id })
+        let http = plain_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
+        Ok(Connection { client, http, account_id })
     }
 
     /// The primary mail account.
@@ -267,6 +271,12 @@ impl Connection {
         let max = self.client.session().core_capabilities().map_or(0, |c| c.max_objects_in_get());
         batch_size(max)
     }
+}
+
+/// Like jmap-client's own client, but it follows no redirects at all: the bearer token must
+/// not be sent anywhere the session did not name.
+fn plain_http() -> std::result::Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder().timeout(REQUEST_TIMEOUT).redirect(reqwest::redirect::Policy::none()).build()
 }
 
 /// The API and push URLs come from the server's own answer; the bearer token must not be sent

@@ -13,7 +13,7 @@ use std::{
 
 use kweb_core::{
     ffi::{Core, Shade},
-    model::{Account, Action, ConnectionStatus},
+    model::{Account, Action, ConnectionStatus, Reminder},
     notify::Plan,
     push::Listener,
     secrets::{MemorySecrets, SecretStore},
@@ -46,7 +46,7 @@ impl Listener for Recorder {
     fn cache_changed(&self) {
         self.events.lock().unwrap().push(Ev::CacheChanged);
     }
-    fn calendar_alert(&self, _: String, _: String, _: Option<String>) {}
+    fn reminder(&self, _: Reminder) {}
 }
 
 impl Recorder {

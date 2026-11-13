@@ -627,3 +627,73 @@ async fn seeded_data_is_as_documented() {
             .map(|(a, b)| (a.to_string(), b.to_string()))
     );
 }
+
+// ---- calendar ---------------------------------------------------------------------------
+
+/// `CalendarEvent/get` as the core sends it: one plain JMAP request.
+async fn calendar_get(server: &MockServer, ids: Value, properties: Value) -> Value {
+    let body = json!({
+        "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:calendars"],
+        "methodCalls": [["CalendarEvent/get", { "accountId": ACCOUNT_ID, "ids": ids, "properties": properties }, "a"]]
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{}/jmap", server.url()))
+        .bearer_auth(server.issue_access_token())
+        .body(body.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let answer: Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(answer["methodResponses"][0][0], "CalendarEvent/get", "{answer}");
+    answer["methodResponses"][0][1].clone()
+}
+
+#[tokio::test]
+async fn calendar_events_are_stored_and_fetched_by_id() {
+    let server = MockServer::start().await;
+    let first = server.add_event(json!({"title": "Standup", "start": "2026-11-11T09:30:00", "description": "long"}));
+    let second = server.add_event(json!({"@type": "Task", "title": "Tax", "due": "2026-11-20T17:00:00"}));
+    assert_ne!(first, second);
+
+    let got = calendar_get(&server, json!([first, second, "nope"]), json!(["title", "start", "@type"])).await;
+    let list = got["list"].as_array().unwrap();
+    assert_eq!(list.len(), 2);
+    // `id` always comes; properties not asked for do not.
+    assert_eq!(list[0], json!({"id": first, "title": "Standup", "start": "2026-11-11T09:30:00", "@type": "Event"}));
+    assert_eq!(list[1]["@type"], "Task");
+    assert_eq!(got["notFound"], json!(["nope"]));
+
+    server.remove_event(&first);
+    let got = calendar_get(&server, json!([first]), Value::Null).await;
+    assert_eq!((got["list"].as_array().unwrap().len(), got["notFound"].clone()), (0, json!([first])));
+    assert_eq!(server.request_count("CalendarEvent/get"), 2);
+}
+
+#[tokio::test]
+async fn fired_alerts_reach_streams_that_ask_for_them() {
+    let server = MockServer::start().await;
+    let client = signed_in(&server).await;
+    let mut wants = client.event_source(Some([DataType::CalendarAlert]), false, None, None).await.unwrap();
+    let mut mail_only = client.event_source(Some([DataType::Email]), false, None, None).await.unwrap();
+    server.wait_for_event_streams(2).await;
+
+    let id = server.add_event(json!({"title": "Call", "start": "2026-11-11T09:30:00"}));
+    server.fire_alert(&id, "al1", Some("2026-11-11T09:30:00"));
+    server.fire_alert("gone", "al2", None);
+
+    let first = tokio::time::timeout(T, wants.next()).await.expect("alert in time").unwrap().unwrap();
+    let PushNotification::CalendarAlert(alert) = first else { panic!("not an alert") };
+    assert_eq!(alert.account_id, ACCOUNT_ID);
+    assert_eq!((alert.calendar_event_id.as_str(), alert.alert_id.as_str()), (id.as_str(), "al1"));
+    assert_eq!(alert.recurrence_id.as_deref(), Some("2026-11-11T09:30:00"));
+    assert_eq!(alert.uid, format!("uid-{id}"));
+
+    // An alert for an event that no longer exists is still pushed, without a recurrence id.
+    let second = tokio::time::timeout(T, wants.next()).await.expect("alert in time").unwrap().unwrap();
+    let PushNotification::CalendarAlert(alert) = second else { panic!("not an alert") };
+    assert_eq!((alert.calendar_event_id.as_str(), alert.recurrence_id), ("gone", None));
+
+    // The stream that did not ask for alerts heard nothing.
+    assert!(tokio::time::timeout(Duration::from_millis(200), mail_only.next()).await.is_err());
+}

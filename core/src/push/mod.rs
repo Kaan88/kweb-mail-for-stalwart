@@ -24,7 +24,7 @@ use crate::{
     actions,
     auth::Tokens,
     jmap::{is_unauthorized, Connection},
-    model::{Account, ConnectionStatus},
+    model::{Account, ConnectionStatus, Reminder},
     notify::{self, OnScreen, Plan},
     store::Store,
     sync, Error, Result,
@@ -38,8 +38,8 @@ pub trait Listener: Send + Sync {
     fn notifications(&self, plan: notify::Plan);
     /// The cache changed: lists on screen should reload.
     fn cache_changed(&self);
-    /// The server fired a calendar or task reminder (details are fetched in a later milestone).
-    fn calendar_alert(&self, event_id: String, alert_id: String, recurrence_id: Option<String>);
+    /// The server fired a calendar or task reminder: show it now.
+    fn reminder(&self, reminder: Reminder);
 }
 
 /// Timings, so tests can run in milliseconds. `Default` gives the production values.
@@ -107,6 +107,7 @@ async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
 /// user still has to see new mail. A 401 does stop it (the caller renews the token), and so
 /// does a lost grant.
 async fn pass(deps: &Deps, conn: &Connection, on_screen: OnScreen<'_>) -> Result<Plan> {
+    let _one_at_a_time = deps.store.pass_lock().lock().await;
     let id = &deps.account.id;
     let sent = match actions::flush(conn, &deps.store, id).await {
         Ok(n) => n,

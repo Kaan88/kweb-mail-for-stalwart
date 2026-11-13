@@ -11,12 +11,13 @@ use std::{
 
 use kweb_core::{
     actions, auth,
-    model::{Account, Action, ConnectionStatus},
+    model::{Account, Action, ConnectionStatus, Reminder},
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Handle, Listener, Timing},
     secrets::MemorySecrets,
     store::Store,
 };
+use serde_json::json;
 use support::MockServer;
 
 const DEADLINE: Duration = Duration::from_secs(5);
@@ -28,7 +29,7 @@ enum Ev {
     Status(ConnectionStatus),
     Plan(Plan),
     CacheChanged,
-    Alert,
+    Alert(Reminder),
 }
 
 #[derive(Default)]
@@ -46,8 +47,8 @@ impl Listener for Recorder {
     fn cache_changed(&self) {
         self.events.lock().unwrap().push(Ev::CacheChanged);
     }
-    fn calendar_alert(&self, _event_id: String, _alert_id: String, _recurrence_id: Option<String>) {
-        self.events.lock().unwrap().push(Ev::Alert);
+    fn reminder(&self, reminder: Reminder) {
+        self.events.lock().unwrap().push(Ev::Alert(reminder));
     }
 }
 
@@ -87,6 +88,16 @@ impl Recorder {
 
     fn cancelled_ids(&self) -> Vec<String> {
         self.plans().into_iter().flat_map(|p| p.cancel).map(|c| c.message_id).collect()
+    }
+
+    fn reminders(&self) -> Vec<Reminder> {
+        self.all()
+            .into_iter()
+            .filter_map(|e| match e {
+                Ev::Alert(r) => Some(r),
+                _ => None,
+            })
+            .collect()
     }
 
     fn is_live(&self) -> bool {
@@ -475,5 +486,148 @@ async fn cannot_calculate_changes_mid_session_still_ends_in_the_right_notificati
     r.wait_posted(&new).await;
     r.wait_cancelled(&old).await;
     assert!(matches!(handle.status(), ConnectionStatus::Live { .. }));
+    handle.stop().await;
+}
+
+/// The 15-minute check can fire while the live connection is in the middle of a pass. Both
+/// work on one cache, so they must take turns: one of them announces the mail, not both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn passes_that_overlap_announce_a_mail_once() {
+    let r = rig(fast()).await;
+    let id = r.deliver("only once");
+
+    let checks = (0..8).map(|_| {
+        let deps = r.deps.clone();
+        tokio::spawn(async move { push::check_once(&deps, OnScreen::Unknown).await.unwrap() })
+    });
+    let mut posted = Vec::new();
+    for check in checks.collect::<Vec<_>>() {
+        posted.extend(check.await.unwrap().post.into_iter().map(|n| n.message_id));
+    }
+    assert_eq!(posted, [id]);
+    assert_eq!(r.rec.plans().len(), 1);
+}
+
+// ---- calendar and task reminders --------------------------------------------------------
+
+impl Rig {
+    async fn wait_reminders(&self, n: usize) -> Vec<Reminder> {
+        let rec = self.rec.clone();
+        eventually(&format!("{n} reminders"), move || rec.reminders().len() >= n).await;
+        self.rec.reminders()
+    }
+}
+
+#[tokio::test]
+async fn an_alert_arrives_with_title_start_zone_and_location() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    let id = r.server.add_event(json!({
+        "title": "Dentist", "start": "2026-11-12T10:00:00", "timeZone": "Europe/Istanbul",
+        "locations": {"l1": {"name": "Clinic on Main St"}}
+    }));
+    r.server.fire_alert(&id, "al1", None);
+
+    let got = r.wait_reminders(1).await;
+    assert_eq!(
+        got,
+        [Reminder {
+            event_id: id,
+            alert_id: "al1".into(),
+            is_task: false,
+            title: "Dentist".into(),
+            location: "Clinic on Main St".into(),
+            local_start: Some("2026-11-12T10:00:00".into()),
+            time_zone: Some("Europe/Istanbul".into()),
+            all_day: false,
+        }]
+    );
+    // An alert is not a mail change: no pass ran, so nothing was announced.
+    assert!(r.rec.plans().is_empty());
+    handle.stop().await;
+}
+
+#[tokio::test]
+async fn an_alert_picks_the_occurrence_and_a_task_its_due_time() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    let weekly = r.server.add_event(json!({
+        "title": "Weekly", "start": "2026-11-04T10:00:00", "timeZone": "Europe/Istanbul",
+        "recurrenceOverrides": {"2026-11-11T10:00:00": {"start": "2026-11-11T11:15:00"}}
+    }));
+    let task = r.server.add_event(json!({"@type": "Task", "title": "Tax", "due": "2026-11-20T17:00:00"}));
+    r.server.fire_alert(&weekly, "a", Some("2026-11-11T10:00:00"));
+    r.server.fire_alert(&task, "b", None);
+
+    let mut got = r.wait_reminders(2).await;
+    got.sort_by(|a, b| a.alert_id.cmp(&b.alert_id));
+    assert_eq!(got[0].local_start.as_deref(), Some("2026-11-11T11:15:00"));
+    assert_eq!(got[0].time_zone.as_deref(), Some("Europe/Istanbul"));
+    assert!(got[1].is_task);
+    assert_eq!((got[1].local_start.as_deref(), got[1].time_zone.as_deref()), (Some("2026-11-20T17:00:00"), None));
+    handle.stop().await;
+}
+
+#[tokio::test]
+async fn an_alert_for_a_missing_event_still_arrives_without_details() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    r.server.fire_alert("deleted-meanwhile", "al9", None);
+
+    let got = r.wait_reminders(1).await;
+    assert_eq!(got.len(), 1);
+    let bare = &got[0];
+    assert_eq!((bare.event_id.as_str(), bare.alert_id.as_str()), ("deleted-meanwhile", "al9"));
+    assert_eq!((bare.title.as_str(), bare.location.as_str(), bare.local_start.clone()), ("", "", None));
+    assert!(bare.time_zone.is_none() && !bare.all_day && !bare.is_task);
+    handle.stop().await;
+}
+
+#[tokio::test]
+async fn an_alert_still_arrives_when_the_fetch_fails() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    let id = r.server.add_event(json!({"title": "Never read", "start": "2026-11-12T10:00:00"}));
+    // The stream is open, but from now on the API refuses the token (401).
+    r.server.expire_access_tokens();
+    r.server.fire_alert(&id, "al1", None);
+
+    let got = r.wait_reminders(1).await;
+    assert_eq!((got[0].event_id.as_str(), got[0].title.as_str(), got[0].local_start.clone()), (id.as_str(), "", None));
+    handle.stop().await;
+}
+
+#[tokio::test]
+async fn a_slow_calendar_fetch_does_not_hold_up_mail() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    r.server.set_calendar_delay(Duration::from_millis(1500));
+    let event = r.server.add_event(json!({"title": "Slow", "start": "2026-11-12T10:00:00"}));
+    r.server.fire_alert(&event, "al1", None);
+    let mail = r.deliver("while the alert loads");
+
+    r.wait_posted(&mail).await;
+    assert!(r.rec.reminders().is_empty(), "the reminder should still be loading");
+    let got = r.wait_reminders(1).await;
+    assert_eq!(got[0].title, "Slow");
+    handle.stop().await;
+}
+
+#[tokio::test]
+async fn mail_keeps_working_around_reminders() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    let before = r.deliver("before");
+    r.wait_posted(&before).await;
+
+    let event = r.server.add_event(json!({"title": "Lunch", "start": "2026-11-12T12:00:00"}));
+    r.server.fire_alert(&event, "al1", None);
+    r.wait_reminders(1).await;
+
+    let after = r.deliver("after");
+    r.wait_posted(&after).await;
+    assert_eq!(r.rec.posted_ids(), [before, after]);
+    assert_eq!(r.rec.reminders().len(), 1);
+    r.never_needed_sign_in();
     handle.stop().await;
 }

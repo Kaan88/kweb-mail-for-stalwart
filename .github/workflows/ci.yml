@@ -59,6 +59,9 @@ jobs:
       - run: ./gradlew assembleDebug
         working-directory: android
 
+      - run: ./gradlew testDebugUnitTest lintDebug
+        working-directory: android
+
       # The Kotlin side finds this function by its symbol name; a typo would only show on a phone.
       - name: Check the TLS init symbol is exported
         run: |
