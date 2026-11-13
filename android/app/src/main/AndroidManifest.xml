@@ -27,6 +27,21 @@
             </intent-filter>
         </activity>
 
+        <!-- Where the browser comes back to after sign-in (ovh.kweb.mail:/oauth/callback). -->
+        <activity
+            android:name=".ui.signin.SignInReturnActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ovh.kweb.mail" />
+            </intent-filter>
+        </activity>
+
         <!-- Holds the live connection to the user's own mail server. -->
         <service
             android:name=".background.PushService"

@@ -7,6 +7,8 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +17,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
 import uniffi.kweb_core.Exception as CoreException
@@ -28,9 +31,9 @@ data class SignInUiState(
 )
 
 /**
- * Runs the sign-in. `finishSignIn()` blocks for up to five minutes, so it lives in [viewModelScope]:
- * it goes on while the activity is stopped behind the browser, and a sign-in that completes after
- * the user pressed Cancel is still accepted (the core has no way to cancel it).
+ * Runs the sign-in: asks the core for the page to open, waits for the browser to come back
+ * through [SignInReturn] (up to five minutes) and hands the answer to the core. Cancel ends the
+ * wait; once the answer is with the core, the sign-in is seen through.
  */
 class SignInViewModel(app: Application, private val saved: SavedStateHandle) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(SignInUiState(address = saved[ADDRESS] ?: ""))
@@ -39,6 +42,7 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
 
     /** Counts attempts; a result of an older one is ignored, except a success. */
     private var attempt = 0
+    private var job: Job? = null
 
     val state: StateFlow<SignInUiState> get() = stateFlow
 
@@ -65,12 +69,13 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
             ?: return stateFlow.update { it.copy(error = SignInError.InvalidAddress) }
         val mine = ++attempt
         stateFlow.update { it.copy(phase = SignInPhase.Starting, error = null) }
-        viewModelScope.launch { run(mine, url) }
+        job = viewModelScope.launch { run(mine, url) }
     }
 
-    /** Back to the form. A sign-in still waiting in the core is left to time out or succeed. */
+    /** Back to the form. The answer of a browser that comes back later is not used. */
     fun cancel() {
         attempt++
+        job?.cancel()
         stateFlow.update { it.copy(phase = SignInPhase.Form, error = null) }
     }
 
@@ -80,7 +85,8 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
     private suspend fun run(mine: Int, url: String) {
         val core = Background.core(getApplication())
         val authorizeUrl = try {
-            withContext(Dispatchers.IO) { core.beginSignIn(url) }
+            SignInReturn.clear()
+            withContext(Dispatchers.IO) { core.beginSignInWithRedirect(url, SignInReturn.REDIRECT_URI) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: CoreException) {
@@ -91,10 +97,16 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
         if (mine != attempt) return
         stateFlow.update { it.copy(phase = SignInPhase.Waiting) }
         browserUrls.send(authorizeUrl)
+        val callbackUrl = withTimeoutOrNull(WAIT_MILLIS) { SignInReturn.await() }
+            ?: return fail(mine, SignInError.NoBrowserAnswer)
+        // From here on a Cancel comes too late: the answer is used up either way.
+        withContext(NonCancellable) { complete(mine, callbackUrl) }
+    }
+
+    private suspend fun complete(mine: Int, callbackUrl: String) {
+        val core = Background.core(getApplication())
         try {
-            withContext(Dispatchers.IO) { core.finishSignIn() }
-        } catch (e: CancellationException) {
-            throw e
+            withContext(Dispatchers.IO) { core.completeSignIn(callbackUrl) }
         } catch (e: CoreException) {
             return fail(mine, SignInError.fromFinish(e))
         } catch (e: Exception) {
@@ -103,8 +115,6 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
         // The account exists from here on, whatever the set-up of the background half does.
         try {
             withContext(Dispatchers.IO) { Background.afterSignIn(getApplication()) }
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Exception) {
             Log.e(Background.TAG, "set-up after sign-in failed", e)
         }
@@ -120,5 +130,6 @@ class SignInViewModel(app: Application, private val saved: SavedStateHandle) : A
 
     private companion object {
         const val ADDRESS = "address"
+        const val WAIT_MILLIS = 5 * 60 * 1000L
     }
 }

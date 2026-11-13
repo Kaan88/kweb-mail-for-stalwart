@@ -257,3 +257,25 @@ fn finish_without_begin_is_an_error() {
     let rig = Rig::new();
     assert!(matches!(rig.core.finish_sign_in(), Err(Error::Invalid { .. })));
 }
+
+/// The way Android signs in: the answer comes back as an app link, not through a socket.
+#[test]
+fn sign_in_through_an_app_redirect() {
+    let rig = Rig::new();
+    let redirect = "ovh.kweb.mail:/oauth/callback";
+    let url = rig.core.begin_sign_in_with_redirect(rig.server.url(), redirect.to_string()).unwrap();
+    let callback = rig.server.authorize(&url).unwrap();
+    assert!(callback.starts_with(redirect), "{callback}");
+
+    // An answer to some other sign-in is refused and does not end this one.
+    let stray = format!("{redirect}?code=abc&state=someone-else");
+    assert!(matches!(rig.core.complete_sign_in(stray), Err(Error::Invalid { .. })));
+    // The socket way has nothing to wait for either.
+    assert!(matches!(rig.core.finish_sign_in(), Err(Error::Invalid { .. })));
+
+    let account = rig.core.complete_sign_in(callback.clone()).unwrap();
+    assert_eq!(account.id, ACCOUNT_ID);
+    assert_eq!(rig.core.account(), Some(account));
+    // The same answer cannot be used twice.
+    assert!(matches!(rig.core.complete_sign_in(callback), Err(Error::Invalid { .. })));
+}

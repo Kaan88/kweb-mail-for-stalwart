@@ -53,8 +53,9 @@ struct Session {
 
 #[derive(Default)]
 struct Inner {
-    /// A sign-in the browser has not come back from yet, with the socket it will come back to.
-    pending: Option<(PendingSignIn, TcpListener)>,
+    /// A sign-in the browser has not come back from yet, with the socket it will come back
+    /// to (none when it comes back through a redirect the host catches itself).
+    pending: Option<(PendingSignIn, Option<TcpListener>)>,
     session: Option<Session>,
     listener: Option<Arc<dyn Listener>>,
     watcher: Option<push::Handle>,
@@ -108,42 +109,66 @@ impl Core {
             Ok::<_, Error>((pending, listener))
         })?;
         let url = pending.authorize_url.clone();
-        self.lock().pending = Some((pending, listener));
+        self.lock().pending = Some((pending, Some(listener)));
         Ok(url)
+    }
+
+    /// Starts a sign-in whose answer the host catches itself and returns the URL to open in
+    /// the browser. `redirect_uri` is a private-use scheme the host is registered for, such
+    /// as `ovh.kweb.mail:/oauth/callback`. This is the way on Android: a socket in the app
+    /// cannot be relied on while the browser is in front, because Android may freeze the
+    /// process. Finish with [`Core::complete_sign_in`].
+    pub fn begin_sign_in_with_redirect(&self, server_url: String, redirect_uri: String) -> Result<String> {
+        let previous = match self.store.load_account()? {
+            Some(account) => stored_client(&self.store, &account.id)?,
+            None => None,
+        };
+        let pending = self.rt.block_on(auth::begin_sign_in(&server_url, &redirect_uri, previous.as_ref()))?;
+        let url = pending.authorize_url.clone();
+        self.lock().pending = Some((pending, None));
+        Ok(url)
+    }
+
+    /// Finishes a sign-in started with [`Core::begin_sign_in_with_redirect`]. `callback_url`
+    /// is the full URL the browser was sent back to. A URL that does not belong to the
+    /// sign-in in progress is refused and the sign-in stays open.
+    pub fn complete_sign_in(&self, callback_url: String) -> Result<Account> {
+        let pending = {
+            let mut inner = self.lock();
+            match inner.pending.take() {
+                Some((pending, _)) if belongs_to(&callback_url, pending.state()) => pending,
+                other => {
+                    inner.pending = other;
+                    return Err(Error::invalid("this is not the answer to the sign-in in progress"));
+                }
+            }
+        };
+        self.signed_in(pending, callback_url)
     }
 
     /// Waits (up to five minutes) for the browser to come back, finishes the sign-in and
     /// returns the account. The live connection starts if a listener was given to
     /// [`Core::start`] before.
     pub fn finish_sign_in(&self) -> Result<Account> {
-        let (pending, listener) = self.lock().pending.take().ok_or_else(|| Error::invalid("no sign-in was started"))?;
+        let (pending, listener) = {
+            let mut inner = self.lock();
+            match inner.pending.take() {
+                Some((pending, Some(listener))) => (pending, listener),
+                other => {
+                    inner.pending = other;
+                    return Err(Error::invalid("no sign-in is waiting for the browser on this device"));
+                }
+            }
+        };
         let state = pending.state().to_string();
-        let (client, tokens, account) = self.rt.block_on(async {
+        let callback = self.rt.block_on(async {
             let wait = loopback::wait_for_callback(listener, &state, APP_NAME);
-            let callback = tokio::time::timeout(auth::SIGN_IN_TIMEOUT, wait)
+            tokio::time::timeout(auth::SIGN_IN_TIMEOUT, wait)
                 .await
-                .map_err(|_| Error::temporary("no answer from the browser within 5 minutes"))??;
-            let signed = auth::complete_sign_in(pending, &callback, self.secrets.clone()).await?;
-            let token = signed.tokens.access_token().await?;
-            let conn = Connection::connect(&signed.client.server_url, &token.token).await?;
-            let username = if signed.username.is_empty() { conn.username() } else { signed.username };
-            let account = Account {
-                id: conn.account_id(),
-                server_url: signed.client.server_url.clone(),
-                username,
-                signed_in_at: now(),
-            };
-            Ok::<_, Error>((signed.client, signed.tokens, account))
+                .map_err(|_| Error::temporary("no answer from the browser within 5 minutes"))?
         })?;
-
-        self.stop();
-        let account = self.remember(account, &client)?;
-        let mut inner = self.lock();
-        inner.session = Some(Session { account: account.clone(), tokens });
-        self.spawn_watcher(&mut inner);
-        Ok(account)
+        self.signed_in(pending, callback)
     }
-
     /// Revokes the grant on the server (best effort) and wipes the cache.
     pub fn sign_out(&self) -> Result<()> {
         self.stop();
@@ -236,6 +261,31 @@ impl Core {
 }
 
 impl Core {
+    /// Exchanges the code, finds the account and starts the live connection if a listener
+    /// is waiting. Shared by both ways of coming back from the browser.
+    fn signed_in(&self, pending: PendingSignIn, callback: String) -> Result<Account> {
+        let (client, tokens, account) = self.rt.block_on(async {
+            let signed = auth::complete_sign_in(pending, &callback, self.secrets.clone()).await?;
+            let token = signed.tokens.access_token().await?;
+            let conn = Connection::connect(&signed.client.server_url, &token.token).await?;
+            let username = if signed.username.is_empty() { conn.username() } else { signed.username };
+            let account = Account {
+                id: conn.account_id(),
+                server_url: signed.client.server_url.clone(),
+                username,
+                signed_in_at: now(),
+            };
+            Ok::<_, Error>((signed.client, signed.tokens, account))
+        })?;
+
+        self.stop();
+        let account = self.remember(account, &client)?;
+        let mut inner = self.lock();
+        inner.session = Some(Session { account: account.clone(), tokens });
+        self.spawn_watcher(&mut inner);
+        Ok(account)
+    }
+
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // Nothing is left half-done under this lock, so a panic elsewhere does not poison the state.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -278,6 +328,11 @@ impl Core {
         self.store.kv_set(&account.id, OAUTH_CLIENT_KEY, &json)?;
         Ok(account)
     }
+}
+
+/// Whether `callback_url` carries the `state` of the pending sign-in.
+fn belongs_to(callback_url: &str, state: &str) -> bool {
+    url::Url::parse(callback_url).is_ok_and(|url| url.query_pairs().any(|(k, v)| k == "state" && v == state))
 }
 
 fn stored_client(store: &Store, account_id: &str) -> Result<Option<OAuthClient>> {

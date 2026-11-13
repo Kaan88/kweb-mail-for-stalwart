@@ -60,7 +60,7 @@ object Background {
     }
 
     /**
-     * Call right after `finishSignIn()` succeeded: starts the service and schedules the
+     * Call right after `completeSignIn()` succeeded: starts the service and schedules the
      * 15-minute check.
      */
     fun afterSignIn(context: Context) {
