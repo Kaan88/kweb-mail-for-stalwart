@@ -9,9 +9,12 @@ A native Android mail client for Stalwart 1.1+, JMAP only. Rust core (`core/`, c
 ## Where it stands
 
 - M0 to M2 are built and pass CI. On the real phone: sign-in with a passkey, live notifications, Mark read and Archive from a notification, and the settings all work.
-- **Still unverified on a real phone (M2 table in PLAN.md):** a notification going away when the mail is read elsewhere, a swiped notification staying away, restart without opening the app, overnight idle, and calendar reminders (never tried against a real server). The owner tests these; keep them in mind and do not claim M2 is done.
+- **Still unverified on a real phone (M2 table in PLAN.md):** a notification going away when the mail is read elsewhere, a swiped notification staying away, overnight idle, and calendar reminders (never tried against a real server). Restart without opening the app works (owner, 2026-11-14). The owner tests these; keep them in mind and do not claim M2 is done.
 - On the emulator against the local test server (`dev/README.md`): sign-in with the app link, live notification within 5 s, removal on read, archive or delete elsewhere, swipe staying away, and the offline-then-reconnect case all passed. The emulator needs KVM and a VirtualBox VM of the owner's must not be running at the same time (see `dev/README.md`).
 - **M3 (reading) has not started in code.** Its scope is in PLAN.md. The core has mailboxes, message headers (no bodies), sync and actions; M3 adds bodies, threads, folders, search, swipe actions and offline reading of recent mail.
+- **Next step: M3 (reading).** The owner asked to continue with it. Nothing is built yet; start by reading the M3 section of PLAN.md and the core's `jmap` and `store` modules.
+- **Roadmap decisions (owner, 2026-11-14, all in PLAN.md):** JMAP only, Stalwart only. M7 also holds an AI assistant: the Rust core calls an OpenAI-compatible or Anthropic provider itself (Stalwart has no client AI endpoint), starting from the owner's Thunderbird extension (`ai-assistant-1.2.3.xpi`, in the owner's Downloads; its design is summarised in PLAN.md). When that work starts, build Stalwart from source with `RUSTFLAGS="--cfg stalwart_tests"` as a second local test server (that build grants Enterprise features with no licence; the owner will test a real licence later). M8 is a simplified Sieve editor (RFC 9661). M9 is optional S/MIME and OpenPGP.
+- Git: commit 3427c11 and the PLAN.md and CLAUDE.md edits are the only local changes that matter; the other modified files are line-ending noise.
 - Known limits: no Reply action until M4; a sign-in cannot be cancelled inside the core; a calendar alert pushed during a reconnect is lost.
 
 ## Development machine
