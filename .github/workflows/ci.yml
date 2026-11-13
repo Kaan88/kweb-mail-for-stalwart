@@ -59,6 +59,14 @@ jobs:
       - run: ./gradlew assembleDebug
         working-directory: android
 
+      # The Kotlin side finds this function by its symbol name; a typo would only show on a phone.
+      - name: Check the TLS init symbol is exported
+        run: |
+          nm="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          libs=$(find android/app/build -name libkweb_core.so -path '*arm64-v8a*' | head -1)
+          test -n "$libs"
+          "$nm" -D --defined-only "$libs" | grep -w Java_ovh_kweb_mail_Tls_init
+
       - uses: actions/upload-artifact@v4
         with:
           name: kweb-mail-debug-apk

@@ -2,6 +2,8 @@
 //! The Kotlin side calls [`ffi`] and renders what comes back; it never talks to the server.
 
 pub mod actions;
+#[cfg(target_os = "android")]
+mod android;
 pub mod auth;
 pub mod error;
 pub mod ffi;

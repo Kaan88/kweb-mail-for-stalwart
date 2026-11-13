@@ -33,6 +33,12 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "h
 jmap-client = "0.4"
 rusqlite = { version = "0.42", features = ["bundled"] }
 
+# Must be the versions the HTTP stack itself uses (see Cargo.lock): the verifier keeps its
+# JVM handle in a global, and a second copy of the crate would have its own, empty one.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+rustls-platform-verifier = "0.7"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
