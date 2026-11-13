@@ -1,0 +1,7 @@
+// Moves every project's build directory off the NTFS drive the repository is on, where Gradle
+// cannot always delete its own output. Used by dev/gradle.sh; pass it with `-I`, never put it in
+// ~/.gradle/init.d (it would change every Gradle project on the machine).
+def root = System.getenv("KWEB_BUILD_ROOT") ?: "${System.getProperty('user.home')}/.cache/kweb-mail/gradle"
+allprojects {
+    layout.buildDirectory = new File(root, project.path.replace(':', '/') ?: "root")
+}
