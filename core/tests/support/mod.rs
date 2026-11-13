@@ -47,6 +47,8 @@ struct Shared {
     calendar: Mutex<Calendar>,
     /// How long `CalendarEvent/get` takes to answer, in milliseconds.
     calendar_delay_ms: AtomicU64,
+    /// See [`MockServer::set_calendar_refused`].
+    calendar_refused: AtomicBool,
     oauth: Mutex<Oauth>,
     down: AtomicBool,
     /// Requests by path ("/jmap") and, for JMAP calls, by method name ("Email/get").
@@ -88,6 +90,7 @@ impl MockServer {
             mail: Mutex::new(Mail::new(tx.clone())),
             calendar: Mutex::new(Calendar::default()),
             calendar_delay_ms: AtomicU64::new(0),
+            calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
             down: AtomicBool::new(false),
             counts: Mutex::new(HashMap::new()),
@@ -222,6 +225,13 @@ impl MockServer {
     /// Makes `CalendarEvent/get` slow, to show that nothing else waits for it.
     pub fn set_calendar_delay(&self, delay: Duration) {
         self.shared.calendar_delay_ms.store(delay.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// Makes `CalendarEvent/get` answer 401 while everything else keeps working. Expiring
+    /// the tokens would do that too, but it also ends the session of any pass that happens to
+    /// be running, and an alert pushed while the stream is being replaced is never seen.
+    pub fn set_calendar_refused(&self, refused: bool) {
+        self.shared.calendar_refused.store(refused, Ordering::SeqCst);
     }
 
     // ---- trouble ---------------------------------------------------------------------
@@ -564,6 +574,9 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
     if calls.iter().any(|c| c[0] == "CalendarEvent/get") {
         let delay = s.calendar_delay_ms.load(Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(delay)).await;
+        if s.calendar_refused.load(Ordering::SeqCst) {
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
     }
     let mut responses: Vec<(String, Value, String)> = Vec::new();
     for call in calls {

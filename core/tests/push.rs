@@ -588,8 +588,8 @@ async fn an_alert_still_arrives_when_the_fetch_fails() {
     let r = rig(fast()).await;
     let handle = r.start().await;
     let id = r.server.add_event(json!({"title": "Never read", "start": "2026-11-12T10:00:00"}));
-    // The stream is open, but from now on the API refuses the token (401).
-    r.server.expire_access_tokens();
+    // The stream stays open, but the lookup of the details is refused (401).
+    r.server.set_calendar_refused(true);
     r.server.fire_alert(&id, "al1", None);
 
     let got = r.wait_reminders(1).await;
