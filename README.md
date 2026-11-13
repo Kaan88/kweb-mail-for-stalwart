@@ -22,3 +22,5 @@ cd android && ./gradlew assembleDebug -PskipNative      # Kotlin side only
 - [branding/ward](branding/ward): the Ward mark, lockups and icon sizes.
 
 This is an independent project. It is not made, endorsed or supported by Stalwart Labs or the Bulwark project.
+
+Licensed under the [MIT licence](LICENSE).

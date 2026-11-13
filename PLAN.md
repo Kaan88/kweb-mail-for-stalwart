@@ -174,4 +174,4 @@ Postern (MIT, same author) already has, in Rust: the OAuth flow with client regi
 
 1. Which phone and Android version is the target? It sets the minimum SDK (proposed: Android 10, API 29) and how much the battery risk matters.
 2. Package id. Proposed: `ovh.kweb.mail`.
-3. Licence, if the repository is ever made public.
+3. ~~Licence.~~ Settled 2026-11-13: MIT, as Postern. The repository is public.
