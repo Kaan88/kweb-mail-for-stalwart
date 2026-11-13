@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Ward mark (branding/ward/ward-mark.svg) in the 64-unit box of the maskable icon, scaled
+     1.4x about its centre onto the 108dp adaptive canvas; it stays inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="32"
+        android:pivotY="32"
+        android:scaleX="1.4"
+        android:scaleY="1.4"
+        android:translateX="22"
+        android:translateY="22">
+        <path
+            android:pathData="M24,17v30M24,33l15,-16M29,28l12,19"
+            android:strokeColor="#ffffff"
+            android:strokeWidth="6"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

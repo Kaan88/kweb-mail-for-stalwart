@@ -1,0 +1,88 @@
+//! Actions queued while offline. Stored as a kind string plus message id so a new kind
+//! needs no schema change.
+
+use super::Store;
+use crate::model::Action;
+use crate::Result;
+
+fn to_columns(action: &Action) -> (&'static str, &str) {
+    match action {
+        Action::MarkRead { message_id } => ("mark_read", message_id),
+        Action::MarkUnread { message_id } => ("mark_unread", message_id),
+        Action::Archive { message_id } => ("archive", message_id),
+        Action::Delete { message_id } => ("delete", message_id),
+        Action::Destroy { message_id } => ("destroy", message_id),
+    }
+}
+
+fn from_columns(kind: &str, message_id: String) -> Option<Action> {
+    Some(match kind {
+        "mark_read" => Action::MarkRead { message_id },
+        "mark_unread" => Action::MarkUnread { message_id },
+        "archive" => Action::Archive { message_id },
+        "delete" => Action::Delete { message_id },
+        "destroy" => Action::Destroy { message_id },
+        _ => return None,
+    })
+}
+
+impl Store {
+    /// Returns the row id, which stays stable until the action is marked done.
+    pub fn outbox_enqueue(&self, account_id: &str, action: &Action) -> Result<i64> {
+        let (kind, message_id) = to_columns(action);
+        self.write(|c| {
+            c.execute(
+                "INSERT INTO outbox (account_id, kind, message_id) VALUES (?1, ?2, ?3)",
+                [account_id, kind, message_id],
+            )?;
+            Ok(c.last_insert_rowid())
+        })
+    }
+
+    /// `(id, action, attempts)`, oldest first. A row with a kind this version does not know
+    /// (written by a newer app) is skipped rather than blocking the queue.
+    pub fn outbox_pending(&self, account_id: &str) -> Result<Vec<(i64, Action, u32)>> {
+        self.read(|c| {
+            let mut stmt =
+                c.prepare("SELECT id, kind, message_id, attempts FROM outbox WHERE account_id = ?1 ORDER BY id")?;
+            let rows = stmt.query_map([account_id], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?))
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (id, kind, message_id, attempts) = row?;
+                if let Some(action) = from_columns(&kind, message_id) {
+                    out.push((id, action, attempts));
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// The server has the action: remove it from the queue.
+    pub fn outbox_done(&self, id: i64) -> Result<()> {
+        self.write(|c| {
+            c.execute("DELETE FROM outbox WHERE id = ?1", [id])?;
+            Ok(())
+        })
+    }
+
+    /// Counts one more failed try and keeps the last error text for the Delivery check screen.
+    pub fn outbox_failed(&self, id: i64, error: &str) -> Result<()> {
+        self.write(|c| {
+            c.execute(
+                "UPDATE outbox SET attempts = attempts + 1, last_error = ?2 WHERE id = ?1",
+                rusqlite::params![id, error],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The last error recorded for a queued action, if any.
+    pub fn outbox_last_error(&self, id: i64) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
+        self.read(|c| {
+            Ok(c.query_row("SELECT last_error FROM outbox WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+        })
+    }
+}

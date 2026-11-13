@@ -1,0 +1,15 @@
+[package]
+name = "kweb-cli"
+description = "Drives kweb-core against a real server from the desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kweb"
+path = "src/main.rs"
+
+[dependencies]
+kweb-core = { path = "../core" }
+serde_json = "1"
