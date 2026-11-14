@@ -162,6 +162,17 @@ Checked on the emulator against the local Stalwart ([design/m4-emulator.png](des
 
 Agenda and day views, create and edit events, repeat rules, invitations, tasks.
 
+Built 2026-11-14. How it works:
+
+- **The agenda is asked from the server each time** and kept in the cache for offline use (`core/src/jmap/calendars.rs`, `jscal.rs`, `store/calendar.rs`). Stalwart 1.1.0 neither expands repeating events in a query nor takes more than one calendar per query, so the core fetches the events of the visible calendars whole and expands the rules itself (`recur.rs`: daily, weekly, monthly, yearly, with interval, count, until, weekdays, month days and set positions). Time zones come from the `chrono-tz` crate (`clock.rs`).
+- **One event** is read as the series or as one occurrence (`Core::event(id, recurrence_id)`), with that occurrence's own time, title and place.
+- **Writes are patches of what the app owns** (title, time, zone, length, place, notes, reminders, a simple repeat rule, the calendar). Everything else on the server stays: participants, other calendars, a rule the app cannot edit. A write carries the state it was read at and is redone once if the event changed meanwhile. Moving a series moves its exceptions with it.
+- **Invitations** are answered in the calendar (the server tells the organizer); **tasks** are ticked off in the agenda.
+- **A reminder notification** opens the occurrence it is for and goes away when opened.
+- **Android:** the bottom bar (Mail, Calendar) on the two root screens, the agenda with a week strip, the event screen, and a form for creating and changing entries.
+
+Not built: the day view (the agenda with its week strip stands in for it), answering an invitation from the mail that carried it, showing or hiding single calendars, creating calendars.
+
 ### M6: contacts and away message
 
 Contact list, view, edit. Vacation response switch.
@@ -260,3 +271,14 @@ M4
 - A draft is kept on the phone from the first keystroke and copied to Drafts on the server with the next pass.
 - Recipient suggestions come from the server's address book when it has one and from the people in cached mail.
 - A Settings screen holds storage, theme, Delivery check and sign-out, and replaces the drawer's Theme entry.
+- Outgoing mail is handled after the notifications in a pass, so new mail is always announced first.
+- A reply to a note to oneself is addressed to oneself rather than left without a recipient.
+
+M5
+- The agenda asks the server each time and keeps the answer for offline use; there is no background calendar sync.
+- Stalwart 1.1.0 does not expand repeating events in a query (it matches a series only by its first start) and accepts only one calendar per query. The core therefore fetches every event of the visible calendars and expands daily, weekly, monthly and yearly rules itself, with time zones from the `chrono-tz` crate (a new dependency). A large calendar is fetched again for each agenda; caching by the server's state is a later optimisation.
+- Tasks are JSCalendar tasks in the calendars (the server has no separate tasks capability). The app can tick them off and edit them like events.
+- Repeat rules the app can edit: every day, week (with weekdays), month or year, ending never, on a date or after a count. Anything richer is shown as "repeats" and left untouched by a save.
+- An entry's colour comes from its calendar's position in the list (primary, secondary, tertiary containers), not from the colour stored on the server, so it follows the theme.
+- Invitations are answered in the calendar. Answering from the mail that carried one is left for later.
+- The bottom bar (Mail, Calendar) arrives with M5 and shows on the two root screens only.
