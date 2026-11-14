@@ -46,3 +46,5 @@ mod sharing;
 mod sync;
 #[path = "suite/unsubscribe.rs"]
 mod unsubscribe;
+#[path = "suite/webpush.rs"]
+mod webpush;

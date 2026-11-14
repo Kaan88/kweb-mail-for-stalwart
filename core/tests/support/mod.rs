@@ -14,6 +14,7 @@ mod enterprise;
 mod files;
 mod manage;
 mod oauth;
+mod pushsub;
 mod shares;
 mod sharing;
 mod sieve;
@@ -41,6 +42,7 @@ use calendar::Calendar;
 use files::Files;
 use manage::Manage;
 use oauth::Oauth;
+use pushsub::PushSubs;
 use shares::OwnShares;
 use sharing::Sharing;
 use sieve::Sieve;
@@ -55,6 +57,8 @@ pub use enterprise::{iso, Enterprise, LiveEnd, ADMIN_KEY};
 pub use files::{EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 #[allow(unused_imports)]
 pub use manage::{Edition, OTP_CODE, PASSWORD as ACCOUNT_PASSWORD};
+#[allow(unused_imports)]
+pub use pushsub::{Delivery, SubView};
 #[allow(unused_imports)]
 pub use sharing::ALL_MAIL_RIGHTS;
 /// An identity as the server holds it.
@@ -90,6 +94,7 @@ struct Shared {
     calendar: Mutex<Calendar>,
     /// How long `CalendarEvent/get` takes to answer, in milliseconds.
     calendar_delay_ms: AtomicU64,
+    bodies_delay_ms: AtomicU64,
     /// See [`MockServer::set_calendar_refused`].
     calendar_refused: AtomicBool,
     oauth: Mutex<Oauth>,
@@ -105,6 +110,8 @@ struct Shared {
     /// The filter scripts. Taken before `account` when both are needed.
     sieve: Mutex<Sieve>,
     admin: Mutex<admin_mock::Admin>,
+    /// `PushSubscription` and the Web Push messages the server would send.
+    webpush: Mutex<PushSubs>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
     upload_limit: AtomicU64,
     /// See [`MockServer::lose_next_submission_answer`].
@@ -153,6 +160,7 @@ impl MockServer {
             mail: Mutex::new(Mail::new(tx.clone())),
             calendar: Mutex::new(Calendar::default()),
             calendar_delay_ms: AtomicU64::new(0),
+            bodies_delay_ms: AtomicU64::new(0),
             calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
             files: Mutex::new(Files::default()),
@@ -162,6 +170,7 @@ impl MockServer {
             account: Mutex::new(Account::default()),
             sieve: Mutex::new(Sieve::default()),
             admin: Mutex::new(admin_mock::Admin::default()),
+            webpush: Mutex::new(PushSubs::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
             fail_submission_queries: AtomicUsize::new(0),
@@ -219,6 +228,51 @@ impl MockServer {
         let mut manage = self.shared.manage.lock().unwrap();
         manage.offered = offered;
         manage.granted = granted;
+    }
+
+    // ---- Web Push ---------------------------------------------------------------------
+
+    /// Runs `f` on the mock's push subscriptions.
+    pub fn webpush<T>(&self, f: impl FnOnce(&mut PushSubs) -> T) -> T {
+        f(&mut self.shared.webpush.lock().unwrap())
+    }
+
+    /// The subscriptions the server holds (the ones that did not expire).
+    pub fn webpush_subscriptions(&self) -> Vec<SubView> {
+        self.webpush(|p| p.views())
+    }
+
+    /// The messages the server sent to Google since the last call, encrypted.
+    pub fn webpush_take_deliveries(&self) -> Vec<Delivery> {
+        self.webpush(|p| std::mem::take(&mut p.deliveries))
+    }
+
+    /// What the server would send to every verified subscription for `plain`, and does.
+    pub fn webpush_send(&self, plain: &Value) -> Vec<Delivery> {
+        self.webpush(|p| p.send_to_verified(plain))
+    }
+
+    /// The `EmailPush` the server sends for a new message, to every verified subscription.
+    pub fn webpush_email_push(&self, subject: &str) -> Vec<Delivery> {
+        self.webpush_send(&json!({
+            "@type": "EmailPush", "accountId": ACCOUNT_ID, "state": "s",
+            "emails": [{ "id": "e1", "subject": subject, "preview": "secret preview" }],
+        }))
+    }
+
+    /// A `StateChange` for the account.
+    pub fn webpush_state_change(&self) -> Vec<Delivery> {
+        self.webpush_send(
+            &json!({ "@type": "StateChange", "changed": { ACCOUNT_ID: { "Email": "s", "Mailbox": "s" } } }),
+        )
+    }
+
+    /// A `CalendarAlert`.
+    pub fn webpush_calendar_alert(&self, event_id: &str, alert_id: &str) -> Vec<Delivery> {
+        self.webpush_send(&json!({
+            "@type": "CalendarAlert", "accountId": ACCOUNT_ID, "calendarEventId": event_id,
+            "uid": "u", "recurrenceId": null, "alertId": alert_id,
+        }))
     }
 
     // ---- OAuth helpers ---------------------------------------------------------------
@@ -525,6 +579,11 @@ impl MockServer {
     /// else (headers, changes, actions) keeps working.
     pub fn set_bodies_fail(&self, fail: bool) {
         self.shared.mail().bodies_fail = fail;
+    }
+
+    /// Every `Email/get` that asks for body values is answered this long after it came.
+    pub fn set_bodies_delay(&self, delay: Duration) {
+        self.shared.bodies_delay_ms.store(delay.as_millis() as u64, Ordering::SeqCst);
     }
 
     /// With false, mutations stop producing push events: a stream that is open but dead.
@@ -1299,6 +1358,10 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
             primary[urn] = json!(ACCOUNT_ID);
         }
     }
+    if let Some(key) = s.webpush.lock().unwrap().key.clone() {
+        capabilities[pushsub::CAPABILITY] = json!({ "applicationServerKey": key });
+        capabilities["urn:ietf:params:jmap:emailpush"] = json!({});
+    }
     capabilities[core]["maxSizeUpload"] = json!(upload_limit);
     let mut accounts = json!({
         ACCOUNT_ID: {
@@ -1441,6 +1504,19 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
         && s.fail_submission_queries.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if calls.iter().any(|c| c[0].as_str().is_some_and(|n| n.starts_with("PushSubscription/"))) {
+        let mut push = s.webpush.lock().unwrap();
+        if push.fail_next > 0 {
+            push.fail_next -= 1;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    }
+    let asks_bodies =
+        |c: &Value| c[0] == "Email/get" && (c[1]["fetchTextBodyValues"] == true || c[1]["fetchHTMLBodyValues"] == true);
+    if calls.iter().any(asks_bodies) {
+        let delay = s.bodies_delay_ms.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
     if calls.iter().any(|c| c[0] == "CalendarEvent/get") {
         let delay = s.calendar_delay_ms.load(Ordering::SeqCst);
@@ -1611,6 +1687,7 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
             let mail_blob = |id: &str| s.mail().blob(id);
             s.files.lock().unwrap().call(name, args, &mail_blob).map(one)
         }
+        "PushSubscription/get" | "PushSubscription/set" => s.webpush.lock().unwrap().call(name, args).map(one),
         "EmailSubmission/query" => s.mail().submission_query(args).map(one),
         "EmailSubmission/get" => s.mail().submission_get(args).map(one),
         "EmailSubmission/set" => {

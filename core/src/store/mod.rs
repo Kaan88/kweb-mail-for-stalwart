@@ -17,6 +17,7 @@ mod schema;
 #[cfg(test)]
 mod tests;
 mod threads;
+mod waiting;
 
 pub use drafts::{DraftRow, DraftState, Threading, DIRECTORY_EVERY};
 pub use outbox::Job;
@@ -34,6 +35,8 @@ pub struct Store {
     pass: tokio::sync::Mutex<()>,
     /// See [`Store::send_lock`].
     sending: tokio::sync::Mutex<()>,
+    /// See [`Store::webpush_lock`].
+    webpush: tokio::sync::Mutex<()>,
     /// When the identities and the address book were last fetched by this process.
     directory: Mutex<Option<Instant>>,
     /// See [`contacts::Cards`].
@@ -57,6 +60,14 @@ impl Store {
         &self.sending
     }
 
+    /// Held by whatever changes the push subscription's record or talks to the server about it
+    /// (switching on, housekeeping, switching off) and by the handling of the server's
+    /// verification: the server sends that within a moment of the create, so it must find the
+    /// record written.
+    pub fn webpush_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.webpush
+    }
+
     pub fn open(path: &Path) -> Result<Store> {
         let conn = Connection::open(path)?;
         // WAL lets the UI read while sync writes. The pragma answers with a row.
@@ -78,6 +89,7 @@ impl Store {
             conn: Mutex::new(conn),
             pass: tokio::sync::Mutex::new(()),
             sending: tokio::sync::Mutex::new(()),
+            webpush: tokio::sync::Mutex::new(()),
             directory: Mutex::new(None),
             cards: Mutex::default(),
         })

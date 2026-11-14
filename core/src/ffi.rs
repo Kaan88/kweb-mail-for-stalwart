@@ -76,6 +76,10 @@ pub enum Shade {
     Ids { ids: Vec<i32> },
 }
 
+/// Push through Google as an option to the permanent connection (dev/notes/google-push-contract.md).
+mod webpush;
+pub use webpush::*;
+
 struct Session {
     account: Account,
     tokens: Tokens,
@@ -226,6 +230,9 @@ impl Core {
     /// Revokes the grant on the server (best effort) and wipes the cache.
     pub fn sign_out(&self) -> Result<()> {
         self.stop();
+        // The subscription for push through Google is destroyed on the server while the grant
+        // still works (best effort, bounded): a dead one is never dropped by the server itself.
+        let _ = self.web_push_drop_within(Some(webpush::SIGN_OUT_BUDGET));
         let session = {
             let mut inner = self.lock();
             inner.pending = None;
@@ -239,6 +246,8 @@ impl Core {
         // so it goes before the (slow) revoke; both steps are tried and the first error is returned.
         self.ai.cancel_all();
         let key = assistant::forget_key(&*self.secrets).and(self.admin_disconnect());
+        // The keys of the push subscription go with the account.
+        let push_keys = crate::webpush::forget(None, &*self.secrets);
         let deleted = match session {
             Some(session) => {
                 self.rt.block_on(session.tokens.sign_out());
@@ -246,7 +255,7 @@ impl Core {
             }
             None => Ok(()),
         };
-        key.and(deleted)
+        key.and(push_keys).and(deleted)
     }
 
     /// Starts the live connection and reports to `listener` from now on. Without an account

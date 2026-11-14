@@ -40,6 +40,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Calendars => calendars(core),
         Command::Identities => identities(core),
         Command::Quota => quota(core),
+        Command::PushStatus => crate::push::status(core),
         Command::Features => features(core),
         Command::Masked(what) => masked(core, what),
         Command::Security => security(core),

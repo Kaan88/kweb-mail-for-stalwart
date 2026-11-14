@@ -6,6 +6,7 @@ mod ai;
 mod args;
 mod commands;
 mod enterprise;
+mod push;
 mod secrets;
 mod timefmt;
 

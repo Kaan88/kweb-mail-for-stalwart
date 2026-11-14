@@ -101,6 +101,25 @@ pub async fn check_once(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     }
 }
 
+/// [`check_once`] without the extras after the pass (the directory and the bodies): the plan is
+/// returned as soon as the pass has made it. For a push receiver, whose seconds are few and
+/// whose process has no listener, so that the returned plan is the only way to the screen.
+pub async fn check_pass_only(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
+    match attempt_pass(deps, on_screen).await {
+        Err(e) if is_unauthorized(&e) => {
+            deps.tokens.invalidate().await;
+            attempt_pass(deps, on_screen).await
+        }
+        other => other,
+    }
+}
+
+async fn attempt_pass(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
+    let token = deps.tokens.access_token().await?;
+    let conn = Connection::connect(&deps.account.server_url, &token.token).await?;
+    pass(deps, &conn, on_screen).await
+}
+
 async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     let token = deps.tokens.access_token().await?;
     let conn = Connection::connect(&deps.account.server_url, &token.token).await?;

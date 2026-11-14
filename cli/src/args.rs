@@ -49,6 +49,7 @@ Usage:
   kweb calendars              list calendars
   kweb identities             list the addresses you can send as
   kweb quota                  show storage use and limits
+  kweb push status           show where push through Google stands (no secrets)
   kweb contacts [query]       list contacts, or those matching the words of the query
   kweb files [ls] [folder-id] list the files and folders in a folder (default: the top level)
   kweb files spaces           list the places that hold files: your own and shared ones
@@ -173,6 +174,7 @@ pub enum Command {
     Calendars,
     Identities,
     Quota,
+    PushStatus,
     Features,
     Masked(Masked),
     Security,
@@ -325,6 +327,10 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "agenda" => agenda(rest),
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
+        "push" => match rest {
+            [word] if word == "status" => Ok(Command::PushStatus),
+            _ => Err("push takes one word: status".into()),
+        },
         "features" => no_args(rest, Command::Features),
         "security" => no_args(rest, Command::Security),
         "masked" => masked(rest).map(Command::Masked),
@@ -1105,6 +1111,8 @@ mod tests {
         assert_eq!(p(&["identities"]), Ok(Command::Identities));
         assert_eq!(p(&["quota"]), Ok(Command::Quota));
         assert!(p(&["quota", "x"]).is_err());
+        assert_eq!(p(&["push", "status"]), Ok(Command::PushStatus));
+        assert!(p(&["push"]).is_err() && p(&["push", "status", "x"]).is_err() && p(&["push", "on"]).is_err());
         assert_eq!(
             p(&["send", "bo@example.test", "Hi", "Hello Bo"]),
             Ok(Command::Send { to: "bo@example.test".into(), subject: "Hi".into(), text: "Hello Bo".into() })

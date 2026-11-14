@@ -22,6 +22,7 @@ pub mod snippets;
 pub mod store;
 pub mod sync;
 pub mod unsubscribe;
+pub mod webpush;
 
 pub use error::{Error, Result};
 
