@@ -256,11 +256,21 @@ Asked for by the owner after M8, to be built as fast as possible, in this order 
 9. **Share into the app** from other apps.
 10. **Several accounts.** Last, because it reaches through the whole core.
 
+**Built 2026-11-14, items 1 to 3 (folders).** "Manage folders" in the drawer: a tree with a bell per folder, new, rename, move and delete for folders the user made (long-press in the drawer gives the same menu). "Report spam" / "Not spam" wherever Archive is offered, with Undo. "Block sender" in the message menu.
+- Decided without asking: the notify choice is kept on the device only, starts off, and counts mail that arrives after it was switched on; Drafts, Sent, Trash and Junk cannot notify; folders with a role cannot be renamed, moved or deleted in the app although the server would allow it; deleting a folder with mail moves the mail to the Trash and never destroys it; a folder with folders inside must be emptied of them first; spam is the `$junk` keyword plus the Junk folder (and `$notjunk` plus the Inbox back), queued offline like other actions; blocking adds a filter rule first in the list and switches the filters on, and is refused while the away message or a foreign script is active.
+- Checked: 913 core tests, 864 Android unit tests. On the emulator against the local server: a folder made in the app, its bell switched on, a filter rule moving the tester's mail into it, and a mail then sent arrived in that folder unread and was notified. Not checked: rename, move and delete of a folder on a device, spam and block on a device, a notification's actions for mail outside the Inbox.
+
+**Built 2026-11-14, the rest of M7 (sharing).** A "Share" entry on a mail folder, calendar, address book and file folder opens who it is shared with, at "can see" or "can change", with a search for people where the server allows looking them up. Reply, reply all and forward work from a shared message (the draft is the user's own; a forward's attachments are copied into the own account). Shared events and contacts can be created, changed and deleted where the rights allow.
+- Decided without asking: a level is a fixed set of rights per kind and never includes sharing onward, renaming or deleting the thing itself; Drafts, Trash and Junk cannot be shared; where the server forbids lookups (the default), only existing shares can be changed; answering an invitation stays unavailable in a shared calendar.
+- Checked: with the CLI on the local server as both test users (people search, lists of shares for folders, calendars and address books, a level changed and put back, a share given and taken back and seen by the other user). On the emulator: the Share screen opens from a folder. Not checked: sharing from the calendar, contacts and files screens on a device, reply and forward from a shared message on a device, editing a shared event or contact on a device.
+
 For later consideration: adding an invitation or contact from an attachment (`.ics`, `.vcf`), Turkish, app lock.
 
 Maybe: home screen widgets, delivery status on sent mail, quiet hours and VIP senders, print or save a message as PDF or `.eml`, tablet and landscape layout, read receipts.
 
 M9 (S/MIME and OpenPGP) is left alone for now (owner).
+
+**Before the final release (owner, 2026-11-14):** a second Fable agent goes through every screen of the app on the emulator against the mock-ups once more (`design/mockup-themes.pdf`, the owner's sheet of the mail list, the Today screen and a message in the four palettes, light and dark, and `design/mockups-material.html`), in each built-in theme, and reports every difference; the differences are fixed and the agent looks again. It runs after the last feature is merged, so it sees the final screens. The sheet's "Today" overview is left out of the app (owner, 2026-11-14), so the review does not count it as missing.
 
 ## Scope
 
