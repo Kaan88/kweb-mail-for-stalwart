@@ -123,6 +123,54 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 .ph{font-size:12px;font-weight:700;border-radius:10px;padding:2px 9px;white-space:nowrap}
 .ph.a{background:var(--tint);color:var(--tint-fg)} .ph.b{background:var(--ok-bg);color:var(--ok)}
 .ph.c{background:var(--warn-bg);color:var(--warn)} .ph.d{border:1px solid var(--line);color:var(--muted)}
+/* added in the second pass */
+.grp{display:flex;flex-direction:column;gap:6px}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px;white-space:nowrap}
+.tag.built{background:var(--ok-bg);color:var(--ok)} .tag.next{background:var(--tint);color:var(--tint-fg)}
+.tag.later{border:1px solid var(--line);color:var(--muted)} .tag.opt{background:var(--warn-bg);color:var(--warn)}
+.mk{display:inline-flex;gap:3px;align-items:center;color:var(--muted);flex:none}
+.mk .i{width:13px;height:13px}
+.mk .star{fill:var(--brand);stroke:var(--brand)}
+.swipe{position:relative;background:var(--ok-bg);color:var(--ok);flex:none}
+.swipe>.lbl{position:absolute;left:14px;top:0;bottom:0;display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px}
+.swipe>.row{background:var(--p-bg);color:var(--fg);transform:translateX(104px);box-shadow:-6px 0 12px rgba(0,0,0,.12)}
+.snack{position:absolute;left:10px;right:10px;bottom:70px;background:var(--fg);color:var(--p-bg);border-radius:10px;padding:10px 14px;display:flex;justify-content:space-between;font-size:12.5px}
+.snack b{color:var(--tint)}
+.scrim{position:absolute;inset:0;background:rgba(10,10,16,.42)}
+.drawer{position:absolute;inset:0 56px 0 0;background:var(--p-bg);border-radius:0 18px 18px 0;padding:30px 0 10px;display:flex;flex-direction:column}
+.acct{display:flex;gap:10px;align-items:center;padding:8px 16px 12px}
+.acct small{display:block;color:var(--muted)}
+.fl{display:flex;gap:12px;align-items:center;padding:9px 16px;margin:0 8px;border-radius:22px}
+.fl span{flex:1} .fl em{font-style:normal;font-size:11.5px;font-weight:700;color:var(--muted)}
+.fl.on{background:var(--tint);color:var(--tint-fg);font-weight:700} .fl.on em{color:var(--tint-fg)}
+.fl.sub{padding-left:48px}
+.hr{height:1px;background:var(--p-line);margin:8px 0;flex:none}
+.card{margin:0 10px;border-radius:14px;background:var(--p-surface);padding:9px 10px;display:flex;flex-direction:column;gap:8px;flex:none}
+.card .row{padding:0}
+.card .txt{background:var(--p-bg);border-radius:10px;padding:10px;font-size:13px;line-height:1.5}
+.card .txt p{max-width:none;font-size:13px}
+.ban{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)}
+.ban b{color:var(--brand)}
+.ph-img{height:54px;border-radius:8px;border:1.5px dashed var(--p-line);display:grid;place-items:center;color:var(--muted);font-size:11.5px;margin:8px 0}
+.note{margin:0 12px;border-radius:10px;background:var(--warn-bg);color:var(--warn);padding:7px 10px;font-size:12px;flex:none}
+.q{color:var(--fg)} .hit{background:var(--tint);color:var(--tint-fg);border-radius:3px;padding:0 2px}
+.hello{padding:8px 16px 2px}
+.hello b{display:block;font-size:19px;font-weight:500}
+.hello small{color:var(--muted)}
+.bento{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 12px}
+.tile{background:var(--p-surface);border-radius:18px;padding:11px 12px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.tile.w{grid-column:span 2}
+.tile.hot{background:var(--tint);color:var(--tint-fg)}
+.tile.good{background:var(--ok-bg);color:var(--ok)}
+.tile .k{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;opacity:.8;display:flex;gap:6px;align-items:center}
+.tile .k .i{width:14px;height:14px}
+.tile .v{font-size:26px;font-weight:500;line-height:1.1}
+.tile .l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile small{opacity:.8}
+.meter{height:6px;border-radius:3px;background:var(--p-line);overflow:hidden;margin-top:4px}
+.meter i{display:block;height:100%;width:38%;background:var(--brand)}
+.changes{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;max-width:74ch}
+.changes li::marker{color:var(--brand)}
 .build{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px 32px}
 .build div{min-width:0;font-size:15px}
 .build b{display:block}
@@ -144,6 +192,14 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
   <symbol id="fw" viewBox="0 0 24 24"><path d="M14 7l5 5-5 5M19 12h-9a5 5 0 00-5 5v1"/></symbol>
   <symbol id="ok" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
   <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="star" viewBox="0 0 24 24"><path d="M12 4l2.5 5.2 5.5.8-4 4 1 5.6-5-2.8-5 2.8 1-5.6-4-4 5.5-.8z"/></symbol>
+  <symbol id="inb" viewBox="0 0 24 24"><path d="M4 13l2-8h12l2 8v6H4zM4 13h5l1 2h4l1-2h5"/></symbol>
+  <symbol id="send" viewBox="0 0 24 24"><path d="M4 12l16-7-6 15-3-6z"/></symbol>
+  <symbol id="doc" viewBox="0 0 24 24"><path d="M7 4h7l4 4v12H7zM14 4v4h4"/></symbol>
+  <symbol id="fold" viewBox="0 0 24 24"><path d="M4 7h6l2 2h8v10H4z"/></symbol>
+  <symbol id="warn" viewBox="0 0 24 24"><path d="M12 5l8 14H4zM12 10v4M12 17v.01"/></symbol>
+  <symbol id="bell" viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4"/></symbol>
+  <symbol id="cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4"/></symbol>
   <symbol id="ward" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="16" fill="#c8234a" stroke="none"/><path d="M24 17v30M24 33l15-16M29 28l12 19" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
@@ -151,59 +207,105 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 <header>
   <svg class="lockup" viewBox="0 0 218 64" role="img" aria-label="kweb mail"><rect x="4" y="4" width="56" height="56" rx="16" fill="var(--brand)"/><path d="M24 17v30M24 33l15-16M29 28l12 19" stroke="var(--brand-fg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/><g transform="translate(80 0)"><path d="M0 8v48M0 41l15-15M6 36l11 20M26 26l6.5 30 6.5-22 6.5 22 6.5-30M62 41h30a15 15 0 1 0-4.4 10.6M101 8v48M101 41a15 15 0 1 0 30 0 15 15 0 1 0-30 0" stroke="var(--fg)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></g></svg>
   <h1>kweb mail for Stalwart</h1>
-  <p class="lede">An Android client built for Stalwart servers only. First design pass and feature scope. Seven screens in the Ward colours, in light and dark. All names and messages are examples.</p>
+  <p class="lede">An Android client built for Stalwart servers only. Second design pass, made while the reading milestone (M3) was built: eleven screens in the Ward colours, in light and dark, each marked with where it stands. All names and messages are examples.</p>
 </header>
 
 <section>
-<h2>Screens</h2>
+<div class="grp"><h2>Reading mail</h2><p class="lede">Milestone M3. These five are what the app does today on the emulator, apart from the buttons marked for later.</p></div>
 <div class="wall">
 
 <figure>
 <div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
   <div class="search"><svg class="i"><use href="#find"/></svg><span>Search mail</span><div class="av s">K</div></div>
   <div class="chips"><span class="chip on">Inbox</span><span class="chip">Unread</span><span class="chip">Flagged</span><span class="chip">Files</span></div>
-  <div class="row un"><div class="av">M</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Merve Aydın</span><span class="when">09:38</span></div><div class="sub">Revised offer for the workshop</div><div class="pre">Hi, I've attached the updated numbers we talked about…</div></div></div>
+  <div class="row un"><div class="av">M</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Merve Aydın</span><span class="when">09:38</span></div><div class="top"><span class="sub">Revised offer for the workshop</span><span class="mk"><svg class="i star"><use href="#star"/></svg><svg class="i"><use href="#clip"/></svg></span></div><div class="pre">Hi, I've attached the updated numbers we talked about…</div></div></div>
   <div class="row un"><div class="av">H</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Hetzner</span><span class="when">09:12</span></div><div class="sub">Invoice for October is ready</div><div class="pre">Your invoice R0098241 is available in the console.</div></div></div>
   <div class="row un"><div class="av">D</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Deniz, Okan · 4</span><span class="when">08:55</span></div><div class="sub">Saturday plans</div><div class="pre">Okan: works for me, I'll bring the projector.</div></div></div>
-  <div class="row"><div class="av">G</div><div class="m"><div class="top"><span class="who">GitHub</span><span class="when">Yesterday</span></div><div class="sub">[postern] Release v0.2.1 published</div><div class="pre">Sign-in gateways, session reset, neutral wording.</div></div></div>
+  <div class="swipe"><span class="lbl"><svg class="i"><use href="#arch"/></svg>Archive</span><div class="row"><div class="av">G</div><div class="m"><div class="top"><span class="who">GitHub</span><span class="when">Yesterday</span></div><div class="sub">[postern] Release v0.2.1 published</div><div class="pre">Sign-in gateways, session reset, neutral wording.</div></div></div></div>
   <div class="row"><div class="av">S</div><div class="m"><div class="top"><span class="who">Selin Kaya</span><span class="when">Yesterday</span></div><div class="sub">Re: Photos from the trip</div><div class="pre">These are great. Can you send the full-size ones?</div></div></div>
   <div class="row"><div class="av">T</div><div class="m"><div class="top"><span class="who">THY Miles&amp;Smiles</span><span class="when">Mon</span></div><div class="sub">Your booking confirmation</div><div class="pre">Ankara (ESB) to Izmir (ADB), 21 November.</div></div></div>
-  <div class="row"><div class="av">A</div><div class="m"><div class="top"><span class="who">Ayşe Demir</span><span class="when">Sun</span></div><div class="sub">Worksheet for grade 3</div><div class="pre">Could you check page two before I print it?</div></div></div>
   <div class="fab"><svg class="i"><use href="#pen"/></svg>Compose</div>
   <div class="nav" style="margin-top:auto"><div class="on"><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
 </div></div>
-<figcaption><b>Inbox</b>Threads, with unread marked by weight and a crimson dot. Swipe right to archive, left to delete. The chips filter in place; folders open from the account avatar.</figcaption>
+<figcaption><b>Inbox<span class="tag built">Built · M3</span></b>Conversations, with unread marked by weight and a crimson dot, a star for flagged and a clip for files. Swipe right to archive, left to delete, each with Undo. The first chip names the folder; the others filter in place. Folders open from the avatar. The Compose button comes with M4 and the bottom bar with M5.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="search"><svg class="i"><use href="#find"/></svg><span>Search mail</span><div class="av s">K</div></div>
+  <div class="chips"><span class="chip on">Inbox</span><span class="chip">Unread</span><span class="chip">Flagged</span></div>
+  <div class="row un"><div class="av">M</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Merve Aydın</span></div><div class="sub">Revised offer for the workshop</div></div></div>
+  <div class="row un"><div class="av">H</div><div class="m"><div class="top"><span class="who"><i class="dot"></i>Hetzner</span></div><div class="sub">Invoice for October is ready</div></div></div>
+  <div class="scrim"></div>
+  <div class="drawer">
+    <div class="acct"><div class="av">K</div><div><b>Kaan</b><small>you@kweb.ovh</small></div></div>
+    <div class="fl on"><svg class="i"><use href="#inb"/></svg><span>Inbox</span><em>3</em></div>
+    <div class="fl sub"><span>Work</span><em>1</em></div>
+    <div class="fl"><svg class="i"><use href="#doc"/></svg><span>Drafts</span><em>2</em></div>
+    <div class="fl"><svg class="i"><use href="#send"/></svg><span>Sent</span></div>
+    <div class="fl"><svg class="i"><use href="#arch"/></svg><span>Archive</span></div>
+    <div class="fl"><svg class="i"><use href="#warn"/></svg><span>Spam</span><em>12</em></div>
+    <div class="fl"><svg class="i"><use href="#del"/></svg><span>Trash</span></div>
+    <div class="hr"></div>
+    <div class="fl"><svg class="i"><use href="#fold"/></svg><span>Receipts</span></div>
+    <div class="fl"><svg class="i"><use href="#fold"/></svg><span>School</span><em>4</em></div>
+    <div class="fl sub"><span>Grade 3</span></div>
+    <div class="hr" style="margin-top:auto"></div>
+    <div class="fl"><svg class="i"><use href="#bell"/></svg><span>Delivery check</span><em style="color:var(--ok)">Live</em></div>
+    <div class="fl"><svg class="i"><use href="#cog"/></svg><span>Settings</span></div>
+  </div>
+</div></div>
+<figcaption><b>Folders<span class="tag built">Built · M3</span></b>The system folders first, in a fixed order, then your own as a tree, each with its unread count. Delivery check lives here, with its state in one word. Settings joins it in M4.</figcaption>
 </figure>
 
 <figure>
 <div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
   <div class="bar"><svg class="i"><use href="#back"/></svg><span class="t"></span><svg class="i"><use href="#arch"/></svg><svg class="i"><use href="#del"/></svg><svg class="i"><use href="#more"/></svg></div>
-  <div class="pad mail">
-    <div class="subj">Revised offer for the workshop</div>
-    <div class="row" style="padding:4px 0"><div class="av">M</div><div class="m"><div class="top"><span class="who"><b>Merve Aydın</b></span><span class="when">09:38</span></div><div class="pre">to me</div></div></div>
-    <p>Hi,</p>
-    <p>I've attached the updated numbers we talked about on Tuesday. The room is confirmed for the 21st, and catering is now included in the price.</p>
-    <p>If this works for you, I'll send the contract tomorrow morning.</p>
-    <p>Best,<br>Merve</p>
-    <div class="att"><svg class="i"><use href="#clip"/></svg><span>Offer-2026.pdf<br><small>184 KB</small></span></div>
+  <div class="pad" style="padding-bottom:8px"><div class="subj">Saturday plans</div></div>
+  <div style="display:flex;flex-direction:column;gap:6px">
+  <div class="card"><div class="row"><div class="av">D</div><div class="m"><div class="top"><span class="who">Deniz Arslan</span><span class="when">Tue</span></div><div class="pre">Board games at mine on Saturday? I have the new…</div></div></div></div>
+  <div class="card"><div class="row"><div class="av">K</div><div class="m"><div class="top"><span class="who">me</span><span class="when">Tue</span></div><div class="pre">I'm in. Should I bring anything?</div></div></div></div>
+  <div class="card"><div class="row"><div class="av">D</div><div class="m"><div class="top"><span class="who">Deniz Arslan</span><span class="when">Wed</span></div><div class="pre">Snacks would be great. Okan, are you coming?</div></div></div></div>
+  <div class="card"><div class="row"><div class="av">O</div><div class="m"><div class="top"><span class="who"><b>Okan Yıldız</b></span><span class="when">08:55</span></div><div class="pre">to Deniz, me</div></div></div>
+    <div class="txt"><p>Works for me, I'll bring the projector.</p><p style="margin-top:8px">See you at seven.</p></div></div>
   </div>
   <div class="acts"><div class="btn p"><svg class="i"><use href="#re"/></svg>Reply</div><div class="btn">Reply all</div><div class="btn"><svg class="i"><use href="#fw"/></svg>Forward</div></div>
 </div></div>
-<figcaption><b>Message</b>Opening it marks it read on the server, which clears its notification on every device. HTML mail renders in a sandboxed view with remote images off until you allow them.</figcaption>
+<figcaption><b>Conversation<span class="tag built">Built · M3</span></b>Every message of the thread, your own replies from Sent included. Unread ones and the last one open by themselves; a tap opens or folds the others. Opening marks it read on the server. The reply buttons come with M4.</figcaption>
 </figure>
 
 <figure>
-<div class="phone"><div class="sb"><span>9:42</span><span>5G ▮</span></div><div class="body">
-  <div class="bar"><svg class="i"><use href="#x"/></svg><span class="t">New message</span><svg class="i"><use href="#clip"/></svg><span class="btn p" style="flex:none;padding:6px 16px">Send</span></div>
-  <div class="fld"><label>From</label><span>you@kweb.ovh ▾</span></div>
-  <div class="fld"><label>To</label><span class="tok">Merve Aydın</span><span>sel|</span></div>
-  <div class="sug"><div class="row"><div class="av s">S</div><div class="m"><div class="who"><b>Sel</b>in Kaya</div><div class="pre">selin@example.org</div></div></div></div>
-  <div class="fld"><label>Subject</label><span>Re: Revised offer for the workshop</span></div>
-  <div class="pad mail" style="padding-top:12px"><p>Hi Merve,</p><p>This works. Please send the contract over.</p><p style="color:var(--muted)">Kaan</p></div>
-  <div class="n quiet" style="margin:auto 12px 14px;background:var(--p-surface)"><svg class="i"><use href="#ok"/></svg>Draft saved to the server · 09:42</div>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><svg class="i"><use href="#back"/></svg><span class="t"></span><svg class="i"><use href="#arch"/></svg><svg class="i"><use href="#del"/></svg><svg class="i"><use href="#more"/></svg></div>
+  <div class="pad" style="padding-bottom:8px"><div class="subj">Revised offer for the workshop</div></div>
+  <div class="card"><div class="row"><div class="av">M</div><div class="m"><div class="top"><span class="who"><b>Merve Aydın</b></span><span class="when">09:38</span></div><div class="pre">to me</div></div><span class="mk"><svg class="i star"><use href="#star"/></svg></span></div>
+    <div class="ban"><span>Remote images are hidden</span><b>Show</b></div>
+    <div class="txt"><p>Hi,</p><div class="ph-img">image not loaded</div><p>I've attached the updated numbers we talked about on Tuesday. The room is confirmed for the 21st, and catering is now included.</p><p style="margin-top:8px">Best,<br>Merve</p></div>
+    <div class="att"><svg class="i"><use href="#clip"/></svg><span>Offer-2026.pdf<br><small>184 KB · tap to open, hold to save</small></span></div>
+  </div>
+  <div class="acts"><div class="btn p"><svg class="i"><use href="#re"/></svg>Reply</div><div class="btn">Reply all</div><div class="btn"><svg class="i"><use href="#fw"/></svg>Forward</div></div>
 </div></div>
-<figcaption><b>Compose</b>Recipients complete from your Stalwart address book. Drafts are saved to the server, so you can finish one on the desktop. After Send, a 10-second Undo bar holds the message back.</figcaption>
+<figcaption><b>Message<span class="tag built">Built · M3</span></b>HTML mail is shown with scripts off and nothing loaded from the internet until you tap Show, for that message only. Pictures inside the mail itself always show. Links open in the browser. The newest Inbox mail and anything you opened can be read offline.</figcaption>
 </figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="search"><svg class="i"><use href="#back"/></svg><span class="q">invoice|</span><svg class="i"><use href="#x"/></svg></div>
+  <div class="row"><div class="av">H</div><div class="m"><div class="top"><span class="who">Hetzner</span><span class="when">09:12</span></div><div class="sub"><span class="hit">Invoice</span> for October is ready</div><div class="pre">Your <span class="hit">invoice</span> R0098241 is available in the console.</div></div></div>
+  <div class="row"><div class="av">A</div><div class="m"><div class="top"><span class="who">Accounts</span><span class="when">3 Nov</span></div><div class="sub"><span class="hit">Invoice</span> 2026-114 attached</div><div class="pre">Please find the <span class="hit">invoice</span> attached.</div></div></div>
+  <div class="row"><div class="av">H</div><div class="m"><div class="top"><span class="who">Hetzner</span><span class="when">9 Oct</span></div><div class="sub"><span class="hit">Invoice</span> for September is ready</div><div class="pre">Your <span class="hit">invoice</span> R0091877 is available in the console.</div></div></div>
+  <div class="row"><div class="av">M</div><div class="m"><div class="top"><span class="who">Merve Aydın</span><span class="when">2 Oct</span></div><div class="sub">Re: Room booking</div><div class="pre">…and I will send the <span class="hit">invoice</span> once the date is fixed.</div></div></div>
+  <div class="note" style="margin-top:auto;margin-bottom:14px">Offline: showing matches from mail on this phone</div>
+</div></div>
+<figcaption><b>Search<span class="tag built">Built · M3</span></b>The server searches all mail, bodies included, as you type. Without a connection the phone searches what it holds and says so. Marking the matching words is a later refinement.</figcaption>
+</figure>
+
+</div>
+</section>
+
+<section>
+<div class="grp"><h2>Notifications and delivery</h2><p class="lede">Milestone M2, the first priority of the project. Unchanged from the first pass.</p></div>
+<div class="wall">
 
 <figure>
 <div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body"><div class="shade">
@@ -214,7 +316,7 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
   <div class="n"><div class="h"><svg><use href="#ward"/></svg>kweb mail · Reminder</div><b>Dentist in 15 minutes</b><span>10:00 – 10:45 · Çankaya</span><div class="a"><span>Snooze 10 min</span><span>Open</span></div></div>
   <div class="n quiet"><svg class="i"><use href="#ok"/></svg>kweb mail · Connected · silent</div>
 </div></div></div>
-<figcaption><b>Notifications</b>One per message, grouped per account, with actions that work without opening the app. The dashed card shows what happens to mail you read elsewhere. The silent "Connected" entry is what keeps the live connection alive; it can be hidden in Android's settings.</figcaption>
+<figcaption><b>Notifications<span class="tag built">Built · M2</span></b>One per message, grouped per account, with actions that work without opening the app. The dashed card shows what happens to mail you read elsewhere. The silent "Connected" entry is what keeps the live connection alive; it can be hidden in Android's settings.</figcaption>
 </figure>
 
 <figure>
@@ -231,7 +333,27 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
   <div class="set"><div class="m">Remove when read elsewhere</div><span class="sw"></span></div>
   <div class="acts"><div class="btn p">Send a test notification</div></div>
 </div></div>
-<figcaption><b>Delivery check</b>The screen that answers "will I get my notifications?". Each row is a real test, and a failed one says what to change and opens the right Android setting.</figcaption>
+<figcaption><b>Delivery check<span class="tag built">Built · M2</span></b>The screen that answers "will I get my notifications?". Each row is a real test, and a failed one says what to change and opens the right Android setting.</figcaption>
+</figure>
+
+</div>
+</section>
+
+<section>
+<div class="grp"><h2>Still to come</h2><p class="lede">Sending is next (M4, the 0.1.0 release). Calendar and contacts follow. The overview is a proposal, not a commitment.</p></div>
+<div class="wall">
+
+<figure>
+<div class="phone"><div class="sb"><span>9:42</span><span>5G ▮</span></div><div class="body">
+  <div class="bar"><svg class="i"><use href="#x"/></svg><span class="t">New message</span><svg class="i"><use href="#clip"/></svg><span class="btn p" style="flex:none;padding:6px 16px">Send</span></div>
+  <div class="fld"><label>From</label><span>you@kweb.ovh ▾</span></div>
+  <div class="fld"><label>To</label><span class="tok">Merve Aydın</span><span>sel|</span></div>
+  <div class="sug"><div class="row"><div class="av s">S</div><div class="m"><div class="who"><b>Sel</b>in Kaya</div><div class="pre">selin@example.org</div></div></div></div>
+  <div class="fld"><label>Subject</label><span>Re: Revised offer for the workshop</span></div>
+  <div class="pad mail" style="padding-top:12px"><p>Hi Merve,</p><p>This works. Please send the contract over.</p><p style="color:var(--muted)">Kaan</p></div>
+  <div class="n quiet" style="margin:auto 12px 14px;background:var(--p-surface)"><svg class="i"><use href="#ok"/></svg>Draft saved to the server · 09:42</div>
+</div></div>
+<figcaption><b>Compose<span class="tag next">Planned · M4</span></b>Recipients complete from your Stalwart address book. Drafts are saved to the server, so you can finish one on the desktop. After Send, a 10-second Undo bar holds the message back.</figcaption>
 </figure>
 
 <figure>
@@ -250,7 +372,7 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
   <div class="fab" style="padding:12px"><svg class="i"><use href="#plus"/></svg></div>
   <div class="nav" style="margin-top:auto"><div><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div class="on"><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
 </div></div>
-<figcaption><b>Calendar</b>An agenda with a week strip, showing events and tasks from every calendar on the server. Invitations can be answered here or from the mail that carried them.</figcaption>
+<figcaption><b>Calendar<span class="tag later">Planned · M5</span></b>An agenda with a week strip, showing events and tasks from every calendar on the server. Invitations can be answered here or from the mail that carried them.</figcaption>
 </figure>
 
 <figure>
@@ -269,15 +391,43 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
   <div class="fab" style="padding:12px"><svg class="i"><use href="#plus"/></svg></div>
   <div class="nav" style="margin-top:auto"><div><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Mail<span class="badge">3</span></div><div><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div class="on"><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
 </div></div>
-<figcaption><b>Contacts</b>Your Stalwart address books. Tapping a contact shows their details and recent mail with them; the same list feeds recipient completion.</figcaption>
+<figcaption><b>Contacts<span class="tag later">Planned · M6</span></b>Your Stalwart address books. Tapping a contact shows their details and recent mail with them; the same list feeds recipient completion.</figcaption>
+</figure>
+
+<figure>
+<div class="phone"><div class="sb"><span>9:41</span><span>5G ▮</span></div><div class="body">
+  <div class="hello" style="display:flex;align-items:center;gap:10px"><div style="flex:1"><b>Good morning</b><small>Thursday, 12 November</small></div><span class="btn p" style="flex:none;padding:8px 14px"><svg class="i"><use href="#pen"/></svg>Compose</span></div>
+  <div class="bento">
+    <div class="tile w hot"><span class="k"><svg class="i"><use href="#inb"/></svg>Inbox</span><span class="v">3 unread</span><span class="l"><b>Merve Aydın</b> · Revised offer for the workshop</span><span class="l"><b>Hetzner</b> · Invoice for October is ready</span></div>
+    <div class="tile"><span class="k"><svg class="i"><use href="#cal"/></svg>Next</span><span class="v">10:00</span><span class="l">Dentist · Çankaya</span><small>in 19 minutes</small></div>
+    <div class="tile good"><span class="k"><svg class="i"><use href="#bell"/></svg>Delivery</span><span class="v">Live</span><small>last push 12 s ago</small></div>
+    <div class="tile"><span class="k"><svg class="i"><use href="#star"/></svg>Flagged</span><span class="v">2</span><span class="l">Offer, Booking</span></div>
+    <div class="tile"><span class="k"><svg class="i"><use href="#ok"/></svg>Tasks</span><span class="v">1 due</span><span class="l">Reply to Merve · 12:00</span></div>
+    <div class="tile w"><span class="k"><svg class="i"><use href="#clip"/></svg>Recent files</span><span class="l">Offer-2026.pdf · Merve Aydın · 184 KB</span><span class="l">invoice-R0098241.pdf · Hetzner · 61 KB</span></div>
+  </div>
+  <div class="nav" style="margin-top:auto"><div class="on"><span class="pill"><svg class="i"><use href="#mail"/></svg></span>Home</div><div><span class="pill"><svg class="i"><use href="#inb"/></svg></span>Mail<span class="badge">3</span></div><div><span class="pill"><svg class="i"><use href="#cal"/></svg></span>Calendar</div><div><span class="pill"><svg class="i"><use href="#ppl"/></svg></span>Contacts</div></div>
+</div></div>
+<figcaption><b>Home overview<span class="tag opt">Optional · proposed</span></b>A start screen of tiles for people who want the day at a glance: unread mail, the next event, whether delivery works, flagged mail, tasks, recent files. Each tile opens its place. Off by default (a switch in Settings); without it the app opens on the Inbox as now. The mail tiles could ship after M4; the calendar and task tiles need M5.</figcaption>
 </figure>
 
 </div>
 </section>
 
 <section>
+<h2>What changed since the first pass</h2>
+<ul class="changes">
+<li><b>The message screen became a conversation.</b> The first pass showed one mail; a thread of four had nowhere to go. Messages are now cards that fold, with your own replies in between.</li>
+<li><b>Folders, search and the remote-images bar were missing</b> although the captions promised them. They are drawn now, as built.</li>
+<li><b>Rows carry a star and a clip</b>, so the Flagged and Files chips have something to point at, and a swipe shows what it will do and offers Undo.</li>
+<li><b>Delivery check moved into the folder drawer</b> with its state in one word, instead of a bell icon that looked like a notification setting.</li>
+<li><b>The scope table follows the plan again:</b> filters and S/MIME or OpenPGP are planned (phase 4) and the AI assistant is in phase 3; the first pass had them as not planned or did not have them.</li>
+<li><b>Every screen says where it stands</b> (built, planned, optional), so the page cannot be read as a promise of what is installed.</li>
+</ul>
+</section>
+
+<section>
 <h2>Scope against Stalwart 1.1</h2>
-<p class="lede">Every row is something Stalwart 1.1.0 advertises over JMAP. Phase 1 is the app you can use daily; later phases add to it without changing its structure.</p>
+<p class="lede">Every row is something Stalwart 1.1.0 advertises over JMAP. Phase 1 (milestones M0 to M4) is the app you can use daily; later phases add to it without changing its structure. Reading, the second row, is what M3 built.</p>
 <div class="scroll"><table>
 <tr><th>Area</th><th>Stalwart capability</th><th>What the app does with it</th><th>Phase</th></tr>
 <tr><td>Sign-in</td><td>OAuth 2.0 with PKCE, passkeys<br><code>jmap:core</code></td><td>Sign in through the browser, as Postern does. Only a renewable token is kept, in the Android Keystore.</td><td><span class="ph a">1</span></td></tr>
@@ -291,8 +441,9 @@ td code{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 <tr><td>Away message</td><td>Vacation response<br><code>jmap:vacationresponse</code></td><td>One switch with dates and text.</td><td><span class="ph b">2</span></td></tr>
 <tr><td>Shared mailboxes</td><td>Sharing, principals<br><code>jmap:principals</code> <code>jmap:mail:share</code></td><td>Mailboxes and calendars shared with you appear and work. Managing who you share with stays in Bulwark.</td><td><span class="ph c">3</span></td></tr>
 <tr><td>Files</td><td>JMAP File Storage<br><code>jmap:filenode</code></td><td>Browse, download, upload, attach from server files.</td><td><span class="ph c">3</span></td></tr>
-<tr><td>Filters</td><td>Sieve scripts<br><code>jmap:sieve</code></td><td>Left to Bulwark. A rule editor on a phone is a lot of work for something done rarely.</td><td><span class="ph d">Not planned</span></td></tr>
-<tr><td>Encryption</td><td>S/MIME and OpenPGP (server-side)</td><td>Stalwart's encryption gateway and at-rest encryption keep working untouched. No key handling in the app.</td><td><span class="ph d">Not planned</span></td></tr>
+<tr><td>AI assistant</td><td>None on the server for clients (its model serves the spam filter and Sieve only)</td><td>Summarize, draft and rewrite with a provider and key you set yourself. Nothing is sent until you tap; it never sends or deletes on its own.</td><td><span class="ph c">3</span></td></tr>
+<tr><td>Filters</td><td>Sieve scripts<br><code>jmap:sieve</code></td><td>A simple rule builder (from, to, subject; move, mark read, star, delete) that writes one managed script. Scripts made elsewhere are shown, never overwritten.</td><td><span class="ph d">4</span></td></tr>
+<tr><td>Encryption</td><td>None needed: plain JMAP and blobs</td><td>Optional and off by default: check signatures, then decrypt, then sign and encrypt with S/MIME and OpenPGP. Stalwart's own at-rest encryption keeps working untouched.</td><td><span class="ph d">4, optional</span></td></tr>
 <tr><td>Extras</td><td>Object metadata, blob management<br><code>jmap:metadata</code> <code>jmap:blob</code></td><td>Used internally where they save requests; nothing to show.</td><td><span class="ph d">Not planned</span></td></tr>
 </table></div>
 </section>

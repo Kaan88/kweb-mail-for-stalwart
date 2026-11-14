@@ -12,7 +12,7 @@ The first priority is notifications:
 - A notification disappears by itself when the mail is read, archived or deleted on any other device.
 - The app can show the user, at any time, whether delivery is working.
 
-Design and scope were agreed from [design/mockups.html](design/mockups.html).
+Design and scope were agreed from [design/mockups.html](design/mockups.html); the look moved to Material You later (see Decisions).
 
 ## Decisions
 
@@ -27,7 +27,8 @@ Design and scope were agreed from [design/mockups.html](design/mockups.html).
 | Sign-in | OAuth 2.0 authorization code with PKCE in the browser | Passkeys work; no password is stored. Ported from Postern. |
 | Accounts | One in phase 1 | Keeps the first version small. The data model keys everything by account so more can follow. |
 | Distribution | Signed APK, sideloaded | No Play Store review, which also avoids its foreground-service rules. |
-| Branding | Ward: crimson `#c8234a` (dark `#f0577a`), ink `#1b1d2a` (dark `#eceef4`), tint `#fde4ea` (dark `#4a1424`) | Files in [branding/ward](branding/ward). |
+| Branding | Ward: crimson `#c8234a` (dark `#f0577a`), ink `#1b1d2a` (dark `#eceef4`), tint `#fde4ea` (dark `#4a1424`) | Files in [branding/ward](branding/ward). Since 2026-11-14 this is the icon and the name only; the app's colours are the next row. |
+| Look | Material You (Material 3 Expressive). The colours are the user's choice: the phone's wallpaper palette (dynamic colour, Android 12 and later, the default there) or a built-in theme: Ward crimson (the default on older phones), Lavender, Moss, Peach. Light or dark follows the system. | Owner's decision, 2026-11-14. Mock-ups: [design/mockups-material.html](design/mockups-material.html), which holds the palettes the app uses (`ui/theme/Palettes.kt`). [design/mockups.html](design/mockups.html) is the earlier fixed-crimson design. Built so far: colour, the theme picker (in the folder drawer), and the mock-ups' style on the mail list, thread, message, search, Delivery check and sign-in screens (grouped rows with large outer corners, square avatars for unread mail, the tall search pill, tonal bars, the verdict card on Delivery check; see [design/m3-material.png](design/m3-material.png) and, next to the mock-up, [design/m3-material-compare.png](design/m3-material-compare.png)). The app's own green and amber status colours are gone: a passed check is the tertiary container, a failed one the error container. The connected reply buttons, the Compose button and the bottom bar come with M4 and M5. |
 
 ## Layout of the repository
 
@@ -128,6 +129,19 @@ Done when all of these pass on the real phone:
 
 Inbox, threads, message view (HTML in a sandboxed WebView, remote images off by default), folders, search, swipe actions, offline reading of recent mail.
 
+Built 2026-11-14 (not committed at the time of writing). How it was decided:
+
+- **Lists are conversations.** A row is a thread's mail in that folder; the thread screen shows the whole thread, replies in Sent included (`Thread/get`, then the headers that are missing).
+- **Bodies come from `Email/get` body values, not from the raw message.** The server has parsed the MIME already and the request carries no attachments. The raw message's blob id is stored with the body, so M9 can fetch the RFC 5322 bytes when it needs them (this replaces "keep the raw bytes" in M9 stage 0).
+- **Offline reading:** the bodies of the newest 100 Inbox mails are fetched after a notification pass, beside the live loop and never in its way, plus every message that was opened. Attachments and inline pictures are fetched when shown and kept in the app's cache directory.
+- **Each folder has a window:** the cache holds it without gaps back to a date, and the list shows only that part; "load older" moves the window. Without it, an old mail fetched by a search or a thread would appear in the list with a gap above it.
+- **HTML is not cleaned in the core.** The WebView has scripts off, no file or content access, a content security policy, and every request goes through one policy: `cid:` pictures from the mail, remote content only after "Show" for that message (network loads are blocked in the view until then), links open in the browser on a tap only.
+- **New actions:** star, move to a folder (also Spam and Undo of a swipe). A change the server refuses for good is dropped from the queue and the message is shown again as the server has it.
+- **Search** is the server's (`text` filter); offline it falls back to the cached senders, subjects and previews and says so.
+- **Left for M4:** Compose and reply buttons, Settings. Not done in M3: marking the matched words in search results, a per-sender "always show images".
+
+Checked on the emulator against the local Stalwart: list, folders drawer, a four-mail thread, HTML with a remote image (hidden, then shown), an inline picture, swipe to archive with Undo, search on the server, reading a prefetched mail with the server cut off. Not checked there: opening and saving an attachment, Move to, load older on a large folder, the dark theme, a notification tap opening its thread. Not checked on the real phone at all.
+
 ### M4: sending
 
 Compose, reply, forward, attachments, drafts on the server, sender identities, undo send, recipient completion from the address book, quota in Settings.
@@ -176,7 +190,7 @@ For people who use them; the owner does not. Off by default and independent of t
 
 | Stage | What | Rough size |
 |---|---|---|
-| 0 | Keep the raw RFC 5322 bytes (shared with M3) and parse MIME with exact signed byte ranges. A spike proves the chosen crates build with cargo-ndk for arm64 and x86_64. | with M3 |
+| 0 | Fetch the raw RFC 5322 bytes by the blob id M3 stores with each body, and parse MIME with exact signed byte ranges. A spike proves the chosen crates build with cargo-ndk for arm64 and x86_64. | with M3 |
 | 1 | Read-only verify: `multipart/signed` (PGP and S/MIME) and a small status chip; a keyring of public keys and certificates in the core database. Likely stack: rPGP (`pgp` crate) for OpenPGP; RustCrypto `cms`/`x509` crates for S/MIME. | 3 to 4 weeks |
 | 2 | Decrypt: import private keys (armored PGP, PKCS#12) through the file picker, wrapped by an Android Keystore key, held in Rust only for the call and zeroized after. Detect mail Stalwart encrypted at rest and say that its bodies cannot be searched on the server. | 2 to 3 weeks |
 | 3 | Compose: sign and encrypt, including to the sender's own key so Sent stays readable; avoid double encryption with Stalwart's gateway. | 3 to 4 weeks |

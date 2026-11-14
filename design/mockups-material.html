@@ -1,0 +1,332 @@
+<title>kweb Material Second Pass</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=Roboto+Flex:opsz,wght@8..144,400..800&display=swap">
+<style>
+/* Layout: review notes first, a sticky control bar (palette + mode), then the screens as phones in three groups. Phones read colour tokens from .wrap, set by script. */
+:root{--bg:#f6f4f5;--fg:#1c1c26;--muted:#656878;--line:#e0dde3;--card:#fff;--brand:#b72046;--brand-fg:#fff;--page:"Figtree",system-ui,sans-serif;--bezel:#16171f}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101118;--fg:#eceef4;--muted:#9a9fb2;--line:#2a2c3a;--card:#191b25;--brand:#ffb2bd;--brand-fg:#670023;--bezel:#05060a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101118;--fg:#eceef4;--muted:#9a9fb2;--line:#2a2c3a;--card:#191b25;--brand:#ffb2bd;--brand-fg:#670023;--bezel:#05060a;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.5 var(--page);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:36px 72px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:26px}
+h1{font-size:32px;line-height:1.12;margin:0 0 8px;font-weight:700;text-wrap:balance}
+.lede{color:var(--muted);max-width:70ch;margin:0}
+.ctl{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);padding:10px 0;z-index:5}
+.ctl .g{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.ctl .g>span{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-right:4px}
+.ctl button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:20px;padding:6px 14px;cursor:pointer;display:flex;gap:8px;align-items:center}
+.ctl button[aria-pressed="true"]{background:var(--brand);color:var(--brand-fg);border-color:transparent}
+.ctl button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.ctl i{width:12px;height:12px;border-radius:50%;display:inline-block;border:1px solid rgba(128,128,128,.5)}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px 26px;font-size:14.5px}
+.notes div{min-width:0}.notes b{display:block}.notes span{color:var(--muted)}
+.wall{display:flex;flex-wrap:wrap;gap:46px 34px;justify-content:center}
+figure{margin:0;width:300px;max-width:100%;display:flex;flex-direction:column;gap:12px}
+figcaption{font-size:14px;line-height:1.45;color:var(--muted)}figcaption b{display:block;color:var(--fg);font-size:15.5px}
+.phone{position:relative;width:300px;height:620px;border:8px solid var(--bezel);border-radius:36px;overflow:hidden;background:var(--m-bg)}
+.s{position:absolute;inset:0;display:flex;flex-direction:column;overflow:hidden;background:var(--m-bg);color:var(--m-fg);font:400 13px/1.35 "Roboto Flex",Roboto,system-ui,sans-serif}
+.s *{box-sizing:border-box}
+.sb{display:flex;justify-content:space-between;padding:9px 22px 4px;font-size:11px;font-weight:500;flex:none}
+.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.av{width:40px;height:40px;border-radius:50%;background:var(--m-secc);color:var(--m-osecc);display:grid;place-items:center;font-weight:600;font-size:15px;flex:none}
+.av.sq{border-radius:15px;background:var(--m-pri);color:var(--m-opri)}
+.av.sm{width:28px;height:28px;font-size:12px}
+.tb{display:flex;align-items:center;gap:6px;padding:6px 8px;flex:none}.tb .t{flex:1;font-size:22px;font-weight:500;padding-left:8px}
+.ib{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;flex:none}
+.sr{margin:6px 14px 8px;height:52px;border-radius:26px;background:var(--m-sch);display:flex;align-items:center;gap:12px;padding:0 8px 0 16px;color:var(--m-var);flex:none}
+.sr span{flex:1;font-size:15px}.sr .av{width:34px;height:34px;font-size:13px}
+.ch{display:flex;gap:8px;padding:0 14px 8px;flex:none}
+.c{height:32px;border-radius:10px;border:1px solid var(--m-out);padding:0 12px;display:flex;align-items:center;gap:6px;font-weight:500;font-size:12.5px;color:var(--m-var)}
+.c.on{background:var(--m-secc);color:var(--m-osecc);border-color:transparent}.c .i{width:16px;height:16px;stroke-width:2.4}
+.lst{display:flex;flex-direction:column;gap:2px;padding:0 10px;flex:1;min-height:0;overflow:hidden}
+.it{display:flex;gap:12px;padding:10px 14px;background:var(--m-scl);border-radius:6px;align-items:flex-start;position:relative}
+.it:first-child{border-radius:26px 26px 6px 6px}
+.it.u{background:var(--m-sch)}.it .m{flex:1;min-width:0}.it .l{display:flex;justify-content:space-between;gap:8px}
+.it .tm{font-size:11px;color:var(--m-var);flex:none}.it.u .tm{color:var(--m-pri);font-weight:700}
+.it.u .nm,.it.u .sj{font-weight:700}.it .sj{font-size:13.5px}.it .pv{color:var(--m-var);font-size:12.5px}
+.it.sw{transform:translateX(0)}
+.swp{position:relative;border-radius:6px;overflow:hidden;background:var(--m-pc);color:var(--m-opc)}
+.swp .bk{position:absolute;left:0;top:0;bottom:0;width:90px;display:flex;align-items:center;padding-left:20px;gap:8px;font-weight:600;font-size:12px}
+.swp .it{transform:translateX(86px);width:100%;margin-left:0;border-radius:6px 0 0 6px}
+.fab{position:absolute;right:16px;bottom:90px;height:56px;padding:0 20px 0 18px;border-radius:20px;background:var(--m-pc);color:var(--m-opc);display:flex;gap:12px;align-items:center;font-weight:600;font-size:15px;box-shadow:0 3px 10px rgba(0,0,0,.22)}
+.fab.r{width:56px;padding:0;justify-content:center}
+.nv{display:flex;background:var(--m-sc);padding:12px 8px 16px;margin-top:auto;flex:none}
+.nv div{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11.5px;color:var(--m-var);font-weight:500;position:relative}
+.nv div span{width:60px;height:32px;border-radius:16px;display:grid;place-items:center}
+.nv .on{color:var(--m-fg);font-weight:700}.nv .on span{background:var(--m-secc);color:var(--m-osecc)}
+.nv .bg{position:absolute;top:-4px;left:calc(50% + 6px);background:var(--m-err);color:var(--m-oerr);border-radius:9px;min-width:16px;height:16px;font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px}
+.subj{font-size:25px;line-height:1.2;font-weight:500;padding:4px 20px 8px;font-variation-settings:"opsz" 28}
+.who{display:flex;gap:12px;align-items:center;padding:4px 20px 10px}.who div{flex:1;min-width:0}.who small{color:var(--m-var);display:block}
+.body{padding:0 20px;display:flex;flex-direction:column;gap:9px;font-size:14px;line-height:1.5}.body p{margin:0}
+.att{margin:12px 20px 0;background:var(--m-sch);border-radius:20px;padding:10px 12px;display:flex;gap:12px;align-items:center}
+.att i{width:42px;height:42px;border-radius:12px;background:var(--m-terc);color:var(--m-oterc);display:grid;place-items:center;font-style:normal;font-weight:700;font-size:11px}
+.att small{color:var(--m-var);display:block}
+.ftb{position:absolute;left:16px;right:16px;bottom:22px;height:64px;border-radius:32px;background:var(--m-sch);display:flex;align-items:center;gap:6px;padding:0 8px;box-shadow:0 4px 14px rgba(0,0,0,.2)}
+.bgrp{display:flex;gap:2px;flex:1}.bgrp div{height:48px;flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;font-size:12.5px;background:var(--m-sc);color:var(--m-fg)}
+.bgrp div:first-child{border-radius:24px 8px 8px 24px;background:var(--m-pri);color:var(--m-opri)}.bgrp div:last-child{border-radius:8px 24px 24px 8px}
+.send{height:40px;padding:0 18px;border-radius:20px;background:var(--m-pri);color:var(--m-opri);display:flex;gap:8px;align-items:center;font-weight:600;font-size:14px}
+.f{display:flex;gap:10px;align-items:center;padding:11px 20px;border-bottom:1px solid var(--m-outv);min-height:48px}
+.f label{width:50px;color:var(--m-var);flex:none}
+.tok{display:flex;gap:6px;align-items:center;background:var(--m-secc);color:var(--m-osecc);border-radius:10px;height:32px;padding:0 10px 0 4px;font-weight:500}
+.menu{margin:6px 14px;background:var(--m-sch);border-radius:22px;padding:6px;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.menu .it{background:transparent;border-radius:16px;padding:8px 10px;align-items:center}
+.snk{margin:auto 14px 16px;background:var(--m-inv);color:var(--m-oinv);border-radius:14px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex:none}
+.snk b{margin-left:auto;color:var(--m-invp);font-weight:600}
+.fmt{display:flex;gap:2px;padding:6px 10px;border-top:1px solid var(--m-outv);color:var(--m-var);flex:none}
+.shade{background:var(--m-sc);flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:6px;padding:6px 10px 12px}
+.clock{padding:6px 12px 2px;font-size:56px;font-weight:400;line-height:1;letter-spacing:-1px}.clock small{display:block;font-size:13px;letter-spacing:0;color:var(--m-var);margin-top:4px}
+.qs{display:flex;gap:6px;padding:8px 0}.qs div{flex:1;height:48px;border-radius:24px;background:var(--m-pri);color:var(--m-opri);display:flex;align-items:center;gap:8px;padding:0 14px;font-size:12px;font-weight:600}.qs div.off{background:var(--m-sch);color:var(--m-fg)}
+.n{background:var(--m-scl);border-radius:6px;padding:11px 14px;display:flex;flex-direction:column;gap:4px}
+.n.f{border-radius:26px 26px 6px 6px}.n.l{border-radius:6px 6px 26px 26px}
+.n .h{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--m-var)}
+.n .h i{width:18px;height:18px;border-radius:6px;background:var(--m-pri);color:var(--m-opri);display:grid;place-items:center}.n .h i .i{width:12px;height:12px}
+.n b{font-size:13.5px}.n span{color:var(--m-var)}
+.n .a{display:flex;gap:6px;padding-top:6px}.n .a div{height:30px;padding:0 14px;border-radius:15px;background:var(--m-sch);display:flex;align-items:center;font-weight:600;font-size:12px;color:var(--m-fg)}
+.n .a div:first-child{background:var(--m-pc);color:var(--m-opc)}
+.n.gone{background:transparent;border:1.5px dashed var(--m-out);border-radius:26px}
+.n.q{flex-direction:row;align-items:center;gap:8px;font-size:11.5px;color:var(--m-var);margin-top:auto;background:transparent}
+.wk{display:flex;padding:2px 12px 10px;flex:none}.wk div{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;color:var(--m-var);font-weight:500}
+.wk b{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-size:14px;color:var(--m-fg);font-weight:500}
+.wk .on b{background:var(--m-pri);color:var(--m-opri);font-weight:700}
+.dh{padding:12px 20px 4px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--m-var)}
+.ev{margin:3px 14px;padding:10px 14px;border-radius:20px;background:var(--m-pc);color:var(--m-opc);display:flex;flex-direction:column}
+.ev.b{background:var(--m-secc);color:var(--m-osecc)}.ev.c{background:var(--m-terc);color:var(--m-oterc)}
+.ev b{font-size:14px}.ev small{opacity:.8}
+.lt{padding:10px 24px 2px;font-size:20px;font-weight:600;color:var(--m-pri)}
+.ci{display:flex;gap:14px;align-items:center;padding:8px 20px}.ci .m{flex:1;min-width:0}.ci small{color:var(--m-var);display:block}
+.idx{position:absolute;right:4px;top:130px;display:flex;flex-direction:column;gap:3px;font-size:9.5px;font-weight:700;color:var(--m-var);align-items:center}
+.hero{margin:6px 14px 8px;border-radius:30px;background:var(--m-pc);color:var(--m-opc);padding:16px;display:flex;gap:14px;align-items:center;flex:none}
+.hero .blob{width:58px;height:58px;background:var(--m-pri);color:var(--m-opri);display:grid;place-items:center;border-radius:62% 38% 55% 45%/48% 58% 42% 52%;flex:none}.hero .blob .i{width:28px;height:28px;stroke-width:2.4}
+.hero b{font-size:18px;font-weight:600;display:block}.hero small{opacity:.8}
+.set{display:flex;gap:12px;align-items:center;padding:9px 20px}.set .m{flex:1;min-width:0}.set small{display:block;color:var(--m-var);font-size:12px}
+.pill{font-size:11.5px;font-weight:700;border-radius:10px;padding:3px 10px;background:var(--m-terc);color:var(--m-oterc);flex:none}
+.swt{width:48px;height:28px;border-radius:14px;background:var(--m-pri);position:relative;flex:none}
+.swt::after{content:"";position:absolute;right:3px;top:3px;width:22px;height:22px;border-radius:50%;background:var(--m-opri)}
+.swt svg{position:absolute;right:7px;top:8px;width:12px;height:12px;stroke:var(--m-pri);stroke-width:3;z-index:1;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.btnf{margin:auto 16px 18px;height:52px;border-radius:26px;background:var(--m-pri);color:var(--m-opri);display:flex;justify-content:center;align-items:center;gap:8px;font-weight:600;font-size:15px;flex:none}
+/* second pass */
+.lst>*{flex:none}
+.who .av{flex:none}
+h2{font-size:21px;margin:8px 0 0;font-weight:700}
+.grp{display:flex;flex-direction:column;gap:4px}
+.tag{display:inline-block;font-size:11px;font-weight:700;border-radius:10px;padding:1px 8px;margin-left:8px;vertical-align:1px;white-space:nowrap;border:1px solid var(--line);color:var(--muted)}
+.tag.built{background:var(--brand);color:var(--brand-fg);border-color:transparent}
+.find{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:7px;max-width:76ch;font-size:15px}
+.find li::marker{color:var(--brand)}
+.mk{display:inline-flex;gap:3px;align-items:center;color:var(--m-var);flex:none}.mk .i{width:14px;height:14px}.mk .st{fill:var(--m-pri);stroke:var(--m-pri)}
+.scr{position:absolute;inset:0;background:rgba(0,0,0,.42)}
+.dr{position:absolute;inset:0 50px 0 0;background:var(--m-scl);border-radius:0 28px 28px 0;padding:34px 12px 12px;display:flex;flex-direction:column;gap:2px}
+.dr .ac{display:flex;gap:12px;align-items:center;padding:4px 12px 12px}.dr .ac small{display:block;color:var(--m-var)}
+.di{height:44px;border-radius:22px;display:flex;align-items:center;gap:12px;padding:0 16px;font-weight:500;color:var(--m-var);flex:none}
+.di.on{background:var(--m-secc);color:var(--m-osecc);font-weight:700}.di em{margin-left:auto;font-style:normal;font-size:12px;font-weight:700}
+.di.sub{padding-left:50px}.dl{height:1px;background:var(--m-outv);margin:6px 12px;flex:none}
+.cv{display:flex;flex-direction:column;gap:2px;padding:0 10px}
+.cc{background:var(--m-scl);border-radius:6px;padding:9px 14px;display:flex;gap:12px;align-items:center}
+.cc:first-child{border-radius:26px 26px 6px 6px}.cc .m{flex:1;min-width:0}.cc .pv{color:var(--m-var);font-size:12.5px}
+.cc.open{flex-direction:column;align-items:stretch;gap:10px;background:var(--m-sch);border-radius:6px 6px 26px 26px;padding:12px}
+.cc.open .hd{display:flex;gap:12px;align-items:center}.cc.open small{color:var(--m-var);display:block}
+.txt{background:var(--m-bg);border-radius:18px;padding:12px 14px;font-size:13.5px;line-height:1.5;display:flex;flex-direction:column;gap:8px}.txt p{margin:0}
+.rb{margin:0 14px 10px;height:44px;border-radius:14px;background:var(--m-terc);color:var(--m-oterc);display:flex;align-items:center;gap:10px;padding:0 6px 0 14px;font-weight:500;font-size:12.5px;flex:none}
+.rb span{flex:1}.rb b{height:32px;padding:0 14px;border-radius:16px;background:var(--m-oterc);color:var(--m-terc);display:grid;place-items:center;font-weight:600}
+.phi{height:50px;border-radius:12px;border:1.5px dashed var(--m-out);display:grid;place-items:center;color:var(--m-var);font-size:11.5px}
+.off{margin:auto 14px 16px;border-radius:14px;background:var(--m-secc);color:var(--m-osecc);padding:10px 14px;font-size:12.5px;font-weight:500;flex:none}
+.hero.bad{background:var(--m-errc);color:var(--m-oerrc)}.hero.bad .blob{background:var(--m-err);color:var(--m-oerr)}
+.pill.bad{background:var(--m-errc);color:var(--m-oerrc)}
+.fix{height:30px;padding:0 14px;border-radius:15px;background:var(--m-pri);color:var(--m-opri);display:grid;place-items:center;font-weight:600;font-size:12px;flex:none}
+.bt{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:94px;gap:6px;padding:4px 12px 6px;flex:1;min-height:0}
+.tl{border-radius:28px;padding:13px 14px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;position:relative;min-width:0}
+.tl small{font-size:11.5px;font-weight:600;letter-spacing:.02em;opacity:.8}
+.tl b{font-size:15px;font-weight:600;line-height:1.2}
+.tl.a{grid-row:span 2;background:var(--m-pc);color:var(--m-opc);border-radius:34px 34px 34px 12px}
+.tl.b{background:var(--m-secc);color:var(--m-osecc)}
+.tl.c{background:var(--m-terc);color:var(--m-oterc)}
+.tl.d{grid-column:span 2;background:var(--m-sch);color:var(--m-fg);flex-direction:row;align-items:center;gap:12px}
+.tl.e{background:var(--m-scl);color:var(--m-fg);outline:1.5px solid var(--m-outv);outline-offset:-1.5px}
+.tl.f{background:var(--m-pri);color:var(--m-opri);border-radius:12px 34px 34px 34px}
+.tl .big{font-size:78px;line-height:.85;font-weight:500;letter-spacing:-3px;font-variation-settings:"opsz" 144}
+.tl .pillb{align-self:flex-start;height:34px;padding:0 16px;border-radius:17px;background:var(--m-pri);color:var(--m-opri);display:flex;align-items:center;gap:6px;font-weight:600;font-size:12.5px}
+.stk{display:flex}.stk .av{width:30px;height:30px;font-size:11px;margin-left:-8px;border:2px solid var(--m-sch)}.stk .av:first-child{margin-left:0}
+.tl .blob{position:absolute;right:-18px;top:-18px;width:72px;height:72px;background:var(--m-oterc);opacity:.12;border-radius:62% 38% 55% 45%/48% 58% 42% 52%}
+.hd2{padding:4px 20px 2px;flex:none}.hd2 h2{margin:0;font-size:34px;font-weight:500;letter-spacing:-.5px;font-variation-settings:"opsz" 48}.hd2 small{color:var(--m-var)}
+.tb2{display:flex;align-items:center;gap:6px;padding:4px 10px 0 20px;flex:none}
+h2.sec{font-size:20px;margin:6px 0 0}
+.tl.ok{background:var(--m-terc);color:var(--m-oterc)}
+</style>
+
+<div class="wrap">
+<header>
+  <h1>kweb mail in Material You, second pass</h1>
+  <p class="lede">A review of the first Material 3 Expressive pages, and the same direction carried through the reading milestone (M3) as it is built today. Twelve screens. Switch the colour source and light or dark below; every screen says where it stands.</p>
+</header>
+<section class="grp">
+<h2>What the review found</h2>
+<ul class="find">
+<li><b>Read mail had no avatar colour.</b> The avatar used two colour roles that were never defined, so the circle of a read message was invisible. It now uses the secondary container.</li>
+<li><b>The unread badge was white on pale red in dark mode.</b> It now takes the on-error colour.</li>
+<li><b>Two layout slips.</b> The sender avatar on the message screen stretched into a wide pill, and list rows squeezed each other when the list was full. Both are fixed.</li>
+<li><b>The seven screens predate M3.</b> There was no conversation, no folder list, no search and no notice for hidden images, all of which exist in the app now. They are drawn here.</li>
+<li><b>Delivery check only showed the good day.</b> Every status pill had the same colour, so a failure had no way to look different. A failing state is added.</li>
+<li><b>Three home tiles could not be built.</b> "To pay", "Trip" and "People" need the app to understand what a mail says; nothing before the AI assistant (M7) does that. The overview here uses only data the app has.</li>
+<li><b>The watch is left out.</b> A Wear OS app is not in the plan, and a paired watch already shows the phone's notifications with their Archive and Mark read actions. It is yours to add to the plan or not.</li>
+<li><b>The notification shade is Android's.</b> The app chooses icon, texts, actions and accent colour; the card shapes in that picture are the system's and will differ by phone.</li>
+</ul>
+</section>
+<div class="ctl" id="ctl">
+  <div class="g" id="pal"><span>Colour</span></div>
+  <div class="g" id="mode"><span>Mode</span></div>
+</div>
+<div id="screens" style="display:flex;flex-direction:column;gap:26px">
+<section class="grp"><h2>Reading mail</h2><p class="lede">Milestone M3, built and checked on the emulator, today still in the fixed crimson colours.</p></section>
+<div class="wall" id="reading"></div>
+<section class="grp"><h2>Notifications and delivery</h2><p class="lede">Milestone M2, the first priority of the project.</p></section>
+<div class="wall" id="notify"></div>
+<section class="grp"><h2>Still to come</h2><p class="lede">Sending is next (M4). Calendar and contacts follow. The overview is a proposal.</p></section>
+<div class="wall" id="later"></div>
+</div>
+<section class="grp">
+<h2>For the build</h2>
+<div class="notes">
+  <div><b>Colour is one file</b><span>The app already uses Material 3 components and takes every colour from the theme; only the theme file holds the crimson. Dynamic colour is a change there: the wallpaper palette on Android 12 and later, a scheme seeded from the Ward crimson below that (the app supports Android 10).</span></div>
+  <div><b>Shapes need no new library</b><span>Grouped lists with large outer and small inner corners, and square or round avatars, are plain shapes. The connected button group, the floating toolbar and the morphing icon are newer Material pieces; whether the pinned library version has them as stable needs checking before they are promised.</span></div>
+  <div><b>Status colours</b><span>The app has its own green and amber for "ok" and "warning". Here good states use the tertiary container and failures the error container, so they follow the wallpaper too.</span></div>
+</div>
+</section>
+</div>
+<script>
+/* order: bg fg var pri opri pc opc secc osecc terc oterc scl sc sch out outv inv oinv invp */
+const K='bg fg var pri opri pc opc secc osecc terc oterc scl sc sch out outv inv oinv invp err'.split(' ');
+/* error roles are the same in every palette */
+const E={l:{oerr:'#ffffff',errc:'#ffdad6',oerrc:'#410002'},d:{oerr:'#690005',errc:'#93000a',oerrc:'#ffdad6'}};
+const P={
+ ward:{n:'Ward crimson',sw:'#b72046',
+  l:'#fff8f7 #22191a #534344 #b72046 #ffffff #ffd9de #400012 #fadde0 #2c1519 #ffddb9 #2b1700 #fff0f0 #fceaea #f6e3e4 #857374 #d8c2c3 #382e2f #ffecee #ffb2bd #ba1a1a',
+  d:'#1a1112 #f0dedf #d8c1c3 #ffb2bd #670023 #8f0b37 #ffd9de #5c3f43 #ffd9de #6b4300 #ffddb9 #231a1b #271e1f #322829 #a08c8d #534344 #f0dedf #382e2f #b72046 #ffb4ab'},
+ lav:{n:'Lavender wallpaper',sw:'#6750a4',
+  l:'#fef7ff #1d1b20 #49454f #6750a4 #ffffff #eaddff #21005d #e8def8 #1d192b #ffd8e4 #31111d #f7f2fa #f3edf7 #ece6f0 #7a757f #cac4d0 #322f35 #f5eff7 #d0bcff #ba1a1a',
+  d:'#141218 #e6e0e9 #cac4d0 #d0bcff #381e72 #4f378b #eaddff #4a4458 #e8def8 #633b48 #ffd8e4 #1d1b20 #211f26 #2b2930 #938f99 #49454f #e6e0e9 #322f35 #6750a4 #ffb4ab'},
+ moss:{n:'Moss wallpaper',sw:'#3f6837',
+  l:'#f8fbf1 #191d16 #43483f #3f6837 #ffffff #c0efb1 #002200 #d7e8cd #131f0e #bcebee #002022 #f2f5eb #ecefe5 #e6e9e0 #73796e #c3c8bb #2e312b #eff2e8 #a5d396 #ba1a1a',
+  d:'#11140f #e1e4d9 #c3c8bb #a5d396 #0a3909 #275021 #c0efb1 #3b4b34 #d7e8cd #1e4d51 #bcebee #191d16 #1d211a #272b24 #8d9387 #43483f #e1e4d9 #2e312b #3f6837 #ffb4ab'},
+ peach:{n:'Peach wallpaper',sw:'#8e4e1c',
+  l:'#fff8f5 #221a15 #52443c #8e4e1c #ffffff #ffdcc6 #301400 #f8dccd #2a1709 #e2e4b3 #1c1d00 #fff1ea #fbebe3 #f5e5dc #85736a #d7c2b8 #382e29 #ffede4 #ffb68a #ba1a1a',
+  d:'#19120d #efded5 #d7c2b8 #ffb68a #4f2500 #703700 #ffdcc6 #5a4235 #f8dccd #494a1e #e2e4b3 #211a15 #261e19 #312823 #9f8d83 #52443c #efded5 #382e29 #8e4e1c #ffb4ab'}
+};
+const IC={back:'M15 5l-7 7 7 7',arch:'M4 5h16v4H4zM6 9v10h12V9M10 13h4',del:'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13',more:'M12 5v.01M12 12v.01M12 19v.01',find:'M16 16l4 4M5 11a6 6 0 1012 0 6 6 0 10-12 0',mail:'M4 6h16v12H4zM4 7l8 6 8-6',cal:'M5 6h14v14H5zM5 10h14M9 4v4M15 4v4',ppl:'M8 9a4 4 0 108 0 4 4 0 10-8 0M5 20c1-4 4-5 7-5s6 1 7 5',pen:'M5 19l1-4L16 5l3 3L9 18z',clip:'M8 12l6-6a3 3 0 014 4l-8 8a5 5 0 01-7-7l7-7',x:'M6 6l12 12M18 6L6 18',re:'M10 7l-5 5 5 5M5 12h9a5 5 0 015 5v1',fw:'M14 7l5 5-5 5M19 12h-9a5 5 0 00-5 5v1',ok:'M5 12l5 5 9-10',plus:'M12 5v14M5 12h14',menu:'M4 7h16M4 12h16M4 17h16',send:'M4 12l16-8-6 16-3-7z',bell:'M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4',wifi:'M3 9a14 14 0 0118 0M6 12.5a9 9 0 0112 0M9 16a4 4 0 016 0M12 19v.01',bold:'M7 5h6a3.5 3.5 0 010 7H7zM7 12h7a3.5 3.5 0 010 7H7z',link:'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',bolt:'M13 3L5 14h6l-1 7 8-11h-6z',shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z',sync:'M4 12a8 8 0 0114-5M20 4v4h-4M20 12a8 8 0 01-14 5M4 20v-4h4',snz:'M7 5h8L7 13h8M16 14h4l-4 5h4',star:'M12 4l2.5 5.2 5.5.8-4 4 1 5.6-5-2.8-5 2.8 1-5.6-4-4 5.5-.8z',inb:'M4 13l2-8h12l2 8v6H4zM4 13h5l1 2h4l1-2h5',doc:'M7 4h7l4 4v12H7zM14 4v4h4',fold:'M4 7h6l2 2h8v10H4z',warn:'M12 5l8 14H4zM12 10v4M12 17v.01',cog:'M9 12a3 3 0 106 0 3 3 0 10-6 0M12 4v2M12 18v2M4 12h2M18 12h2'};
+const ic=(n,c='')=>`<svg class="i ${c}" viewBox="0 0 24 24"><path d="${IC[n]}"/></svg>`;
+const sb=(t='9:41')=>`<div class="sb"><span>${t}</span><span>▂▄▆ 82%</span></div>`;
+const nav=a=>`<div class="nv">${[['mail','Mail'],['cal','Calendar'],['ppl','Contacts']].map((x,k)=>`<div class="${k==a?'on':''}"><span>${ic(x[0])}</span>${x[1]}${k==0?'<i class="bg">3</i>':''}</div>`).join('')}</div>`;
+const M=[
+ {n:'Merve Aydın',i:'M',s:'Revised offer for the workshop',p:"Hi, I've attached the updated numbers we talked about…",t:'09:38',u:1,f:1,a:1},
+ {n:'Hetzner',i:'H',s:'Invoice for October is ready',p:'Your invoice R0098241 is available in the console.',t:'09:12',u:1},
+ {n:'Deniz, Okan · 4',i:'D',s:'Saturday plans',p:"Okan: works for me, I'll bring the projector.",t:'08:55',u:1},
+ {n:'GitHub',i:'G',s:'[postern] Release v0.2.1 published',p:'Sign-in gateways, session reset, neutral wording.',t:'Yesterday'},
+ {n:'Selin Kaya',i:'S',s:'Re: Photos from the trip',p:'These are great. Can you send the full-size ones?',t:'Yesterday'},
+ {n:'THY Miles&Smiles',i:'T',s:'Your booking confirmation',p:'Ankara (ESB) to Izmir (ADB), 21 November.',t:'Mon'},
+ {n:'Ayşe Demir',i:'A',s:'Worksheet for grade 3',p:'Could you check page two before I print it?',t:'Sun'}];
+const row=m=>`<div class="it ${m.u?'u':''}"><div class="av ${m.u?'sq':''}">${m.i}</div><div class="m"><div class="l"><span class="nm ell">${m.n}</span><span class="tm">${m.t}</span></div><div class="l"><span class="sj ell">${m.s}</span>${m.f||m.a?`<span class="mk">${m.f?ic('star','st'):''}${m.a?ic('clip'):''}</span>`:''}</div><div class="pv ell">${m.p}</div></div></div>`;
+
+const S=[];const tbar=`<div class="tb"><div class="ib">${ic('back')}</div><span class="t"></span><div class="ib">${ic('arch')}</div><div class="ib">${ic('del')}</div><div class="ib">${ic('more')}</div></div>`;
+const reply=`<div class="ftb"><div class="bgrp"><div>${ic('re')}Reply</div><div>Reply all</div><div>${ic('fw')}</div></div></div>`;
+S.push(['Inbox','Built · M3','built','Conversations. Unread is a rounded square on a raised surface, read a circle; a star and a clip mark flagged mail and files. Swipe right archives, left deletes, both with Undo. The first chip names the folder. The Compose button comes with M4, the bottom bar with M5.',
+`<div class="s">${sb()}<div class="sr">${ic('menu')}<span>Search mail</span><div class="av">K</div></div>
+ <div class="ch"><div class="c on">${ic('ok')}Inbox</div><div class="c">Unread</div><div class="c">Flagged</div><div class="c">Files</div></div>
+ <div class="lst">${row(M[0])}${row(M[1])}${row(M[2])}<div class="swp"><div class="bk">${ic('arch')}Archive</div>${row(M[3])}</div>${row(M[4])}${row(M[5])}</div>
+ <div class="fab">${ic('pen')}Compose</div>${nav(0)}</div>`]);
+const di=(i,n,c,x='')=>`<div class="di ${x}">${i?ic(i):''}<span>${n}</span>${c?`<em>${c}</em>`:''}</div>`;
+S.push(['Folders','Built · M3','built','A standard navigation drawer. System folders first in a fixed order, then your own as a tree, each with its unread count; the current one sits in the secondary container. Delivery check is here with its state in one word. Settings joins in M4.',
+`<div class="s">${sb()}<div class="sr">${ic('menu')}<span>Search mail</span><div class="av">K</div></div><div class="lst">${row(M[0])}${row(M[1])}</div>
+ <div class="scr"></div><div class="dr"><div class="ac"><div class="av sq">K</div><div><b>Kaan</b><small>you@kweb.ovh</small></div></div>
+ ${di('inb','Inbox',3,'on')}${di('','Work',1,'sub')}${di('doc','Drafts',2)}${di('send','Sent')}${di('arch','Archive')}${di('warn','Spam',12)}${di('del','Trash')}
+ <div class="dl"></div>${di('fold','Receipts')}${di('fold','School',4)}${di('','Grade 3','','sub')}
+ <div class="dl" style="margin-top:auto"></div>${di('bell','Delivery check','Live')}${di('cog','Settings')}</div></div>`]);
+const cc=(i,n,p,t,sq)=>`<div class="cc"><div class="av ${sq?'sq':''}" style="width:34px;height:34px;font-size:13px">${i}</div><div class="m"><div class="l" style="display:flex;justify-content:space-between;gap:8px"><b class="ell">${n}</b><span class="pv">${t}</span></div><div class="pv ell">${p}</div></div></div>`;
+S.push(['Conversation','Built · M3','built','The whole thread as one group, your own replies from Sent included. Unread messages and the last one open by themselves; a tap opens or folds the others. Opening marks it read on the server. The reply group comes with M4.',
+`<div class="s">${sb()}${tbar}<div class="subj">Saturday plans</div>
+ <div class="cv">${cc('D','Deniz Arslan','Board games at mine on Saturday? I have the new…','Tue')}${cc('K','me',"I'm in. Should I bring anything?",'Tue')}${cc('D','Deniz Arslan','Snacks would be great. Okan, are you coming?','Wed')}
+ <div class="cc open"><div class="hd"><div class="av sq">O</div><div style="flex:1;min-width:0"><b>Okan Yıldız</b><small>to Deniz, me</small></div><small>08:55</small></div><div class="txt"><p>Works for me, I'll bring the projector.</p><p>See you at seven.</p></div></div></div>${reply}</div>`]);
+S.push(['Message','Built · M3','built','HTML mail is shown with scripts off and nothing loaded from the internet until you tap Show, for that message only. The notice is a tonal bar, not a warning: nothing is wrong. Pictures inside the mail always show, links open in the browser, and the attachment is a card you tap to open.',
+`<div class="s">${sb()}${tbar}<div class="subj">Revised offer for the workshop</div>
+ <div class="who"><div class="av sq">M</div><div><b>Merve Aydın</b><small>to me</small></div><span class="mk">${ic('star','st')}</span><small>09:38</small></div>
+ <div class="rb"><span>Remote images are hidden</span><b>Show</b></div>
+ <div class="body"><p>Hi,</p><div class="phi">image not loaded</div><p>I've attached the updated numbers we talked about on Tuesday. The room is confirmed for the 21st.</p><p>Best,<br>Merve</p></div>
+ <div class="att"><i>PDF</i><div><b>Offer-2026.pdf</b><small>184 KB</small></div></div>${reply}</div>`]);
+const R=[{n:'Hetzner',i:'H',s:'Invoice for October is ready',p:'Your invoice R0098241 is available in the console.',t:'09:12',u:1},{n:'Accounts',i:'A',s:'Invoice 2026-114 attached',p:'Please find the invoice attached.',t:'3 Nov',a:1},{n:'Hetzner',i:'H',s:'Invoice for September is ready',p:'Your invoice R0091877 is available in the console.',t:'9 Oct'},{n:'Merve Aydın',i:'M',s:'Re: Room booking',p:'…and I will send the invoice once the date is fixed.',t:'2 Oct'}];
+S.push(['Search','Built · M3','built','The server searches all mail, bodies included, as you type. Without a connection the phone searches what it holds and says so in a quiet bar.',
+`<div class="s">${sb()}<div class="sr" style="color:var(--m-fg)">${ic('back')}<span>invoice|</span>${ic('x')}<i style="width:8px"></i></div><div class="lst">${R.map(row).join('')}</div><div class="off">Offline: showing matches from mail on this phone</div></div>`]);
+
+const sw=()=>`<span class="swt">${ic('ok')}</span>`;
+const st=(a,b,c)=>`<div class="set"><div class="m"><div>${a}</div><small>${b}</small></div><span class="pill">${c}</span></div>`;
+S.push(['Delivery check','Built · M2','built','A hero card gives the answer first, with a shape-morphing icon. Each test is a row with a status pill. Switches carry a check mark. The test button is a full-width filled pill.',
+`<div class="s">${sb()}<div class="tb"><div class="ib">${ic('back')}</div><span class="t">Delivery check</span></div>
+ <div class="hero"><div class="blob">${ic('ok')}</div><div><b>All good</b><small>Last push 12 seconds ago</small></div></div>
+ ${st('Connection to mail.kweb.ovh','Last push 12 seconds ago','Live')}${st('Notification permission','Mail and reminders may alert','Allowed')}${st('Battery optimisation','Android may not pause the app','Exempt')}${st('Safety check','Every 15 minutes · last at 09:30','On time')}${st('Sign-in','Token renews by itself · no password stored','Valid')}
+ <div class="dh">What to show</div>
+ <div class="set"><div class="m">New mail in Inbox</div>${sw()}</div><div class="set"><div class="m">Calendar and task reminders</div>${sw()}</div><div class="set"><div class="m">Remove when read elsewhere</div>${sw()}</div>
+ <div class="btnf">${ic('bell')}Send a test notification</div></div>`]);
+
+S.push(['Notifications','Built · M2','built','Android draws the shade, but this is what the app puts in it: one card per message in a rounded group, tonal action buttons, a dashed card for mail read elsewhere and a quiet row for the live connection.',
+`<div class="s">${sb()}<div class="clock">9:41<small>Thursday, 12 November</small></div>
+ <div class="shade"><div class="qs"><div>${ic('wifi')}Home</div><div class="off">${ic('bell')}Silent</div></div>
+  <div class="n f"><div class="h"><i>${ic('mail')}</i>kweb mail · Merve Aydın · now</div><b>Revised offer for the workshop</b><span>Hi, I've attached the updated numbers we talked about on Tuesday…</span><div class="a"><div>Archive</div><div>Mark read</div><div>Reply</div></div></div>
+  <div class="n"><div class="h"><i>${ic('mail')}</i>kweb mail · Hetzner · 29 min</div><b>Invoice for October is ready</b><span>Your invoice R0098241 is available.</span></div>
+  <div class="n l"><div class="h"><i>${ic('cal')}</i>kweb mail · Reminder</div><b>Dentist in 15 minutes</b><span>10:00 – 10:45 · Çankaya</span><div class="a"><div>Snooze 10 min</div><div>Open</div></div></div>
+  <div class="n gone"><div class="h">Deniz, Okan · Saturday plans</div><span>Read on another device at 09:40. Removed here about a second later, without a sound.</span></div>
+  <div class="n q">${ic('sync')}kweb mail · Connected · silent</div></div></div>`]);
+S.push(['Compose','Planned · M4','','Send is a filled pill with an icon. The recipient is a chip with the contact photo, completion opens as a floating menu, and the draft notice is a standard snackbar.',
+`<div class="s">${sb('9:42')}<div class="tb"><div class="ib">${ic('x')}</div><span class="t">New message</span><div class="ib">${ic('clip')}</div><div class="send">${ic('send')}Send</div></div>
+ <div class="f"><label>From</label><span>you@kweb.ovh ▾</span></div>
+ <div class="f"><label>To</label><span class="tok"><span class="av sm" style="width:24px;height:24px;font-size:10px">M</span>Merve Aydın</span><span>sel|</span></div>
+ <div class="menu"><div class="it"><div class="av sm">S</div><div class="m"><div><b>Sel</b>in Kaya</div><div class="pv">selin@example.org</div></div></div></div>
+ <div class="f"><label>Subject</label><span class="ell">Re: Revised offer for the workshop</span></div>
+ <div class="body" style="padding-top:14px"><p>Hi Merve,</p><p>This works. Please send the contract over.</p><p style="color:var(--m-var)">Kaan</p></div>
+ <div class="snk">${ic('ok')}Draft saved to the server · 09:42<b>View</b></div>
+ <div class="fmt"><div class="ib">${ic('bold')}</div><div class="ib">${ic('link')}</div><div class="ib">${ic('clip')}</div></div></div>`]);
+S.push(['Calendar','Planned · M5','','The week strip uses a filled circle for today. Events are rounded containers in three tonal colours, so each calendar is recognisable without borders. Today and the add button use the primary colour.',
+`<div class="s">${sb()}<div class="tb"><span class="t" style="font-size:24px">November 2026</span><div class="ib">${ic('find')}</div><div class="c on" style="height:34px;border-radius:17px">Today</div></div>
+ <div class="wk"><div>M<b>9</b></div><div>T<b>10</b></div><div>W<b>11</b></div><div class="on">T<b>12</b></div><div>F<b>13</b></div><div>S<b>14</b></div><div>S<b>15</b></div></div>
+ <div class="dh">Today · Thu 12</div><div class="ev"><b>Dentist</b><small>10:00 – 10:45 · Çankaya · reminder 15 min before</small></div><div class="ev b"><b>Department meeting</b><small>14:30 – 15:30 · Room 204 · 6 guests</small></div>
+ <div class="dh">Fri 13</div><div class="ev c"><b>Workshop offer: reply to Merve</b><small>Task · due 12:00</small></div>
+ <div class="dh">Sat 14</div><div class="ev b"><b>Board games at Deniz's</b><small>19:00 – 23:00 · Going</small></div>
+ <div class="dh">Sat 21</div><div class="ev"><b>Flight ESB → ADB</b><small>07:55 – 09:10</small></div>
+ <div class="fab r">${ic('plus')}</div>${nav(1)}</div>`]);
+const C=[['A',['Ayşe Demir','ayse@example.org · school']],['D',['Deniz Arslan','deniz@example.org']],['M',['Merve Aydın','merve@example.org · +90 312 555 01 42']],['O',['Okan Yıldız','okan@example.org']],['S',['Selin Kaya','selin@example.org']]];
+S.push(['Contacts','Planned · M6','','Large primary-colour letters head each group, avatars are tonal circles, and an index runs down the right edge. Same address books as before.',
+`<div class="s">${sb()}<div class="sr">${ic('find')}<span>Search contacts</span></div>
+ ${C.map(c=>`<div class="lt">${c[0]}</div><div class="ci"><div class="av">${c[0]}</div><div class="m"><b>${c[1][0]}</b><small class="ell">${c[1][1]}</small></div></div>`).join('')}
+ <div class="idx">${'ADMOS'.split('').map(x=>`<span>${x}</span>`).join('')}</div>
+ <div class="fab r">${ic('plus')}</div>${nav(2)}</div>`]);
+
+S.push(['Delivery check, a problem','Built · M2','built','The same screen when something is wrong. The first pass showed only the good case, with every pill in one colour. A failed test takes the error container, says what to change, and its button opens the right Android setting.',
+`<div class="s">${sb()}<div class="tb"><div class="ib">${ic('back')}</div><span class="t">Delivery check</span></div>
+ <div class="hero bad"><div class="blob">${ic('warn')}</div><div><b>Mail may arrive late</b><small>One thing needs changing</small></div></div>
+ ${st('Connection to mail.kweb.ovh','Last push 4 minutes ago','Live')}${st('Notification permission','Mail and reminders may alert','Allowed')}
+ <div class="set"><div class="m"><div>Battery optimisation</div><small>Android pauses the app in the background</small></div><span class="pill bad">Restricted</span><span class="fix">Fix</span></div>
+ ${st('Safety check','Every 15 minutes · last at 09:30','On time')}${st('Sign-in','Token renews by itself · no password stored','Valid')}
+ <div class="btnf">${ic('bell')}Send a test notification</div></div>`]);
+S.push(['Home overview','Optional · proposed','','A start screen of tiles, off by default; the app opens on the Inbox without it. Every tile is made of data the app already has: unread mail, the next event, whether delivery works, flagged mail and files, tasks. The first pass had tiles for a bill to pay and a trip, which would need the app to understand what mail says.',
+`<div class="s">${sb()}<div class="tb2"><div class="hd2" style="flex:1;padding:0"><h2 style="margin:0;font-size:34px;font-weight:500">Today</h2><small>Thursday 12 November</small></div><div class="ib">${ic('find')}</div><div class="av sq" style="width:36px;height:36px">K</div></div>
+ <div class="bt">
+  <div class="tl a"><small>Unread</small><div class="big">3</div><div><div class="stk"><div class="av sq" style="border-color:var(--m-pc)">M</div><div class="av" style="border-color:var(--m-pc)">H</div><div class="av" style="border-color:var(--m-pc)">D</div></div><div style="height:8px"></div><div class="pillb">Open Inbox</div></div></div>
+  <div class="tl b"><small>Next event</small><div><b>Dentist</b><div style="font-size:11.5px;opacity:.8">10:00 · in 19 min</div></div></div>
+  <div class="tl ok"><div class="blob"></div><small>Delivery</small><div><b style="font-size:22px">Live</b><div style="font-size:11.5px;opacity:.8">last push 12 s ago</div></div></div>
+  <div class="tl d"><div style="flex:1;min-width:0"><small>Flagged and files</small><b>2 flagged · 3 new files</b><div style="font-size:11.5px;opacity:.75" class="ell">Offer-2026.pdf · invoice-R0098241.pdf</div></div>${ic('clip')}</div>
+  <div class="tl e"><small>Tasks</small><div><b>1 due today</b><div style="font-size:11.5px;opacity:.75">Reply to Merve · 12:00</div></div></div>
+  <div class="tl f"><small>Write</small><div style="display:flex;justify-content:space-between;align-items:flex-end"><b style="font-size:18px">New<br>message</b>${ic('pen')}</div></div>
+ </div>${nav(0)}</div>`]);
+
+
+const G=[['reading','Reading mail',[0,1,2,3,4]],['notify','Notifications and delivery',[6,5,10]],['later','Still to come',[7,8,9,11]]];
+/* S order: 0 inbox 1 folders 2 conversation 3 message 4 search 5 delivery 6 notifications 7 compose 8 calendar 9 contacts 10 delivery-bad 11 home */
+const fig=s=>`<figure><div class="phone">${s[4]}</div><figcaption><b>${s[0]}<span class="tag ${s[2]}">${s[1]}</span></b>${s[3]}</figcaption></figure>`;
+G.forEach(g=>{document.getElementById(g[0]).innerHTML=g[2].map(k=>fig(S[k])).join('')});
+const root=document.getElementById('screens');let pal='ward',mode=matchMedia('(prefers-color-scheme:dark)').matches?'d':'l';
+if(document.documentElement.dataset.theme)mode=document.documentElement.dataset.theme=='dark'?'d':'l';
+function apply(){const v=P[pal][mode].split(' ');K.forEach((k,j)=>root.style.setProperty('--m-'+k,v[j]));
+ Object.entries(E[mode]).forEach(([k,x])=>root.style.setProperty('--m-'+k,x));
+ document.querySelectorAll('#pal button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k==pal));
+ document.querySelectorAll('#mode button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k==mode))}
+Object.entries(P).forEach(([k,p])=>{const b=document.createElement('button');b.type='button';b.dataset.k=k;b.innerHTML=`<i style="background:${p.sw}"></i>${p.n}`;b.onclick=()=>{pal=k;apply()};document.getElementById('pal').appendChild(b)});
+[['l','Light'],['d','Dark']].forEach(([k,n])=>{const b=document.createElement('button');b.type='button';b.dataset.k=k;b.textContent=n;b.onclick=()=>{mode=k;apply()};document.getElementById('mode').appendChild(b)});
+apply();
+
+</script>

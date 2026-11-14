@@ -9,7 +9,7 @@ Everything lives outside the repository, under `~/tools` (`$KWEB_TOOLS` override
 | Path under `~/tools` | What |
 |---|---|
 | `jdk/` | Temurin JDK 21 |
-| `rust/` | a private rustup toolchain (stable) with the `aarch64-linux-android` and `x86_64-linux-android` targets, and `cargo-ndk`; the system's own `cargo` is left alone |
+| `rust/` | a private rustup toolchain (stable) with the `aarch64-linux-android` and `x86_64-linux-android` targets, the `rustfmt` and `clippy` components (`rustup component add rustfmt clippy`), and `cargo-ndk`; the system's own `cargo` is left alone |
 | `android-sdk/` | SDK command-line tools, platform 36, build-tools (Gradle fetches what it needs), NDK 28.2, emulator, platform-tools, system image Android 35 Google APIs x86_64 |
 | `stalwart-test/` | Stalwart 1.1.0 (`bin/stalwart`), `stalwart-cli` (`node/`), config, data, logs, credentials (`etc/`) |
 | `dl/` | the downloaded archives and install logs; can be deleted |
@@ -108,6 +108,12 @@ Possible way to run both at once, not tried: make VirtualBox use KVM for that VM
 Sign-in with the app link (the consent page says it returns to `ovh.kweb.mail`), 12 seeded mails in the Inbox, new mail notifies within 5 s with Archive and Mark read buttons, read elsewhere removes the notification and the summary within 1 s, archive and delete elsewhere remove it, a swiped notification stays away when the next mail arrives, and with the connection cut for a while, three mails delivered and one read elsewhere, exactly the two unread mails show within 5 s of reconnecting.
 
 Not checked: the 15-minute background check (WorkManager will not run a periodic job early), restart without opening the app, overnight, reminders, the Archive/Mark read buttons themselves (tapping them), TLS.
+
+### Checked on the emulator for M3 (2026-11-14)
+
+The mail list of the seeded Inbox as conversations, the folder drawer, the four-mail thread, the newsletter with its remote image hidden and then shown, the inline picture, swipe to archive with Undo, search for "invoice" answered by the server, and a prefetched mail read with the server cut off (`adb reverse --remove tcp:18080`).
+
+Two things to know: after switching between `-PskipNative` and a full build, Kotlin may fail with "Conflicting declarations" in the generated bindings; `dev/gradle.sh clean assembleDebug` cures it. And `adb shell uiautomator dump /sdcard/u.xml` followed by `adb shell cat /sdcard/u.xml` gives the texts on screen with their positions, which beats guessing tap coordinates from a screenshot.
 
 ## Known differences from the real phone
 

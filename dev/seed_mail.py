@@ -19,10 +19,11 @@ from email.utils import formatdate, make_msgid
 BASE = "http://127.0.0.1:18080"
 TO = "tester@kweb.test"
 
-# A 1x1 red PNG, for the inline image and the attachment.
+# An 8x8 crimson PNG, for the inline image and the attachment.
 PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108020000009077533d"
-    "0000000c4944415408d763f8cfc000000301010018dd8db00000000049454e44ae426082"
+    "89504e470d0a1a0a0000000d49484452000000080000000808020000004b6d29dc"
+    "000000154944415478da633ca1ecc5800d3031e00083530200f6840145c67bd891"
+    "0000000049454e44ae426082"
 )
 
 
