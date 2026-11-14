@@ -4,6 +4,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -23,6 +24,13 @@ class ReminderRulesTest {
         assertEquals(id, ReminderRules.notificationId("event-1", "alert-1"))
         assertTrue(id in 100..899)
         assertNotEquals(id, ReminderRules.notificationId("event-1", "alert-2"))
+    }
+
+    @Test
+    fun onlyIdsInTheRemindersRangeAreTheirs() {
+        assertTrue(ReminderRules.isReminderId(ReminderRules.notificationId("e", "a")))
+        for (id in listOf(0, 1, 2, 3, 4, 99, 900, 1000, 5000, -1)) assertFalse("$id", ReminderRules.isReminderId(id))
+        assertTrue(ReminderRules.isReminderId(100) && ReminderRules.isReminderId(899))
     }
 
     @Test

@@ -16,6 +16,9 @@ internal object ReminderRules {
     private const val FIRST_ID = 100
     private const val SPAN = 800
 
+    /** Whether [id] is one a reminder's notification can have: nothing else (mail, summary, service) is. */
+    fun isReminderId(id: Int): Boolean = id in FIRST_ID until FIRST_ID + SPAN
+
     /**
      * The id of a reminder's notification: the same alert always gets the same id, so a snoozed
      * reminder replaces the one it came from, and different alerts rarely collide.

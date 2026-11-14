@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -24,6 +25,9 @@ import uniffi.kweb_core.DraftKind
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val stackFlow = MutableStateFlow(BackStack.initial)
 
+    /** The state of the screens that live as long as their route is on the stack. */
+    val stores = ScreenStores()
+
     private val serverUrlFlow = MutableStateFlow<String?>(null)
 
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
@@ -38,19 +42,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { SessionState.load(app) }
+        viewModelScope.launch { stackFlow.collect { stores.retain(it) } }
         viewModelScope.launch {
+            var wasOut = false
             SessionState.signedIn.collect { signedIn ->
                 if (signedIn == false) {
+                    wasOut = true
                     stackFlow.value = BackStack.initial
                     serverUrlFlow.value = null
                 } else if (signedIn == true) {
+                    // Whatever was asked while signed out must not wait under the new session.
+                    if (wasOut) stackFlow.value = BackStack.initial
+                    wasOut = false
                     serverUrlFlow.value = withContext(Dispatchers.IO) { Background.core(app).account()?.serverUrl }
                 }
             }
         }
     }
 
+    override fun onCleared() {
+        stores.clear()
+    }
+
     fun open(route: Route) = stackFlow.update { BackStack.push(it, route) }
+
+    /** The root screen a tab of the bottom bar leads to. Each side keeps its own state in its view model. */
+    fun switchTo(root: Route) {
+        if (SessionState.signedIn.value != true) return
+        stackFlow.value = BackStack.switchTo(root)
+    }
+
+    /**
+     * The activity was opened from the reminder of [eventId] (for [recurrenceId] when it repeats): show that
+     * event over the agenda. Waits for the first answer of the session; a signed-out app ignores it.
+     */
+    fun openReminder(eventId: String, recurrenceId: String?) {
+        viewModelScope.launch {
+            val signedIn = SessionState.signedIn.first { it != null }
+            if (signedIn == true) stackFlow.update { BackStack.showOver(it, BackStack.forReminder(eventId, recurrenceId)) }
+        }
+    }
+
+    /** An entry was saved: back to the agenda. It reads again when it comes up. */
+    fun eventSaved() = stackFlow.update { BackStack.afterEventSaved(it) }
 
     fun back() = stackFlow.update { BackStack.pop(it) }
 
@@ -76,7 +110,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 messageChannel.send(R.string.compose_start_failed)
                 return@launch
             }
-            stackFlow.value = BackStack.forCompose(draftId)
+            stackFlow.update { BackStack.showOver(it, BackStack.forCompose(draftId)) }
             val app = getApplication<Application>()
             withContext(Dispatchers.IO) {
                 runCatching { Background.core(app).notificationSwiped(messageId) }
@@ -102,7 +136,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     BackStack.initial
                 }
             }
-            stackFlow.value = stack
+            stackFlow.update { BackStack.showOver(it, stack) }
         }
     }
 }

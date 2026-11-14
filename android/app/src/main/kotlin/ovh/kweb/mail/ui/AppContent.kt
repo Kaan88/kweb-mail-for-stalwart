@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
@@ -17,10 +18,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ovh.kweb.mail.ui.calendar.CalendarScreen
+import ovh.kweb.mail.ui.calendar.EditEventScreen
+import ovh.kweb.mail.ui.calendar.EventScreen
 import ovh.kweb.mail.ui.compose.ComposeScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
 import ovh.kweb.mail.ui.list.MailListScreen
+import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.search.SearchScreen
 import ovh.kweb.mail.ui.search.SearchViewModel
 import ovh.kweb.mail.ui.settings.SettingsScreen
@@ -50,6 +58,12 @@ fun AppContent(app: AppViewModel = viewModel()) {
             LaunchedEffect(app) {
                 app.messages.collect { snackbar.showSnackbar(resources.getString(it)) }
             }
+            // The Inbox's unread count, the badge on Mail; read from the list's own state, so both sides agree.
+            val mailList: MailListViewModel = viewModel()
+            val unread by remember(mailList) {
+                mailList.state.map { s -> s.mailboxes.firstOrNull { it.role == "inbox" }?.unreadEmails?.toInt() ?: 0 }.distinctUntilChanged()
+            }.collectAsStateWithLifecycle(0)
+            val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
             when (val route = stack.last()) {
                 Route.MailList -> MailListScreen(
                     onOpenThread = { threadId, mailboxId -> app.open(Route.Thread(threadId, mailboxId, null)) },
@@ -57,7 +71,26 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenSettings = { app.open(Route.Settings) },
                     onCompose = { app.open(Route.Compose(it)) },
+                    bottomBar = bottomBar,
+                    appSnackbar = snackbar,
                 )
+                Route.Calendar -> CalendarScreen(
+                    onOpenEvent = { eventId, recurrenceId -> app.open(Route.Event(eventId, recurrenceId)) },
+                    onAddEvent = { app.open(Route.EditEvent(null, it)) },
+                    bottomBar = bottomBar,
+                    appSnackbar = snackbar,
+                )
+                // These two keep their state in a store of their own that goes when the route does (see ScreenStores).
+                is Route.Event -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        EventScreen(route.eventId, route.recurrenceId, onBack = app::back, onEdit = { app.open(Route.EditEvent(it, null)) })
+                    }
+                }
+                is Route.EditEvent -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved)
+                    }
+                }
                 // One thread replacing another (a notification tap) must not inherit the first one's state.
                 is Route.Thread -> key(route) {
                     ThreadScreen(route, onBack = app::back, onCompose = { app.open(Route.Compose(it)) })
@@ -77,7 +110,10 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 )
                 Route.SignInAgain -> SignInAgain(app)
             }
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+            // The two root screens put it above their bottom bar themselves.
+            if (stack.last() != Route.MailList && stack.last() != Route.Calendar) {
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+            }
         }
     }
 }

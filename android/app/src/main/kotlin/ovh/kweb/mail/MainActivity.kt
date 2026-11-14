@@ -61,9 +61,24 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
+    /** A tap on the reminder of an event or task opens that entry. */
+    private fun handleReminderIntent(intent: Intent): Boolean {
+        val eventId = intent.getStringExtra(Notifier.EXTRA_EVENT_ID) ?: return false
+        val recurrenceId = intent.getStringExtra(Notifier.EXTRA_RECURRENCE_ID)
+        val androidId = intent.getIntExtra(Notifier.EXTRA_REMINDER_ANDROID_ID, 0)
+        intent.removeExtra(Notifier.EXTRA_EVENT_ID)
+        intent.removeExtra(Notifier.EXTRA_RECURRENCE_ID)
+        intent.removeExtra(Notifier.EXTRA_REMINDER_ANDROID_ID)
+        app.openReminder(eventId, recurrenceId)
+        // The Open button does not remove its notification by itself.
+        val appContext = applicationContext
+        lifecycleScope.launch(Dispatchers.IO) { runCatching { Notifier(appContext).cancelReminder(androidId) } }
+        return true
+    }
+
     /** A tap on a mail notification names its message: it opens over the Inbox. */
     private fun handleNotificationIntent(intent: Intent) {
-        if (handleReplyIntent(intent)) return
+        if (handleReplyIntent(intent) || handleReminderIntent(intent)) return
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
         intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
         mailList.showInbox()

@@ -30,6 +30,20 @@ internal object NotificationIntents {
     }
 
     /**
+     * Opens [MainActivity] on a reminder: its event, the occurrence it is for (when it repeats) and the
+     * Android id of the notification, so that opening it takes the notification away.
+     */
+    fun openReminder(context: Context, notificationId: Int, reminder: Reminder): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setData(uri("reminder", "${reminder.eventId}/${reminder.alertId}/${reminder.recurrenceId.orEmpty()}"))
+            .putExtra(Notifier.EXTRA_EVENT_ID, reminder.eventId)
+            .putExtra(Notifier.EXTRA_REMINDER_ANDROID_ID, notificationId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        reminder.recurrenceId?.let { intent.putExtra(Notifier.EXTRA_RECURRENCE_ID, it) }
+        return PendingIntent.getActivity(context, notificationId, intent, FLAGS)
+    }
+
+    /**
      * The Reply button: opens [MainActivity] on a new answer to [messageId]. It carries the
      * notification's id too, because an action button does not always remove its notification and
      * the activity then has to.
@@ -82,6 +96,7 @@ internal object ReminderExtras {
     private const val LOCAL_START = "reminder.localStart"
     private const val TIME_ZONE = "reminder.timeZone"
     private const val ALL_DAY = "reminder.allDay"
+    private const val RECURRENCE_ID = "reminder.recurrenceId"
 
     fun put(intent: Intent, reminder: Reminder): Intent = intent
         .putExtra(EVENT_ID, reminder.eventId)
@@ -92,6 +107,7 @@ internal object ReminderExtras {
         .putExtra(LOCAL_START, reminder.localStart)
         .putExtra(TIME_ZONE, reminder.timeZone)
         .putExtra(ALL_DAY, reminder.allDay)
+        .putExtra(RECURRENCE_ID, reminder.recurrenceId)
 
     /** The reminder in [intent], or null when it does not carry one. */
     fun read(intent: Intent): Reminder? {
@@ -105,6 +121,7 @@ internal object ReminderExtras {
             localStart = intent.getStringExtra(LOCAL_START),
             timeZone = intent.getStringExtra(TIME_ZONE),
             allDay = intent.getBooleanExtra(ALL_DAY, false),
+            recurrenceId = intent.getStringExtra(RECURRENCE_ID),
         )
     }
 }

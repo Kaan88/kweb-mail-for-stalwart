@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bottom bar -->
+    <string name="tab_mail">Mail</string>
+    <string name="tab_calendar">Calendar</string>
+
+    <!-- Agenda -->
+    <string name="cal_today">Today</string>
+    <string name="cal_add">New event</string>
+    <string name="cal_previous_week">Previous week</string>
+    <string name="cal_next_week">Next week</string>
+    <string name="cal_offline">Offline: showing what this phone has</string>
+    <string name="cal_agenda_failed">The calendar could not be updated.</string>
+    <string name="cal_load_failed">The calendar could not be loaded.</string>
+    <string name="cal_empty">Nothing is planned in these weeks.</string>
+    <string name="cal_continues">Continues</string>
+    <string name="cal_form_zone">Times are in %1$s</string>
+    <string name="cal_untitled">No title</string>
+    <string name="cal_task_failed">The task could not be changed.</string>
+    <string name="cal_task_mark_done">Mark as done</string>
+    <string name="cal_task_mark_open">Mark as not done</string>
+
+    <!-- Wording of entries -->
+    <string name="cal_all_day">All day</string>
+    <plurals name="cal_all_day_days">
+        <item quantity="one">All day · %d day</item>
+        <item quantity="other">All day · %d days</item>
+    </plurals>
+    <string name="cal_task">Task</string>
+    <string name="cal_task_due">Task · due %1$s</string>
+    <string name="cal_invitation">Invitation</string>
+    <string name="cal_with_zone">%1$s (%2$s)</string>
+    <string name="cal_repeats">Repeats</string>
+    <plurals name="cal_every_days">
+        <item quantity="one">Every day</item>
+        <item quantity="other">Every %d days</item>
+    </plurals>
+    <plurals name="cal_every_weeks">
+        <item quantity="one">Every week</item>
+        <item quantity="other">Every %d weeks</item>
+    </plurals>
+    <plurals name="cal_every_months">
+        <item quantity="one">Every month</item>
+        <item quantity="other">Every %d months</item>
+    </plurals>
+    <plurals name="cal_every_years">
+        <item quantity="one">Every year</item>
+        <item quantity="other">Every %d years</item>
+    </plurals>
+    <string name="cal_repeat_on">%1$s on %2$s</string>
+    <string name="cal_repeat_until">%1$s, until %2$s</string>
+    <plurals name="cal_repeat_times">
+        <item quantity="one">%1$s, %2$d time</item>
+        <item quantity="other">%1$s, %2$d times</item>
+    </plurals>
+    <string name="cal_reminder_at_start">At the start</string>
+    <plurals name="cal_reminder_minutes">
+        <item quantity="one">%d minute before</item>
+        <item quantity="other">%d minutes before</item>
+    </plurals>
+    <plurals name="cal_reminder_hours">
+        <item quantity="one">%d hour before</item>
+        <item quantity="other">%d hours before</item>
+    </plurals>
+    <plurals name="cal_reminder_days">
+        <item quantity="one">%d day before</item>
+        <item quantity="other">%d days before</item>
+    </plurals>
+    <string name="cal_status_accepted">Accepted</string>
+    <string name="cal_status_tentative">Maybe</string>
+    <string name="cal_status_declined">Declined</string>
+    <string name="cal_status_none">No answer yet</string>
+
+    <!-- Event screen -->
+    <string name="cal_edit">Edit</string>
+    <string name="cal_delete">Delete</string>
+    <string name="cal_dismiss">Dismiss</string>
+    <string name="cal_event_failed">This entry could not be loaded. You may be offline.</string>
+    <string name="cal_event_missing">This entry is no longer there.</string>
+    <string name="cal_guests">Guests</string>
+    <string name="cal_organizer">Organizer</string>
+    <string name="cal_you">You</string>
+    <string name="cal_accept">Accept</string>
+    <string name="cal_maybe">Maybe</string>
+    <string name="cal_decline">Decline</string>
+    <string name="cal_respond_failed">Your answer could not be sent.</string>
+    <string name="cal_delete_failed">The entry could not be deleted.</string>
+    <string name="cal_delete_title">Delete this event?</string>
+    <string name="cal_delete_task_title">Delete this task?</string>
+    <string name="cal_delete_series_text">It repeats. All of its repeats are deleted with it.</string>
+    <string name="cal_delete_repeating_text">This event repeats. Delete only this one, or all of them?</string>
+    <string name="cal_delete_this_one">This one</string>
+    <string name="cal_delete_all">All of them</string>
+
+    <!-- Edit screen -->
+    <string name="cal_new">New entry</string>
+    <string name="cal_edit_title">Change entry</string>
+    <string name="cal_close">Close</string>
+    <string name="cal_save">Save</string>
+    <string name="cal_ok">OK</string>
+    <string name="cal_save_failed">The entry could not be saved.</string>
+    <string name="cal_title_label">Title</string>
+    <string name="cal_kind_event">Event</string>
+    <string name="cal_kind_task">Task</string>
+    <string name="cal_calendar">Calendar</string>
+    <string name="cal_all_day_switch">All day</string>
+    <string name="cal_starts">Starts</string>
+    <string name="cal_ends">Ends</string>
+    <string name="cal_due">Due</string>
+    <string name="cal_repeat">Repeat</string>
+    <string name="cal_repeat_never">Never</string>
+    <string name="cal_repeat_locked">Repeats (cannot be changed here)</string>
+    <string name="cal_repeat_ends">Ends</string>
+    <string name="cal_ends_never">Never</string>
+    <string name="cal_ends_on_date">On a date</string>
+    <string name="cal_ends_after">After a number of times</string>
+    <string name="cal_repeat_count">Number of times</string>
+    <string name="cal_reminder">Reminder</string>
+    <string name="cal_reminder_none">None</string>
+    <plurals name="cal_reminders_locked">
+        <item quantity="one">%d reminder (cannot be changed here)</item>
+        <item quantity="other">%d reminders (cannot be changed here)</item>
+    </plurals>
+    <string name="cal_place">Place</string>
+    <string name="cal_notes">Notes</string>
+    <string name="cal_read_only">You cannot change this entry.</string>
+    <string name="cal_no_calendar">There is no calendar here that you can add to.</string>
+    <string name="cal_discard_title">Discard your changes?</string>
+    <string name="cal_discard_text">What you changed will be lost.</string>
+    <string name="cal_discard">Discard</string>
+    <string name="cal_keep_editing">Keep editing</string>
+
+    <!-- Problems the form finds before it asks the server -->
+    <string name="cal_problem_title">Give it a title.</string>
+    <string name="cal_problem_calendar">Choose a calendar.</string>
+    <string name="cal_problem_end">The end is before the start.</string>
+    <string name="cal_problem_until_missing">Choose the date the repeats end on.</string>
+    <string name="cal_problem_until">The repeats end before the first one starts.</string>
+    <string name="cal_problem_count">Enter how many times, from 1 to 999.</string>
+    <string name="cal_problem_weekday">Choose at least one weekday.</string>
+</resources>

@@ -92,6 +92,9 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     val events: Flow<ListEvent> get() = eventChannel.receiveAsFlow()
 
+    /** Kept here so that the place in the list survives a visit to the calendar or to a thread. */
+    val listState = androidx.compose.foundation.lazy.LazyListState()
+
     init {
         // One loader, so that a burst of changes costs one read and loads never overlap.
         viewModelScope.launch { reloads.receiveAsFlow().collect { load() } }
@@ -104,6 +107,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
                     false -> {
                         holdJob?.cancel()
                         stateFlow.value = MailListState()
+                        listState.requestScrollToItem(0)
                     }
                     null -> Unit
                 }
@@ -120,12 +124,14 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectFolder(mailboxId: String?) {
         stateFlow.update { it.fresh(selectedId = mailboxId, filter = ListFilter.ALL) }
+        listState.requestScrollToItem(0)
         reload()
     }
 
     fun selectFilter(filter: ListFilter) {
         if (stateFlow.value.filter == filter) return
         stateFlow.update { it.fresh(selectedId = it.selectedId, filter = filter) }
+        listState.requestScrollToItem(0)
         reload()
     }
 

@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -111,10 +110,12 @@ fun MailListScreen(
     onOpenDeliveryCheck: () -> Unit,
     onOpenSettings: () -> Unit,
     onCompose: (draftId: String) -> Unit,
+    bottomBar: @Composable () -> Unit,
+    appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val listState = rememberLazyListState()
+    val listState = vm.listState
     val snackbar = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -212,7 +213,13 @@ fun MailListScreen(
                     FilterChips(current?.let { folderName(it) }, state.filter, vm::selectFilter)
                 }
             },
-            snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = bottomBar,
+            snackbarHost = {
+                Column {
+                    SnackbarHost(snackbar)
+                    SnackbarHost(appSnackbar)
+                }
+            },
             floatingActionButton = {
                 // The primary container, a pen and a word, at the bottom right, as in the Inbox figure.
                 ExtendedFloatingActionButton(

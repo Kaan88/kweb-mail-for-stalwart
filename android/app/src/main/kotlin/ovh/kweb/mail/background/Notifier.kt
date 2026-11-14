@@ -61,6 +61,15 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
         updateSummary((activeMailIds().toSet() - androidId).size, groupKey())
     }
 
+    /**
+     * Removes a reminder's notification (the user opened it). The id comes from an intent the exported
+     * activity received: only ids in the reminders' own range are taken, never a mail notification or the
+     * service entry.
+     */
+    fun cancelReminder(androidId: Int) {
+        if (ReminderRules.isReminderId(androidId)) manager.cancel(androidId)
+    }
+
     /** Removes every notification of the app. The service entry stays while the service runs. */
     fun cancelAll() = manager.cancelAll()
 
@@ -68,7 +77,7 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
     fun showReminder(reminder: Reminder) {
         if (!settings.remindersEnabled) return
         val id = ReminderRules.notificationId(reminder.eventId, reminder.alertId)
-        val open = NotificationIntents.openApp(context, id, "reminder", reminder.eventId, EXTRA_EVENT_ID)
+        val open = NotificationIntents.openReminder(context, id, reminder)
         val notification = NotificationCompat.Builder(context, Channels.REMINDERS)
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(reminderTitle(reminder))
@@ -178,6 +187,12 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
 
         /** Extra of the intent that opens the app from a reminder: the event or task id (String). */
         const val EXTRA_EVENT_ID = "ovh.kweb.mail.extra.EVENT_ID"
+
+        /** Extra next to [EXTRA_EVENT_ID]: the occurrence of a repeating event the reminder is for (String, absent when it does not repeat). */
+        const val EXTRA_RECURRENCE_ID = "ovh.kweb.mail.extra.RECURRENCE_ID"
+
+        /** Extra next to [EXTRA_EVENT_ID]: the Android id of the reminder's notification (Int). */
+        const val EXTRA_REMINDER_ANDROID_ID = "ovh.kweb.mail.extra.REMINDER_ANDROID_ID"
 
         /** Ids below this are the app's own; the core keeps mail ids at or above it. */
         private const val FIRST_MAIL_ID = 1000
