@@ -241,12 +241,146 @@ pub struct Quota {
     pub limit: Option<u64>,
 }
 
+/// One of the user's calendars.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Calendar {
+    pub id: String,
+    pub name: String,
+    /// A CSS colour as the server has it ("#3a7bd5", "teal"); `None` when it has none.
+    pub color: Option<String>,
+    pub is_default: bool,
+    /// Whether its events are shown (the server's `isVisible`).
+    pub is_visible: bool,
+    /// The user may add and change events in it.
+    pub may_write: bool,
+}
+
+/// How often an event comes back.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Frequency {
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly,
+}
+
+/// A repeat rule the app can show and edit. A rule on the server that says more than this
+/// (several rules, by-month-day lists, exceptions) is kept as it is and reported as
+/// `EventDetail::has_complex_repeat`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepeatRule {
+    pub frequency: Frequency,
+    /// Every n-th day, week, month or year; 1 or more.
+    pub interval: u32,
+    /// For a weekly rule: the weekdays as "mo", "tu", "we", "th", "fr", "sa", "su". Empty means
+    /// the weekday of the start.
+    pub by_day: Vec<String>,
+    /// The last day it happens, as a local date "2026-12-31"; `None` when it has no end date.
+    pub until: Option<String>,
+    /// How many times it happens; `None` when it is not limited by count.
+    pub count: Option<u32>,
+}
+
+/// One entry of the agenda: an event, one occurrence of a repeating event, or a task.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Occurrence {
+    pub event_id: String,
+    /// Which occurrence of a repeating event this is; `None` for one that does not repeat.
+    pub recurrence_id: Option<String>,
+    pub calendar_id: String,
+    pub title: String,
+    pub location: String,
+    /// When it starts (a task: when it is due), Unix seconds. For an all-day entry and a
+    /// floating time this is that wall-clock time read in the zone the agenda was asked for.
+    pub starts_at: i64,
+    /// When it ends; equal to `starts_at` for a task or an entry without a length.
+    pub ends_at: i64,
+    pub all_day: bool,
+    pub is_task: bool,
+    /// A task that is done.
+    pub is_done: bool,
+    pub is_recurring: bool,
+    /// The user's answer when it is an invitation: "needs-action", "accepted", "tentative",
+    /// "declined". `None` when the user is not a participant.
+    pub my_status: Option<String>,
+}
+
+/// Someone invited to an event.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Participant {
+    pub name: String,
+    pub email: String,
+    /// "needs-action", "accepted", "tentative", "declined".
+    pub status: String,
+    pub is_organizer: bool,
+    pub is_me: bool,
+}
+
+/// What the user can set on an event or a task. Times are local to `time_zone`, as JSCalendar
+/// has them: the same form whether it is read or written.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EventInput {
+    pub calendar_id: String,
+    pub title: String,
+    pub location: String,
+    pub description: String,
+    /// Local date-time "2026-11-12T10:00:00" (a task: when it is due). For an all-day entry
+    /// the time is "00:00:00".
+    pub start: String,
+    /// IANA zone of `start`; `None` is a floating time.
+    pub time_zone: Option<String>,
+    /// Length in seconds; whole days for an all-day entry; 0 for a task.
+    pub duration_secs: u64,
+    pub all_day: bool,
+    pub is_task: bool,
+    pub repeat: Option<RepeatRule>,
+    /// Reminders, as minutes before the start.
+    pub alert_minutes: Vec<u32>,
+}
+
+/// An event or task in full, for its own screen and for editing; for one occurrence of a
+/// repeating event when [`Core::event`](crate::ffi::Core::event) was asked for it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EventDetail {
+    pub event_id: String,
+    /// What can be edited, as it is now.
+    pub input: EventInput,
+    pub is_done: bool,
+    pub participants: Vec<Participant>,
+    /// The user's own answer, as in [`Occurrence::my_status`].
+    pub my_status: Option<String>,
+    /// The repeat rule says more than [`RepeatRule`] can: `input.repeat` is `None`, the rule
+    /// is shown as "repeats" only, and saving leaves it untouched.
+    pub has_complex_repeat: bool,
+    /// The user may change or delete it.
+    pub may_write: bool,
+}
+
+/// The agenda of a span of time. The occurrences of a repeating event are worked out in the
+/// core from its rules: daily, weekly, monthly and yearly with `interval`, `count`, `until`,
+/// `byDay` (with an ordinal in a monthly or yearly rule), `byMonthDay`, `byMonth` and, monthly
+/// and yearly, `bySetPosition`. A series whose rule says more than that (`byYearDay`,
+/// `byWeekNo`, time parts, finer frequencies, another calendar, `skip`, a first day of the week
+/// other than Monday, or several rules one of which is such) is not guessed at: it shows only
+/// its first occurrence, and those an override changed or added, in every span.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Agenda {
+    /// By start time, all-day entries first within a day.
+    pub entries: Vec<Occurrence>,
+    /// The server could not be reached: this is what the cache holds for the span, which may
+    /// be incomplete or out of date.
+    pub from_cache: bool,
+}
+
 /// A calendar or task reminder the server fired. Times stay as the server gives them: the
 /// host has the time zone database and the user's locale, so it does the formatting.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Reminder {
     pub event_id: String,
     pub alert_id: String,
+    /// Which occurrence of a repeating event the alert is for, as the server named it; `None`
+    /// for one that does not repeat.
+    pub recurrence_id: Option<String>,
     /// A task (due time) and not an event (start time).
     pub is_task: bool,
     /// Empty when the details could not be fetched; the host then shows a generic text.

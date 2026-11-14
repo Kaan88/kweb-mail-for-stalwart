@@ -1,5 +1,7 @@
 use super::*;
-use crate::model::{Action, Address, Attachment, ListFilter, Mailbox, MessageBody, MessageHeader, ThreadRow};
+use crate::model::{
+    Action, Address, Attachment, Calendar, ListFilter, Mailbox, MessageBody, MessageHeader, Occurrence, ThreadRow,
+};
 
 const A: &str = "acc1";
 
@@ -883,9 +885,8 @@ fn migration_three_keeps_what_the_earlier_ones_stored() {
     )
     .unwrap();
 
-    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..3]).unwrap(), 1);
     let st = Store::init(conn).unwrap();
-    assert_eq!(st.schema_version().unwrap(), 3);
     assert_eq!(st.get_message(A, "m1").unwrap().unwrap().subject, "Hi");
     assert_eq!(st.outbox_pending(A).unwrap().len(), 1);
     assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
@@ -1196,4 +1197,157 @@ fn the_directory_is_due_until_a_refresh_worked_and_then_for_an_hour() {
     st.directory_done(start);
     assert!(!st.directory_due(start + Duration::from_secs(60)));
     assert!(st.directory_due(start + DIRECTORY_EVERY));
+}
+
+// ---- M5: calendars and the agenda ----
+
+fn calendar(id: &str, name: &str) -> Calendar {
+    Calendar {
+        id: id.into(),
+        name: name.into(),
+        color: Some("#3a7bd5".into()),
+        is_default: id == "c1",
+        is_visible: true,
+        may_write: true,
+    }
+}
+
+fn entry(event: &str, recurrence: Option<&str>, starts_at: i64, ends_at: i64) -> Occurrence {
+    Occurrence {
+        event_id: event.into(),
+        recurrence_id: recurrence.map(String::from),
+        calendar_id: "c1".into(),
+        title: format!("title {event}"),
+        location: String::new(),
+        starts_at,
+        ends_at,
+        all_day: false,
+        is_task: false,
+        is_done: false,
+        is_recurring: recurrence.is_some(),
+        my_status: None,
+    }
+}
+
+fn starts(entries: &[Occurrence]) -> Vec<(&str, Option<&str>)> {
+    let mut found: Vec<_> = entries.iter().map(|e| (e.event_id.as_str(), e.recurrence_id.as_deref())).collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn migration_four_keeps_what_the_earlier_ones_stored() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..3]).unwrap(), 3);
+    conn.execute_batch(
+        "INSERT INTO accounts VALUES ('acc1', 'https://x', 'kaan', 5);
+         INSERT INTO messages (account_id, id, thread_id, from_name, from_email, subject, preview, received_at,
+             is_unread, is_flagged, has_attachment, size, to_json)
+             VALUES ('acc1', 'm1', 't1', 'Ann', 'ann@x', 'Hi', 'p', 100, 1, 0, 0, 7, '[]');
+         INSERT INTO identities VALUES ('acc1', 0, '{\"id\":\"i1\",\"name\":\"K\",\"email\":\"k@x\",\"signature\":\"\"}');
+         INSERT INTO contacts VALUES ('acc1', 'ann@x', 'Ann', 0);
+         INSERT INTO sync_state VALUES ('acc1', 'Email', 's1');",
+    )
+    .unwrap();
+
+    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    let st = Store::init(conn).unwrap();
+    assert_eq!(st.schema_version().unwrap(), 4);
+    assert_eq!(st.get_message(A, "m1").unwrap().unwrap().subject, "Hi");
+    assert_eq!(st.identities_list(A).unwrap()[0].email, "k@x");
+    assert_eq!(st.contacts_list(A).unwrap().len(), 1);
+    assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
+    // The new tables are there, empty and usable.
+    assert!(st.calendars_list(A).unwrap().is_empty() && st.agenda_list(A, 0, i64::MAX).unwrap().is_empty());
+    st.calendars_replace(A, &[calendar("c1", "Personal")]).unwrap();
+    st.agenda_replace(A, 0, 100, &[entry("e1", None, 10, 20)]).unwrap();
+    assert_eq!((st.calendars_list(A).unwrap().len(), st.agenda_list(A, 0, 100).unwrap().len()), (1, 1));
+}
+
+#[test]
+fn calendars_come_back_as_stored_and_are_replaced_whole() {
+    let st = s();
+    assert!(st.calendars_list(A).unwrap().is_empty());
+    let first = [calendar("c2", "Work"), calendar("c1", "Personal")];
+    st.calendars_replace(A, &first).unwrap();
+    assert_eq!(st.calendars_list(A).unwrap(), first, "the server's order is kept");
+    st.calendars_replace(A, &[calendar("c3", "New")]).unwrap();
+    assert_eq!(st.calendars_list(A).unwrap(), [calendar("c3", "New")]);
+    st.calendars_replace(A, &[]).unwrap();
+    assert!(st.calendars_list(A).unwrap().is_empty());
+    // Another account has its own list.
+    st.save_account(&account("acc2")).unwrap();
+    st.calendars_replace("acc2", &[calendar("c9", "Other")]).unwrap();
+    st.calendars_replace(A, &[calendar("c1", "Personal")]).unwrap();
+    assert_eq!(st.calendars_list("acc2").unwrap()[0].id, "c9");
+}
+
+#[test]
+fn the_agenda_cache_answers_a_span_with_what_overlaps_it() {
+    let st = s();
+    let all = [
+        entry("before", None, 10, 20),
+        entry("starts-before", None, 90, 150),
+        entry("inside", None, 120, 130),
+        entry("point-at-start", None, 100, 100),
+        entry("point-at-end", None, 200, 200),
+        entry("ends-at-start", None, 50, 100),
+        entry("series", Some("2026-11-16T08:00:00"), 150, 160),
+        entry("series", Some("2026-11-17T08:00:00"), 250, 260),
+    ];
+    st.agenda_replace(A, 0, 1000, &all).unwrap();
+    let found = st.agenda_list(A, 100, 200).unwrap();
+    assert_eq!(
+        starts(&found),
+        [("inside", None), ("point-at-start", None), ("series", Some("2026-11-16T08:00:00")), ("starts-before", None)]
+    );
+    assert_eq!(found.iter().find(|e| e.event_id == "inside").unwrap(), &all[2], "as it was written");
+}
+
+#[test]
+fn replacing_a_span_drops_what_the_server_no_longer_has_there() {
+    let st = s();
+    st.agenda_replace(
+        A,
+        0,
+        1000,
+        &[entry("a", None, 100, 200), entry("b", None, 300, 400), entry("c", None, 800, 900)],
+    )
+    .unwrap();
+    // The server now has a changed `a`, no `b`, and a new `d`; `c` is outside the span asked for.
+    st.agenda_replace(A, 0, 500, &[entry("a", None, 110, 210), entry("d", None, 450, 460)]).unwrap();
+    let found = st.agenda_list(A, 0, 1000).unwrap();
+    assert_eq!(starts(&found), [("a", None), ("c", None), ("d", None)]);
+    assert_eq!(found.iter().find(|e| e.event_id == "a").unwrap().starts_at, 110);
+    // An entry that began before the span and is still cached is replaced, not duplicated.
+    st.agenda_replace(A, 400, 600, &[entry("d", None, 450, 460)]).unwrap();
+    assert_eq!(st.agenda_list(A, 0, 1000).unwrap().len(), 3);
+}
+
+#[test]
+fn an_event_is_forgotten_with_all_its_occurrences() {
+    let st = s();
+    st.agenda_replace(
+        A,
+        0,
+        1000,
+        &[entry("series", Some("r1"), 100, 110), entry("series", Some("r2"), 200, 210), entry("plain", None, 300, 310)],
+    )
+    .unwrap();
+    st.agenda_forget_event(A, "series").unwrap();
+    assert_eq!(starts(&st.agenda_list(A, 0, 1000).unwrap()), [("plain", None)]);
+    st.agenda_forget_event(A, "never-cached").unwrap();
+    assert_eq!(st.agenda_list(A, 0, 1000).unwrap().len(), 1);
+}
+
+#[test]
+fn signing_out_takes_the_calendar_cache_with_it() {
+    let st = s();
+    st.calendars_replace(A, &[calendar("c1", "Personal")]).unwrap();
+    st.agenda_replace(A, 0, 100, &[entry("e1", None, 10, 20)]).unwrap();
+    st.delete_account(A).unwrap();
+    st.save_account(&account(A)).unwrap();
+    assert!(st.calendars_list(A).unwrap().is_empty());
+    assert!(st.agenda_list(A, 0, 100).unwrap().is_empty());
 }

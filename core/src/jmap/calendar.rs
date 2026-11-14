@@ -18,10 +18,6 @@ use crate::{model::Reminder, Error, Result};
 const CORE_CAPABILITY: &str = "urn:ietf:params:jmap:core";
 const CALENDARS_CAPABILITY: &str = "urn:ietf:params:jmap:calendars";
 
-/// Only what a reminder shows, so a long description or a big attendee list is not downloaded.
-const PROPERTIES: [&str; 8] =
-    ["@type", "title", "start", "due", "timeZone", "showWithoutTime", "locations", "recurrenceOverrides"];
-
 impl Connection {
     /// The details of the event or task an alert fired for. `recurrence_id` is the alert's own:
     /// for a recurring event it says which occurrence the alarm is about.
@@ -61,8 +57,9 @@ fn get_request(account_id: &str, event_id: &str) -> Value {
         "using": [CORE_CAPABILITY, CALENDARS_CAPABILITY],
         "methodCalls": [["CalendarEvent/get", {
             "accountId": account_id,
+            // No `properties`: Stalwart 1.1 leaves some (`recurrenceRules`) out when properties are
+            // named, and a reminder for a moved occurrence needs the overrides to be there.
             "ids": [event_id],
-            "properties": PROPERTIES,
         }, "a"]]
     })
 }
@@ -108,6 +105,7 @@ fn reminder_from_event(event: &Value, event_id: &str, alert_id: &str, recurrence
     Reminder {
         event_id: event_id.to_string(),
         alert_id: alert_id.to_string(),
+        recurrence_id: recurrence_id.map(str::to_string),
         is_task,
         title: text("title").unwrap_or_default().to_string(),
         location: first_location(event, patch),
@@ -157,7 +155,7 @@ fn split_utc(at: &str, zone: Option<&str>) -> (Option<String>, Option<String>) {
 
 /// The name of the first location that has one. An override can replace the whole `locations`
 /// map or patch single entries with JSON-pointer keys (`locations/l1/name`).
-fn first_location(event: &Value, patch: Option<&Value>) -> String {
+pub(super) fn first_location(event: &Value, patch: Option<&Value>) -> String {
     let own = patch.and_then(|p| p.get("locations")).or(event.get("locations"));
     let mut places: BTreeMap<String, Value> = match own {
         Some(Value::Object(map)) => map.iter().map(|(id, l)| (id.clone(), l.clone())).collect(),
@@ -322,12 +320,12 @@ mod tests {
     }
 
     #[test]
-    fn request_names_the_properties_and_the_account() {
+    fn request_asks_for_the_whole_event_in_the_right_account() {
         let body = get_request("acc", "ev9");
         let call = &body["methodCalls"][0];
         assert_eq!(call[0], "CalendarEvent/get");
         assert_eq!(call[1]["accountId"], "acc");
         assert_eq!(call[1]["ids"], json!(["ev9"]));
-        assert!(call[1]["properties"].as_array().unwrap().contains(&json!("recurrenceOverrides")));
+        assert!(call[1].get("properties").is_none(), "the real server leaves the overrides out when asked by name");
     }
 }

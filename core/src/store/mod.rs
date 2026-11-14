@@ -6,6 +6,7 @@
 
 mod bodies;
 mod bookkeeping;
+mod calendar;
 mod drafts;
 mod mailboxes;
 mod messages;

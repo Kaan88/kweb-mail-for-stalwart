@@ -163,6 +163,30 @@ pub(super) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, email)
     );
     ",
+    // 4: M5 (calendar). The calendar list and the agenda entries, so both can be shown offline.
+    "
+    -- The calendars in the server's order. A `Calendar` as JSON.
+    CREATE TABLE calendars (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        position   INTEGER NOT NULL,
+        calendar   TEXT NOT NULL,
+        PRIMARY KEY (account_id, position)
+    );
+
+    -- What the agenda last showed: one row per event or occurrence (`recurrence_id` is '' for
+    -- an event that does not repeat), the `Occurrence` as JSON. `starts_at` and `ends_at` are
+    -- columns so a span can be answered without reading every row.
+    CREATE TABLE agenda_entries (
+        account_id    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        event_id      TEXT NOT NULL,
+        recurrence_id TEXT NOT NULL,
+        starts_at     INTEGER NOT NULL,
+        ends_at       INTEGER NOT NULL,
+        occurrence    TEXT NOT NULL,
+        PRIMARY KEY (account_id, event_id, recurrence_id)
+    );
+    CREATE INDEX agenda_entries_by_start ON agenda_entries (account_id, starts_at);
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

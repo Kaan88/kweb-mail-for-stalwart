@@ -28,7 +28,7 @@ const QUOTA_CAPABILITY: &str = "urn:ietf:params:jmap:quota";
 const CONTACT_LIMIT: usize = 2000;
 
 /// The id a request gives the one object it creates.
-const CREATE_ID: &str = "new";
+pub(super) const CREATE_ID: &str = "new";
 
 /// What the server says about the copy of a message it holds.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -64,7 +64,7 @@ impl Connection {
 
     /// The account that holds what `capability` is about; the mail account when the session
     /// names none.
-    fn account_for(&self, capability: &str) -> String {
+    pub(super) fn account_for(&self, capability: &str) -> String {
         let session = self.client.session();
         let named = session.primary_accounts().find(|(c, _)| c.as_str() == capability);
         named.map_or_else(|| self.account_id.clone(), |(_, account)| account.clone())
@@ -73,7 +73,7 @@ impl Connection {
     /// One request with these method calls. Returns every response in order, `(method, arguments)`:
     /// a method such as `EmailSubmission/set` may add responses of its own (`Email/set`). A
     /// method that failed as a whole is an error here.
-    async fn call(&self, capabilities: &[&str], calls: &[(&str, Value)]) -> Result<Vec<(String, Value)>> {
+    pub(super) async fn call(&self, capabilities: &[&str], calls: &[(&str, Value)]) -> Result<Vec<(String, Value)>> {
         let what = calls.first().map_or("request", |(name, _)| name);
         let mut using = vec![CORE_CAPABILITY];
         using.extend_from_slice(capabilities);
@@ -320,11 +320,12 @@ fn method_error(what: &str, args: &Value) -> Error {
     let detail = args["description"].as_str().filter(|d| !d.is_empty()).unwrap_or(kind);
     match kind {
         "forbidden" | "invalidArguments" | "requestTooLarge" => Error::invalid(format!("{what}: {detail}")),
+        "stateMismatch" => super::errors::state_mismatch(format!("{what}: {detail}")),
         _ => Error::temporary(format!("{what} failed: {detail}")),
     }
 }
 
-fn response<'a>(responses: &'a [(String, Value)], name: &str) -> Result<&'a Value> {
+pub(super) fn response<'a>(responses: &'a [(String, Value)], name: &str) -> Result<&'a Value> {
     responses
         .iter()
         .find(|(n, _)| n == name)
@@ -349,7 +350,7 @@ const REFUSED_FOR_GOOD: [&str; 12] = [
 ];
 
 /// A SetError object. The text is the server's own words, for the user to read.
-fn set_error(e: &Value) -> Error {
+pub(super) fn set_error(e: &Value) -> Error {
     let kind = e["type"].as_str().unwrap_or("unknown");
     let detail = e["description"].as_str().filter(|d| !d.is_empty()).unwrap_or(kind);
     if REFUSED_FOR_GOOD.contains(&kind) {
@@ -365,7 +366,7 @@ fn not_created_kind(set: &Value) -> Option<&str> {
 }
 
 /// The id of the one object a `/set` created, or why it did not.
-fn created_id(set: &Value) -> Result<String> {
+pub(super) fn created_id(set: &Value) -> Result<String> {
     if let Some(id) = set["created"][CREATE_ID]["id"].as_str() {
         return Ok(id.to_string());
     }

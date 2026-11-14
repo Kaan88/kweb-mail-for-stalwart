@@ -18,6 +18,8 @@ Usage:
   kweb archive <message-id>   move a message to Archive
   kweb delete <message-id>    move a message to Trash
   kweb destroy <message-id>   delete a message for good
+  kweb agenda [days]          show events and tasks for the next days (default 7), in $TZ or UTC
+  kweb calendars              list calendars
   kweb identities             list the addresses you can send as
   kweb quota                  show storage use and limits
   kweb send <to> <subject> <text>
@@ -32,6 +34,9 @@ WARNING: secrets.json holds the OAuth refresh token in plain text. kweb is a
 developer tool; do not use it with an account you cannot afford to lose access to.";
 
 pub const DEFAULT_INBOX_COUNT: u32 = 20;
+pub const DEFAULT_AGENDA_DAYS: u32 = 7;
+/// The longest span the server answers for (a year).
+pub const MAX_AGENDA_DAYS: u32 = 365;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -48,6 +53,8 @@ pub enum Command {
     Archive { id: String },
     Delete { id: String },
     Destroy { id: String },
+    Agenda { days: u32 },
+    Calendars,
     Identities,
     Quota,
     Send { to: String, subject: String, text: String },
@@ -65,6 +72,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "mailboxes" => no_args(rest, Command::Mailboxes),
         "watch" => no_args(rest, Command::Watch),
         "sign-out" => no_args(rest, Command::SignOut),
+        "calendars" => no_args(rest, Command::Calendars),
+        "agenda" => agenda(rest),
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
         "send" => send(rest),
@@ -113,6 +122,17 @@ fn send(rest: &[String]) -> Result<Command, String> {
         [_, _, _] => Err("send needs a <to> address".into()),
         [_, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
         _ => Err("send needs <to> <subject> <text>".into()),
+    }
+}
+
+fn agenda(rest: &[String]) -> Result<Command, String> {
+    match rest {
+        [] => Ok(Command::Agenda { days: DEFAULT_AGENDA_DAYS }),
+        [n] => match n.parse::<u32>() {
+            Ok(days) if (1..=MAX_AGENDA_DAYS).contains(&days) => Ok(Command::Agenda { days }),
+            _ => Err(format!("agenda needs a number of days from 1 to {MAX_AGENDA_DAYS}, not '{n}'")),
+        },
+        [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
     }
 }
 
@@ -221,6 +241,19 @@ mod tests {
         assert!(p(&["send", "bo@example.test", "Hi"]).is_err());
         assert!(p(&["send", "a", "b", "c", "d"]).is_err());
         assert!(p(&["send", " ", "b", "c"]).is_err());
+    }
+
+    #[test]
+    fn agenda_days_and_calendars() {
+        assert_eq!(p(&["agenda"]), Ok(Command::Agenda { days: 7 }));
+        assert_eq!(p(&["agenda", "30"]), Ok(Command::Agenda { days: 30 }));
+        assert_eq!(p(&["agenda", "365"]), Ok(Command::Agenda { days: 365 }));
+        assert!(p(&["agenda", "0"]).is_err());
+        assert!(p(&["agenda", "366"]).is_err());
+        assert!(p(&["agenda", "x"]).is_err());
+        assert!(p(&["agenda", "1", "2"]).is_err());
+        assert_eq!(p(&["calendars"]), Ok(Command::Calendars));
+        assert!(p(&["calendars", "x"]).is_err());
     }
 
     #[test]

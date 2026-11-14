@@ -534,6 +534,7 @@ async fn an_alert_arrives_with_title_start_zone_and_location() {
         [Reminder {
             event_id: id,
             alert_id: "al1".into(),
+            recurrence_id: None,
             is_task: false,
             title: "Dentist".into(),
             location: "Clinic on Main St".into(),
@@ -561,6 +562,8 @@ async fn an_alert_picks_the_occurrence_and_a_task_its_due_time() {
 
     let mut got = r.wait_reminders(2).await;
     got.sort_by(|a, b| a.alert_id.cmp(&b.alert_id));
+    assert_eq!(got[0].recurrence_id.as_deref(), Some("2026-11-11T10:00:00"));
+    assert_eq!(got[1].recurrence_id, None);
     assert_eq!(got[0].local_start.as_deref(), Some("2026-11-11T11:15:00"));
     assert_eq!(got[0].time_zone.as_deref(), Some("Europe/Istanbul"));
     assert!(got[1].is_task);

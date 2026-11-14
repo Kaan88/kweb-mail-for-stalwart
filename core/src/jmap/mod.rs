@@ -8,8 +8,12 @@
 //! arrive as `Error::Temporary`; every other network or server problem does too.
 
 mod calendar;
+mod calendars;
+mod clock;
 mod convert;
 mod errors;
+mod jscal;
+mod recur;
 mod send;
 
 use std::{io::Write, pin::Pin, time::Duration};
@@ -37,6 +41,7 @@ use convert::{
 };
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_unauthorized};
+pub use jscal::{check_span, sort as sort_agenda};
 pub use send::{CopyState, HeaderIds, Uploaded};
 
 const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
@@ -97,6 +102,8 @@ pub struct Connection {
     /// For blob downloads, which may take long: see [`download_http`].
     downloads: reqwest::Client,
     account_id: String,
+    /// The longest span the server expands, in seconds; read from the session when first needed.
+    calendar_span: tokio::sync::OnceCell<u64>,
 }
 
 impl Connection {
@@ -121,7 +128,7 @@ impl Connection {
         let http = plain_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
         let downloads =
             download_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
-        Ok(Connection { client, http, downloads, account_id })
+        Ok(Connection { client, http, downloads, account_id, calendar_span: tokio::sync::OnceCell::new() })
     }
 
     /// The primary mail account.

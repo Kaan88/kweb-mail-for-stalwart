@@ -278,6 +278,7 @@ fn bare_reminder(event_id: String, alert_id: String) -> Reminder {
     Reminder {
         event_id,
         alert_id,
+        recurrence_id: None,
         is_task: false,
         title: String::new(),
         location: String::new(),

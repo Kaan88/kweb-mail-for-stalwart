@@ -276,6 +276,38 @@ impl MockServer {
         assert!(self.shared.calendar.lock().unwrap().remove(id), "no event '{id}'");
     }
 
+    /// An event as the server has it now.
+    pub fn event(&self, id: &str) -> Option<Value> {
+        self.shared.calendar.lock().unwrap().event(id)
+    }
+
+    /// Every event, in the order they were made.
+    pub fn events(&self) -> Vec<Value> {
+        self.shared.calendar.lock().unwrap().events()
+    }
+
+    /// Another calendar (the first, `cal1` "Personal", is there from the start). One that is
+    /// not `visible` has `isVisible` false; one that is not `writable` has no write rights.
+    pub fn add_calendar(&self, id: &str, name: &str, visible: bool, writable: bool) {
+        self.shared.calendar.lock().unwrap().add_calendar(id, name, visible, writable);
+    }
+
+    /// The addresses `ParticipantIdentity/get` gives for the user (default: the sign-in name).
+    pub fn set_calendar_addresses(&self, addresses: &[&str]) {
+        self.shared.calendar.lock().unwrap().set_addresses(addresses);
+    }
+
+    /// The `maxExpandedQueryDuration` the session states (default `P52W1D`, which is what
+    /// Stalwart says); `None` leaves it out.
+    pub fn set_calendar_max_span(&self, span: Option<&str>) {
+        self.shared.calendar.lock().unwrap().max_span = span.map(str::to_string);
+    }
+
+    /// The ids of the events a change asked the server to send scheduling messages for.
+    pub fn scheduled_events(&self) -> Vec<String> {
+        self.shared.calendar.lock().unwrap().scheduled.clone()
+    }
+
     /// The alarm fires: a `CalendarAlert` goes out on every open stream that asked for that
     /// type. The event need not exist (it may have been deleted since).
     pub fn fire_alert(&self, event_id: &str, alert_id: &str, recurrence_id: Option<&str>) {
@@ -288,6 +320,12 @@ impl MockServer {
             "alertId": alert_id,
         });
         let _ = self.shared.tx.send(StreamMsg::CalendarAlert { data });
+    }
+
+    /// Another client changes `property` of the event right after this client's next
+    /// `CalendarEvent/get` (each call queues one change): its write then finds the state moved.
+    pub fn change_event_after_next_get(&self, id: &str, property: &str, value: Value) {
+        self.shared.calendar.lock().unwrap().interfere.push_back((id.into(), property.into(), value));
     }
 
     /// Makes `CalendarEvent/get` slow, to show that nothing else waits for it.
@@ -679,7 +717,12 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     };
     let upload_limit = s.upload_limit.load(Ordering::SeqCst);
     let mut capabilities = json!({ core: core_caps, mail: {}, submission: {}, calendars: {} });
-    let mut account_capabilities = json!({ mail: mail_caps, submission: submission_caps, calendars: {} });
+    // Stalwart states the longest span it expands among the calendar account capabilities.
+    let calendar_caps = match s.calendar.lock().unwrap().max_span.clone() {
+        Some(span) => json!({ "maxExpandedQueryDuration": span, "maxCalendarsPerEvent": 10 }),
+        None => json!({}),
+    };
+    let mut account_capabilities = json!({ mail: mail_caps, submission: submission_caps, calendars: calendar_caps });
     let mut primary = json!({ mail: ACCOUNT_ID, submission: ACCOUNT_ID, calendars: ACCOUNT_ID });
     for (urn, on) in [("urn:ietf:params:jmap:contacts", contacts), ("urn:ietf:params:jmap:quota", quota)] {
         if on {
@@ -805,7 +848,11 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
 fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value)>, state::MethodError> {
     let one = |value: Value| vec![(name.to_string(), value)];
     match name {
-        "CalendarEvent/get" => s.calendar.lock().unwrap().get(args).map(one),
+        "Calendar/get"
+        | "ParticipantIdentity/get"
+        | "CalendarEvent/get"
+        | "CalendarEvent/query"
+        | "CalendarEvent/set" => s.calendar.lock().unwrap().call(name, args).map(one),
         "Identity/get" | "ContactCard/query" | "ContactCard/get" | "Quota/get" => {
             s.account.lock().unwrap().call(name, args).map(one)
         }

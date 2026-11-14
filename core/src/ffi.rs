@@ -21,10 +21,11 @@ use crate::{
     actions,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
     compose,
-    jmap::{is_unauthorized, Connection},
+    jmap::{self, is_unauthorized, Connection},
     model::{
-        Account, Action, Address, Attachment, ConnectionStatus, Draft, DraftKind, Identity, ListFilter, Mailbox,
-        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
+        Account, Action, Address, Agenda, Attachment, Calendar, ConnectionStatus, Draft, DraftKind, EventDetail,
+        EventInput, Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder,
+        SearchResult, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -743,6 +744,109 @@ impl Listener for Silent {
     fn notifications(&self, _: Plan) {}
     fn cache_changed(&self) {}
     fn reminder(&self, _: Reminder) {}
+}
+
+// ---- M5: calendar ----
+#[uniffi::export]
+impl Core {
+    /// The user's calendars (network; the cached list when the server cannot be reached).
+    pub fn calendars(&self) -> Result<Vec<Calendar>> {
+        let account_id = self.account_id()?;
+        match self.with_connection(|conn| async move { conn.calendars().await }) {
+            Ok(list) => {
+                self.store.calendars_replace(&account_id, &list)?;
+                Ok(list)
+            }
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => Err(e),
+            Err(e) => match self.store.calendars_list(&account_id)? {
+                // An empty cache says nothing: the list was never fetched, or the user has no calendar.
+                list if list.is_empty() => Err(e),
+                list => Ok(list),
+            },
+        }
+    }
+
+    /// Everything between `from` and `to` (Unix seconds, `to` exclusive) in the visible
+    /// calendars, repeating events expanded, tasks included (a task with no due date has no
+    /// place in time and is left out). `time_zone` is the IANA zone the phone is in: all-day
+    /// entries and floating times are placed in it. The answer is kept in the cache; when the
+    /// server cannot be reached the cache answers and `from_cache` is set (what it holds was
+    /// placed in the zone that was asked for at the time). A span that ends before it starts, an
+    /// unknown zone or a span longer than the server expands (a year) is `Error::Invalid`.
+    pub fn agenda(&self, from: i64, to: i64, time_zone: String) -> Result<Agenda> {
+        let account_id = self.account_id()?;
+        let zone = jmap::check_span(from, to, &time_zone)?;
+        match self.with_connection(|conn| async move { conn.agenda(from, to, zone).await }) {
+            Ok((calendars, entries)) => {
+                self.store.calendars_replace(&account_id, &calendars)?;
+                self.store.agenda_replace(&account_id, from, to, &entries)?;
+                Ok(Agenda { entries, from_cache: false })
+            }
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => Err(e),
+            Err(_) => {
+                let mut entries = self.store.agenda_list(&account_id, from, to)?;
+                jmap::sort_agenda(&mut entries, zone);
+                Ok(Agenda { entries, from_cache: true })
+            }
+        }
+    }
+
+    /// One event or task in full (network). With `recurrence_id` (that of the [`Occurrence`]) it
+    /// is that occurrence of a repeating event: the start (a task: due time), length, title,
+    /// place, description and the user's answer as the agenda shows them, an override applied;
+    /// `input.repeat` and the rest are the series'. An occurrence the series does not have, or
+    /// that is excluded, is `Error::Invalid`.
+    pub fn event(&self, event_id: String, recurrence_id: Option<String>) -> Result<EventDetail> {
+        let (id, recurrence) = (&event_id, recurrence_id.as_deref());
+        self.with_connection(|conn| async move { conn.event_detail(id, recurrence).await })
+    }
+
+    /// Creates an event or task (`event_id` is `None`) or changes one, the whole series when
+    /// it repeats (network). Returns its id. A title that is blank, a start that is not a
+    /// local date-time, an unknown zone, an all-day entry that is not whole days from
+    /// midnight, a repeat rule that makes no sense or a calendar that is unknown or cannot be
+    /// written is `Error::Invalid` with a message the user can read; a value the user did not change
+    /// is not checked again. Moving the start of a repeating event moves its changed and deleted
+    /// occurrences with it, and an event in several calendars stays in the others when its
+    /// calendar is changed. An event someone else changed while it was being saved is read again
+    /// once; a second clash is `Error::Temporary`. What the app cannot edit
+    /// (participants, a complex repeat rule, other properties) is left as it is on the server.
+    /// A task has no length; its `start` is its due time, empty for a task with no due date.
+    pub fn save_event(&self, event_id: Option<String>, input: EventInput) -> Result<String> {
+        let account_id = self.account_id()?;
+        let (id, input) = (event_id.as_deref(), &input);
+        let saved = self.with_connection(|conn| async move { conn.save_event(id, input).await })?;
+        self.store.agenda_forget_event(&account_id, &saved)?;
+        Ok(saved)
+    }
+
+    /// Deletes an event or task: the whole series, or with `recurrence_id` (the `recurrence_id`
+    /// of the [`Occurrence`]) that one occurrence only (network). Nobody is told: an invitation
+    /// declined with [`Core::respond_to_event`] is.
+    pub fn delete_event(&self, event_id: String, recurrence_id: Option<String>) -> Result<()> {
+        let account_id = self.account_id()?;
+        let (id, recurrence) = (&event_id, recurrence_id.as_deref());
+        self.with_connection(|conn| async move { conn.delete_event(id, recurrence).await })?;
+        self.store.agenda_forget_event(&account_id, &event_id)
+    }
+
+    /// Answers an invitation: `status` is "accepted", "tentative" or "declined". The server
+    /// tells the organizer (network). An event the user is not invited to, or another answer,
+    /// is `Error::Invalid`.
+    pub fn respond_to_event(&self, event_id: String, status: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        let (id, status) = (&event_id, &status);
+        self.with_connection(|conn| async move { conn.respond_to_event(id, status).await })?;
+        self.store.agenda_forget_event(&account_id, &event_id)
+    }
+
+    /// Marks a task done or not done (network). An event is `Error::Invalid`.
+    pub fn set_task_done(&self, event_id: String, done: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        let id = &event_id;
+        self.with_connection(|conn| async move { conn.set_task_done(id, done).await })?;
+        self.store.agenda_forget_event(&account_id, &event_id)
+    }
 }
 
 #[cfg(test)]

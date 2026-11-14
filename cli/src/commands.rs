@@ -6,7 +6,8 @@ use std::{process, sync::Arc, thread};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{
-        Account, Action, Address, ConnectionStatus, DraftKind, Identity, MessageBody, MessageHeader, Quota, Reminder,
+        Account, Action, Address, Calendar, ConnectionStatus, DraftKind, Identity, MessageBody, MessageHeader,
+        Occurrence, Quota, Reminder,
     },
     notify::Plan,
     push::Listener,
@@ -29,6 +30,8 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Archive { id } => act(core, Action::Archive { message_id: id }, "archived"),
         Command::Delete { id } => act(core, Action::Delete { message_id: id }, "moved to Trash"),
         Command::Destroy { id } => act(core, Action::Destroy { message_id: id }, "destroyed"),
+        Command::Agenda { days } => agenda(core, days),
+        Command::Calendars => calendars(core),
         Command::Identities => identities(core),
         Command::Quota => quota(core),
         Command::Send { to, subject, text } => send(core, to, subject, text),
@@ -256,6 +259,76 @@ fn act(core: &Core, action: Action, done: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn calendars(core: &Core) -> Result<(), String> {
+    let list = core.calendars().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        println!("No calendars.");
+    }
+    for c in &list {
+        println!("{}", calendar_line(c));
+    }
+    Ok(())
+}
+
+/// `Personal  default  shown  writable  #3a7bd5  [id]`
+fn calendar_line(c: &Calendar) -> String {
+    let flags = [
+        if c.is_default { "default" } else { "-" },
+        if c.is_visible { "shown" } else { "hidden" },
+        if c.may_write { "writable" } else { "read-only" },
+    ];
+    let color = c.color.as_deref().map_or_else(|| "-".to_string(), one_line);
+    format!("{}  {}  {}  [{}]", one_line(&c.name), flags.join("  "), color, one_line(&c.id))
+}
+
+fn agenda(core: &Core, days: u32) -> Result<(), String> {
+    let zone = timefmt::zone_from_env(std::env::var("TZ").ok().as_deref());
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+    let (from, to) = timefmt::span(now.as_secs() as i64, days, zone);
+    let agenda = core.agenda(from, to, zone.name().to_string()).map_err(|e| e.to_string())?;
+    if agenda.from_cache {
+        println!("(offline: this is what the cache holds, and may be incomplete)");
+    }
+    if agenda.entries.is_empty() {
+        println!("Nothing in the next {days} days.");
+    }
+    let mut last_day = String::new();
+    for entry in &agenda.entries {
+        let day = timefmt::day(entry.starts_at, zone);
+        if day != last_day {
+            println!("{day}");
+            last_day = day;
+        }
+        println!("  {}", agenda_line(entry, zone));
+    }
+    Ok(())
+}
+
+/// `09:00-10:30  Title  @ Place  [id]`; an all-day entry says `all day`, a task `[ ]` or `[x]`
+/// and its due time. A repeating entry's id carries the occurrence after a `#`.
+fn agenda_line(o: &Occurrence, zone: chrono_tz::Tz) -> String {
+    let when = if o.all_day {
+        "all day".to_string()
+    } else if o.is_task {
+        format!("{} due", timefmt::clock(o.starts_at, zone))
+    } else if o.ends_at > o.starts_at {
+        format!("{}-{}", timefmt::clock(o.starts_at, zone), timefmt::clock(o.ends_at, zone))
+    } else {
+        timefmt::clock(o.starts_at, zone)
+    };
+    let task = match (o.is_task, o.is_done) {
+        (false, _) => "",
+        (true, false) => "[ ] ",
+        (true, true) => "[x] ",
+    };
+    let place = if o.location.is_empty() { String::new() } else { format!("  @ {}", one_line(&o.location)) };
+    let id = match &o.recurrence_id {
+        Some(r) => format!("{}#{}", one_line(&o.event_id), one_line(r)),
+        None => one_line(&o.event_id),
+    };
+    format!("{when}  {task}{}{place}  [{id}]", one_line(&o.title))
+}
+
 fn identities(core: &Core) -> Result<(), String> {
     core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
     let list = core.identities().map_err(|e| e.to_string())?;
@@ -403,6 +476,66 @@ mod tests {
         let line = message_line(&header("Ann", true));
         assert_eq!(line, "* 1970-01-01 00:00  Ann  Hello  [e7]");
         assert!(message_line(&header("Ann", false)).starts_with("  1970"));
+    }
+
+    fn occurrence() -> Occurrence {
+        Occurrence {
+            event_id: "ev1".into(),
+            recurrence_id: None,
+            calendar_id: "cal1".into(),
+            title: "Standup".into(),
+            location: String::new(),
+            starts_at: 1_767_427_200, // 2026-01-03 08:00 UTC
+            ends_at: 1_767_429_000,
+            all_day: false,
+            is_task: false,
+            is_done: false,
+            is_recurring: false,
+            my_status: None,
+        }
+    }
+
+    #[test]
+    fn an_agenda_line_shows_the_time_range_in_the_zone() {
+        let o = occurrence();
+        assert_eq!(agenda_line(&o, chrono_tz::Tz::UTC), "08:00-08:30  Standup  [ev1]");
+        assert_eq!(agenda_line(&o, chrono_tz::Tz::Europe__Berlin), "09:00-09:30  Standup  [ev1]");
+    }
+
+    #[test]
+    fn an_agenda_line_for_special_entries() {
+        let zone = chrono_tz::Tz::UTC;
+        let all_day = Occurrence { all_day: true, ..occurrence() };
+        assert_eq!(agenda_line(&all_day, zone), "all day  Standup  [ev1]");
+        let task = Occurrence { is_task: true, ends_at: 1_767_427_200, location: "Desk".into(), ..occurrence() };
+        assert_eq!(agenda_line(&task, zone), "08:00 due  [ ] Standup  @ Desk  [ev1]");
+        let done = Occurrence { is_done: true, ..task };
+        assert!(agenda_line(&done, zone).contains("[x] Standup"));
+        let point = Occurrence { ends_at: 1_767_427_200, ..occurrence() };
+        assert_eq!(agenda_line(&point, zone), "08:00  Standup  [ev1]");
+        let nth = Occurrence { recurrence_id: Some("2026-01-03T08:00:00".into()), ..occurrence() };
+        assert!(agenda_line(&nth, zone).ends_with("[ev1#2026-01-03T08:00:00]"));
+    }
+
+    #[test]
+    fn an_agenda_line_cannot_carry_control_characters() {
+        let o = Occurrence { title: "a\u{1b}[31mb\nc".into(), ..occurrence() };
+        assert!(!agenda_line(&o, chrono_tz::Tz::UTC).contains(['\u{1b}', '\n']));
+    }
+
+    #[test]
+    fn a_calendar_line_shows_its_flags() {
+        let c = Calendar {
+            id: "cal1".into(),
+            name: "Personal".into(),
+            color: Some("#3a7bd5".into()),
+            is_default: true,
+            is_visible: true,
+            may_write: true,
+        };
+        assert_eq!(calendar_line(&c), "Personal  default  shown  writable  #3a7bd5  [cal1]");
+        let other = Calendar { is_default: false, is_visible: false, may_write: false, color: None, ..c };
+        assert_eq!(calendar_line(&other), "Personal  -  hidden  read-only  -  [cal1]");
     }
 
     fn body() -> MessageBody {

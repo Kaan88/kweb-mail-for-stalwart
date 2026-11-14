@@ -14,6 +14,17 @@ use crate::Error;
 
 const UNAUTHORIZED_PREFIX: &str = "unauthorized: ";
 const CANNOT_CALCULATE_PREFIX: &str = "cannot calculate changes: ";
+const STATE_MISMATCH_PREFIX: &str = "state mismatch: ";
+
+/// A `/set` the server refused because `ifInState` no longer matched: the object was changed
+/// meanwhile. The caller reads it again and rebuilds the change.
+pub(super) fn is_state_mismatch(e: &Error) -> bool {
+    matches!(e, Error::Temporary { msg } if msg.starts_with(STATE_MISMATCH_PREFIX))
+}
+
+pub(super) fn state_mismatch(detail: impl std::fmt::Display) -> Error {
+    Error::temporary(format!("{STATE_MISMATCH_PREFIX}{detail}"))
+}
 
 /// The server refused the access token (HTTP 401). The caller renews the token and retries;
 /// this is not a reason to ask the user to sign in again.
