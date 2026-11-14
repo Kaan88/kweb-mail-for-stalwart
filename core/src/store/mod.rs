@@ -6,6 +6,7 @@
 
 mod bodies;
 mod bookkeeping;
+mod drafts;
 mod mailboxes;
 mod messages;
 mod outbox;
@@ -14,17 +15,21 @@ mod schema;
 mod tests;
 mod threads;
 
+pub use drafts::{DraftRow, DraftState, Threading, DIRECTORY_EVERY};
+
 use crate::model::Account;
 use crate::Result;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct Store {
     conn: Mutex<Connection>,
     /// See [`Store::pass_lock`].
     pass: tokio::sync::Mutex<()>,
+    /// When the identities and the address book were last fetched by this process.
+    directory: Mutex<Option<Instant>>,
 }
 
 impl Store {
@@ -53,7 +58,7 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&mut conn, schema::MIGRATIONS)?;
-        Ok(Store { conn: Mutex::new(conn), pass: tokio::sync::Mutex::new(()) })
+        Ok(Store { conn: Mutex::new(conn), pass: tokio::sync::Mutex::new(()), directory: Mutex::new(None) })
     }
 
     /// The schema version of the open database.

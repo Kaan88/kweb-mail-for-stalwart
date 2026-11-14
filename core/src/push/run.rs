@@ -17,6 +17,7 @@ use tokio::{
 
 use super::{now_secs, pass, Deps, Listener, Timing};
 use crate::{
+    compose,
     jmap::{is_unauthorized, Connection, Event, EventStream},
     model::{ConnectionStatus, Reminder},
     notify::OnScreen,
@@ -176,6 +177,8 @@ impl Runner {
         let (conn, store, running) = (conn.clone(), self.deps.store.clone(), self.prefetching.clone());
         let account_id = self.deps.account.id.clone();
         tokio::spawn(async move {
+            // The identities and the address book ride along: optional like the bodies.
+            compose::refresh_directory(&conn, &store, &account_id).await;
             let _ = sync::prefetch_bodies(&conn, &store, &account_id).await;
             running.store(false, Ordering::Release);
         });

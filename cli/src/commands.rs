@@ -5,7 +5,9 @@ use std::{process, sync::Arc, thread};
 
 use kweb_core::{
     ffi::{Core, Shade},
-    model::{Account, Action, Address, ConnectionStatus, MessageBody, MessageHeader, Reminder},
+    model::{
+        Account, Action, Address, ConnectionStatus, DraftKind, Identity, MessageBody, MessageHeader, Quota, Reminder,
+    },
     notify::Plan,
     push::Listener,
 };
@@ -27,6 +29,9 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Archive { id } => act(core, Action::Archive { message_id: id }, "archived"),
         Command::Delete { id } => act(core, Action::Delete { message_id: id }, "moved to Trash"),
         Command::Destroy { id } => act(core, Action::Destroy { message_id: id }, "destroyed"),
+        Command::Identities => identities(core),
+        Command::Quota => quota(core),
+        Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::SignOut => sign_out(core),
     }
 }
@@ -251,6 +256,79 @@ fn act(core: &Core, action: Action, done: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn identities(core: &Core) -> Result<(), String> {
+    core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
+    let list = core.identities().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        println!("The server lists no identities.");
+    }
+    for identity in &list {
+        println!("{}", identity_line(identity));
+    }
+    Ok(())
+}
+
+/// `[id] Name <address>`, with a note when there is a signature.
+fn identity_line(i: &Identity) -> String {
+    let who = addresses(&[Address { name: i.name.clone(), email: i.email.clone() }]);
+    let sig = if i.signature.is_empty() { "" } else { "  (has a signature)" };
+    format!("[{}] {}{sig}", one_line(&i.id), one_line(&who))
+}
+
+fn quota(core: &Core) -> Result<(), String> {
+    let list = core.quota().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        println!("The server reports no quota.");
+    }
+    for q in &list {
+        println!("{}", quota_line(q));
+    }
+    Ok(())
+}
+
+/// `Storage: 1.5 KB of 9.8 KB`, `Messages: 7`, with "no limit" when the server sets none.
+fn quota_line(q: &Quota) -> String {
+    let amount = |n: u64| if q.resource == "octets" { size_text(n) } else { n.to_string() };
+    match q.limit {
+        Some(limit) => format!("{}: {} of {}", one_line(&q.name), amount(q.used), amount(limit)),
+        None => format!("{}: {} (no limit)", one_line(&q.name), amount(q.used)),
+    }
+}
+
+/// Writes a plain message, sends it without the undo delay and runs one pass. Says whether
+/// the server took it, still has it, or sent it back.
+fn send(core: &Core, to: String, subject: String, text: String) -> Result<(), String> {
+    // A fresh cache does not know yet which addresses the user can send as: one check brings them.
+    if core.identities().map_err(|e| e.to_string())?.is_empty() {
+        core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
+    }
+    let mut draft = core.new_draft(DraftKind::New).map_err(|e| e.to_string())?;
+    draft.to = vec![Address { name: String::new(), email: to.trim().to_string() }];
+    draft.subject = subject;
+    // Above the signature the identity brings.
+    draft.body = format!("{text}{}", draft.body);
+    let id = draft.id.clone();
+    if let Err(e) = core.send(draft, 0) {
+        // Nothing was queued: do not leave the draft behind.
+        let _ = core.discard_draft(id);
+        return Err(e.to_string());
+    }
+    core.check_once(Shade::Unknown)
+        .map_err(|e| format!("{id} is queued but not sent yet (the next pass will send it): {e}"))?;
+    if let Some(back) = core.drafts().map_err(|e| e.to_string())?.into_iter().find(|d| d.id == id) {
+        return Err(format!(
+            "the server refused it: {}",
+            one_line(back.send_error.as_deref().unwrap_or("no reason given"))
+        ));
+    }
+    if core.pending_sends().map_err(|e| e.to_string())?.iter().any(|p| p.draft_id == id) {
+        println!("{id}: queued; the server did not take it yet.");
+    } else {
+        println!("{id}: sent.");
+    }
+    Ok(())
+}
+
 fn sign_out(core: &Core) -> Result<(), String> {
     let was_signed_in = core.account().is_some();
     core.sign_out().map_err(|e| e.to_string())?;
@@ -408,6 +486,29 @@ mod tests {
     #[test]
     fn the_address_stands_in_for_a_missing_name() {
         assert!(message_line(&header("", false)).contains("a@example.test"));
+    }
+
+    #[test]
+    fn identity_lines_show_the_address_and_a_signature_note() {
+        let mut i = Identity {
+            id: "i1".into(),
+            name: "Alice".into(),
+            email: "a@example.test".into(),
+            signature: String::new(),
+        };
+        assert_eq!(identity_line(&i), "[i1] Alice <a@example.test>");
+        i.signature = "Alice".into();
+        i.name.clear();
+        assert_eq!(identity_line(&i), "[i1] a@example.test  (has a signature)");
+    }
+
+    #[test]
+    fn quota_lines_use_bytes_for_octets_and_plain_counts_otherwise() {
+        let q = |resource: &str, used, limit| Quota { name: "Q".into(), resource: resource.into(), used, limit };
+        assert_eq!(quota_line(&q("octets", 1536, Some(10_240))), "Q: 1.5 KB of 10.0 KB");
+        assert_eq!(quota_line(&q("octets", 5, None)), "Q: 5 B (no limit)");
+        assert_eq!(quota_line(&q("count", 7, None)), "Q: 7 (no limit)");
+        assert_eq!(quota_line(&q("count", 7, Some(100))), "Q: 7 of 100");
     }
 
     #[test]

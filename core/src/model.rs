@@ -168,6 +168,79 @@ pub struct SearchResult {
     pub from_cache: bool,
 }
 
+/// An address the server lets the user send as (JMAP Identity).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Identity {
+    pub id: String,
+    /// The display name that goes with the address; may be empty.
+    pub name: String,
+    pub email: String,
+    /// Plain-text signature; empty when there is none.
+    pub signature: String,
+}
+
+/// What a new draft starts from.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum DraftKind {
+    /// An empty message.
+    New,
+    /// An answer to the sender of a message.
+    Reply { message_id: String },
+    /// An answer to the sender and everyone else on a message, without the user's own address.
+    ReplyAll { message_id: String },
+    /// A message passed on, with its attachments.
+    Forward { message_id: String },
+    /// A draft that is in the Drafts mailbox on the server (written here or elsewhere).
+    Existing { message_id: String },
+}
+
+/// A message being written. It lives in the cache from the first keystroke, so nothing typed
+/// is lost offline or when the app is killed; the core keeps a copy in Drafts on the server.
+/// The text is plain text: this version writes no HTML.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Draft {
+    /// Made by the core; stays the same for the life of the draft.
+    pub id: String,
+    /// Which [`Identity`] it is sent as.
+    pub identity_id: String,
+    pub to: Vec<Address>,
+    pub cc: Vec<Address>,
+    pub bcc: Vec<Address>,
+    pub subject: String,
+    /// The whole text, the quoted original of a reply included.
+    pub body: String,
+    pub attachments: Vec<Attachment>,
+    /// The message this answers or passes on. Sending marks it answered or forwarded.
+    pub source_message_id: Option<String>,
+    /// It passes the source on (Forward); otherwise it answers it.
+    pub is_forward: bool,
+    /// The id of its copy in Drafts on the server; `None` until it has been saved there.
+    pub server_id: Option<String>,
+    /// Why the last try to send it failed; `None` when it was never sent or the try worked.
+    pub send_error: Option<String>,
+    pub updated_at: i64,
+}
+
+/// A message the user sent that the core still holds back, so the send can be undone.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PendingSend {
+    pub draft_id: String,
+    pub subject: String,
+    /// When it goes to the server.
+    pub send_at: i64,
+}
+
+/// How much of one limit of the account is used (JMAP Quota).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Quota {
+    pub name: String,
+    /// What is counted: "octets" (bytes) or "count" (objects).
+    pub resource: String,
+    pub used: u64,
+    /// The limit; `None` when the server sets none.
+    pub limit: Option<u64>,
+}
+
 /// A calendar or task reminder the server fired. Times stay as the server gives them: the
 /// host has the time zone database and the user's locale, so it does the formatting.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

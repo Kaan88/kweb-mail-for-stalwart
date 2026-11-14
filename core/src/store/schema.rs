@@ -121,6 +121,48 @@ pub(super) const MIGRATIONS: &[&str] = &[
     -- One full resync, which fills `to_json` and the windows.
     DELETE FROM sync_state WHERE data_type = 'Email';
     ",
+    // 3: M4 (sending). Drafts, the sender identities and the address book.
+    "
+    -- `draft` is a `Draft` as JSON. `server_id` and `send_error` are columns because they are
+    -- looked up and changed on their own; the columns win over what the JSON says.
+    -- `state`: 'draft', 'sending' (held back until `send_at`), 'submitting' (handed to the
+    -- server, outcome not known yet). `dirty`: the server copy is not current. `rev` counts the
+    -- user's edits, so a pass that saved an older version does not mark the newer one saved.
+    -- `threading`: the In-Reply-To and References ids as JSON; NULL until they are looked up.
+    CREATE TABLE drafts (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        id         TEXT NOT NULL,
+        draft      TEXT NOT NULL,
+        server_id  TEXT,
+        send_error TEXT,
+        updated_at INTEGER NOT NULL,
+        state      TEXT NOT NULL DEFAULT 'draft',
+        send_at    INTEGER,
+        dirty      INTEGER NOT NULL DEFAULT 0,
+        discarded  INTEGER NOT NULL DEFAULT 0,
+        rev        INTEGER NOT NULL DEFAULT 0,
+        threading  TEXT,
+        PRIMARY KEY (account_id, id)
+    );
+    CREATE INDEX drafts_by_server_id ON drafts (account_id, server_id);
+
+    -- Sender identities in the server's order (the first is the default). An `Identity` as JSON.
+    CREATE TABLE identities (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        position   INTEGER NOT NULL,
+        identity   TEXT NOT NULL,
+        PRIMARY KEY (account_id, position)
+    );
+
+    -- The address book, one row per address, in the server's order.
+    CREATE TABLE contacts (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        email      TEXT NOT NULL COLLATE NOCASE,
+        name       TEXT NOT NULL,
+        position   INTEGER NOT NULL,
+        PRIMARY KEY (account_id, email)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

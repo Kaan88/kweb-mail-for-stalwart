@@ -167,6 +167,10 @@ pub struct Email {
     /// `(name, email)` pairs.
     pub to: Vec<(String, String)>,
     pub cc: Vec<(String, String)>,
+    pub bcc: Vec<(String, String)>,
+    /// Message-IDs without angle brackets.
+    pub in_reply_to: Vec<String>,
+    pub references: Vec<String>,
     /// `None`: the message is its own thread.
     pub thread: Option<String>,
     pub text: Option<String>,
@@ -285,7 +289,9 @@ impl Email {
         put("from", json!([{ "name": self.from_name, "email": self.from_email }]));
         put("to", addresses(&self.to));
         put("cc", addresses(&self.cc));
-        put("bcc", Value::Null);
+        put("bcc", addresses(&self.bcc));
+        put("inReplyTo", if self.in_reply_to.is_empty() { Value::Null } else { json!(self.in_reply_to) });
+        put("references", if self.references.is_empty() { Value::Null } else { json!(self.references) });
         put("replyTo", Value::Null);
         put("subject", json!(self.subject));
         put("preview", json!(self.preview));
@@ -362,7 +368,53 @@ pub struct Mail {
     pub push_enabled: bool,
     /// `Email/get` that asks for body values fails (see `MockServer::set_bodies_fail`).
     pub bodies_fail: bool,
+    /// Files put on the server through the upload endpoint: blob id to type and bytes.
+    uploads: BTreeMap<String, (String, Vec<u8>)>,
+    /// Every submission the server accepted, oldest first.
+    pub submissions: Vec<Submission>,
+    /// What `EmailSubmission/set` does instead of accepting.
+    pub refusal: Option<Refusal>,
     tx: broadcast::Sender<StreamMsg>,
+}
+
+/// A message the server was asked to send and did.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Submission {
+    pub id: String,
+    pub identity_id: String,
+    pub email_id: String,
+    /// The addresses it was sent to (To, Cc and Bcc).
+    pub recipients: Vec<String>,
+}
+
+/// How the mock refuses a submission.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Refusal {
+    /// A SetError of this type (`invalidEmail`, `tooLarge`, `forbiddenFrom`, ...): it will be
+    /// refused again.
+    Permanent(&'static str),
+    /// The method fails as a whole with `serverFail`: a retry may work.
+    Temporary,
+}
+
+/// A message as a test looks at it: what the server holds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MailView {
+    pub id: String,
+    pub from: (String, String),
+    pub to: Vec<(String, String)>,
+    pub cc: Vec<(String, String)>,
+    pub bcc: Vec<(String, String)>,
+    pub subject: String,
+    pub text: Option<String>,
+    pub in_reply_to: Vec<String>,
+    pub references: Vec<String>,
+    /// Sorted.
+    pub keywords: Vec<String>,
+    /// Roles of the mailboxes it is in, sorted.
+    pub roles: Vec<String>,
+    /// `(name, type, bytes)`.
+    pub files: Vec<(String, String, Vec<u8>)>,
 }
 
 fn set_of(ids: &[&str]) -> BTreeSet<String> {
@@ -399,6 +451,9 @@ impl Mail {
             dirty_mailbox: false,
             push_enabled: true,
             bodies_fail: false,
+            uploads: BTreeMap::new(),
+            submissions: Vec::new(),
+            refusal: None,
             tx,
         };
         let now = now_secs();
@@ -462,6 +517,9 @@ impl Mail {
                     from_email: from_email.into(),
                     to: vec![(to_name.into(), to_email.into())],
                     cc: Vec::new(),
+                    bcc: Vec::new(),
+                    in_reply_to: Vec::new(),
+                    references: Vec::new(),
                     thread: None,
                     text: None,
                     html: None,
@@ -495,7 +553,41 @@ impl Mail {
     /// The type and bytes of an attachment, by blob id.
     pub fn blob(&self, blob_id: &str) -> Option<(String, Vec<u8>)> {
         let all = self.emails.values().flat_map(|e| e.attachments.iter());
-        all.into_iter().find(|a| a.blob_id == blob_id).map(|a| (a.mime_type.clone(), a.bytes.clone()))
+        let attached = all.into_iter().find(|a| a.blob_id == blob_id).map(|a| (a.mime_type.clone(), a.bytes.clone()));
+        attached.or_else(|| self.uploads.get(blob_id).cloned())
+    }
+
+    /// Keeps an uploaded file and returns its blob id.
+    pub fn upload(&mut self, mime_type: &str, bytes: Vec<u8>) -> String {
+        let id = format!("up{}", self.uploads.len() + 1);
+        self.uploads.insert(id.clone(), (mime_type.to_string(), bytes));
+        id
+    }
+
+    /// What the server holds of a message.
+    pub fn view(&self, id: &str) -> Option<MailView> {
+        let e = self.emails.get(id)?;
+        let mut roles: Vec<String> = self
+            .mailboxes
+            .iter()
+            .filter(|m| e.mailbox_ids.contains(&m.id))
+            .filter_map(|m| m.role.map(str::to_string))
+            .collect();
+        roles.sort();
+        Some(MailView {
+            id: e.id.clone(),
+            from: (e.from_name.clone(), e.from_email.clone()),
+            to: e.to.clone(),
+            cc: e.cc.clone(),
+            bcc: e.bcc.clone(),
+            subject: e.subject.clone(),
+            text: e.text.clone(),
+            in_reply_to: e.in_reply_to.clone(),
+            references: e.references.clone(),
+            keywords: e.keywords.iter().cloned().collect(),
+            roles,
+            files: e.attachments.iter().map(|a| (a.name.clone(), a.mime_type.clone(), a.bytes.clone())).collect(),
+        })
     }
 
     pub fn mailbox_id_by_role(&self, role: &str) -> Option<String> {
@@ -569,6 +661,9 @@ impl Mail {
                 from_email: from_email.into(),
                 to: vec![("Alice Test".into(), USERNAME.into())],
                 cc: Vec::new(),
+                bcc: Vec::new(),
+                in_reply_to: Vec::new(),
+                references: Vec::new(),
                 thread: None,
                 text: None,
                 html: None,
@@ -916,15 +1011,19 @@ impl Mail {
         out.insert("oldState".into(), json!(old_state));
 
         if let Some(Value::Object(create)) = args.get("create") {
-            let not_created: Map<String, Value> = create
-                .keys()
-                .map(|k| {
-                    (
-                        k.clone(),
-                        json!({"type": "forbidden", "description": "the mock does not create mail through Email/set"}),
-                    )
-                })
-                .collect();
+            let mut created = Map::new();
+            let mut not_created = Map::new();
+            for (key, object) in create {
+                match self.create_email(object) {
+                    Ok(made) => {
+                        created.insert(key.clone(), made);
+                    }
+                    Err(e) => {
+                        not_created.insert(key.clone(), e);
+                    }
+                }
+            }
+            out.insert("created".into(), Value::Object(created));
             if !not_created.is_empty() {
                 out.insert("notCreated".into(), Value::Object(not_created));
             }
@@ -964,6 +1063,175 @@ impl Mail {
         }
         out.insert("newState".into(), json!(self.email_state()));
         Ok(Value::Object(out))
+    }
+
+    /// One entry of `create`: a message built from header properties, a body structure and
+    /// body values, the way a client writes a draft. The error is a JMAP SetError object.
+    fn create_email(&mut self, object: &Value) -> Result<Value, Value> {
+        let invalid =
+            |prop: &str, why: &str| json!({"type": "invalidProperties", "properties": [prop], "description": why});
+        let mailbox_ids = object.get("mailboxIds").and_then(flag_set).filter(|m| !m.is_empty());
+        let mailbox_ids = mailbox_ids.ok_or_else(|| invalid("mailboxIds", "a message must be in a mailbox"))?;
+        if let Some(bad) = mailbox_ids.iter().find(|m| !self.mailboxes.iter().any(|b| &b.id == *m)) {
+            return Err(invalid("mailboxIds", &format!("no mailbox '{bad}'")));
+        }
+        let keywords = match object.get("keywords") {
+            None | Some(Value::Null) => BTreeSet::new(),
+            Some(v) => flag_set(v).ok_or_else(|| invalid("keywords", "expected an object of true values"))?,
+        };
+        let list = |key: &str| -> Result<Vec<(String, String)>, Value> {
+            match object.get(key) {
+                None | Some(Value::Null) => Ok(Vec::new()),
+                Some(Value::Array(a)) => a
+                    .iter()
+                    .map(|x| {
+                        let email = x["email"].as_str().ok_or_else(|| invalid(key, "an address needs an email"))?;
+                        Ok((x["name"].as_str().unwrap_or_default().to_string(), email.to_string()))
+                    })
+                    .collect(),
+                Some(_) => Err(invalid(key, "expected a list of addresses")),
+            }
+        };
+        let ids = |key: &str| -> Vec<String> {
+            object[key].as_array().into_iter().flatten().filter_map(|s| s.as_str().map(str::to_string)).collect()
+        };
+        let mut from = list("from")?;
+        let (mut text, mut html, mut attachments) = (None, None, Vec::new());
+        let values = object.get("bodyValues").cloned().unwrap_or(Value::Null);
+        let mut parts = vec![object.get("bodyStructure").cloned().unwrap_or(Value::Null)];
+        while let Some(part) = parts.pop() {
+            parts.extend(part["subParts"].as_array().into_iter().flatten().rev().cloned());
+            let mime = part["type"].as_str().unwrap_or("text/plain");
+            if let Some(blob_id) = part["blobId"].as_str() {
+                let Some((_, bytes)) = self.blob(blob_id) else {
+                    return Err(json!({"type": "blobNotFound", "notFound": [blob_id]}));
+                };
+                attachments.push(Attachment {
+                    blob_id: blob_id.to_string(),
+                    name: part["name"].as_str().unwrap_or_default().to_string(),
+                    mime_type: mime.to_string(),
+                    cid: None,
+                    inline: false,
+                    bytes,
+                });
+            } else if let Some(value) = part["partId"].as_str().and_then(|p| values[p]["value"].as_str()) {
+                match mime {
+                    "text/html" => html = html.or(Some(value.to_string())),
+                    _ => text = text.or(Some(value.to_string())),
+                }
+            }
+        }
+        let (from_name, from_email) = if from.is_empty() { Default::default() } else { from.remove(0) };
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let id = format!("e{seq}");
+        let in_reply_to = ids("inReplyTo");
+        // An answer joins the thread of the message it answers.
+        let thread = in_reply_to.first().and_then(|mid| {
+            self.emails.values().find(|e| format!("{}@mock.example.test", e.id) == *mid).map(|e| e.thread_id())
+        });
+        let preview: String = text.iter().flat_map(|t| t.chars()).take(100).collect();
+        let email = Email {
+            id: id.clone(),
+            seq,
+            mailbox_ids: mailbox_ids.clone(),
+            keywords,
+            from_name,
+            from_email,
+            to: list("to")?,
+            cc: list("cc")?,
+            bcc: list("bcc")?,
+            in_reply_to,
+            references: ids("references"),
+            thread,
+            text,
+            html,
+            attachments,
+            subject: object["subject"].as_str().unwrap_or_default().to_string(),
+            preview,
+            received_at: now_secs(),
+        };
+        let (thread_id, size) = (email.thread_id(), 1200 + email.subject.len() + email.preview.len());
+        self.emails.insert(id.clone(), email);
+        self.log_email(&id, Kind::Created);
+        self.touch_mailboxes(mailbox_ids);
+        Ok(json!({ "id": id, "blobId": format!("b{id}"), "threadId": thread_id, "size": size }))
+    }
+
+    /// `EmailSubmission/set`: the answer, and the `Email/set` answer for `onSuccessUpdateEmail`
+    /// that a server adds after it. `identities` are the ids a message may be sent as.
+    pub fn submission_set(
+        &mut self,
+        args: &Value,
+        identities: &[String],
+    ) -> Result<(Value, Option<Value>), MethodError> {
+        if let Some(a) = args.get("accountId").and_then(Value::as_str) {
+            if a != ACCOUNT_ID {
+                return Err(merr("accountNotFound", format!("no account '{a}'")));
+            }
+        }
+        if self.refusal == Some(Refusal::Temporary) {
+            return Err(merr("serverFail", "the mock was told to fail submissions"));
+        }
+        let old_state = self.email_state();
+        let mut created = Map::new();
+        let mut not_created = Map::new();
+        let mut updated = Map::new();
+        for (key, object) in args.get("create").and_then(Value::as_object).into_iter().flatten() {
+            match self.accept_submission(object, identities) {
+                Ok(submission) => {
+                    created.insert(key.clone(), json!({ "id": submission.id, "undoStatus": "final" }));
+                    let patch = &args["onSuccessUpdateEmail"][format!("#{key}")];
+                    if !patch.is_null() {
+                        match self.apply_patch(&submission.email_id, patch) {
+                            Ok(()) => {
+                                updated.insert(submission.email_id.clone(), Value::Null);
+                            }
+                            Err(e) => return Err(merr("serverFail", format!("onSuccessUpdateEmail failed: {e}"))),
+                        }
+                    }
+                    self.submissions.push(submission);
+                }
+                Err(e) => {
+                    not_created.insert(key.clone(), e);
+                }
+            }
+        }
+        let mut out = json!({
+            "accountId": ACCOUNT_ID, "oldState": "ss0", "newState": "ss1", "created": created,
+        });
+        if !not_created.is_empty() {
+            out["notCreated"] = Value::Object(not_created);
+        }
+        let follow = (!updated.is_empty()).then(|| {
+            json!({ "accountId": ACCOUNT_ID, "oldState": old_state, "newState": self.email_state(), "updated": updated })
+        });
+        Ok((out, follow))
+    }
+
+    fn accept_submission(&self, object: &Value, identities: &[String]) -> Result<Submission, Value> {
+        if let Some(Refusal::Permanent(kind)) = &self.refusal {
+            return Err(json!({"type": kind, "description": format!("the mock refuses submissions: {kind}")}));
+        }
+        let invalid =
+            |prop: &str, why: &str| json!({"type": "invalidProperties", "properties": [prop], "description": why});
+        let identity_id = object["identityId"].as_str().unwrap_or_default();
+        if !identities.iter().any(|i| i == identity_id) {
+            return Err(invalid("identityId", "no such identity"));
+        }
+        let email_id = object["emailId"].as_str().unwrap_or_default();
+        let email = self.emails.get(email_id).ok_or_else(|| invalid("emailId", "no such message"))?;
+        let all = [&email.to, &email.cc, &email.bcc];
+        let recipients: Vec<String> = all.into_iter().flatten().map(|(_, e)| e.clone()).collect();
+        if recipients.is_empty() {
+            return Err(json!({"type": "noRecipients"}));
+        }
+        Ok(Submission {
+            id: format!("s{}", self.submissions.len() + 1),
+            identity_id: identity_id.to_string(),
+            email_id: email_id.to_string(),
+            recipients,
+        })
     }
 
     /// One entry of `update`: whole-property replacement and `a/b` patch paths. The error is

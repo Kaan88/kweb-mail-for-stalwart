@@ -2,8 +2,9 @@
 //!
 //! [`spawn`] holds a JMAP EventSource stream open and, whenever something may have changed
 //! (the session came up, the server pushed a state change, the stream was re-armed, the token
-//! was renewed, the host called [`Handle::poke`]), runs one *pass*: send queued actions, sync
-//! the cache, run the notification rule and tell the [`Listener`] what to post and cancel.
+//! was renewed, the host called [`Handle::poke`]), runs one *pass*: send queued actions, bring
+//! the drafts and the messages to send up to date, sync the cache, run the notification rule
+//! and tell the [`Listener`] what to post and cancel.
 //!
 //! [`check_once`] is the same pass without a stream, for the 15-minute job, the boot receiver
 //! and "the app came to the foreground".
@@ -23,6 +24,7 @@ use tokio::{sync::Notify, task::JoinHandle};
 use crate::{
     actions,
     auth::Tokens,
+    compose,
     jmap::{is_unauthorized, Connection},
     model::{Account, ConnectionStatus, Reminder},
     notify::{self, OnScreen, Plan},
@@ -107,7 +109,11 @@ async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     // and are optional. This call is the 15-minute job or the boot receiver, whose process may
     // not live long, so the prefetch is done here, within a budget (each batch that arrived is
     // kept), and nothing it does can fail the check.
-    let _ = tokio::time::timeout(PREFETCH_BUDGET, sync::prefetch_bodies(&conn, &deps.store, &deps.account.id)).await;
+    let extras = async {
+        compose::refresh_directory(&conn, &deps.store, &deps.account.id).await;
+        sync::prefetch_bodies(&conn, &deps.store, &deps.account.id).await
+    };
+    let _ = tokio::time::timeout(PREFETCH_BUDGET, extras).await;
     Ok(plan)
 }
 
@@ -115,7 +121,7 @@ async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
 ///
 /// A queued action that cannot be sent right now does not stop the sync and the rule: the
 /// user still has to see new mail. A 401 does stop it (the caller renews the token), and so
-/// does a lost grant.
+/// does a lost grant. Drafts and messages to send are handled last, on the same terms.
 async fn pass(deps: &Deps, conn: &Connection, on_screen: OnScreen<'_>) -> Result<Plan> {
     let _one_at_a_time = deps.store.pass_lock().lock().await;
     let id = &deps.account.id;
@@ -133,7 +139,17 @@ async fn pass(deps: &Deps, conn: &Connection, on_screen: OnScreen<'_>) -> Result
     if !plan.is_empty() {
         deps.listener.notifications(plan.clone());
     }
-    Ok(plan)
+    // The drafts and the messages to send come after the notifications are out: new mail is
+    // announced first, whatever the outgoing mail takes. Only a 401 or a lost grant comes back
+    // as an error.
+    let drafts = compose::flush(conn, &deps.store, id, now_secs()).await;
+    if drafts.changed {
+        deps.listener.cache_changed();
+    }
+    match drafts.error {
+        Some(e) => Err(e),
+        None => Ok(plan),
+    }
 }
 
 fn now_secs() -> i64 {

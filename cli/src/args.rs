@@ -18,6 +18,10 @@ Usage:
   kweb archive <message-id>   move a message to Archive
   kweb delete <message-id>    move a message to Trash
   kweb destroy <message-id>   delete a message for good
+  kweb identities             list the addresses you can send as
+  kweb quota                  show storage use and limits
+  kweb send <to> <subject> <text>
+                              send a plain message now (no undo delay)
   kweb sign-out               revoke the grant and wipe the cache
   kweb help                   this text
 
@@ -44,6 +48,9 @@ pub enum Command {
     Archive { id: String },
     Delete { id: String },
     Destroy { id: String },
+    Identities,
+    Quota,
+    Send { to: String, subject: String, text: String },
     SignOut,
 }
 
@@ -58,6 +65,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "mailboxes" => no_args(rest, Command::Mailboxes),
         "watch" => no_args(rest, Command::Watch),
         "sign-out" => no_args(rest, Command::SignOut),
+        "identities" => no_args(rest, Command::Identities),
+        "quota" => no_args(rest, Command::Quota),
+        "send" => send(rest),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
         "show" => one_arg(name, "message-id", rest).map(|id| Command::Show { id }),
         "search" => search(rest),
@@ -93,6 +103,17 @@ fn search(rest: &[String]) -> Result<Command, String> {
         return Err("search needs a <query>".into());
     }
     Ok(Command::Search { query })
+}
+
+fn send(rest: &[String]) -> Result<Command, String> {
+    match rest {
+        [to, subject, text] if !to.trim().is_empty() => {
+            Ok(Command::Send { to: to.clone(), subject: subject.clone(), text: text.clone() })
+        }
+        [_, _, _] => Err("send needs a <to> address".into()),
+        [_, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+        _ => Err("send needs <to> <subject> <text>".into()),
+    }
 }
 
 fn inbox(rest: &[String]) -> Result<Command, String> {
@@ -186,6 +207,20 @@ mod tests {
         assert!(p(&["inbox", "-n", "0"]).is_err());
         assert!(p(&["inbox", "-n", "x"]).is_err());
         assert!(p(&["inbox", "5"]).is_err());
+    }
+
+    #[test]
+    fn identities_quota_and_send() {
+        assert_eq!(p(&["identities"]), Ok(Command::Identities));
+        assert_eq!(p(&["quota"]), Ok(Command::Quota));
+        assert!(p(&["quota", "x"]).is_err());
+        assert_eq!(
+            p(&["send", "bo@example.test", "Hi", "Hello Bo"]),
+            Ok(Command::Send { to: "bo@example.test".into(), subject: "Hi".into(), text: "Hello Bo".into() })
+        );
+        assert!(p(&["send", "bo@example.test", "Hi"]).is_err());
+        assert!(p(&["send", "a", "b", "c", "d"]).is_err());
+        assert!(p(&["send", " ", "b", "c"]).is_err());
     }
 
     #[test]

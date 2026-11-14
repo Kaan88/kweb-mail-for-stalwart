@@ -12,7 +12,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, MutexGuard,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use tokio::{net::TcpListener, runtime::Runtime};
@@ -20,15 +20,16 @@ use tokio::{net::TcpListener, runtime::Runtime};
 use crate::{
     actions,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
+    compose,
     jmap::{is_unauthorized, Connection},
     model::{
-        Account, Action, ConnectionStatus, ListFilter, Mailbox, MessageBody, MessageHeader, Reminder, SearchResult,
-        ThreadRow,
+        Account, Action, Address, Attachment, ConnectionStatus, Draft, DraftKind, Identity, ListFilter, Mailbox,
+        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
     secrets::SecretStore,
-    store::Store,
+    store::{DraftState, Store, Threading},
     sync, Error, Result,
 };
 
@@ -77,7 +78,8 @@ pub struct Core {
     rt: Runtime,
     store: Arc<Store>,
     secrets: Arc<dyn SecretStore>,
-    inner: Mutex<Inner>,
+    /// Shared with the tasks that poke the live loop when a held-back message is due.
+    inner: Arc<Mutex<Inner>>,
 }
 
 #[uniffi::export]
@@ -97,7 +99,7 @@ impl Core {
                 .map(|client| Session { account, tokens: Tokens::new(client, secrets.clone()) }),
             None => None,
         };
-        Ok(Arc::new(Core { rt, store, secrets, inner: Mutex::new(Inner { session, ..Inner::default() }) }))
+        Ok(Arc::new(Core { rt, store, secrets, inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })) }))
     }
 
     /// The signed-in account. Does not block.
@@ -387,6 +389,171 @@ impl Core {
     }
 }
 
+// ---- M4: sending ----
+#[uniffi::export]
+impl Core {
+    /// The addresses the user can send as, from the cache (a pass keeps them current). The
+    /// first is the default.
+    pub fn identities(&self) -> Result<Vec<Identity>> {
+        self.store.identities_list(&self.account_id()?)
+    }
+
+    /// Starts a draft and stores it in the cache. A reply or forward is filled in from its
+    /// source: recipients, subject ("Re: ", "Fwd: " added once), the original quoted in the
+    /// text, and for a forward the original's attachments. The source's body is fetched when
+    /// the cache does not have it (network, only then). `Existing` opens a server draft.
+    pub fn new_draft(&self, kind: DraftKind) -> Result<Draft> {
+        let account_id = self.account_id()?;
+        let identities = self.store.identities_list(&account_id)?;
+        let (id, at) = (compose::new_id()?, now());
+        let draft = match kind {
+            DraftKind::New => compose::blank(&identities, id, at),
+            DraftKind::Reply { message_id } => {
+                let (header, body) = self.source(&account_id, &message_id)?;
+                compose::answer(false, (&header, &body), &identities, id, at)
+            }
+            DraftKind::ReplyAll { message_id } => {
+                let (header, body) = self.source(&account_id, &message_id)?;
+                compose::answer(true, (&header, &body), &identities, id, at)
+            }
+            DraftKind::Forward { message_id } => {
+                let (header, body) = self.source(&account_id, &message_id)?;
+                compose::forward((&header, &body), &identities, id, at)
+            }
+            DraftKind::Existing { message_id } => {
+                return self.open_draft(&account_id, &message_id, &identities, id, at)
+            }
+        };
+        self.store.draft_insert(&account_id, &draft, None, false)?;
+        Ok(draft)
+    }
+
+    /// Stores the draft in the cache at once and has the next pass put it in Drafts on the
+    /// server. Never needs the network. Returns the draft as stored. A draft that was thrown
+    /// away, or that is being sent, is `Error::Invalid`.
+    pub fn save_draft(&self, draft: Draft) -> Result<Draft> {
+        check_draft_id(&draft.id)?;
+        let saved = self.store.draft_save(&self.account_id()?, &draft, now())?;
+        self.poke();
+        Ok(saved)
+    }
+
+    /// The drafts in the cache that are not waiting to be sent, newest first.
+    pub fn drafts(&self) -> Result<Vec<Draft>> {
+        self.store.drafts_list(&self.account_id()?)
+    }
+
+    /// One draft from the cache.
+    pub fn draft(&self, draft_id: String) -> Result<Option<Draft>> {
+        Ok(self.store.draft_get(&self.account_id()?, &draft_id)?.map(|row| row.draft))
+    }
+
+    /// Throws a draft away, here at once and on the server with the next pass.
+    pub fn discard_draft(&self, draft_id: String) -> Result<()> {
+        self.store.draft_discard(&self.account_id()?, &draft_id)?;
+        self.poke();
+        Ok(())
+    }
+
+    /// Uploads a file and adds it to the draft (network). Returns the draft with it.
+    /// A file larger than the server takes is `Error::Invalid`.
+    pub fn add_attachment(
+        &self,
+        draft_id: String,
+        file_path: String,
+        name: String,
+        mime_type: String,
+    ) -> Result<Draft> {
+        let account_id = self.account_id()?;
+        match self.store.draft_get(&account_id, &draft_id)? {
+            Some(row) if row.state == DraftState::Draft => {}
+            _ => return Err(Error::invalid("no such draft is being written")),
+        }
+        let name = if name.is_empty() {
+            Path::new(&file_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        } else {
+            name
+        };
+        let mime_type = if mime_type.trim().is_empty() { "application/octet-stream".to_string() } else { mime_type };
+        let (path, mime) = (&file_path, &mime_type);
+        // No pass lock is held while the file goes up: it may take minutes.
+        let uploaded = self.with_connection(|conn| async move {
+            let (limit, size) = (conn.max_upload(), fs::metadata(path).map_err(read_error)?.len());
+            if limit > 0 && size > limit {
+                return Err(Error::invalid(format!("the file is larger than the server takes ({limit} bytes)")));
+            }
+            conn.upload(fs::read(path).map_err(read_error)?, mime).await
+        })?;
+        let file = Attachment {
+            blob_id: uploaded.blob_id,
+            name,
+            mime_type,
+            size: uploaded.size,
+            content_id: None,
+            is_inline: false,
+        };
+        let draft = self.store.draft_add_attachment(&account_id, &draft_id, file, now())?;
+        self.poke();
+        Ok(draft)
+    }
+
+    /// Hands the draft over for sending in `delay_secs` seconds, during which
+    /// [`Core::undo_send`] takes it back. Works offline: it goes out with the first pass after
+    /// that. A draft with no recipient or a malformed address is `Error::Invalid`. If the
+    /// server refuses it later, it is a draft again with `send_error` set, and the listener's
+    /// `cache_changed` is called.
+    pub fn send(&self, draft: Draft, delay_secs: u32) -> Result<PendingSend> {
+        let account_id = self.account_id()?;
+        check_draft_id(&draft.id)?;
+        compose::rules::check_recipients(&draft)?;
+        if !self.store.identities_list(&account_id)?.iter().any(|i| i.id == draft.identity_id) {
+            return Err(Error::invalid("choose an address to send from"));
+        }
+        let at = now();
+        let pending = self.store.draft_send(&account_id, &draft, at + i64::from(delay_secs), at)?;
+        self.poke_in(delay_secs);
+        Ok(pending)
+    }
+
+    /// Takes a message back before it has gone to the server and returns it as a draft.
+    /// Too late is `Error::Invalid`.
+    pub fn undo_send(&self, draft_id: String) -> Result<Draft> {
+        self.store.draft_undo_send(&self.account_id()?, &draft_id)
+    }
+
+    /// The messages that are still held back or waiting for a connection.
+    pub fn pending_sends(&self) -> Result<Vec<PendingSend>> {
+        self.store.pending_sends(&self.account_id()?)
+    }
+
+    /// Addresses that match what the user typed in a recipient field, best first: the address
+    /// book (kept in the cache by a pass, when the server has one) and the people in cached
+    /// mail. From the cache only.
+    pub fn suggest_recipients(&self, text: String, limit: u32) -> Result<Vec<Address>> {
+        compose::suggest(&self.store, &self.account_id()?, &text, limit)
+    }
+
+    /// How much of the account's storage is used (network).
+    pub fn quota(&self) -> Result<Vec<Quota>> {
+        self.with_connection(|conn| async move { conn.quotas().await })
+    }
+}
+
+/// A draft id is made by the core: hex. Anything of that kind is taken.
+fn check_draft_id(id: &str) -> Result<()> {
+    let fine =
+        !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if fine {
+        Ok(())
+    } else {
+        Err(Error::invalid("not a draft id"))
+    }
+}
+
+fn read_error(e: std::io::Error) -> Error {
+    Error::invalid(format!("the file cannot be read: {e}"))
+}
+
 impl Core {
     /// Exchanges the code, finds the account and starts the live connection if a listener
     /// is waiting. Shared by both ways of coming back from the browser.
@@ -417,6 +584,59 @@ impl Core {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // Nothing is left half-done under this lock, so a panic elsewhere does not poison the state.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The header and the body of a message to answer or pass on. The header must be in the
+    /// cache; the body comes from the cache, else from the server.
+    fn source(&self, account_id: &str, message_id: &str) -> Result<(MessageHeader, MessageBody)> {
+        let header = self
+            .store
+            .get_message(account_id, message_id)?
+            .ok_or_else(|| Error::invalid(format!("the message '{message_id}' is not in the cache")))?;
+        Ok((header, self.message_body(message_id.to_string())?))
+    }
+
+    /// A draft that is in Drafts on the server, as a local draft. One that was opened before is
+    /// the same local draft, not a second one.
+    fn open_draft(
+        &self,
+        account_id: &str,
+        message_id: &str,
+        identities: &[Identity],
+        id: String,
+        at: i64,
+    ) -> Result<Draft> {
+        if let Some(known) = self.store.draft_by_server_id(account_id, message_id)? {
+            return Ok(known);
+        }
+        let ids = [message_id.to_string()];
+        let ids = &ids;
+        let (headers, bodies, header_ids) = self.with_connection(|conn| async move {
+            let (headers, _) = conn.messages(ids).await?;
+            Ok((headers, conn.bodies(ids).await?, conn.header_ids(&ids[0]).await?))
+        })?;
+        let (Some(header), Some(body)) = (headers.first(), bodies.first()) else {
+            return Err(Error::invalid(format!("the server has no draft '{message_id}'")));
+        };
+        let draft = compose::opened((header, body), identities, id, at);
+        let threading = header_ids.map(|h| Threading { in_reply_to: h.in_reply_to, references: h.references });
+        self.store.draft_insert(account_id, &draft, Some(&threading.unwrap_or_default()), false)?;
+        Ok(draft)
+    }
+
+    /// Pokes the live loop in `delay_secs` seconds, so a message held back leaves on time.
+    /// The loop is looked up when the time comes: it may have been restarted meanwhile.
+    fn poke_in(&self, delay_secs: u32) {
+        if delay_secs == 0 {
+            return self.poke();
+        }
+        let inner = self.inner.clone();
+        self.rt.spawn(async move {
+            tokio::time::sleep(Duration::from_secs(u64::from(delay_secs))).await;
+            if let Some(watcher) = &inner.lock().unwrap_or_else(|e| e.into_inner()).watcher {
+                watcher.poke();
+            }
+        });
     }
 
     /// Runs `f` with a live connection. One connection is kept for as long as its access token

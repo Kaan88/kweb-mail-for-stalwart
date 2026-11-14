@@ -463,9 +463,9 @@ fn migration_two_keeps_what_migration_one_stored() {
     )
     .unwrap();
 
-    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..2]).unwrap(), 1);
     let st = Store::init(conn).unwrap();
-    assert_eq!(st.schema_version().unwrap(), 2);
+    assert_eq!(st.schema_version().unwrap() as usize, schema::MIGRATIONS.len());
     let m = st.get_message(A, "m1").unwrap().unwrap();
     assert_eq!((m.subject.as_str(), m.mailbox_ids.clone(), m.to.clone()), ("Hi", strs(&["inbox"]), Vec::new()));
     let queued = st.outbox_pending(A).unwrap();
@@ -838,4 +838,362 @@ fn a_queued_move_without_a_target_is_skipped_like_an_unknown_kind() {
     st.outbox_enqueue(A, &Action::Flag { message_id: "m1".into() }).unwrap();
     let got: Vec<Action> = st.outbox_pending(A).unwrap().into_iter().map(|(_, a, _)| a).collect();
     assert_eq!(got, [Action::Flag { message_id: "m1".into() }]);
+}
+
+// ---- M4: sending ----
+
+use crate::model::{Draft, Identity, PendingSend};
+use crate::Error;
+
+fn draft(id: &str) -> Draft {
+    Draft {
+        id: id.into(),
+        identity_id: "i1".into(),
+        to: vec![Address { name: "Bo".into(), email: "bo@x.org".into() }],
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        subject: format!("subject {id}"),
+        body: "text".into(),
+        attachments: Vec::new(),
+        source_message_id: None,
+        is_forward: false,
+        server_id: None,
+        send_error: None,
+        updated_at: 1,
+    }
+}
+
+fn row(st: &Store, id: &str) -> DraftRow {
+    st.draft_get(A, id).unwrap().expect("a draft")
+}
+
+#[test]
+fn migration_three_keeps_what_the_earlier_ones_stored() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..2]).unwrap(), 2);
+    conn.execute_batch(
+        "INSERT INTO accounts VALUES ('acc1', 'https://x', 'kaan', 5);
+         INSERT INTO messages (account_id, id, thread_id, from_name, from_email, subject, preview, received_at,
+             is_unread, is_flagged, has_attachment, size, to_json)
+             VALUES ('acc1', 'm1', 't1', 'Ann', 'ann@x', 'Hi', 'p', 100, 1, 0, 0, 7, '[]');
+         INSERT INTO message_mailboxes VALUES ('acc1', 'm1', 'inbox');
+         INSERT INTO outbox (account_id, kind, message_id) VALUES ('acc1', 'archive', 'm1');
+         INSERT INTO sync_state VALUES ('acc1', 'Email', 's1');",
+    )
+    .unwrap();
+
+    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    let st = Store::init(conn).unwrap();
+    assert_eq!(st.schema_version().unwrap(), 3);
+    assert_eq!(st.get_message(A, "m1").unwrap().unwrap().subject, "Hi");
+    assert_eq!(st.outbox_pending(A).unwrap().len(), 1);
+    assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
+    // The new tables are there, empty and usable.
+    assert!(st.drafts_list(A).unwrap().is_empty());
+    st.draft_insert(A, &draft("d1"), None, false).unwrap();
+    assert!(st.identities_list(A).unwrap().is_empty() && st.contacts_list(A).unwrap().is_empty());
+}
+
+#[test]
+fn a_stored_draft_comes_back_as_it_was_written() {
+    let st = s();
+    let mut d = draft("d1");
+    d.server_id = Some("srv1".into());
+    st.draft_insert(A, &d, Some(&Threading { in_reply_to: vec!["a@x".into()], references: vec!["a@x".into()] }), false)
+        .unwrap();
+    let r = row(&st, "d1");
+    assert_eq!(r.draft, d);
+    assert_eq!((r.state, r.dirty, r.discarded, r.rev, r.send_at), (DraftState::Draft, false, false, 0, None));
+    assert_eq!(r.threading.unwrap().in_reply_to, vec!["a@x".to_string()]);
+    assert_eq!(st.draft_by_server_id(A, "srv1").unwrap().unwrap().id, "d1");
+    assert_eq!(st.draft_by_server_id(A, "other").unwrap(), None);
+    assert_eq!(st.draft_get(A, "nope").unwrap(), None);
+    // The same id twice is an error, not a replacement.
+    assert!(st.draft_insert(A, &d, None, false).is_err());
+}
+
+#[test]
+fn saving_marks_the_draft_for_the_server_and_keeps_what_the_pass_owns() {
+    let st = s();
+    let mut d = draft("d1");
+    d.server_id = Some("srv1".into());
+    st.draft_insert(A, &d, None, false).unwrap();
+
+    // The caller's copy is older than the pass: its server id is stale.
+    let mut edited = draft("d1");
+    edited.body = "new text".into();
+    edited.server_id = Some("stale".into());
+    edited.send_error = Some("made up".into());
+    let saved = save_new(&st, &edited, 50).unwrap();
+    assert_eq!((saved.body.as_str(), saved.updated_at), ("new text", 50));
+    assert_eq!((saved.server_id.as_deref(), saved.send_error), (Some("srv1"), None));
+    let r = row(&st, "d1");
+    assert_eq!((r.dirty, r.rev), (true, 1));
+
+    // An unknown id is a new draft.
+    save_new(&st, &draft("fresh"), 60).unwrap();
+    assert_eq!(row(&st, "fresh").draft.updated_at, 60);
+    // Newest first.
+    let listed: Vec<String> = st.drafts_list(A).unwrap().into_iter().map(|d| d.id).collect();
+    assert_eq!(listed, ["fresh", "d1"]);
+}
+
+#[test]
+fn a_server_copy_counts_as_saved_only_if_the_draft_was_not_edited_meanwhile() {
+    let st = s();
+    save_new(&st, &draft("d1"), 10).unwrap();
+    let seen = row(&st, "d1");
+    assert_eq!(st.drafts_to_save(A).unwrap().len(), 1);
+
+    // An edit arrives while the pass talks to the server.
+    save_new(&st, &draft("d1"), 11).unwrap();
+    st.draft_saved(A, "d1", "srv1", seen.rev).unwrap();
+    let r = row(&st, "d1");
+    assert_eq!((r.draft.server_id.as_deref(), r.dirty), (Some("srv1"), true), "the copy is kept, the row stays due");
+
+    st.draft_saved(A, "d1", "srv2", r.rev).unwrap();
+    let r = row(&st, "d1");
+    assert_eq!((r.draft.server_id.as_deref(), r.dirty), (Some("srv2"), false));
+    assert!(st.drafts_to_save(A).unwrap().is_empty());
+
+    // A copy the server will not take is let go of until the next edit.
+    save_new(&st, &draft("d1"), 12).unwrap();
+    let r = row(&st, "d1");
+    st.draft_give_up(A, "d1", r.rev - 1).unwrap();
+    assert!(row(&st, "d1").dirty, "an older version's give-up does not count");
+    st.draft_give_up(A, "d1", r.rev).unwrap();
+    assert!(!row(&st, "d1").dirty);
+}
+
+#[test]
+fn sending_holds_the_message_back_and_a_second_send_changes_nothing() {
+    let st = s();
+    let first = send_new(&st, &draft("d1"), 100, 90).unwrap();
+    assert_eq!(first, PendingSend { draft_id: "d1".into(), subject: "subject d1".into(), send_at: 100 });
+    assert!(st.drafts_list(A).unwrap().is_empty());
+    assert_eq!(st.pending_sends(A).unwrap(), vec![first.clone()]);
+    assert_eq!(send_new(&st, &draft("d1"), 500, 95).unwrap(), first, "a second tap does not move the time");
+
+    assert!(st.drafts_to_send(A, 99).unwrap().is_empty());
+    assert_eq!(st.drafts_to_send(A, 100).unwrap().len(), 1);
+    // A message that is being sent cannot be edited.
+    assert!(matches!(save_new(&st, &draft("d1"), 96), Err(Error::Invalid { .. })));
+    assert!(st.drafts_to_save(A).unwrap().is_empty(), "not saved to Drafts while held back");
+}
+
+/// A send of a draft as the tests write it: the row is born first if it is not there, as
+/// `new_draft` does for the app (a user write never makes a row).
+fn send_new(st: &Store, d: &Draft, send_at: i64, now: i64) -> crate::Result<crate::model::PendingSend> {
+    let _ = st.draft_insert(A, d, None, true);
+    st.draft_send(A, d, send_at, now)
+}
+
+/// The same for an edit.
+fn save_new(st: &Store, d: &Draft, now: i64) -> crate::Result<Draft> {
+    let _ = st.draft_insert(A, d, None, true);
+    st.draft_save(A, d, now)
+}
+
+/// Makes the server copy current, as a pass does, and starts the submission of that version.
+fn begin(st: &Store, id: &str) -> bool {
+    let Some(r) = st.draft_get(A, id).unwrap() else { return false };
+    if r.state == DraftState::Sending {
+        st.draft_saved(A, id, "srv", r.rev).unwrap();
+    }
+    st.draft_begin_submit(A, id, r.rev, "srv").unwrap()
+}
+
+#[test]
+fn a_user_write_never_brings_back_a_draft_that_is_gone() {
+    let st = s();
+    // Never born here, or sent and removed by a pass: the same to the store.
+    assert!(matches!(st.draft_save(A, &draft("gone"), 5), Err(Error::Invalid { .. })));
+    assert!(matches!(st.draft_send(A, &draft("gone"), 100, 90), Err(Error::Invalid { .. })));
+    send_new(&st, &draft("d1"), 100, 90).unwrap();
+    st.draft_delete(A, "d1").unwrap();
+    // A second tap on Send with the screen's old copy must not send it again.
+    assert!(matches!(st.draft_send(A, &draft("d1"), 100, 95), Err(Error::Invalid { .. })));
+    assert!(st.pending_sends(A).unwrap().is_empty());
+}
+
+#[test]
+fn only_the_version_that_was_copied_is_submitted() {
+    let st = s();
+    send_new(&st, &draft("d1"), 100, 90).unwrap();
+    let read = st.draft_get(A, "d1").unwrap().unwrap();
+    st.draft_saved(A, "d1", "srv", read.rev).unwrap();
+    // Meanwhile the user takes it back, changes it and sends again.
+    let back = st.draft_undo_send(A, "d1").unwrap();
+    st.draft_send(A, &back, 200, 95).unwrap();
+    assert!(!st.draft_begin_submit(A, "d1", read.rev, "srv").unwrap(), "the old copy is not sent");
+    assert_eq!(st.draft_get(A, "d1").unwrap().unwrap().state, DraftState::Sending);
+}
+
+#[test]
+fn a_send_can_be_taken_back_until_it_is_started() {
+    let st = s();
+    send_new(&st, &draft("d1"), 100, 90).unwrap();
+    let back = st.draft_undo_send(A, "d1").unwrap();
+    assert_eq!(back.id, "d1");
+    let r = row(&st, "d1");
+    assert_eq!((r.state, r.send_at), (DraftState::Draft, None));
+    assert!(st.pending_sends(A).unwrap().is_empty());
+    assert_eq!(st.drafts_list(A).unwrap().len(), 1);
+    // Not being sent: nothing to take back.
+    assert!(matches!(st.draft_undo_send(A, "d1"), Err(Error::Invalid { .. })));
+
+    send_new(&st, &draft("d1"), 100, 91).unwrap();
+    assert!(begin(&st, "d1"));
+    assert!(!begin(&st, "d1"), "started once");
+    assert!(matches!(st.draft_undo_send(A, "d1"), Err(Error::Invalid { .. })), "too late");
+    assert_eq!(st.pending_sends(A).unwrap().len(), 1, "still listed while the server decides");
+    assert_eq!(st.drafts_to_send(A, 0).unwrap().len(), 1, "settled by the next pass even before its time");
+    assert!(matches!(st.draft_undo_send(A, "nope"), Err(Error::Invalid { .. })));
+}
+
+#[test]
+fn a_refused_message_is_a_draft_again_with_the_reason_until_it_is_sent_again() {
+    let st = s();
+    send_new(&st, &draft("d1"), 100, 90).unwrap();
+    begin(&st, "d1");
+    st.draft_refused(A, "d1", "no such domain").unwrap();
+    let r = row(&st, "d1");
+    assert_eq!((r.state, r.send_at, r.draft.send_error.as_deref()), (DraftState::Draft, None, Some("no such domain")));
+    assert!(r.dirty);
+    assert_eq!(st.drafts_list(A).unwrap().len(), 1);
+
+    // Editing keeps the reason on show; sending again clears it.
+    let saved = save_new(&st, &draft("d1"), 120).unwrap();
+    assert_eq!(saved.send_error.as_deref(), Some("no such domain"));
+    send_new(&st, &draft("d1"), 200, 130).unwrap();
+    assert_eq!(row(&st, "d1").draft.send_error, None);
+}
+
+#[test]
+fn a_lost_server_copy_starts_the_send_over() {
+    let st = s();
+    let mut d = draft("d1");
+    d.server_id = Some("srv".into());
+    st.draft_insert(A, &d, None, false).unwrap();
+    send_new(&st, &d, 100, 90).unwrap();
+    begin(&st, "d1");
+    st.draft_copy_lost(A, "d1").unwrap();
+    let r = row(&st, "d1");
+    assert_eq!((r.state, r.dirty, r.draft.server_id), (DraftState::Sending, true, None));
+    // A draft that is only being written keeps its state.
+    save_new(&st, &draft("d2"), 5).unwrap();
+    st.draft_copy_lost(A, "d2").unwrap();
+    assert_eq!(row(&st, "d2").state, DraftState::Draft);
+}
+
+#[test]
+fn a_discarded_draft_is_gone_from_the_lists_and_waits_for_the_pass() {
+    let st = s();
+    let mut d = draft("d1");
+    d.server_id = Some("srv1".into());
+    st.draft_insert(A, &d, None, false).unwrap();
+    save_new(&st, &draft("d2"), 5).unwrap();
+    st.draft_discard(A, "d1").unwrap();
+    assert_eq!(st.drafts_list(A).unwrap().len(), 1);
+    assert_eq!(st.draft_get(A, "d1").unwrap(), None);
+    assert_eq!(st.draft_by_server_id(A, "srv1").unwrap(), None);
+    assert!(st.drafts_to_save(A).unwrap().iter().all(|r| r.draft.id != "d1"));
+    assert_eq!(st.drafts_discarded(A).unwrap(), vec![("d1".to_string(), Some("srv1".to_string()))]);
+    // A late autosave cannot bring it back.
+    assert!(matches!(save_new(&st, &d, 9), Err(Error::Invalid { .. })));
+    st.draft_delete(A, "d1").unwrap();
+    assert!(st.drafts_discarded(A).unwrap().is_empty());
+
+    // Discarding what is not there is fine; discarding a send under way is not.
+    st.draft_discard(A, "nope").unwrap();
+    send_new(&st, &draft("d3"), 100, 90).unwrap();
+    begin(&st, "d3");
+    assert!(matches!(st.draft_discard(A, "d3"), Err(Error::Invalid { .. })));
+    // A held-back message can be thrown away.
+    send_new(&st, &draft("d4"), 100, 90).unwrap();
+    st.draft_discard(A, "d4").unwrap();
+    assert_eq!(st.pending_sends(A).unwrap().len(), 1);
+}
+
+#[test]
+fn a_file_is_added_to_the_draft_being_written() {
+    let st = s();
+    save_new(&st, &draft("d1"), 10).unwrap();
+    let file = Attachment {
+        blob_id: "b1".into(),
+        name: "a.pdf".into(),
+        mime_type: "application/pdf".into(),
+        size: 3,
+        content_id: None,
+        is_inline: false,
+    };
+    let d = st.draft_add_attachment(A, "d1", file.clone(), 20).unwrap();
+    assert_eq!((d.attachments, d.updated_at), (vec![file.clone()], 20));
+    assert_eq!(row(&st, "d1").rev, 2);
+    assert!(matches!(st.draft_add_attachment(A, "nope", file.clone(), 20), Err(Error::Invalid { .. })));
+    send_new(&st, &draft("d1"), 100, 90).unwrap();
+    assert!(matches!(st.draft_add_attachment(A, "d1", file, 21), Err(Error::Invalid { .. })));
+}
+
+#[test]
+fn identities_keep_the_servers_order_and_are_replaced_whole() {
+    let st = s();
+    let id = |n: &str| Identity { id: n.into(), name: n.into(), email: format!("{n}@x.org"), signature: "sig".into() };
+    st.identities_replace(A, &[id("b"), id("a")]).unwrap();
+    let got: Vec<String> = st.identities_list(A).unwrap().into_iter().map(|i| i.id).collect();
+    assert_eq!(got, ["b", "a"]);
+    st.identities_replace(A, &[id("c")]).unwrap();
+    assert_eq!(st.identities_list(A).unwrap(), vec![id("c")]);
+}
+
+#[test]
+fn contacts_keep_order_and_an_address_once_whatever_its_case() {
+    let st = s();
+    let c = |name: &str, email: &str| Address { name: name.into(), email: email.into() };
+    st.contacts_replace(A, &[c("Zed", "zed@x.org"), c("Ann", "ann@x.org"), c("Ann Again", "ANN@x.org")]).unwrap();
+    assert_eq!(st.contacts_list(A).unwrap(), vec![c("Zed", "zed@x.org"), c("Ann", "ann@x.org")]);
+    st.contacts_replace(A, &[]).unwrap();
+    assert!(st.contacts_list(A).unwrap().is_empty());
+}
+
+#[test]
+fn people_in_mail_are_senders_then_recipients_newest_message_first() {
+    let st = s();
+    let mut old = msg("old", &["inbox"], 10, false);
+    old.from_email = "old@x.org".into();
+    let mut new = msg("new", &["sent"], 20, false);
+    new.from_name = "Me".into();
+    new.from_email = "me@x.org".into();
+    new.to = vec![Address { name: "Bo".into(), email: "bo@x.org".into() }];
+    st.upsert_messages(A, &[old, new]).unwrap();
+    let got: Vec<String> = st.people_in_mail(A, 10).unwrap().into_iter().map(|a| a.email).collect();
+    assert_eq!(got, ["me@x.org", "bo@x.org", "old@x.org"]);
+    assert_eq!(st.people_in_mail(A, 1).unwrap().len(), 2, "the scan is limited by messages");
+}
+
+#[test]
+fn sign_out_takes_the_drafts_and_the_directory_with_it() {
+    let st = s();
+    save_new(&st, &draft("d1"), 1).unwrap();
+    st.identities_replace(
+        A,
+        &[Identity { id: "i".into(), name: String::new(), email: "a@x".into(), signature: String::new() }],
+    )
+    .unwrap();
+    st.contacts_replace(A, &[Address { name: String::new(), email: "c@x".into() }]).unwrap();
+    st.delete_account(A).unwrap();
+    for table in ["drafts", "identities", "contacts"] {
+        assert_eq!(count(&st, table), 0, "{table}");
+    }
+}
+
+#[test]
+fn the_directory_is_due_until_a_refresh_worked_and_then_for_an_hour() {
+    let st = s();
+    let start = Instant::now();
+    assert!(st.directory_due(start));
+    st.directory_done(start);
+    assert!(!st.directory_due(start + Duration::from_secs(60)));
+    assert!(st.directory_due(start + DIRECTORY_EVERY));
 }

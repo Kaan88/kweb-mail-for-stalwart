@@ -6,6 +6,7 @@
 //! The control methods on `MockServer` stand in for "another device" (they change mail and
 //! cause push events) or for server trouble (expired tokens, a dead stream, an outage).
 
+mod account;
 mod calendar;
 mod oauth;
 mod state;
@@ -27,11 +28,12 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
+use account::Account;
 use calendar::Calendar;
 use oauth::Oauth;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
-pub use state::{ACCOUNT_ID, USERNAME};
+pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
 
 /// Ids of the seeded mailboxes.
 pub const INBOX_ID: &str = "mb1";
@@ -50,6 +52,12 @@ struct Shared {
     /// See [`MockServer::set_calendar_refused`].
     calendar_refused: AtomicBool,
     oauth: Mutex<Oauth>,
+    /// Identities, address book and quotas.
+    account: Mutex<Account>,
+    /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
+    upload_limit: AtomicU64,
+    /// See [`MockServer::lose_next_submission_answer`].
+    lose_submission_answer: AtomicBool,
     down: AtomicBool,
     /// Requests by path ("/jmap") and, for JMAP calls, by method name ("Email/get").
     counts: Mutex<HashMap<String, usize>>,
@@ -92,6 +100,9 @@ impl MockServer {
             calendar_delay_ms: AtomicU64::new(0),
             calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
+            account: Mutex::new(Account::default()),
+            upload_limit: AtomicU64::new(50_000_000),
+            lose_submission_answer: AtomicBool::new(false),
             down: AtomicBool::new(false),
             counts: Mutex::new(HashMap::new()),
             open_streams: AtomicUsize::new(0),
@@ -105,6 +116,7 @@ impl MockServer {
             .route("/revoke", post(revoke))
             .route("/.well-known/jmap", get(session))
             .route("/jmap", post(jmap))
+            .route("/jmap/upload/{account}", post(upload))
             .route("/jmap/download/{account}/{blob}/{name}", get(download))
             .route("/eventsource", get(eventsource))
             .layer(middleware::from_fn_with_state(shared.clone(), gate))
@@ -165,6 +177,13 @@ impl MockServer {
     pub fn mark_read(&self, id: &str) {
         self.edit(id, |e| {
             e.keywords.insert("$seen".into());
+        });
+    }
+
+    /// Puts a keyword on a message, as another client or a half-done request would.
+    pub fn add_keyword(&self, id: &str, keyword: &str) {
+        self.edit(id, |e| {
+            e.keywords.insert(keyword.to_string());
         });
     }
 
@@ -331,6 +350,58 @@ impl MockServer {
         self.shared.mail().push_enabled = enabled;
     }
 
+    // ---- sending ---------------------------------------------------------------------
+
+    /// Makes `EmailSubmission/set` refuse (`None` accepts again).
+    pub fn set_submission_refusal(&self, refusal: Option<Refusal>) {
+        self.shared.mail().refusal = refusal;
+    }
+
+    /// The next request that holds an `EmailSubmission/set` is carried out, and the answer is
+    /// lost: the client gets a 500. The message is sent all the same.
+    pub fn lose_next_submission_answer(&self) {
+        self.shared.lose_submission_answer.store(true, Ordering::SeqCst);
+    }
+
+    /// The largest upload the server takes, in bytes (the session says so and the upload
+    /// endpoint answers 413 above it). Set it before a client connects.
+    pub fn set_upload_limit(&self, bytes: u64) {
+        self.shared.upload_limit.store(bytes, Ordering::SeqCst);
+    }
+
+    /// Adds a JSContact card to the address book and returns its id.
+    pub fn add_contact(&self, card: Value) -> String {
+        self.shared.account.lock().unwrap().add_contact(card)
+    }
+
+    /// With false the server has no contacts (the session names no capability).
+    pub fn set_contacts_enabled(&self, enabled: bool) {
+        self.shared.account.lock().unwrap().contacts_enabled = enabled;
+    }
+
+    /// With false the server has no quotas (the session names no capability).
+    pub fn set_quota_enabled(&self, enabled: bool) {
+        self.shared.account.lock().unwrap().quota_enabled = enabled;
+    }
+
+    /// The storage quota: bytes used and the limit.
+    pub fn set_quota(&self, used: u64, limit: Option<u64>) {
+        self.shared.account.lock().unwrap().quota = (used, limit);
+    }
+
+    /// Replaces the identities: `(id, name, email, signature)`.
+    pub fn set_identities(&self, identities: &[(&str, &str, &str, &str)]) {
+        self.shared.account.lock().unwrap().identities = identities
+            .iter()
+            .map(|(id, name, email, signature)| account::IdentityRec {
+                id: id.to_string(),
+                name: name.to_string(),
+                email: email.to_string(),
+                signature: signature.to_string(),
+            })
+            .collect();
+    }
+
     // ---- inspection ------------------------------------------------------------------
 
     /// Requests received (also those answered 503), by path such as "/jmap" or "/token", or
@@ -416,6 +487,25 @@ impl MockServer {
         let mut all: Vec<_> = mail.emails.values().collect();
         all.sort_by_key(|e| e.seq);
         all.into_iter().map(|e| e.id.clone()).collect()
+    }
+
+    /// What the server holds of a message.
+    pub fn view(&self, id: &str) -> MailView {
+        self.shared.mail().view(id).unwrap_or_else(|| panic!("no message '{id}'"))
+    }
+
+    /// Ids of the messages in the mailbox with this role, oldest arrival first.
+    pub fn ids_in(&self, role: &str) -> Vec<String> {
+        let mail = self.shared.mail();
+        let mailbox = mail.mailbox_id_by_role(role).unwrap_or_else(|| panic!("no mailbox with role '{role}'"));
+        let mut inside: Vec<_> = mail.emails.values().filter(|e| e.mailbox_ids.contains(&mailbox)).collect();
+        inside.sort_by_key(|e| e.seq);
+        inside.into_iter().map(|e| e.id.clone()).collect()
+    }
+
+    /// The messages the server has sent, oldest first.
+    pub fn submissions(&self) -> Vec<Submission> {
+        self.shared.mail().submissions.clone()
     }
 
     pub fn email_state(&self) -> String {
@@ -583,28 +673,35 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     let mail = "urn:ietf:params:jmap:mail";
     let submission = "urn:ietf:params:jmap:submission";
     let calendars = "urn:ietf:params:jmap:calendars";
+    let (contacts, quota) = {
+        let account = s.account.lock().unwrap();
+        (account.contacts_enabled, account.quota_enabled)
+    };
+    let upload_limit = s.upload_limit.load(Ordering::SeqCst);
+    let mut capabilities = json!({ core: core_caps, mail: {}, submission: {}, calendars: {} });
+    let mut account_capabilities = json!({ mail: mail_caps, submission: submission_caps, calendars: {} });
+    let mut primary = json!({ mail: ACCOUNT_ID, submission: ACCOUNT_ID, calendars: ACCOUNT_ID });
+    for (urn, on) in [("urn:ietf:params:jmap:contacts", contacts), ("urn:ietf:params:jmap:quota", quota)] {
+        if on {
+            capabilities[urn] = json!({});
+            account_capabilities[urn] = json!({});
+            primary[urn] = json!(ACCOUNT_ID);
+        }
+    }
+    capabilities[core]["maxSizeUpload"] = json!(upload_limit);
     json_response(
         StatusCode::OK,
         json!({
-            "capabilities": {
-                core: core_caps,
-                mail: {},
-                submission: {},
-                calendars: {},
-            },
+            "capabilities": capabilities,
             "accounts": {
                 ACCOUNT_ID: {
                     "name": USERNAME,
                     "isPersonal": true,
                     "isReadOnly": false,
-                    "accountCapabilities": {
-                        mail: mail_caps,
-                        submission: submission_caps,
-                        calendars: {},
-                    }
+                    "accountCapabilities": account_capabilities,
                 }
             },
-            "primaryAccounts": { mail: ACCOUNT_ID, submission: ACCOUNT_ID, calendars: ACCOUNT_ID },
+            "primaryAccounts": primary,
             "username": USERNAME,
             "apiUrl": format!("{b}/jmap"),
             "downloadUrl": format!("{b}/jmap/download/{{accountId}}/{{blobId}}/{{name}}?accept={{type}}"),
@@ -629,6 +726,31 @@ async fn download(
         Some((mime_type, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, mime_type)], bytes).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// The upload endpoint the session names: keeps the body as a blob.
+async fn upload(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path(account): axum::extract::Path<String>,
+    body: Bytes,
+) -> Response {
+    if let Err(r) = check_bearer(&s, &headers) {
+        return r;
+    }
+    if account != ACCOUNT_ID {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if body.len() as u64 > s.upload_limit.load(Ordering::SeqCst) {
+        return problem(StatusCode::PAYLOAD_TOO_LARGE, "limit", "the upload is larger than maxSizeUpload");
+    }
+    let mime_type =
+        headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("application/octet-stream");
+    let blob_id = s.mail().upload(mime_type, body.to_vec());
+    json_response(
+        StatusCode::CREATED,
+        json!({ "accountId": ACCOUNT_ID, "blobId": blob_id, "type": mime_type, "size": body.len() }),
+    )
 }
 
 async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
@@ -656,12 +778,18 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
         };
         s.count(name);
         let result = resolve_refs(args, &responses).and_then(|args| call_method(&s, name, &args));
-        responses.push(match result {
-            Ok(v) => (name.to_string(), v, call_id.to_string()),
-            Err(e) => {
-                ("error".to_string(), json!({ "type": e.kind, "description": e.description }), call_id.to_string())
-            }
-        });
+        match result {
+            Ok(list) => responses.extend(list.into_iter().map(|(n, v)| (n, v, call_id.to_string()))),
+            Err(e) => responses.push((
+                "error".to_string(),
+                json!({ "type": e.kind, "description": e.description }),
+                call_id.to_string(),
+            )),
+        }
+    }
+    if calls.iter().any(|c| c[0] == "EmailSubmission/set") && s.lose_submission_answer.swap(false, Ordering::SeqCst) {
+        // Carried out, but the client never hears of it.
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     json_response(
         StatusCode::OK,
@@ -672,12 +800,38 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
     )
 }
 
-/// Calendar methods are answered from the calendar, everything else from the mail.
-fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Value, state::MethodError> {
-    if name == "CalendarEvent/get" {
-        return s.calendar.lock().unwrap().get(args);
+/// Calendar methods are answered from the calendar, the account's own from the account,
+/// everything else from the mail. A method may answer with more than one response.
+fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value)>, state::MethodError> {
+    let one = |value: Value| vec![(name.to_string(), value)];
+    match name {
+        "CalendarEvent/get" => s.calendar.lock().unwrap().get(args).map(one),
+        "Identity/get" | "ContactCard/query" | "ContactCard/get" | "Quota/get" => {
+            s.account.lock().unwrap().call(name, args).map(one)
+        }
+        "EmailSubmission/query" => {
+            let wanted: Vec<&str> =
+                args["filter"]["emailIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let mail = s.mail();
+            let ids: Vec<&str> = mail
+                .submissions
+                .iter()
+                .filter(|sub| wanted.is_empty() || wanted.contains(&sub.email_id.as_str()))
+                .map(|sub| sub.id.as_str())
+                .collect();
+            Ok(one(json!({ "accountId": state::ACCOUNT_ID, "queryState": "q", "position": 0, "ids": ids })))
+        }
+        "EmailSubmission/set" => {
+            let identities: Vec<String> = s.account.lock().unwrap().identities.iter().map(|i| i.id.clone()).collect();
+            let mut mail = s.mail();
+            let (answer, follow) = mail.submission_set(args, &identities)?;
+            mail.flush();
+            Ok(std::iter::once((name.to_string(), answer))
+                .chain(follow.map(|f| ("Email/set".to_string(), f)))
+                .collect())
+        }
+        _ => s.mail().call(name, args).map(one),
     }
-    s.mail().call(name, args)
 }
 
 // ---- EventSource ------------------------------------------------------------------------

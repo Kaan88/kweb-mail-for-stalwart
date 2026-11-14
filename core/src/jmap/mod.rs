@@ -10,6 +10,7 @@
 mod calendar;
 mod convert;
 mod errors;
+mod send;
 
 use std::{io::Write, pin::Pin, time::Duration};
 
@@ -36,6 +37,7 @@ use convert::{
 };
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_unauthorized};
+pub use send::{CopyState, HeaderIds, Uploaded};
 
 const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -414,7 +416,12 @@ fn download_http() -> std::result::Result<reqwest::Client, reqwest::Error> {
 /// to a plain-http address just because the session says so.
 fn check_session_urls(client: &Client) -> Result<()> {
     let session = client.session();
-    let urls = [("API", session.api_url()), ("push", session.event_source_url()), ("download", session.download_url())];
+    let urls = [
+        ("API", session.api_url()),
+        ("push", session.event_source_url()),
+        ("download", session.download_url()),
+        ("upload", session.upload_url()),
+    ];
     for (what, url) in urls {
         secure_url(url).map_err(|e| Error::temporary(format!("the server's JMAP {what} URL {e}")))?;
     }
