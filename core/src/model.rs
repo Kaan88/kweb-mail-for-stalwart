@@ -449,6 +449,88 @@ pub struct AwayMessage {
     pub text: String,
 }
 
+/// Which kind of service the AI assistant talks to.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AiProvider {
+    /// Anything that speaks the OpenAI chat-completions protocol: OpenAI itself, or a model on
+    /// the user's own machine or network (Ollama, LM Studio, vLLM). The key is optional.
+    OpenAiCompatible,
+    /// Anthropic's Messages API.
+    Anthropic,
+}
+
+/// How the AI assistant is set up. The key is not in here: it lives in the secret store and
+/// never leaves the core.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AiSettings {
+    /// The assistant as a whole. Off until the user sets it up; nothing is ever sent while off.
+    pub enabled: bool,
+    pub provider: AiProvider,
+    /// The service's address up to and including the version part, e.g.
+    /// `https://api.openai.com/v1`, `https://api.anthropic.com/v1`, `http://192.168.1.20:11434/v1`.
+    pub base_url: String,
+    pub model: String,
+    /// A key is stored.
+    pub has_key: bool,
+    /// The user has agreed to send mail to exactly this service and model. Cleared by the core
+    /// whenever the provider, the address or the model changes.
+    pub consented: bool,
+    pub allow_summaries: bool,
+    pub allow_drafts: bool,
+    pub allow_rewrites: bool,
+}
+
+/// How a text is to be changed.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum RewriteStyle {
+    Improve,
+    Shorter,
+    Formal,
+    Friendly,
+    FixSpelling,
+    /// Into this language, named as the user would ("Turkish", "English").
+    Translate {
+        language: String,
+    },
+}
+
+/// One thing the assistant is asked to do. Mail goes to the service only for the task the
+/// user started, and only the parts the task needs.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AiTask {
+    SummarizeMessage {
+        message_id: String,
+    },
+    /// The newest messages of the thread, oldest first.
+    SummarizeThread {
+        thread_id: String,
+    },
+    /// A reply to this message. `instruction` is what the user wants it to say; may be empty.
+    DraftReply {
+        message_id: String,
+        instruction: String,
+    },
+    /// The user's own text, changed as asked. No mail is sent with it.
+    Rewrite {
+        text: String,
+        style: RewriteStyle,
+    },
+}
+
+/// What a task would send, for the user to see before it is sent.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiPreview {
+    /// The host the text goes to, as in the settings' address.
+    pub host: String,
+    pub model: String,
+    /// How many messages of the mailbox are part of it (0 for a rewrite).
+    pub messages: u32,
+    /// How many characters of mail and text are sent, after the limits were applied.
+    pub characters: u32,
+    /// Something was left out to stay within the limits.
+    pub is_cut: bool,
+}
+
 /// A calendar or task reminder the server fired. Times stay as the server gives them: the
 /// host has the time zone database and the user's locale, so it does the formatting.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

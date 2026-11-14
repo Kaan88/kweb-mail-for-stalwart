@@ -19,14 +19,15 @@ use std::{
 use tokio::{net::TcpListener, runtime::Runtime};
 
 use crate::{
-    actions,
+    actions, assistant,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
     compose, contacts,
     jmap::{self, is_unauthorized, Connection},
     model::{
-        Account, Action, Address, AddressBook, Agenda, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact,
-        ContactDetail, ContactList, Draft, DraftKind, EventDetail, EventInput, Identity, ListFilter, Mailbox,
-        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
+        Account, Action, Address, AddressBook, Agenda, AiPreview, AiSettings, AiTask, Attachment, AwayMessage,
+        Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, Draft, DraftKind, EventDetail, EventInput,
+        Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult,
+        ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -85,6 +86,8 @@ pub struct Core {
     secrets: Arc<dyn SecretStore>,
     /// Shared with the tasks that poke the live loop when a held-back message is due.
     inner: Arc<Mutex<Inner>>,
+    /// The assistant task that is running, if any.
+    ai: assistant::Slot,
 }
 
 #[uniffi::export]
@@ -104,7 +107,13 @@ impl Core {
                 .map(|client| Session { account, tokens: Tokens::new(client, secrets.clone()) }),
             None => None,
         };
-        Ok(Arc::new(Core { rt, store, secrets, inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })) }))
+        Ok(Arc::new(Core {
+            rt,
+            store,
+            secrets,
+            inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })),
+            ai: assistant::Slot::default(),
+        }))
     }
 
     /// The signed-in account. Does not block.
@@ -196,11 +205,19 @@ impl Core {
             inner.contact_bases.clear();
             inner.session.take()
         };
-        if let Some(session) = session {
-            self.rt.block_on(session.tokens.sign_out());
-            self.store.delete_account(&session.account.id)?;
-        }
-        Ok(())
+        // With the session gone a new `ai_run` fails, and one that already holds the slot is
+        // stopped here. The provider key stays on the device only as long as the account does,
+        // so it goes before the (slow) revoke; both steps are tried and the first error is returned.
+        self.ai.cancel();
+        let key = assistant::forget_key(&*self.secrets);
+        let deleted = match session {
+            Some(session) => {
+                self.rt.block_on(session.tokens.sign_out());
+                self.store.delete_account(&session.account.id)
+            }
+            None => Ok(()),
+        };
+        key.and(deleted)
     }
 
     /// Starts the live connection and reports to `listener` from now on. Without an account
@@ -992,6 +1009,146 @@ impl Core {
     pub fn set_away_message(&self, message: AwayMessage) -> Result<()> {
         let message = &message;
         self.with_connection(|conn| async move { conn.set_away_message(message).await })
+    }
+}
+
+// ---- M7: the AI assistant ----
+
+/// Hears the answer of the assistant as it is written. Called on a core thread; it must not
+/// call a blocking function of [`Core`] from inside.
+#[uniffi::export(with_foreign)]
+pub trait AiListener: Send + Sync {
+    /// The next piece of the answer.
+    fn text(&self, piece: String);
+}
+
+#[uniffi::export]
+impl Core {
+    /// How the assistant is set up. From the cache; never the key.
+    pub fn ai_settings(&self) -> Result<AiSettings> {
+        assistant::load(&self.store, &*self.secrets, &self.account_id()?)
+    }
+
+    /// Stores the settings. `key`: `None` keeps the stored key, an empty string removes it, any
+    /// other text replaces it (it goes to the secret store, never to the cache or a log).
+    /// `consented` is stored as true only when provider, address and model are the ones already
+    /// stored: a call that changes any of them clears it, and the host grants it by saving
+    /// again with the same values after it showed what goes where. A key that is kept (`None`)
+    /// is removed when the provider, or the scheme, host or port of the address, changes. An address that is not https (or plain http to this
+    /// device or a private network address) is `Error::Invalid`. Returns the settings as stored.
+    pub fn set_ai_settings(&self, settings: AiSettings, key: Option<String>) -> Result<AiSettings> {
+        assistant::save(&self.store, &*self.secrets, &self.account_id()?, settings, key)
+    }
+
+    /// What `task` would send, without sending anything. Reads the cache, and the server for a
+    /// body the cache does not have.
+    pub fn ai_preview(&self, task: AiTask) -> Result<AiPreview> {
+        let account_id = self.account_id()?;
+        let settings = assistant::load(&self.store, &*self.secrets, &account_id)?;
+        if settings.base_url.is_empty() {
+            return Err(Error::invalid("no service is set up for the assistant yet"));
+        }
+        let host = assistant::settings::host_label(&assistant::settings::check_base_url(&settings.base_url)?);
+        let prepared = self.ai_prepare(&account_id, &task)?;
+        Ok(AiPreview {
+            host,
+            model: settings.model,
+            messages: prepared.messages,
+            characters: prepared.characters,
+            is_cut: prepared.is_cut,
+        })
+    }
+
+    /// Runs `task`: sends it to the service and returns the whole answer; `listener` hears it
+    /// piece by piece meanwhile. Blocks until the answer is complete, the service fails
+    /// (`Error::Temporary` with a message the user can read; a refused key says so) or
+    /// [`Core::ai_cancel`] is called (`Error::Invalid`). An answer the service cut off at its
+    /// length limit is `Error::Temporary` too, never returned as if complete. Refused with
+    /// `Error::Invalid` when the assistant is off, not consented to, or this kind of task is
+    /// switched off.
+    pub fn ai_run(&self, task: AiTask, listener: Arc<dyn AiListener>) -> Result<String> {
+        // The slot first: from here on `ai_cancel` and `sign_out` see this run, and the account
+        // is looked at only afterwards, so a run that starts once the session is gone fails.
+        let running = self.ai.begin()?;
+        let account_id = self.account_id()?;
+        let settings = assistant::load(&self.store, &*self.secrets, &account_id)?;
+        assistant::check_allowed(&settings, &task)?;
+        let prepared = self.ai_prepare(&account_id, &task)?;
+        let endpoint = assistant::endpoint(&settings, &*self.secrets)?;
+        let mut on_text = |piece: &str| listener.text(piece.to_string());
+        self.rt.block_on(async {
+            tokio::select! {
+                biased;
+                () = running.cancel.notified() => Err(Error::invalid("cancelled")),
+                answer = assistant::provider::complete(
+                    &endpoint,
+                    &prepared.system,
+                    &prepared.user,
+                    assistant::provider::TIMEOUTS,
+                    &mut on_text,
+                ) => answer,
+            }
+        })
+    }
+
+    /// Stops the task that is running, if any. Does not block.
+    pub fn ai_cancel(&self) {
+        self.ai.cancel();
+    }
+}
+
+impl Core {
+    /// The request for `task`, with the mail it needs from the cache (the server for a body the
+    /// cache lacks). A thread contributes its newest messages only.
+    fn ai_prepare(&self, account_id: &str, task: &AiTask) -> Result<assistant::request::Prepared> {
+        let (mails, earlier) = match task {
+            AiTask::SummarizeMessage { message_id } | AiTask::DraftReply { message_id, .. } => {
+                let (header, body) = self.source(account_id, message_id)?;
+                (vec![assistant::request::mail_input(&header, &body)], 0)
+            }
+            AiTask::SummarizeThread { thread_id } => {
+                let headers = self.store.thread_messages(account_id, thread_id)?;
+                if headers.is_empty() {
+                    return Err(Error::invalid(format!("the conversation '{thread_id}' is not in the cache")));
+                }
+                let skip = headers.len().saturating_sub(assistant::request::THREAD_MESSAGES);
+                let wanted = &headers[skip..];
+                let bodies = self.bodies_of(account_id, wanted.iter().map(|h| h.id.clone()).collect())?;
+                let mails: Vec<_> = wanted
+                    .iter()
+                    .filter_map(|h| {
+                        bodies.iter().find(|b| b.message_id == h.id).map(|b| assistant::request::mail_input(h, b))
+                    })
+                    .collect();
+                // A message whose body is gone counts as left out, so the preview says so.
+                let missing = wanted.len() - mails.len();
+                (mails, skip + missing)
+            }
+            AiTask::Rewrite { .. } => (Vec::new(), 0),
+        };
+        assistant::request::build(task, mails, earlier)
+    }
+
+    /// The bodies of these messages, from the cache, the missing ones fetched in one go. A
+    /// message the server no longer has is left out.
+    fn bodies_of(&self, account_id: &str, ids: Vec<String>) -> Result<Vec<MessageBody>> {
+        let mut found = Vec::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            match self.store.get_body(account_id, &id)? {
+                Some(body) => found.push(body),
+                None => missing.push(id),
+            }
+        }
+        if !missing.is_empty() {
+            let missing = &missing;
+            let fetched = self.with_connection(|conn| async move { conn.bodies(missing).await })?;
+            for body in fetched {
+                self.store.put_body(account_id, &body)?;
+                found.push(body);
+            }
+        }
+        Ok(found)
     }
 }
 

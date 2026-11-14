@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use kweb_core::model::AiProvider;
+
 pub const USAGE: &str = "\
 kweb: a developer tool that drives kweb-core against a Stalwart server.
 
@@ -28,6 +30,12 @@ Usage:
   kweb away off               switch it off
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
+  kweb ai status              show how the AI assistant is set up (never the key)
+  kweb ai set <provider> <base-url> <model> [--yes]
+                              set it up; provider is openai or anthropic. The key is read
+                              from $KWEB_AI_KEY. Without --yes it only says what you agree to
+  kweb ai summary <message-id>
+                              summarise a message, printed as it streams
   kweb sign-out               revoke the grant and wipe the cache
   kweb help                   this text
 
@@ -64,7 +72,16 @@ pub enum Command {
     Contacts { query: String },
     Away(Away),
     Send { to: String, subject: String, text: String },
+    Ai(Ai),
     SignOut,
+}
+
+/// What `kweb ai` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ai {
+    Status,
+    Set { provider: AiProvider, base_url: String, model: String, yes: bool },
+    Summary { id: String },
 }
 
 /// What `kweb away` does.
@@ -93,6 +110,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
         "away" => away(rest),
         "send" => send(rest),
+        "ai" => ai(rest).map(Command::Ai),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
         "show" => one_arg(name, "message-id", rest).map(|id| Command::Show { id }),
         "search" => search(rest),
@@ -152,6 +170,36 @@ fn send(rest: &[String]) -> Result<Command, String> {
         [_, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
         _ => Err("send needs <to> <subject> <text>".into()),
     }
+}
+
+fn ai(rest: &[String]) -> Result<Ai, String> {
+    match rest.split_first() {
+        None => Err("ai needs status, set or summary".into()),
+        Some((sub, rest)) => match sub.as_str() {
+            "status" => no_args(rest, Command::Status).map(|_| Ai::Status),
+            "summary" => one_arg("ai summary", "message-id", rest).map(|id| Ai::Summary { id }),
+            "set" => ai_set(rest),
+            other => Err(format!("ai takes status, set or summary, not '{other}'")),
+        },
+    }
+}
+
+/// The key is never an argument: it is read from the environment (see `kweb help`).
+fn ai_set(rest: &[String]) -> Result<Ai, String> {
+    let yes = rest.iter().any(|a| a == "--yes");
+    let words: Vec<&String> = rest.iter().filter(|a| *a != "--yes").collect();
+    if let Some(flag) = words.iter().find(|a| a.starts_with("--")) {
+        return Err(format!("unknown option '{flag}'"));
+    }
+    let [provider, base_url, model] = words[..] else {
+        return Err("ai set needs <provider> <base-url> <model>".into());
+    };
+    let provider = match provider.to_ascii_lowercase().as_str() {
+        "openai" | "openai-compatible" => AiProvider::OpenAiCompatible,
+        "anthropic" => AiProvider::Anthropic,
+        other => return Err(format!("the provider is openai or anthropic, not '{other}'")),
+    };
+    Ok(Ai::Set { provider, base_url: base_url.clone(), model: model.clone(), yes })
 }
 
 fn agenda(rest: &[String]) -> Result<Command, String> {
@@ -238,6 +286,43 @@ mod tests {
         assert!(p(&["show", "a", "b"]).is_err());
         assert!(p(&["status", "x"]).is_err());
         assert!(p(&["sign-in"]).is_err());
+    }
+
+    #[test]
+    fn ai_commands() {
+        assert_eq!(p(&["ai", "status"]), Ok(Command::Ai(Ai::Status)));
+        assert_eq!(p(&["ai", "summary", "e1"]), Ok(Command::Ai(Ai::Summary { id: "e1".into() })));
+        let set = |provider, yes| {
+            Ok(Command::Ai(Ai::Set { provider, base_url: "https://a.example/v1".into(), model: "m".into(), yes }))
+        };
+        assert_eq!(p(&["ai", "set", "openai", "https://a.example/v1", "m"]), set(AiProvider::OpenAiCompatible, false));
+        assert_eq!(
+            p(&["ai", "set", "Anthropic", "https://a.example/v1", "m", "--yes"]),
+            set(AiProvider::Anthropic, true)
+        );
+        assert_eq!(
+            p(&["ai", "set", "--yes", "openai", "https://a.example/v1", "m"]),
+            set(AiProvider::OpenAiCompatible, true)
+        );
+    }
+
+    #[test]
+    fn ai_mistakes_are_errors_and_a_key_is_never_an_argument() {
+        for bad in [
+            &["ai"][..],
+            &["ai", "nope"],
+            &["ai", "status", "x"],
+            &["ai", "summary"],
+            &["ai", "summary", "a", "b"],
+            &["ai", "set"],
+            &["ai", "set", "openai", "https://a.example/v1"],
+            &["ai", "set", "gemini", "https://a.example/v1", "m"],
+            &["ai", "set", "openai", "https://a.example/v1", "m", "extra"],
+            &["ai", "set", "openai", "https://a.example/v1", "m", "--key", "sk-1"],
+            &["ai", "set", "openai", "https://a.example/v1", "m", "--key=sk-1"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -14,6 +14,7 @@ use kweb_core::{
 };
 
 use crate::{
+    ai,
     args::{Away, Command},
     timefmt,
 };
@@ -40,6 +41,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Contacts { query } => contacts(core, query),
         Command::Away(what) => away(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
+        Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
         Command::SignOut => sign_out(core),
     }
 }
@@ -221,7 +223,7 @@ fn one_line(text: &str) -> String {
 }
 
 /// For the text of a mail: keeps new lines and tabs, drops other control characters.
-fn printable(text: &str) -> String {
+pub(crate) fn printable(text: &str) -> String {
     text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
 }
 

@@ -7,6 +7,7 @@
 //! cause push events) or for server trouble (expired tokens, a dead stream, an outage).
 
 mod account;
+mod ai;
 mod calendar;
 mod oauth;
 mod state;
@@ -33,6 +34,9 @@ use calendar::Calendar;
 use oauth::Oauth;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
+// Only the assistant tests use the mock AI service.
+#[allow(unused_imports)]
+pub use ai::{MockAi, Script};
 pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
 
 /// Ids of the seeded mailboxes.

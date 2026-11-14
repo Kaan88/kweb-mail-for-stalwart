@@ -34,7 +34,7 @@ pub fn new_id() -> Result<String> {
 }
 
 /// The text of a message to quote: the plain version, else the HTML rendered as text.
-fn source_text(body: &MessageBody) -> String {
+pub(crate) fn source_text(body: &MessageBody) -> String {
     match (&body.text, &body.html) {
         (Some(text), _) if !text.trim().is_empty() => text.clone(),
         (_, Some(html)) => rules::html_to_text(html),
