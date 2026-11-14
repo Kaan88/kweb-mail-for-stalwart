@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -110,6 +111,7 @@ fun MailListScreen(
     onOpenDeliveryCheck: () -> Unit,
     onOpenSettings: () -> Unit,
     onCompose: (draftId: String) -> Unit,
+    onOpenShared: () -> Unit,
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
@@ -190,6 +192,10 @@ fun MailListScreen(
                 onFolder = {
                     scope.launch { drawerState.close() }
                     vm.selectFolder(it)
+                },
+                onShared = {
+                    scope.launch { drawerState.close() }
+                    onOpenShared()
                 },
                 onDeliveryCheck = {
                     scope.launch { drawerState.close() }
@@ -450,6 +456,7 @@ private fun DrawerContent(
     folders: List<FolderEntry>,
     currentId: String?,
     onFolder: (String) -> Unit,
+    onShared: () -> Unit,
     onDeliveryCheck: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -482,6 +489,12 @@ private fun DrawerContent(
                 )
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.shared_title)) },
+                icon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                selected = false,
+                onClick = onShared,
+            )
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.delivery_check_title)) },
                 icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },

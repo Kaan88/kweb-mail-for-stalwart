@@ -78,6 +78,8 @@ class CardActions(
     val onSummarize: (() -> Unit)? = null,
     /** "Draft a reply" in the message's menu; null when the assistant does not offer it. */
     val onDraftReply: (() -> Unit)? = null,
+    /** False for a message that may not be answered (one of a shared folder): the card has no menu. */
+    val showMenu: Boolean = true,
 )
 
 /**
@@ -94,6 +96,8 @@ fun MessageCard(
     myAddress: String?,
     busyBlobId: String?,
     actions: CardActions,
+    /** The owner's account id when the message is in a shared account (its pictures and files come from there); null for the user's own. */
+    account: String? = null,
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
@@ -131,7 +135,7 @@ fun MessageCard(
         } else {
             ExpandedHeader(header, sender, initial, body, myAddress, actions)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                BodyView(header, body, remoteAllowed, busyBlobId, actions)
+                BodyView(header, body, remoteAllowed, busyBlobId, actions, account)
             }
         }
     }
@@ -175,7 +179,7 @@ private fun ExpandedHeader(
                 }
             }
             Text(time, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-            MessageMenu(actions)
+            if (actions.showMenu) MessageMenu(actions) else Spacer(Modifier.width(12.dp))
         }
         if (showDetails) {
             SelectionContainer {
@@ -253,6 +257,7 @@ private fun BodyView(
     remoteAllowed: Boolean,
     busyBlobId: String?,
     actions: CardActions,
+    account: String?,
 ) {
     when (state) {
         null, BodyState.Loading -> Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -264,7 +269,7 @@ private fun BodyView(
             Text(stringResource(R.string.thread_body_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = actions.onRetryBody) { Text(stringResource(R.string.retry)) }
         }
-        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, actions)
+        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, actions, account)
     }
 }
 
@@ -275,6 +280,7 @@ private fun LoadedBody(
     remoteAllowed: Boolean,
     busyBlobId: String?,
     actions: CardActions,
+    account: String?,
 ) {
     val html = body.html
     if (html != null) {
@@ -308,7 +314,7 @@ private fun LoadedBody(
             }
         }
         val context = LocalContext.current
-        val inline = remember(body) { inlineLookup(context.applicationContext, body) }
+        val inline = remember(body, account) { inlineLookup(context.applicationContext, body, account) }
         MailWebView(
             html = html,
             allowRemote = remoteAllowed,
@@ -396,14 +402,14 @@ private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardAc
  * when it is not in the cache directory. Called on a WebView thread, so it may block. Only
  * pictures: the view must not be handed a document or a script through a Content-ID.
  */
-private fun inlineLookup(context: android.content.Context, body: MessageBody): (String) -> Pair<String, java.io.InputStream>? {
+private fun inlineLookup(context: android.content.Context, body: MessageBody, account: String?): (String) -> Pair<String, java.io.InputStream>? {
     val files = BlobFiles(context)
     return lookup@{ contentId ->
         val attachment = body.attachments.firstOrNull {
             it.contentId == contentId && it.mimeType.startsWith("image/", ignoreCase = true)
         } ?: return@lookup null
         try {
-            val file = files.ensure(Background.core(context), attachment.blobId, files.inlineFile(attachment.blobId))
+            val file = files.ensure(Background.core(context), attachment.blobId, files.inlineFile(attachment.blobId, account), account)
             attachment.mimeType to FileInputStream(file)
         } catch (e: Exception) {
             // The class only: the message of a failed download may name the blob.

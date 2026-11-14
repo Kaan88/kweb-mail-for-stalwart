@@ -32,6 +32,34 @@ sealed interface Route {
     /** The file storage: the fourth root. Which folder it shows is the state of its view model. */
     data object Files : Route
 
+    /** What other users share with this one: their accounts, each with the kinds it shares. Opened from the folder drawer. */
+    data object Shared : Route
+
+    /**
+     * The shared folders of one account. Ids of mail, folders, events and contacts are only unique within an
+     * account, so every shared route names it ([account] is the JMAP account id of the owner); [owner] is their
+     * address, for the title.
+     */
+    data class SharedFolders(val account: String, val owner: String) : Route
+
+    /** The messages of one shared folder. */
+    data class SharedFolder(val account: String, val mailboxId: String) : Route
+
+    /** One message of a shared folder, opened from [mailboxId] (whose rights say what may be done to it). */
+    data class SharedMail(val account: String, val mailboxId: String, val messageId: String) : Route
+
+    /** The agenda of the calendars one account shares. */
+    data class SharedCalendar(val account: String, val owner: String) : Route
+
+    /** One event of a shared calendar. */
+    data class SharedEventView(val account: String, val eventId: String, val recurrenceId: String?) : Route
+
+    /** The contacts of the address books one account shares. */
+    data class SharedContacts(val account: String, val owner: String) : Route
+
+    /** One shared contact. */
+    data class SharedContactView(val account: String, val contactId: String) : Route
+
     /** One contact. */
     data class Contact(val contactId: String) : Route
 
@@ -76,6 +104,12 @@ object BackStack {
 
     /** The four screens the bottom bar leads to; only they show it. */
     fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Calendar || route == Route.Contacts || route == Route.Files
+
+    /** The share is gone: back to the shared screen (it reads itself again), or the root when it is not on the stack. */
+    fun backToShared(stack: List<Route>): List<Route> {
+        val index = stack.indexOfLast { it == Route.Shared }
+        return if (index < 0) initial else stack.take(index + 1)
+    }
 
     fun pop(stack: List<Route>): List<Route> = if (stack.size > 1) stack.dropLast(1) else stack
 

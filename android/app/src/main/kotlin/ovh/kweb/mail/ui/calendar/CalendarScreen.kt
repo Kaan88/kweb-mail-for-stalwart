@@ -305,7 +305,7 @@ private fun DayCell(day: LocalDate, isSelected: Boolean, isToday: Boolean, local
 }
 
 @Composable
-private fun DayHeading(text: String) {
+internal fun DayHeading(text: String) {
     Text(
         text,
         modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp).semantics { heading() },
@@ -318,7 +318,7 @@ private fun DayHeading(text: String) {
 
 /** An entry: its title, a line with time, place and "Invitation", in the container of its calendar. A task has a round box. */
 @Composable
-private fun EntryCard(
+internal fun EntryCard(
     entry: Occurrence,
     continues: Boolean,
     tone: Int,
@@ -326,7 +326,8 @@ private fun EntryCard(
     locale: Locale,
     words: Words,
     onOpen: () -> Unit,
-    onToggleDone: (Boolean) -> Unit,
+    /** Null where a task cannot be ticked (a shared calendar): its box is only drawn. */
+    onToggleDone: ((Boolean) -> Unit)?,
 ) {
     val (container, content) = toneColors(tone)
     val span = remember(entry, zone) { Span.ofOccurrence(entry.startsAt, entry.endsAt, entry.allDay, entry.isTask, zone) }
@@ -350,7 +351,12 @@ private fun EntryCard(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (entry.isTask) {
-            TaskBox(done = entry.isDone, color = content, checkColor = container, onToggle = { onToggleDone(!entry.isDone) })
+            TaskBox(
+                done = entry.isDone,
+                color = content,
+                checkColor = container,
+                onToggle = onToggleDone?.let { toggle -> { toggle(!entry.isDone) } },
+            )
         }
         Column(Modifier.weight(1f)) {
             Text(
@@ -369,13 +375,13 @@ private fun EntryCard(
 
 /** The round check box of a task. */
 @Composable
-private fun TaskBox(done: Boolean, color: Color, checkColor: Color, onToggle: () -> Unit) {
+private fun TaskBox(done: Boolean, color: Color, checkColor: Color, onToggle: (() -> Unit)?) {
     val description = stringResource(if (done) R.string.cal_task_mark_open else R.string.cal_task_mark_done)
     Box(
         Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .clickable(role = Role.Checkbox, onClickLabel = description, onClick = onToggle)
+            .then(if (onToggle != null) Modifier.clickable(role = Role.Checkbox, onClickLabel = description, onClick = onToggle) else Modifier)
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {

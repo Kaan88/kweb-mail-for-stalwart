@@ -38,6 +38,14 @@ import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.search.SearchScreen
 import ovh.kweb.mail.ui.search.SearchViewModel
 import ovh.kweb.mail.ui.settings.SettingsScreen
+import ovh.kweb.mail.ui.shared.SharedCalendarScreen
+import ovh.kweb.mail.ui.shared.SharedContactScreen
+import ovh.kweb.mail.ui.shared.SharedContactsScreen
+import ovh.kweb.mail.ui.shared.SharedEventScreen
+import ovh.kweb.mail.ui.shared.SharedFolderScreen
+import ovh.kweb.mail.ui.shared.SharedFoldersScreen
+import ovh.kweb.mail.ui.shared.SharedMessageScreen
+import ovh.kweb.mail.ui.shared.SharedScreen
 import ovh.kweb.mail.ui.thread.ThreadScreen
 import ovh.kweb.mail.ui.signin.SignInScreen
 
@@ -77,6 +85,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenSettings = { app.open(Route.Settings) },
                     onCompose = { app.open(Route.Compose(it)) },
+                    onOpenShared = { app.open(Route.Shared) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
@@ -118,6 +127,72 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 is Route.EditContact -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                         EditContactScreen(route.contactId, onBack = app::back, onSaved = app::contactSaved)
+                    }
+                }
+                // The shared screens: one store per route, and the account is part of every route.
+                Route.Shared -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedScreen(
+                            onBack = app::back,
+                            onOpenMail = { app.open(Route.SharedFolders(it.accountId, it.name)) },
+                            onOpenCalendar = { app.open(Route.SharedCalendar(it.accountId, it.name)) },
+                            onOpenContacts = { app.open(Route.SharedContacts(it.accountId, it.name)) },
+                        )
+                    }
+                }
+                is Route.SharedFolders -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedFoldersScreen(
+                            route,
+                            onBack = app::back,
+                            onGone = app::sharedGone,
+                            onOpenFolder = { app.open(Route.SharedFolder(route.account, it)) },
+                        )
+                    }
+                }
+                is Route.SharedFolder -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedFolderScreen(
+                            route,
+                            onBack = app::back,
+                            onGone = app::sharedGone,
+                            onOpenMessage = { app.open(Route.SharedMail(route.account, route.mailboxId, it)) },
+                        )
+                    }
+                }
+                is Route.SharedMail -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedMessageScreen(route, onBack = app::back)
+                    }
+                }
+                is Route.SharedCalendar -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedCalendarScreen(
+                            route,
+                            onBack = app::back,
+                            onGone = app::sharedGone,
+                            onOpenEvent = { eventId, recurrenceId -> app.open(Route.SharedEventView(route.account, eventId, recurrenceId)) },
+                        )
+                    }
+                }
+                is Route.SharedEventView -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedEventScreen(route, onBack = app::back)
+                    }
+                }
+                is Route.SharedContacts -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedContactsScreen(
+                            route,
+                            onBack = app::back,
+                            onGone = app::sharedGone,
+                            onOpenContact = { app.open(Route.SharedContactView(route.account, it)) },
+                        )
+                    }
+                }
+                is Route.SharedContactView -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        SharedContactScreen(route, onBack = app::back, onWrite = { id, to -> app.open(Route.Compose(id, to)) })
                     }
                 }
                 Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {

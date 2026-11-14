@@ -130,7 +130,7 @@ fun ContactScreen(
                 NoticeBar(it.resolve(LocalResources.current), error = true, action = stringResource(R.string.contacts_dismiss) to vm::dismissMessage)
             }
             when {
-                detail != null -> Details(
+                detail != null -> ContactDetails(
                     detail,
                     state.recent,
                     onWrite = vm::write,
@@ -173,7 +173,7 @@ fun ContactScreen(
 }
 
 /** Starts [intent]; when no app can take it a short message says so. */
-private fun launch(context: Context, intent: Intent, missing: Int) {
+internal fun launch(context: Context, intent: Intent, missing: Int) {
     try {
         context.startActivity(intent)
     } catch (e: ActivityNotFoundException) {
@@ -182,8 +182,9 @@ private fun launch(context: Context, intent: Intent, missing: Int) {
     }
 }
 
+/** The content of a contact screen. A contact of a shared address book is shown with [recent] empty. */
 @Composable
-private fun Details(
+internal fun ContactDetails(
     detail: ContactDetail,
     recent: List<MessageHeader>,
     onWrite: (String) -> Unit,

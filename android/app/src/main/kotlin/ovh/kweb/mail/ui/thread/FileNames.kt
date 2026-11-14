@@ -4,6 +4,13 @@ import java.security.MessageDigest
 
 /** Names for files the app writes under its cache. Nothing from a mail reaches a path unchecked. */
 object FileNames {
+    /**
+     * What a downloaded blob's cache name is made from: the blob id alone for the user's own mail (as it always
+     * was), the account and the blob id for a shared account. A blob id is only unique within one account, so
+     * two accounts' blobs must never share a file. The length prefix keeps "a" + "bc" apart from "ab" + "c".
+     */
+    fun blobKey(account: String?, blobId: String): String = if (account == null) blobId else "shared:${account.length}:$account:$blobId"
+
     /** The file system allows 255 bytes; the core adds a temporary suffix while it downloads. */
     private const val MAX_BYTES = 180
 

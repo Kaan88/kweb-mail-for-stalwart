@@ -91,6 +91,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun back() = stackFlow.update { BackStack.pop(it) }
 
+    /** What was opened from "Shared with me" is not shared any more: back to that screen, which reads itself again, and say so. */
+    fun sharedGone() {
+        stackFlow.update { BackStack.backToShared(it) }
+        messageChannel.trySend(R.string.shared_gone)
+    }
+
     /** A message was handed over for sending: back to the list. */
     fun sent() {
         stackFlow.value = BackStack.afterSend()

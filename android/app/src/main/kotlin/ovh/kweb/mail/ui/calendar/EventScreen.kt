@@ -113,7 +113,7 @@ fun EventScreen(eventId: String, recurrenceId: String?, onBack: () -> Unit, onEd
                 NoticeBar(it.resolve(LocalResources.current), error = true, action = stringResource(R.string.cal_dismiss) to vm::dismissMessage)
             }
             when {
-                detail != null -> Details(detail, recurrenceId, state, onAnswer = vm::respond)
+                detail != null -> EventDetails(detail, recurrenceId, state, onAnswer = vm::respond)
                 state.phase == EventPhase.LOADING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 else -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
@@ -177,8 +177,15 @@ private fun DeleteDialog(ask: EventRules.DeleteAsk, isTask: Boolean, onDelete: (
 
 private data class InfoRow(val icon: Int, val primary: String, val secondary: String? = null)
 
+/** The content of an event screen. [readOnly] (an event of a shared calendar) leaves out the buttons that answer an invitation. */
 @Composable
-private fun Details(detail: EventDetail, recurrenceId: String?, state: EventState, onAnswer: (String) -> Unit) {
+internal fun EventDetails(
+    detail: EventDetail,
+    recurrenceId: String?,
+    state: EventState,
+    onAnswer: (String) -> Unit,
+    readOnly: Boolean = false,
+) {
     val locale = rememberLocale()
     val words = rememberWords()
     val input = detail.input
@@ -211,7 +218,7 @@ private fun Details(detail: EventDetail, recurrenceId: String?, state: EventStat
             style = MaterialTheme.typography.headlineMedium,
             textDecoration = if (input.isTask && detail.isDone) TextDecoration.LineThrough else null,
         )
-        if (EventRules.isInvitation(detail.participants, detail.myStatus)) {
+        if (!readOnly && EventRules.isInvitation(detail.participants, detail.myStatus)) {
             AnswerButtons(current = detail.myStatus, busy = state.busy, onAnswer = onAnswer)
         }
         GroupColumn {

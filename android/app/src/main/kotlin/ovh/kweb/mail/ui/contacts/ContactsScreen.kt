@@ -172,7 +172,7 @@ private fun LazyItemScope.Centered(content: @Composable () -> Unit) {
  * does not jump while the view model answers; the view model's query only fills it when the screen comes up.
  */
 @Composable
-private fun SearchPill(initial: String, onChange: (String) -> Unit) {
+internal fun SearchPill(initial: String, onChange: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     var text by remember { mutableStateOf(initial) }
     val focus: FocusManager = LocalFocusManager.current
@@ -215,7 +215,7 @@ private fun SearchPill(initial: String, onChange: (String) -> Unit) {
 }
 
 @Composable
-private fun LetterHeading(letter: String) {
+internal fun LetterHeading(letter: String) {
     Text(
         letter,
         modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 20.dp, top = 14.dp, bottom = 4.dp).semantics { heading() },
@@ -227,7 +227,7 @@ private fun LetterHeading(letter: String) {
 
 /** One contact: a tonal round avatar with the initial, the name, and the quiet line. It is a row of its letter's group. */
 @Composable
-private fun ContactItem(item: ContactRules.Entry.Item, locale: java.util.Locale, onClick: () -> Unit) {
+internal fun ContactItem(item: ContactRules.Entry.Item, locale: java.util.Locale, onClick: () -> Unit) {
     val row: ContactRow = item.row
     val subtitle = remember(row) { ContactRules.subtitle(row) }
     Row(
