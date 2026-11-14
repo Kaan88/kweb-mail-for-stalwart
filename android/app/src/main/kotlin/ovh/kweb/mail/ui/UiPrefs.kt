@@ -17,8 +17,14 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(THEME, null)
         set(value) = prefs.edit { putString(THEME, value) }
 
+    /** The language last asked for in the assistant's Translate; null until used. */
+    var translateLanguage: String?
+        get() = prefs.getString(TRANSLATE, null)
+        set(value) = prefs.edit { putString(TRANSLATE, value) }
+
     private companion object {
         const val FILE = "ui"
+        const val TRANSLATE = "assistant_translate_language"
         const val THEME = "theme"
         const val ASKED = "notification_permission_asked"
     }

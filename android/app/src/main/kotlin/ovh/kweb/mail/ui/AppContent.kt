@@ -22,6 +22,7 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ovh.kweb.mail.ui.assistant.AssistantScreen
 import ovh.kweb.mail.ui.away.AwayScreen
 import ovh.kweb.mail.ui.calendar.CalendarScreen
 import ovh.kweb.mail.ui.calendar.EditEventScreen
@@ -120,6 +121,9 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AwayScreen(onBack = app::back)
                 }
+                Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    AssistantScreen(onBack = app::back)
+                }
                 // One thread replacing another (a notification tap) must not inherit the first one's state.
                 is Route.Thread -> key(route) {
                     ThreadScreen(route, onBack = app::back, onCompose = { app.open(Route.Compose(it)) })
@@ -129,6 +133,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenAway = { app.open(Route.Away) },
+                    onOpenAssistant = { app.open(Route.Assistant) },
                 )
                 Route.Search -> SearchScreen(
                     onBack = app::back,

@@ -14,6 +14,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
@@ -38,12 +39,22 @@ sealed interface AwayRowState {
     data object Unknown : AwayRowState
 }
 
+/** The state line of the assistant row: not read yet, read, or not readable (the row then says nothing). */
+sealed interface AssistantRowState {
+    data object Loading : AssistantRowState
+
+    data class Known(val line: AssistantRules.StateLine) : AssistantRowState
+
+    data object Unknown : AssistantRowState
+}
+
 data class SettingsState(
     val name: String = "",
     /** The server's host, empty until the account is read. */
     val server: String = "",
     val storage: StorageState = StorageState.Loading,
     val away: AwayRowState = AwayRowState.Loading,
+    val assistant: AssistantRowState = AssistantRowState.Loading,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -103,6 +114,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (asked != generation) return@launch
             // An answer that is only a failure does not replace a state that was read earlier.
             stateFlow.update { if (result is AwayRowState.Unknown && it.away is AwayRowState.Known) it else it.copy(away = result) }
+        }
+        viewModelScope.launch {
+            val result = try {
+                val settings = withContext(Dispatchers.IO) { Background.core(getApplication()).aiSettings() }
+                AssistantRules.stateLine(settings)?.let { AssistantRowState.Known(it) } ?: AssistantRowState.Unknown
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the assistant settings failed: ${e.javaClass.simpleName}")
+                AssistantRowState.Unknown
+            }
+            if (asked != generation) return@launch
+            stateFlow.update { if (result is AssistantRowState.Unknown && it.assistant is AssistantRowState.Known) it else it.copy(assistant = result) }
         }
     }
 }

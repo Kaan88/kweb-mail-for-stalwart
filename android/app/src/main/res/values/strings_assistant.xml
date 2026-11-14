@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings row and screen -->
+    <string name="assistant_title">AI assistant</string>
+    <string name="assistant_state_off">Off</string>
+    <string name="assistant_state_on">On</string>
+    <string name="assistant_switch">Use the AI assistant</string>
+    <string name="assistant_switch_detail">Off until you set it up</string>
+    <string name="assistant_service">Service</string>
+    <string name="assistant_service_openai">OpenAI-compatible</string>
+    <string name="assistant_service_openai_detail">OpenAI, or a model on your own computer or network</string>
+    <string name="assistant_service_anthropic">Anthropic</string>
+    <string name="assistant_address">Address</string>
+    <string name="assistant_model">Model</string>
+    <string name="assistant_key">Key</string>
+    <string name="assistant_key_optional">Key (optional)</string>
+    <string name="assistant_key_new">New key</string>
+    <string name="assistant_key_stored">A key is stored</string>
+    <string name="assistant_key_remove">Remove</string>
+    <string name="assistant_key_removing">The stored key is removed when you save.</string>
+    <string name="assistant_key_keep">Keep the stored key</string>
+    <string name="assistant_allow">What it may do</string>
+    <string name="assistant_allow_summaries">Summaries</string>
+    <string name="assistant_allow_drafts">Reply drafts</string>
+    <string name="assistant_allow_rewrites">Rewriting what I write</string>
+    <string name="assistant_privacy">Nothing is sent until you tap a button such as Summarize. Then the mail you chose goes to the service above, and nothing else. The assistant never sends or deletes mail on its own.</string>
+    <string name="assistant_save">Save</string>
+    <string name="assistant_save_failed">The settings could not be saved.</string>
+    <string name="assistant_load_failed">The settings could not be loaded.</string>
+    <string name="assistant_dismiss">Dismiss</string>
+    <string name="assistant_discard_title">Discard changes?</string>
+    <string name="assistant_discard_text">Your changes to the assistant are not saved.</string>
+    <string name="assistant_discard">Discard</string>
+    <string name="assistant_keep_editing">Keep editing</string>
+
+    <!-- Entries -->
+    <string name="assistant_summarize">Summarize</string>
+    <string name="assistant_draft_reply">Draft a reply</string>
+    <string name="assistant_assist">Assist</string>
+    <string name="assistant_improve">Improve</string>
+    <string name="assistant_shorter">Shorter</string>
+    <string name="assistant_formal">More formal</string>
+    <string name="assistant_friendly">Friendlier</string>
+    <string name="assistant_fix_spelling">Fix spelling</string>
+    <string name="assistant_translate">Translate…</string>
+
+    <!-- Translate dialog -->
+    <string name="assistant_translate_title">Translate to</string>
+    <string name="assistant_translate_language">Language</string>
+    <string name="assistant_translate_go">Translate</string>
+
+    <!-- Consent -->
+    <string name="assistant_consent_title">Send to %1$s?</string>
+    <string name="assistant_consent_text">This sends %1$s to %2$s, using the model %3$s. You will not be asked again for this service and model.</string>
+    <string name="assistant_consent_send">Send</string>
+    <plurals name="assistant_scope_messages">
+        <item quantity="one">%1$d message, about %2$s characters</item>
+        <item quantity="other">%1$d messages, about %2$s characters</item>
+    </plurals>
+    <string name="assistant_scope_text">about %1$s characters of your text</string>
+    <string name="assistant_scope_shortened">%1$s, shortened to fit</string>
+
+    <!-- The sheet -->
+    <string name="assistant_sheet_summary">Summary</string>
+    <string name="assistant_sheet_draft">Draft reply</string>
+    <string name="assistant_sheet_rewrite">Suggested text</string>
+    <string name="assistant_instruction">What should it say?</string>
+    <string name="assistant_write_draft">Write draft</string>
+    <string name="assistant_stop">Stop</string>
+    <string name="assistant_stopped">Stopped.</string>
+    <string name="assistant_try_again">Try again</string>
+    <string name="assistant_copy">Copy</string>
+    <string name="assistant_copied">Copied</string>
+    <string name="assistant_close">Close</string>
+    <string name="assistant_use_as_reply">Use as reply</string>
+    <string name="assistant_replace">Replace</string>
+    <string name="assistant_model_line">Written by %1$s. Check it before you use it.</string>
+    <string name="assistant_failed">The assistant could not finish.</string>
+    <string name="assistant_not_available">The assistant is switched off for this.</string>
+    <string name="assistant_sign_in_needed">Sign in again to use the assistant.</string>
+    <string name="assistant_draft_failed">The reply could not be started.</string>
+
+    <!-- In the message being written -->
+    <string name="assistant_nothing_to_change">There is no text of yours to change yet.</string>
+    <string name="assistant_replaced">Text replaced</string>
+    <string name="assistant_undo">Undo</string>
+    <string name="assistant_replace_failed">The text has changed since. Nothing was replaced.</string>
+    <string name="assistant_undo_failed">The text has changed since, so it could not be undone.</string>
+</resources>

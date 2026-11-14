@@ -38,7 +38,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -47,6 +54,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +66,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,7 +80,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,10 +99,18 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.UiPrefs
+import ovh.kweb.mail.ui.assistant.AssistantRules
+import ovh.kweb.mail.ui.assistant.AssistantSheet
+import ovh.kweb.mail.ui.assistant.AssistantViewModel
+import ovh.kweb.mail.ui.assistant.DraftText
+import ovh.kweb.mail.ui.assistant.RewriteTarget
 import ovh.kweb.mail.ui.thread.FileNames
 import ovh.kweb.mail.ui.thread.SizeFormat
 import ovh.kweb.mail.ui.thread.ThreadRules
 import uniffi.kweb_core.Address
+import uniffi.kweb_core.AiTask
+import uniffi.kweb_core.RewriteStyle
 
 /**
  * Writing a message: the draft with [draftId] from the core. [onLeave] goes back, [onSent] goes
@@ -100,6 +123,7 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
         factory = viewModelFactory { initializer { ComposeViewModel(this[APPLICATION_KEY] as Application, draftId, prefillTo) } },
     )
     val s = vm.state
+    val context = LocalContext.current
     val activity = LocalActivity.current
     val toFocus = remember { FocusRequester() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
@@ -107,6 +131,73 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
     }
 
     LaunchedEffect(vm) { vm.start() }
+
+    // The text field keeps its own value so that the selection is known; it is rebuilt from the view model, never saved.
+    var bodyField by remember { mutableStateOf(TextFieldValue(s.body)) }
+    LaunchedEffect(s.body) { if (bodyField.text != s.body) bodyField = TextFieldValue(s.body) }
+
+    // The AI assistant: rewrites the user's own text only; the result is shown in a sheet and replaces on request.
+    val assistant: AssistantViewModel = viewModel()
+    val assistantState by assistant.state.collectAsStateWithLifecycle()
+    val owner = "compose:$draftId"
+    val offered = remember(assistantState.settings) { AssistantRules.visible(assistantState.settings) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val resources = LocalResources.current
+    val prefs = remember { UiPrefs(context) }
+    var askingLanguage by rememberSaveable { mutableStateOf(false) }
+    LifecycleResumeEffect(assistant) {
+        assistant.refreshSettings()
+        onPauseOrDispose { }
+    }
+    DisposableEffect(assistant, owner) { onDispose { if (activity?.isChangingConfigurations != true) assistant.release(owner) } }
+
+    fun rewrite(style: RewriteStyle) {
+        val selection = bodyField.selection
+        val body = vm.state.body
+        val span = DraftText.target(body, selection.start, selection.end)
+        if (span == null) {
+            scope.launch { snackbar.showSnackbar(resources.getString(R.string.assistant_nothing_to_change)) }
+            return
+        }
+        val text = body.substring(span.start, span.end)
+        assistant.open(owner, AssistantRules.Kind.REWRITE, AiTask.Rewrite(text, style), RewriteTarget(span, text))
+    }
+
+    /** "Replace" in the sheet: swaps exactly the part that was sent, and offers one Undo. */
+    fun replaceWith(answer: String) {
+        val target = assistantState.session?.takeIf { it.owner == owner }?.rewrite
+        assistant.close()
+        val before = vm.state.body
+        if (vm.state.sending) {
+            scope.launch { snackbar.showSnackbar(resources.getString(R.string.assistant_replace_failed)) }
+            return
+        }
+        val done = target?.let { DraftText.apply(before, it.span, it.original, answer) }
+        if (done == null) {
+            scope.launch { snackbar.showSnackbar(resources.getString(R.string.assistant_replace_failed)) }
+            return
+        }
+        vm.setBody(done.body)
+        bodyField = TextFieldValue(done.body, TextRange(done.cursor))
+        scope.launch {
+            val result = snackbar.showSnackbar(
+                resources.getString(R.string.assistant_replaced),
+                actionLabel = resources.getString(R.string.assistant_undo),
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                val back = DraftText.undo(vm.state.body, before, done.body)
+                if (back == null || vm.state.sending) {
+                    snackbar.showSnackbar(resources.getString(R.string.assistant_undo_failed))
+                } else {
+                    vm.setBody(back)
+                    bodyField = TextFieldValue(back, TextRange(minOf(done.cursor, back.length)))
+                }
+            }
+        }
+    }
+
     // Leaving the screen for good saves what is left and lets go; a rotation keeps everything.
     DisposableEffect(vm) { onDispose { if (activity?.isChangingConfigurations != true) vm.close() } }
     // Android may kill the process once the app is in the background: write the draft now.
@@ -141,8 +232,12 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
                 onClose = { if (s.ready) vm.leave() else onLeave() },
                 onAttach = { picker.launch("*/*") },
                 onSend = vm::send,
+                canAssist = s.ready && !s.sending && AssistantRules.Kind.REWRITE in offered,
+                onAssist = ::rewrite,
+                onAskLanguage = { askingLanguage = true },
             )
         },
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = { StatusLine(s) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -161,10 +256,53 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
             }
             Phase.Ready -> Column(Modifier.padding(padding).fillMaxSize()) {
                 Notices(s, vm)
-                Form(s, vm, toFocus)
+                Form(s, vm, toFocus, bodyField) { value ->
+                    // A body that is being sent is not edited; the field then keeps what the state has (the selection may move).
+                    if (vm.state.sending && value.text != vm.state.body) return@Form
+                    bodyField = value
+                    if (value.text != vm.state.body) vm.setBody(value.text)
+                }
             }
         }
     }
+
+    assistantState.session?.takeIf { it.owner == owner }?.let { AssistantSheet(it, assistant, onReplace = ::replaceWith) }
+    if (askingLanguage) {
+        TranslateDialog(
+            initial = prefs.translateLanguage.orEmpty(),
+            onConfirm = { language ->
+                askingLanguage = false
+                prefs.translateLanguage = language
+                rewrite(RewriteStyle.Translate(language))
+            },
+            onDismiss = { askingLanguage = false },
+        )
+    }
+}
+
+/** Asks which language to translate into; the last answer is the starting point. */
+@Composable
+private fun TranslateDialog(initial: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var language by rememberSaveable { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.assistant_translate_title)) },
+        text = {
+            OutlinedTextField(
+                value = language,
+                onValueChange = { language = it },
+                label = { Text(stringResource(R.string.assistant_translate_language)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(language.trim()) }, enabled = language.isNotBlank()) {
+                Text(stringResource(R.string.assistant_translate_go))
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 @Composable
@@ -175,6 +313,9 @@ private fun TopBar(
     onClose: () -> Unit,
     onAttach: () -> Unit,
     onSend: () -> Unit,
+    canAssist: Boolean,
+    onAssist: (RewriteStyle) -> Unit,
+    onAskLanguage: () -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -191,6 +332,7 @@ private fun TopBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        if (canAssist) AssistMenu(onAssist, onAskLanguage)
         IconButton(onClick = onAttach, enabled = canAttach) {
             Icon(painterResource(R.drawable.ic_attachment), contentDescription = stringResource(R.string.compose_attach))
         }
@@ -205,6 +347,29 @@ private fun TopBar(
             Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.compose_send), style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+/** The Assist button and its menu: how the text of the message is to be changed. */
+@Composable
+private fun AssistMenu(onStyle: (RewriteStyle) -> Unit, onTranslate: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(painterResource(R.drawable.ic_assistant), contentDescription = stringResource(R.string.assistant_assist))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val choose = { action: () -> Unit ->
+                open = false
+                action()
+            }
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_improve)) }, onClick = { choose { onStyle(RewriteStyle.Improve) } })
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_shorter)) }, onClick = { choose { onStyle(RewriteStyle.Shorter) } })
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_formal)) }, onClick = { choose { onStyle(RewriteStyle.Formal) } })
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_friendly)) }, onClick = { choose { onStyle(RewriteStyle.Friendly) } })
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_fix_spelling)) }, onClick = { choose { onStyle(RewriteStyle.FixSpelling) } })
+            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_translate)) }, onClick = { choose(onTranslate) })
         }
     }
 }
@@ -241,7 +406,7 @@ private fun Bar(text: String, action: Pair<String, () -> Unit>?) {
 }
 
 @Composable
-private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester) {
+private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester, body: TextFieldValue, onBody: (TextFieldValue) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val subjectFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
@@ -302,8 +467,8 @@ private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester)
         }
         s.attaching.forEach { FileCard(it, stringResource(R.string.compose_uploading), busy = true, onRemove = null) }
         BasicTextField(
-            value = s.body,
-            onValueChange = vm::setBody,
+            value = body,
+            onValueChange = onBody,
             modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 320.dp).focusRequester(bodyFocus).padding(horizontal = 20.dp, vertical = 14.dp),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
             cursorBrush = SolidColor(colors.primary),

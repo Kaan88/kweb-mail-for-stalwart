@@ -175,4 +175,14 @@ class BackStackTest {
         assertEquals(stack + Route.Thread("t", null, "m"), shown)
         assertEquals(stack, BackStack.pop(shown))
     }
+
+    @Test fun theAssistantSettingsAreAScreenOverSettings() =
+        assertEquals(listOf(Route.MailList, Route.Settings, Route.Assistant), BackStack.push(BackStack.push(BackStack.initial, Route.Settings), Route.Assistant))
+
+    @Test fun aTargetGoesOverTheAssistantSettingsAndTheyAreNotARoot() {
+        val stack = listOf(Route.MailList, Route.Settings, Route.Assistant)
+        val shown = BackStack.showOver(stack, BackStack.forNotification("t", null, "m"))
+        assertEquals(stack + Route.Thread("t", null, "m"), shown)
+        assertEquals(false, BackStack.isRoot(Route.Assistant))
+    }
 }

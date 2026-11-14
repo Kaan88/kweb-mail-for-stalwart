@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
@@ -74,6 +75,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
     onOpenAway: () -> Unit,
+    onOpenAssistant: () -> Unit,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
 ) {
@@ -120,11 +122,18 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 1),
+                    Groups.shape(0, 2),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
                     icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                     onClick = onOpenAway,
+                )
+                SettingsRow(
+                    Groups.shape(1, 2),
+                    stringResource(R.string.assistant_title),
+                    assistantLine(state.assistant),
+                    icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = onOpenAssistant,
                 )
             }
 
@@ -176,6 +185,17 @@ private fun awayLine(state: AwayRowState): String? {
         is AwayLine.OnFrom -> stringResource(R.string.away_state_on_from, AwayRules.shortDate(line.from, locale))
         is AwayLine.OnFromUntil ->
             stringResource(R.string.away_state_on_from_until, AwayRules.shortDate(line.from, locale), AwayRules.shortDate(line.until, locale))
+    }
+}
+
+/** The quiet line of the assistant row: "Off", "On", or the model's name; nothing while it is read or when it cannot be. */
+@Composable
+private fun assistantLine(state: AssistantRowState): String? {
+    val line = (state as? AssistantRowState.Known)?.line ?: return null
+    return when (line) {
+        AssistantRules.StateLine.Off -> stringResource(R.string.assistant_state_off)
+        AssistantRules.StateLine.On -> stringResource(R.string.assistant_state_on)
+        is AssistantRules.StateLine.Model -> line.name
     }
 }
 

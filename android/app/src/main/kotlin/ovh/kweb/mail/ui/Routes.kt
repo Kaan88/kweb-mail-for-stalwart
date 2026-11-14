@@ -38,6 +38,9 @@ sealed interface Route {
     /** The away message, reached from Settings. */
     data object Away : Route
 
+    /** The settings of the AI assistant, reached from Settings. */
+    data object Assistant : Route
+
     data object Search : Route
 
     data object DeliveryCheck : Route
@@ -87,7 +90,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Assistant
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

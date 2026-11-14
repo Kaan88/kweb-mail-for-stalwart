@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -64,10 +65,15 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.Route
+import ovh.kweb.mail.ui.assistant.AssistantEvent
+import ovh.kweb.mail.ui.assistant.AssistantRules
+import ovh.kweb.mail.ui.assistant.AssistantSheet
+import ovh.kweb.mail.ui.assistant.AssistantViewModel
 import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.MoveDialog
+import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.DraftKind
 
@@ -94,6 +100,24 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     }
 
     LaunchedEffect(vm) { vm.start() }
+
+    // The AI assistant: one task at a time for the app; this screen shows only the session that is its own.
+    val assistant: AssistantViewModel = viewModel()
+    val assistantState by assistant.state.collectAsStateWithLifecycle()
+    val owner = "thread:${route.threadId}"
+    val offered = remember(assistantState.settings) { AssistantRules.visible(assistantState.settings) }
+    LifecycleResumeEffect(assistant) {
+        assistant.refreshSettings()
+        onPauseOrDispose { }
+    }
+    // Leaving the thread for good ends its task and closes its sheet; a rotation keeps both.
+    DisposableEffect(assistant, owner) { onDispose { if (activity?.isChangingConfigurations != true) assistant.release(owner) } }
+    LaunchedEffect(assistant, owner) {
+        assistant.events.collect { event ->
+            // A draft someone else's sheet made is not for this screen.
+            if (event is AssistantEvent.OpenDraft && event.owner == owner) onCompose(event.draftId)
+        }
+    }
     // Leaving the screen for good drops what it holds; a rotation keeps it.
     DisposableEffect(vm) { onDispose { if (activity?.isChangingConfigurations != true) vm.reset() } }
     LaunchedEffect(vm) {
@@ -241,6 +265,14 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                 enabled = hasMessages,
                                 onClick = { menuOpen = false; vm.toggleFlag() },
                             )
+                            if (AssistantRules.Kind.SUMMARY in offered) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.assistant_summarize)) },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                                    enabled = hasMessages,
+                                    onClick = { menuOpen = false; assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeThread(route.threadId)) },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.action_move)) },
                                 enabled = canAct,
@@ -298,6 +330,16 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             onReply = { vm.startDraft(DraftKind.Reply(header.id)) },
                             onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
                             onForward = { vm.startDraft(DraftKind.Forward(header.id)) },
+                            onSummarize = if (AssistantRules.Kind.SUMMARY in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeMessage(header.id)) }
+                            } else {
+                                null
+                            },
+                            onDraftReply = if (AssistantRules.Kind.DRAFT in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(header.id, "")) }
+                            } else {
+                                null
+                            },
                         ),
                     )
                 }
@@ -315,6 +357,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         }
     }
 
+    assistantState.session?.takeIf { it.owner == owner }?.let { AssistantSheet(it, assistant) }
     if (moving) {
         MoveDialog(
             folders = folders,
