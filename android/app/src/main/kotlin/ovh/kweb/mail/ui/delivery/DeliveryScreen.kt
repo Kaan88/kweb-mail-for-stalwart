@@ -10,26 +10,35 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -39,6 +48,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -53,6 +63,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
@@ -61,6 +72,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -74,10 +86,10 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import kotlinx.coroutines.delay
+import androidx.compose.ui.text.toUpperCase
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.ui.UiPrefs
-import ovh.kweb.mail.ui.theme.KwebColors
 import uniffi.kweb_core.ConnectionStatus
 
 /** One row of the screen. [hint] and [onClick] are set only when there is something to do. */
@@ -146,6 +158,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     ) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             if (state.signingOut) LinearProgressIndicator(Modifier.fillMaxWidth())
+            Verdict(items)
             items.forEach { CheckRow(it) }
             SectionTitle(stringResource(R.string.delivery_what_to_show))
             SwitchRow(stringResource(R.string.delivery_show_mail), state.mailEnabled, vm::setMailEnabled)
@@ -153,8 +166,12 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
             SwitchRow(stringResource(R.string.delivery_remove_elsewhere), state.removeWhenReadElsewhere, vm::setRemoveWhenReadElsewhere)
             Button(
                 onClick = vm::sendTestNotification,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 16.dp),
-            ) { Text(stringResource(R.string.delivery_send_test)) }
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp).height(52.dp),
+            ) {
+                Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.delivery_send_test), style = MaterialTheme.typography.titleSmall)
+            }
             state.coreVersion?.let {
                 Text(
                     it,
@@ -327,44 +344,106 @@ private fun clockTime(millis: Long): String =
     DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(Locale.getDefault())
         .format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
 
+/**
+ * The answer first, as the mock-up has it: one card that says whether mail will arrive, in the
+ * primary colours when every check passes and in the error colours when one does not.
+ */
 @Composable
-private fun CheckRow(item: CheckItem) {
-    val click = item.onClick
-    Column {
-        Row(
+private fun Verdict(items: List<CheckItem>) {
+    val failed = items.count { !it.ok }
+    val ok = failed == 0
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 8.dp)
+            .clip(RoundedCornerShape(30.dp))
+            .background(if (ok) colors.primaryContainer else colors.errorContainer)
+            .semantics(mergeDescendants = true) {}
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        // The uneven corners are the mock-up's soft "blob", as far as plain corners can draw it.
+        Box(
             Modifier
-                .fillMaxWidth()
-                .then(if (click != null) Modifier.clickable(role = Role.Button, onClick = click) else Modifier.semantics(mergeDescendants = true) {})
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .size(58.dp)
+                .clip(RoundedCornerShape(topStartPercent = 50, topEndPercent = 38, bottomEndPercent = 50, bottomStartPercent = 42))
+                .background(if (ok) colors.primary else colors.error),
+            contentAlignment = Alignment.Center,
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(item.title, style = MaterialTheme.typography.bodyLarge)
-                Text(item.detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val warn = KwebColors.status.warn
-                item.extra?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = warn) }
-                item.hint?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = warn, fontWeight = FontWeight.Medium) }
-            }
-            StatusPill(item.pill, item.ok)
+            Icon(
+                if (ok) Icons.Filled.Check else Icons.Filled.Warning,
+                contentDescription = null,
+                modifier = Modifier.size(28.dp),
+                tint = if (ok) colors.onPrimary else colors.onError,
+            )
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        val content = if (ok) colors.onPrimaryContainer else colors.onErrorContainer
+        Column(Modifier.weight(1f)) {
+            Text(
+                stringResource(if (ok) R.string.delivery_verdict_ok else R.string.delivery_verdict_bad),
+                color = content,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (ok) items.first().detail else pluralStringResource(R.plurals.delivery_verdict_to_fix, failed, failed),
+                color = content.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
     }
 }
 
-/** The `.st` pill of the mock-up. Its text is real text, so a screen reader reads the verdict. */
+@Composable
+private fun CheckRow(item: CheckItem) {
+    val click = item.onClick
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (click != null) Modifier.clickable(role = Role.Button, onClick = click) else Modifier.semantics(mergeDescendants = true) {})
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 20.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(item.title, style = MaterialTheme.typography.bodyLarge)
+            Text(item.detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val alert = MaterialTheme.colorScheme.error
+            item.extra?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = alert) }
+            item.hint?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = alert, fontWeight = FontWeight.Medium) }
+        }
+        StatusPill(item.pill, item.ok)
+        // The whole row is the button; this says so where there is something to fix.
+        if (!item.ok && click != null) {
+            Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = CircleShape) {
+                Text(
+                    stringResource(R.string.delivery_fix),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The status pill of the mock-up: a passed check in the tertiary container, a failed one in the
+ * error container. Its text is real text, so a screen reader reads the verdict.
+ */
 @Composable
 private fun StatusPill(text: String, ok: Boolean) {
-    val colors = KwebColors.status
+    val colors = MaterialTheme.colorScheme
     Surface(
-        color = if (ok) colors.okContainer else colors.warnContainer,
-        contentColor = if (ok) colors.ok else colors.warn,
+        color = if (ok) colors.tertiaryContainer else colors.errorContainer,
+        contentColor = if (ok) colors.onTertiaryContainer else colors.onErrorContainer,
         shape = RoundedCornerShape(10.dp),
     ) {
         Text(
             text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
         )
@@ -374,29 +453,36 @@ private fun StatusPill(text: String, ok: Boolean) {
 @Composable
 private fun SectionTitle(text: String) {
     Text(
-        text,
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
+        text.toUpperCase(androidx.compose.ui.text.intl.Locale.current),
+        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Column {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
-                .heightIn(min = 56.dp)
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-            Switch(checked = checked, onCheckedChange = null)
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            thumbContent = if (checked) {
+                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+            } else {
+                null
+            },
+        )
     }
 }
 

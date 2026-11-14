@@ -1,4 +1,4 @@
-package ovh.kweb.mail.ui.inbox
+package ovh.kweb.mail.ui.list
 
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.kweb_core.Address
 
 class RowFormatTest {
     private val zone = ZoneId.of("UTC")
@@ -61,4 +62,34 @@ class RowFormatTest {
     @Test fun initialOfNothingIsAQuestionMark() = assertEquals("?", Sender.initial("", ""))
 
     @Test fun initialDoesNotSplitASurrogatePair() = assertEquals("𝐀", Sender.initial("𝐀bc", ""))
+
+    @Test fun oneSenderKeepsTheFullName() = assertEquals("Merve Kaya", SenderLine.senders(listOf("Merve Kaya")))
+
+    @Test fun severalSendersUseFirstNames() =
+        assertEquals("Merve, Ali, selin@example.org", SenderLine.senders(listOf("Merve Kaya", "Ali Veli", "selin@example.org")))
+
+    @Test fun noSendersIsNull() {
+        assertNull(SenderLine.senders(emptyList()))
+        assertNull(SenderLine.senders(listOf(" ", "")))
+    }
+
+    @Test fun blankSendersAreSkipped() = assertEquals("Merve", SenderLine.senders(listOf("", "Merve")))
+
+    @Test fun recipientsUseNamesThenAddresses() = assertEquals(
+        "Ayşe, b@example.org",
+        SenderLine.recipients(listOf(Address("Ayşe", "a@example.org"), Address("", "b@example.org"))),
+    )
+
+    @Test fun noRecipientsIsNull() = assertNull(SenderLine.recipients(emptyList()))
+
+    @Test fun theCountIsShownFromTwoMessages() {
+        assertEquals("Merve", SenderLine.withCount("Merve", 1))
+        assertEquals("Merve · 3", SenderLine.withCount("Merve", 3))
+    }
+
+    @Test
+    fun previewIsOneLine() {
+        assertEquals("Monday is fine for me. > Shall we ship?", Preview.oneLine("Monday is fine for me.\n\n> Shall we ship?\r\n"))
+        assertEquals("", Preview.oneLine(" \n\t "))
+    }
 }

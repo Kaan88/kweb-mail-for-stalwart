@@ -32,6 +32,7 @@ import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.background.Settings
 import ovh.kweb.mail.background.StartFailure
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.thread.BlobFiles
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.coreVersion
 
@@ -152,7 +153,13 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                         Log.w(Background.TAG, "sign-out reported an error", e)
                     }
                     // Whatever the error was, an account that is gone from the core is signed out.
-                    (core.account() == null).also { gone -> if (gone) Background.afterSignOut(getApplication()) }
+                    val gone = core.account() == null
+                    if (gone) {
+                        Background.afterSignOut(getApplication())
+                        // Downloaded attachments and pictures are mail too; this block runs off the main thread.
+                        BlobFiles.clear(getApplication())
+                    }
+                    gone
                 }
             } catch (e: CancellationException) {
                 throw e

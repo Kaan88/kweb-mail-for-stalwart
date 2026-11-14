@@ -1,6 +1,7 @@
 package ovh.kweb.mail.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -11,16 +12,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
 
-/** Navigation and the pending "show this message" request. The back stack never gets empty. */
+/** Navigation. The back stack never gets empty. */
 class AppViewModel(app: Application) : AndroidViewModel(app) {
-    private val stackFlow = MutableStateFlow(listOf(Route.Inbox))
-    private val focusFlow = MutableStateFlow<FocusRequest?>(null)
-    private var serial = 0L
+    private val stackFlow = MutableStateFlow(BackStack.initial)
 
     private val serverUrlFlow = MutableStateFlow<String?>(null)
 
     val stack: StateFlow<List<Route>> get() = stackFlow
-    val focus: StateFlow<FocusRequest?> get() = focusFlow
 
     /** Address of the signed-in server, to prefill the field when signing in again. */
     val serverUrl: StateFlow<String?> get() = serverUrlFlow
@@ -30,8 +28,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             SessionState.signedIn.collect { signedIn ->
                 if (signedIn == false) {
-                    stackFlow.value = listOf(Route.Inbox)
-                    focusFlow.value = null
+                    stackFlow.value = BackStack.initial
                     serverUrlFlow.value = null
                 } else if (signedIn == true) {
                     serverUrlFlow.value = withContext(Dispatchers.IO) { Background.core(app).account()?.serverUrl }
@@ -40,16 +37,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun open(route: Route) = stackFlow.update { if (it.last() == route) it else it + route }
+    fun open(route: Route) = stackFlow.update { BackStack.push(it, route) }
 
-    fun back() = stackFlow.update { if (it.size > 1) it.dropLast(1) else it }
+    fun back() = stackFlow.update { BackStack.pop(it) }
 
-    /** The activity was opened from the notification of [messageId]. */
+    /**
+     * The activity was opened from the notification of [messageId]: show that message over the
+     * list. A message the cache does not have (it should) leaves just the list.
+     */
     fun focusMessage(messageId: String) {
-        stackFlow.value = listOf(Route.Inbox)
-        focusFlow.value = FocusRequest(messageId, ++serial)
+        viewModelScope.launch {
+            val stack = withContext(Dispatchers.IO) {
+                try {
+                    val core = Background.core(getApplication())
+                    val header = core.message(messageId)
+                    val inboxId = core.mailboxes().firstOrNull { it.role == "inbox" }?.id
+                    if (header == null) BackStack.initial else BackStack.forNotification(header.threadId, inboxId, messageId)
+                } catch (e: kotlin.Exception) {
+                    Log.w(Background.TAG, "looking up the tapped message failed", e)
+                    BackStack.initial
+                }
+            }
+            stackFlow.value = stack
+        }
     }
-
-    /** The Inbox has scrolled to the request, or given up on it. Later requests are kept. */
-    fun focusHandled(request: FocusRequest) = focusFlow.update { if (it == request) null else it }
 }

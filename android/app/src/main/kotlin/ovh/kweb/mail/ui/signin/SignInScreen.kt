@@ -6,12 +6,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -124,6 +125,7 @@ private fun Form(state: SignInUiState, onAddress: (String) -> Unit, onSignIn: ()
         value = state.address,
         onValueChange = onAddress,
         modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
         label = { Text(stringResource(R.string.signin_server_label)) },
         supportingText = { Text(state.error?.let { stringResource(it.messageRes(), *it.messageArgs()) } ?: stringResource(R.string.signin_server_hint)) },
         isError = state.error != null,
@@ -138,13 +140,13 @@ private fun Form(state: SignInUiState, onAddress: (String) -> Unit, onSignIn: ()
         keyboardActions = KeyboardActions(onGo = { onSignIn() }),
     )
     Spacer(Modifier.height(16.dp))
-    Button(onClick = onSignIn, enabled = !starting, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+    Button(onClick = onSignIn, enabled = !starting, modifier = Modifier.fillMaxWidth().height(52.dp)) {
         if (starting) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
             Spacer(Modifier.padding(horizontal = 6.dp))
             Text(stringResource(R.string.signin_contacting))
         } else {
-            Text(stringResource(R.string.signin_button))
+            Text(stringResource(R.string.signin_button), style = MaterialTheme.typography.titleSmall)
         }
     }
 }
@@ -159,7 +161,7 @@ private fun Waiting(onCancel: () -> Unit) {
         textAlign = TextAlign.Center,
     )
     Spacer(Modifier.height(24.dp))
-    OutlinedButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
+    OutlinedButton(onClick = onCancel, modifier = Modifier.height(52.dp)) {
         Text(stringResource(R.string.cancel))
     }
 }

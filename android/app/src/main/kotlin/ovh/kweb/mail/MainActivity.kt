@@ -13,15 +13,19 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.ui.AppContent
 import ovh.kweb.mail.ui.AppViewModel
+import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.theme.KwebTheme
+import ovh.kweb.mail.ui.theme.ThemeState
 
 /** The one activity. Screens and navigation are in `ovh.kweb.mail.ui`. */
 class MainActivity : ComponentActivity() {
     private val app: AppViewModel by viewModels()
+    private val mailList: MailListViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        ThemeState.load(this)
         setContent { KwebTheme { AppContent(app) } }
         // After a recreation (rotation) the intent is the one that was handled already.
         if (savedInstanceState == null) handleNotificationIntent(intent)
@@ -41,10 +45,11 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) { Background.onAppForeground(appContext) }
     }
 
-    /** A tap on a mail notification names its message; the Inbox scrolls to it but does not mark it read. */
+    /** A tap on a mail notification names its message: it opens over the Inbox. */
     private fun handleNotificationIntent(intent: Intent) {
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
         intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
+        mailList.showInbox()
         app.focusMessage(messageId)
         // The tap removed the notification while the mail is still unread. Tell the core it is
         // gone on purpose, like a swipe, or the next 15-minute check would put it back.

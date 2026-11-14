@@ -1,4 +1,4 @@
-package ovh.kweb.mail.ui.inbox
+package ovh.kweb.mail.ui.list
 
 import java.time.Instant
 import java.time.ZoneId
@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import uniffi.kweb_core.Address
 
 /** The time at the right of a message row. */
 object RowTime {
@@ -25,6 +26,14 @@ object RowTime {
     }
 }
 
+/** The preview line of a row. */
+object Preview {
+    private val blanks = Regex("\\s+")
+
+    /** The server's preview on one line: line breaks and runs of blanks become one space. */
+    fun oneLine(preview: String): String = preview.replace(blanks, " ").trim()
+}
+
 /** The sender as a row shows it. */
 object Sender {
     /** The display name, or the address when the server gave no name, or null when neither exists. */
@@ -41,4 +50,27 @@ object Sender {
         }
         return "?"
     }
+}
+
+/** The line above a conversation's subject. The words around the names ("To: ") are the screen's. */
+object SenderLine {
+    /**
+     * One sender: the whole name. Several: their first names joined by ", ". Null when there are
+     * none. A sender that is only an address stays whole, since it has no first name.
+     */
+    fun senders(senders: List<String>): String? {
+        val names = senders.map { it.trim() }.filter { it.isNotEmpty() }
+        return when (names.size) {
+            0 -> null
+            1 -> names[0]
+            else -> names.joinToString(", ") { it.substringBefore(' ') }
+        }
+    }
+
+    /** The recipients of a sent or draft message by name, or by address when they have none. */
+    fun recipients(to: List<Address>): String? =
+        to.mapNotNull { Sender.label(it.name, it.email) }.joinToString(", ").ifEmpty { null }
+
+    /** " · n" after the names when the conversation has more than one message. */
+    fun withCount(text: String, messageCount: Int): String = if (messageCount > 1) "$text · $messageCount" else text
 }

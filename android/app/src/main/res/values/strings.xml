@@ -23,16 +23,8 @@
     <string name="signin_error_no_browser">No browser was found to open the sign-in page.</string>
     <string name="signin_error_other">Sign-in failed: %1$s</string>
 
-    <!-- Inbox -->
-    <string name="inbox_title">Inbox</string>
-    <string name="inbox_empty">No mail yet</string>
+    <!-- Mail list -->
     <string name="inbox_first_sync">The first sync is running. Your mail will appear here in a moment.</string>
-    <string name="inbox_yesterday">Yesterday</string>
-    <string name="inbox_no_subject">(no subject)</string>
-    <string name="inbox_unknown_sender">(unknown sender)</string>
-    <string name="inbox_row_actions">Show actions</string>
-    <string name="inbox_action_failed">That did not work. Try again.</string>
-    <string name="inbox_read_failed">The mail on this phone could not be read.</string>
     <string name="action_mark_unread">Mark unread</string>
     <plurals name="unread_count">
         <item quantity="one">%d unread message</item>
