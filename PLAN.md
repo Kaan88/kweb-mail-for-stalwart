@@ -146,6 +146,16 @@ Checked on the emulator against the local Stalwart: list, folders drawer, a four
 
 Compose, reply, forward, attachments, drafts on the server, sender identities, undo send, recipient completion from the address book, quota in Settings.
 
+Built 2026-11-14. How it works:
+
+- **A draft lives in the cache from the first keystroke** (`core/src/compose`, `store/drafts.rs`) and a pass copies it to Drafts on the server; an edit replaces the server copy. A user write never creates a draft row, so a late save or a second tap on Send cannot bring back a message that was sent.
+- **Send holds the message back for 10 seconds on the phone** (Undo), then a pass submits it. The states are draft, sending, submitting. Only the exact version that was copied to the server is submitted. A send whose answer was lost is settled by asking the server whether it holds a submission of that copy, so nothing is sent twice. Any definite refusal gives the draft back with the reason.
+- **Outgoing mail comes after the notifications in a pass**, and the identities and the address book are fetched beside the loop: sending can never delay or fail a notification.
+- **Replies and forwards are built in the core** (recipients, "Re:"/"Fwd:" once, the original quoted as text, threading headers, the signature). Writing is plain text.
+- **Android:** a Compose screen with recipient chips and suggestions, attachments, autosave; the Compose button on the list; the connected Reply / Reply all / Forward bar on a thread; a Reply action on the notification; a Settings screen (account, storage, theme, Delivery check, sign-out, which now warns about unsent mail).
+
+Checked on the emulator against the local Stalwart ([design/m4-emulator.png](design/m4-emulator.png)): write and send a message to the test account, the Undo bar, its arrival after the hold, the reply bar and a prefilled reply, Settings. Not checked there: Undo itself, attachments, Cc/Bcc, suggestions, the notification's Reply action, a refused send, drafts opened from the Drafts folder, several identities. The local server reports no quota, so the storage bar was not seen. Not checked on the real phone.
+
 **Release 0.1.0** after M4: phase 1 of the scope.
 
 ### M5: calendar
@@ -231,3 +241,22 @@ Postern (MIT, same author) already has, in Rust: the OAuth flow with client regi
 1. Which phone and Android version is the target? It sets the minimum SDK (proposed: Android 10, API 29) and how much the battery risk matters.
 2. Package id. Proposed: `ovh.kweb.mail`.
 3. ~~Licence.~~ Settled 2026-11-13: MIT, as Postern. The repository is public.
+
+### Decided without asking (2026-11-14 onwards): the owner's to confirm or change
+
+The owner asked for the milestones to go on without stopping for questions. Each line is a choice made on the way; the code follows it until the owner says otherwise.
+
+M3
+- Bodies come from the server's parsed parts, not the raw message (M9 fetches the raw blob when it needs it).
+- `http:` pictures in a mail never load (cleartext is off) although "Show" is offered for them.
+- The app keeps normal text sizes; the mock-ups are drawn roomier (about six rows a screen against eight).
+- Delivery check uses the theme's tertiary and error containers for its pills, not the app's former green and amber.
+- The Wear OS screens of the design chat are not in the plan.
+- The "Home overview" of tiles is drawn (optional, off by default) but not built or scheduled.
+
+M4
+- Undo send is done on the phone: the message is held back for 10 seconds before it goes to the server. If the app is killed in that time it leaves with the next check.
+- Writing is plain text only; a reply quotes the original as text.
+- A draft is kept on the phone from the first keystroke and copied to Drafts on the server with the next pass.
+- Recipient suggestions come from the server's address book when it has one and from the people in cached mail.
+- A Settings screen holds storage, theme, Delivery check and sign-out, and replaces the drawer's Theme entry.
