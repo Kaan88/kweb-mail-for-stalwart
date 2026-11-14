@@ -18,8 +18,20 @@ export ANDROID_NDK_HOME
 export RUSTUP_HOME="$TOOLS/rust/rustup"
 export CARGO_HOME="$TOOLS/rust/cargo"
 
-# The repository is on an NTFS drive, where builds are slow; build output goes to the home drive.
-export CARGO_TARGET_DIR="${KWEB_TARGET_DIR:-$HOME/.cache/kweb-mail/target}"
+# Build output goes to /mnt/E when that drive is there (the root drive is nearly full; a full test
+# build was tried there and passes), otherwise to the home drive. KWEB_TARGET_DIR overrides both.
+if [ -d /mnt/E ]; then KWEB_DEFAULT_TARGET=/mnt/E/cargo-target/kweb-mail; else KWEB_DEFAULT_TARGET="$HOME/.cache/kweb-mail/target"; fi
+export CARGO_TARGET_DIR="${KWEB_TARGET_DIR:-$KWEB_DEFAULT_TARGET}"
+unset KWEB_DEFAULT_TARGET
+
+# Builds are heavy on this machine (the linker writes hundreds of MB per second), so: four build
+# jobs, four test threads, low CPU and disk priority, and only one cargo at a time across the
+# repository and its copies (a lock file; a second cargo waits for the first).
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-4}"
+KWEB_BUILD_LOCK="$HOME/.cache/kweb-mail/build.lock"
+export KWEB_BUILD_LOCK
+cargo() { flock "$KWEB_BUILD_LOCK" nice -n 15 ionice -c3 cargo "$@"; }
 
 export PATH="$CARGO_HOME/bin:$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$TOOLS/stalwart-test/node/bin:$PATH"
 

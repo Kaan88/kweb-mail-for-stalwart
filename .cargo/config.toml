@@ -1,0 +1,13 @@
+# Keeps local builds light: few parallel jobs and no debug info, so the linker writes small
+# test binaries. Set debug = "line-tables-only" in both profiles if a backtrace needs line numbers.
+[build]
+jobs = 4
+
+[profile.dev]
+debug = 0
+
+[profile.test]
+debug = 0
+
+[profile.dev.package."*"]
+opt-level = 0

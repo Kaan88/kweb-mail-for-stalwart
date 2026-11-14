@@ -7,4 +7,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=env.sh
 source "$HERE/env.sh"
 cd "$HERE/../android"
-exec sh gradlew -I "$HERE/gradle-linux.init.gradle" "$@"
+# One build at a time and at low priority, as for cargo (see env.sh); Gradle runs cargo itself.
+unset -f cargo
+exec flock "$KWEB_BUILD_LOCK" nice -n 15 ionice -c3 sh gradlew -I "$HERE/gradle-linux.init.gradle" "$@"

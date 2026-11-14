@@ -127,3 +127,13 @@ Two things to know: after switching between `-PskipNative` and a full build, Kot
 
 `KWEB_HOME=~/.cache/kweb-mail/cli-home $CARGO_TARGET_DIR/debug/kweb sign-in http://127.0.0.1:18080` prints an address; open it in a browser on this machine and sign in as the tester. After that `kweb files`, `kweb inbox` and the rest run against the real local server, which is the quickest real check of a core change.
 A second home, `KWEB_HOME=~/.cache/kweb-mail/cli-home-second`, is signed in as `second@kweb.test`, the user the tester shares with: `kweb shared` there shows the shared area for real.
+
+## Build settings on this machine
+
+Builds are kept light on purpose (2026-11-14): `.cargo/config.toml` sets 4 jobs and no debug info
+(put `debug = "line-tables-only"` there if a backtrace needs line numbers). `dev/env.sh` defines
+`cargo` as a wrapper that takes a lock (`~/.cache/kweb-mail/build.lock`) and runs at low CPU and
+disk priority with 4 test threads; `dev/gradle.sh` takes the same lock. So only one build runs at a
+time, also across the working copies under `~/.cache/kweb-mail/`; a second one waits. Build output
+is on `/mnt/E/cargo-target/kweb-mail` when `/mnt/E` is mounted, else `~/.cache/kweb-mail/target`;
+`KWEB_TARGET_DIR` overrides it.
