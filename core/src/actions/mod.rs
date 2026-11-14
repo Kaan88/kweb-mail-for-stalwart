@@ -1,4 +1,4 @@
-//! Mark read, archive, delete. Applied to the cache at once and queued in the store, so they
+//! Mark read, flag, archive, move, delete. Applied to the cache at once and queued in the store, so they
 //! also work offline.
 //!
 //! The cache is optimistic: after `submit` it already shows the result. That hides where the
@@ -22,6 +22,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq)]
 enum Edit {
     Unread { id: String, unread: bool },
+    Flagged { id: String, flagged: bool },
     Mailboxes { id: String, mailboxes: Vec<String> },
     Remove { id: String },
 }
@@ -40,6 +41,11 @@ fn edit_for(action: &Action, archive: Option<&str>, trash: Option<&str>) -> Resu
             Edit::Mailboxes { id: message_id.clone(), mailboxes: vec![trash.to_string()] }
         }
         Action::Destroy { message_id } => Edit::Remove { id: message_id.clone() },
+        Action::Flag { message_id } => Edit::Flagged { id: message_id.clone(), flagged: true },
+        Action::Unflag { message_id } => Edit::Flagged { id: message_id.clone(), flagged: false },
+        Action::Move { message_id, mailbox_id } => {
+            Edit::Mailboxes { id: message_id.clone(), mailboxes: vec![mailbox_id.clone()] }
+        }
     })
 }
 
@@ -49,7 +55,10 @@ fn message_id(action: &Action) -> &str {
         | Action::MarkUnread { message_id }
         | Action::Archive { message_id }
         | Action::Delete { message_id }
-        | Action::Destroy { message_id } => message_id,
+        | Action::Destroy { message_id }
+        | Action::Flag { message_id }
+        | Action::Unflag { message_id }
+        | Action::Move { message_id, .. } => message_id,
     }
 }
 
@@ -70,6 +79,7 @@ fn role_id(store: &Store, account_id: &str, role: &str) -> Result<Option<String>
 fn write_edit(store: &Store, account_id: &str, edit: &Edit) -> Result<()> {
     match edit {
         Edit::Unread { id, unread } => store.set_unread(account_id, id, *unread).map(drop),
+        Edit::Flagged { id, flagged } => store.set_flagged(account_id, id, *flagged).map(drop),
         Edit::Mailboxes { id, mailboxes } => store.set_message_mailboxes(account_id, id, mailboxes).map(drop),
         Edit::Remove { id } => store.delete_messages(account_id, std::slice::from_ref(id)),
     }
@@ -87,6 +97,13 @@ pub fn submit(store: &Store, account_id: &str, action: &Action) -> Result<()> {
     let edit = edit_for(&action, archive.as_deref(), trash.as_deref())?;
     store.outbox_enqueue(account_id, &action)?;
     write_edit(store, account_id, &edit)
+}
+
+/// Submits the actions one after the other (a swipe on a conversation). Stops at the first
+/// error and returns it; the ones before it stay queued and applied. Each action is its own
+/// cache transaction, so a list read in between can show some of them.
+pub fn submit_all(store: &Store, account_id: &str, actions: &[Action]) -> Result<()> {
+    actions.iter().try_for_each(|action| submit(store, account_id, action))
 }
 
 /// Puts every queued action back on the cache. Called by `sync` after it wrote server data.
@@ -114,7 +131,8 @@ fn context(store: &Store, account_id: &str) -> Result<ActionContext> {
 /// Sends queued actions to the server, oldest first. Returns how many were applied.
 ///
 /// `Error::Invalid` (the message is gone, or the action can never work) drops the row so it
-/// cannot block the queue. Any other error keeps the row, counts the try and stops here with
+/// cannot block the queue, and the message is fetched again so the cache stops showing a
+/// change that did not happen. Any other error keeps the row, counts the try and stops here with
 /// that error: later actions must not overtake an earlier one. The caller renews the token or
 /// retries later.
 pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result<usize> {
@@ -126,7 +144,10 @@ pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result
                 store.outbox_done(row)?;
                 applied += 1;
             }
-            Err(Error::Invalid { .. }) => store.outbox_done(row)?,
+            Err(Error::Invalid { .. }) => {
+                store.outbox_done(row)?;
+                undo_in_cache(conn, store, account_id, message_id(&action)).await;
+            }
             Err(e) => {
                 store.outbox_failed(row, &e.to_string())?;
                 return Err(e);
@@ -134,6 +155,22 @@ pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result
         }
     }
     Ok(applied)
+}
+
+/// Replaces the optimistic copy of a message by the server's, after an action on it was
+/// dropped; later queued actions are put back on top. Best effort: if the server cannot be
+/// asked now, the next change to the message corrects the cache.
+async fn undo_in_cache(conn: &Connection, store: &Store, account_id: &str, message_id: &str) {
+    let ids = [message_id.to_string()];
+    let Ok((headers, _)) = conn.messages(&ids).await else { return };
+    let written = if headers.is_empty() {
+        store.delete_messages(account_id, &ids)
+    } else {
+        store.upsert_messages(account_id, &headers)
+    };
+    if written.is_ok() {
+        let _ = reapply_pending(store, account_id);
+    }
 }
 
 #[cfg(test)]
@@ -171,6 +208,21 @@ mod tests {
         let e = edit_for(&del(), None, Some("t")).unwrap();
         assert_eq!(e, Edit::Mailboxes { id: id("m"), mailboxes: vec![id("t")] });
         assert_eq!(edit_for(&destroy(), None, None).unwrap(), Edit::Remove { id: id("m") });
+    }
+
+    #[test]
+    fn flag_and_unflag_flip_the_flag() {
+        let e = edit_for(&Action::Flag { message_id: id("m") }, None, None).unwrap();
+        assert_eq!(e, Edit::Flagged { id: id("m"), flagged: true });
+        let e = edit_for(&Action::Unflag { message_id: id("m") }, None, None).unwrap();
+        assert_eq!(e, Edit::Flagged { id: id("m"), flagged: false });
+    }
+
+    #[test]
+    fn move_puts_the_message_in_just_the_target() {
+        let m = Action::Move { message_id: id("m"), mailbox_id: id("junk") };
+        let e = edit_for(&m, None, None).unwrap();
+        assert_eq!(e, Edit::Mailboxes { id: id("m"), mailboxes: vec![id("junk")] });
     }
 
     #[test]

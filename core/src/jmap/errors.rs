@@ -37,7 +37,16 @@ enum Kind {
     Unauthorized,
     CannotCalculateChanges,
     NotFound,
+    /// The server refused the change and will refuse it again (a mailbox that is gone, no right
+    /// to do it).
+    Refused,
     Other,
+}
+
+/// Set errors that trying again cannot cure. Quota and rate limits can pass, so they are not here.
+fn is_permanent(t: &SetErrorType) -> bool {
+    use SetErrorType::*;
+    matches!(t, Forbidden | InvalidPatch | InvalidProperties | WillDestroy | TooManyKeywords | TooManyMailboxes)
 }
 
 fn problem_is_401(p: &ProblemDetails) -> bool {
@@ -52,6 +61,7 @@ fn kind(e: &JmapError) -> Kind {
         JmapError::Transport(t) if t.status().is_some_and(|s| s.as_u16() == 401) => Kind::Unauthorized,
         JmapError::Method(m) if *m.error() == MethodErrorType::CannotCalculateChanges => Kind::CannotCalculateChanges,
         JmapError::Set(s) if *s.error() == SetErrorType::NotFound => Kind::NotFound,
+        JmapError::Set(s) if is_permanent(s.error()) => Kind::Refused,
         _ => Kind::Other,
     }
 }
@@ -61,6 +71,7 @@ pub(super) fn from_jmap(e: JmapError) -> Error {
         Kind::Unauthorized => Error::temporary(format!("{UNAUTHORIZED_PREFIX}{e}")),
         Kind::CannotCalculateChanges => Error::temporary(format!("{CANNOT_CALCULATE_PREFIX}{e}")),
         Kind::NotFound => Error::invalid(format!("not found on the server: {e}")),
+        Kind::Refused => Error::invalid(format!("refused by the server: {e}")),
         Kind::Other => Error::temporary(e.to_string()),
     }
 }
@@ -105,6 +116,21 @@ mod tests {
         let m: jmap_client::core::error::MethodError = serde_json::from_str(r#"{"type":"serverFail"}"#).unwrap();
         let e = from_jmap(JmapError::Method(m));
         assert!(!is_cannot_calculate_changes(&e));
+    }
+
+    #[test]
+    fn a_change_the_server_will_never_take_is_invalid_and_a_passing_one_is_not() {
+        let set = |json: &str| {
+            JmapError::Set(serde_json::from_str::<jmap_client::core::set::SetError<String>>(json).unwrap())
+        };
+        for kind in ["invalidProperties", "forbidden", "invalidPatch", "tooManyMailboxes"] {
+            let e = from_jmap(set(&format!(r#"{{"type":"{kind}"}}"#)));
+            assert!(matches!(e, Error::Invalid { .. }), "{kind}");
+        }
+        for kind in ["overQuota", "rateLimit"] {
+            let e = from_jmap(set(&format!(r#"{{"type":"{kind}"}}"#)));
+            assert!(matches!(e, Error::Temporary { .. }), "{kind}");
+        }
     }
 
     #[test]

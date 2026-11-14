@@ -5,8 +5,13 @@
 //! a blocking function of [`Core`] from inside the callback.
 
 use std::{
+    fs,
+    future::Future,
     path::Path,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,13 +20,16 @@ use tokio::{net::TcpListener, runtime::Runtime};
 use crate::{
     actions,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
-    jmap::Connection,
-    model::{Account, Action, ConnectionStatus, Mailbox, MessageHeader, Reminder},
+    jmap::{is_unauthorized, Connection},
+    model::{
+        Account, Action, ConnectionStatus, ListFilter, Mailbox, MessageBody, MessageHeader, Reminder, SearchResult,
+        ThreadRow,
+    },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
     secrets::SecretStore,
     store::Store,
-    Error, Result,
+    sync, Error, Result,
 };
 
 /// Where the serialized [`OAuthClient`] of an account is kept in the store.
@@ -59,6 +67,8 @@ struct Inner {
     session: Option<Session>,
     listener: Option<Arc<dyn Listener>>,
     watcher: Option<push::Handle>,
+    /// The connection the reading calls share, with the access token it was made with.
+    reader: Option<(String, Arc<Connection>)>,
 }
 
 /// One per process. Owns the cache, the sign-in and the live connection.
@@ -175,6 +185,7 @@ impl Core {
         let session = {
             let mut inner = self.lock();
             inner.pending = None;
+            inner.reader = None;
             inner.session.take()
         };
         if let Some(session) = session {
@@ -258,6 +269,122 @@ impl Core {
     pub fn notification_swiped(&self, message_id: String) -> Result<()> {
         notify::swiped(&self.store, &self.account_id()?, &message_id)
     }
+
+    // ---- M3: reading ----
+
+    /// Several actions at once (a swipe on a conversation), in order. Stops at the first one
+    /// that fails and returns its error; the ones before it stay applied and queued. Each is
+    /// its own cache change, so a list read in between can show some of them.
+    pub fn submit_all(&self, actions: Vec<Action>) -> Result<()> {
+        let result = actions::submit_all(&self.store, &self.account_id()?, &actions);
+        self.poke();
+        result
+    }
+
+    /// One cached message header, e.g. to find the thread of a tapped notification.
+    pub fn message(&self, message_id: String) -> Result<Option<MessageHeader>> {
+        self.store.get_message(&self.account_id()?, &message_id)
+    }
+
+    /// The conversations of a mailbox from the cache, newest first. Only the part of the
+    /// mailbox the cache holds without gaps is listed; [`Core::load_older`] extends it.
+    pub fn threads(&self, mailbox_id: String, filter: ListFilter, limit: u32, offset: u32) -> Result<Vec<ThreadRow>> {
+        self.store.list_threads(&self.account_id()?, &mailbox_id, filter, limit, offset)
+    }
+
+    /// Whether the server may have older mail in this mailbox than the cache lists. From the cache.
+    pub fn has_older(&self, mailbox_id: String) -> Result<bool> {
+        Ok(self.store.get_window(&self.account_id()?, &mailbox_id)?.is_some())
+    }
+
+    /// Fetches the next older page of a mailbox into the cache (network). Returns whether there
+    /// may be still more. The listener's `cache_changed` is not called: the caller reloads.
+    pub fn load_older(&self, mailbox_id: String) -> Result<bool> {
+        let account_id = self.account_id()?;
+        if self.store.get_window(&account_id, &mailbox_id)?.is_none() {
+            return Ok(false);
+        }
+        let (store, account_id, mailbox_id) = (&self.store, &account_id, &mailbox_id);
+        self.with_connection(|conn| async move { sync::load_older(&conn, store, account_id, mailbox_id).await })
+    }
+
+    /// Every cached message of a thread, in all mailboxes, oldest first.
+    pub fn thread_messages(&self, thread_id: String) -> Result<Vec<MessageHeader>> {
+        self.store.thread_messages(&self.account_id()?, &thread_id)
+    }
+
+    /// Asks the server which messages the thread has and caches the headers that are missing
+    /// (network). Returns whether the cache changed.
+    pub fn refresh_thread(&self, thread_id: String) -> Result<bool> {
+        let account_id = self.account_id()?;
+        let (store, account_id, thread_id) = (&self.store, &account_id, &thread_id);
+        self.with_connection(|conn| async move { sync::refresh_thread(&conn, store, account_id, thread_id).await })
+    }
+
+    /// The body of a message: from the cache when it is there, else from the server (and then
+    /// cached). Offline with nothing cached is `Error::Temporary`; a message the server does
+    /// not have is `Error::Invalid`.
+    pub fn message_body(&self, message_id: String) -> Result<MessageBody> {
+        let account_id = self.account_id()?;
+        if let Some(body) = self.store.get_body(&account_id, &message_id)? {
+            return Ok(body);
+        }
+        let ids = [message_id];
+        let ids = &ids;
+        let fetched = self.with_connection(|conn| async move { conn.bodies(ids).await })?;
+        let body = fetched
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("the server has no message '{}'", ids[0])))?;
+        self.store.put_body(&account_id, &body)?;
+        Ok(body)
+    }
+
+    /// Searches on the server (all mail, or one mailbox), newest first. When the server cannot
+    /// be reached the cached headers are searched instead and `from_cache` is set. A blank
+    /// query finds nothing and asks nothing.
+    pub fn search(&self, query: String, mailbox_id: Option<String>, limit: u32) -> Result<SearchResult> {
+        let account_id = self.account_id()?;
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(SearchResult { messages: Vec::new(), from_cache: false });
+        }
+        let (store, id, mailbox) = (&self.store, &account_id, mailbox_id.as_deref());
+        let found =
+            self.with_connection(
+                |conn| async move { sync::search(&conn, store, id, query, mailbox, limit as usize).await },
+            );
+        match found {
+            Ok(messages) => Ok(SearchResult { messages, from_cache: false }),
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => Err(e),
+            Err(_) => {
+                let messages = self.store.search_messages(&account_id, query, mailbox, limit)?;
+                Ok(SearchResult { messages, from_cache: true })
+            }
+        }
+    }
+
+    /// Downloads a blob (an attachment, an inline picture) to `dest_path` (network). The file
+    /// appears only when complete: it is written next to it under a name of its own and
+    /// renamed, so two downloads of the same file at once do not disturb each other.
+    pub fn download_blob(&self, blob_id: String, dest_path: String) -> Result<()> {
+        static SERIAL: AtomicU64 = AtomicU64::new(0);
+        self.account_id()?;
+        let part = format!("{dest_path}.{}-{}.part", std::process::id(), SERIAL.fetch_add(1, Ordering::Relaxed));
+        let (blob_id, part_path) = (&blob_id, &part);
+        let done = self
+            .with_connection(|conn| async move {
+                // Made anew for each try, so a retry after a 401 starts from an empty file.
+                let mut file =
+                    fs::File::create(part_path).map_err(|e| Error::store(format!("saving the file: {e}")))?;
+                conn.download_to(blob_id, &mut file).await
+            })
+            .and_then(|()| fs::rename(&part, &dest_path).map_err(|e| Error::store(format!("saving the file: {e}"))));
+        if done.is_err() {
+            let _ = fs::remove_file(&part);
+        }
+        done
+    }
 }
 
 impl Core {
@@ -282,6 +409,7 @@ impl Core {
         let account = self.remember(account, &client)?;
         let mut inner = self.lock();
         inner.session = Some(Session { account: account.clone(), tokens });
+        inner.reader = None;
         self.spawn_watcher(&mut inner);
         Ok(account)
     }
@@ -289,6 +417,45 @@ impl Core {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // Nothing is left half-done under this lock, so a panic elsewhere does not poison the state.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Runs `f` with a live connection. One connection is kept for as long as its access token
+    /// is the current one. A 401 renews the token and runs `f` once more on a new connection;
+    /// any other error is `f`'s own.
+    fn with_connection<T, F, Fut>(&self, f: F) -> Result<T>
+    where
+        F: Fn(Arc<Connection>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let (tokens, server_url) = {
+            let inner = self.lock();
+            let session = inner.session.as_ref().ok_or_else(not_signed_in)?;
+            (session.tokens.clone(), session.account.server_url.clone())
+        };
+        self.rt.block_on(async {
+            let first = async { f(self.reader(&tokens, &server_url).await?).await }.await;
+            match first {
+                Err(e) if is_unauthorized(&e) => {
+                    tokens.invalidate().await;
+                    self.lock().reader = None;
+                    f(self.reader(&tokens, &server_url).await?).await
+                }
+                other => other,
+            }
+        })
+    }
+
+    /// The shared connection, made again when the access token is not the one it was made with.
+    async fn reader(&self, tokens: &Tokens, server_url: &str) -> Result<Arc<Connection>> {
+        let token = tokens.access_token().await?;
+        if let Some((used, conn)) = &self.lock().reader {
+            if *used == token.token {
+                return Ok(conn.clone());
+            }
+        }
+        let conn = Arc::new(Connection::connect(server_url, &token.token).await?);
+        self.lock().reader = Some((token.token, conn.clone()));
+        Ok(conn)
     }
 
     fn account_id(&self) -> Result<String> {

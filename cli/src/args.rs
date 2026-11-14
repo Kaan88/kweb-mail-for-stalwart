@@ -10,6 +10,8 @@ Usage:
   kweb status                 show the account
   kweb inbox [-n N]           sync, then show the newest N Inbox messages (default 20)
   kweb mailboxes              sync, then list mailboxes with totals
+  kweb show <message-id>      show a message: headers, text, attachments
+  kweb search <query>         search all mail on the server (the cache when offline)
   kweb watch                  follow live changes until Ctrl+C
   kweb read <message-id>      mark a message read
   kweb unread <message-id>    mark a message unread
@@ -34,6 +36,8 @@ pub enum Command {
     Status,
     Inbox { count: u32 },
     Mailboxes,
+    Show { id: String },
+    Search { query: String },
     Watch,
     Read { id: String },
     Unread { id: String },
@@ -55,6 +59,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "watch" => no_args(rest, Command::Watch),
         "sign-out" => no_args(rest, Command::SignOut),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
+        "show" => one_arg(name, "message-id", rest).map(|id| Command::Show { id }),
+        "search" => search(rest),
         "read" => one_arg(name, "message-id", rest).map(|id| Command::Read { id }),
         "unread" => one_arg(name, "message-id", rest).map(|id| Command::Unread { id }),
         "archive" => one_arg(name, "message-id", rest).map(|id| Command::Archive { id }),
@@ -78,6 +84,15 @@ fn one_arg(command: &str, what: &str, rest: &[String]) -> Result<String, String>
         [] => Err(format!("{command} needs a <{what}>")),
         [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
     }
+}
+
+/// The words after `search` are one query, so quotes are optional.
+fn search(rest: &[String]) -> Result<Command, String> {
+    let query = rest.join(" ");
+    if query.trim().is_empty() {
+        return Err("search needs a <query>".into());
+    }
+    Ok(Command::Search { query })
 }
 
 fn inbox(rest: &[String]) -> Result<Command, String> {
@@ -137,6 +152,7 @@ mod tests {
             p(&["sign-in", "https://mail.example"]),
             Ok(Command::SignIn { server_url: "https://mail.example".into() })
         );
+        assert_eq!(p(&["show", "e1"]), Ok(Command::Show { id: "e1".into() }));
         assert_eq!(p(&["read", "e1"]), Ok(Command::Read { id: "e1".into() }));
         assert_eq!(p(&["unread", "e1"]), Ok(Command::Unread { id: "e1".into() }));
         assert_eq!(p(&["archive", "e1"]), Ok(Command::Archive { id: "e1".into() }));
@@ -148,8 +164,18 @@ mod tests {
     fn missing_and_extra_arguments_are_errors() {
         assert!(p(&["read"]).is_err());
         assert!(p(&["read", "a", "b"]).is_err());
+        assert!(p(&["show"]).is_err());
+        assert!(p(&["show", "a", "b"]).is_err());
         assert!(p(&["status", "x"]).is_err());
         assert!(p(&["sign-in"]).is_err());
+    }
+
+    #[test]
+    fn search_takes_the_rest_of_the_line_as_one_query() {
+        assert_eq!(p(&["search", "invoice"]), Ok(Command::Search { query: "invoice".into() }));
+        assert_eq!(p(&["search", "big", "invoice"]), Ok(Command::Search { query: "big invoice".into() }));
+        assert!(p(&["search"]).is_err());
+        assert!(p(&["search", " "]).is_err());
     }
 
     #[test]

@@ -1,27 +1,35 @@
-//! Actions queued while offline. Stored as a kind string plus message id so a new kind
-//! needs no schema change.
+//! Actions queued while offline. Stored as a kind string, a message id and, for a move, the
+//! target mailbox, so a new kind needs no schema change.
 
 use super::Store;
 use crate::model::Action;
 use crate::Result;
 
-fn to_columns(action: &Action) -> (&'static str, &str) {
+/// `(kind, message id, target mailbox)`.
+fn to_columns(action: &Action) -> (&'static str, &str, Option<&str>) {
     match action {
-        Action::MarkRead { message_id } => ("mark_read", message_id),
-        Action::MarkUnread { message_id } => ("mark_unread", message_id),
-        Action::Archive { message_id } => ("archive", message_id),
-        Action::Delete { message_id } => ("delete", message_id),
-        Action::Destroy { message_id } => ("destroy", message_id),
+        Action::MarkRead { message_id } => ("mark_read", message_id, None),
+        Action::MarkUnread { message_id } => ("mark_unread", message_id, None),
+        Action::Archive { message_id } => ("archive", message_id, None),
+        Action::Delete { message_id } => ("delete", message_id, None),
+        Action::Destroy { message_id } => ("destroy", message_id, None),
+        Action::Flag { message_id } => ("flag", message_id, None),
+        Action::Unflag { message_id } => ("unflag", message_id, None),
+        Action::Move { message_id, mailbox_id } => ("move", message_id, Some(mailbox_id)),
     }
 }
 
-fn from_columns(kind: &str, message_id: String) -> Option<Action> {
+/// `None` for a kind this version does not know, and for a move that lost its target.
+fn from_columns(kind: &str, message_id: String, target: Option<String>) -> Option<Action> {
     Some(match kind {
         "mark_read" => Action::MarkRead { message_id },
         "mark_unread" => Action::MarkUnread { message_id },
         "archive" => Action::Archive { message_id },
         "delete" => Action::Delete { message_id },
         "destroy" => Action::Destroy { message_id },
+        "flag" => Action::Flag { message_id },
+        "unflag" => Action::Unflag { message_id },
+        "move" => Action::Move { message_id, mailbox_id: target? },
         _ => return None,
     })
 }
@@ -29,29 +37,37 @@ fn from_columns(kind: &str, message_id: String) -> Option<Action> {
 impl Store {
     /// Returns the row id, which stays stable until the action is marked done.
     pub fn outbox_enqueue(&self, account_id: &str, action: &Action) -> Result<i64> {
-        let (kind, message_id) = to_columns(action);
+        let (kind, message_id, target) = to_columns(action);
         self.write(|c| {
             c.execute(
-                "INSERT INTO outbox (account_id, kind, message_id) VALUES (?1, ?2, ?3)",
-                [account_id, kind, message_id],
+                "INSERT INTO outbox (account_id, kind, message_id, target) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![account_id, kind, message_id, target],
             )?;
             Ok(c.last_insert_rowid())
         })
     }
 
     /// `(id, action, attempts)`, oldest first. A row with a kind this version does not know
-    /// (written by a newer app) is skipped rather than blocking the queue.
+    /// (written by a newer app), or a move without a target, is skipped rather than blocking
+    /// the queue.
     pub fn outbox_pending(&self, account_id: &str) -> Result<Vec<(i64, Action, u32)>> {
         self.read(|c| {
-            let mut stmt =
-                c.prepare("SELECT id, kind, message_id, attempts FROM outbox WHERE account_id = ?1 ORDER BY id")?;
+            let mut stmt = c.prepare(
+                "SELECT id, kind, message_id, attempts, target FROM outbox WHERE account_id = ?1 ORDER BY id",
+            )?;
             let rows = stmt.query_map([account_id], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, u32>(3)?))
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, u32>(3)?,
+                    r.get(4)?,
+                ))
             })?;
             let mut out = Vec::new();
             for row in rows {
-                let (id, kind, message_id, attempts) = row?;
-                if let Some(action) = from_columns(&kind, message_id) {
+                let (id, kind, message_id, attempts, target) = row?;
+                if let Some(action) = from_columns(&kind, message_id, target) {
                     out.push((id, action, attempts));
                 }
             }

@@ -2,7 +2,10 @@
 
 use std::{
     convert::Infallible,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -17,7 +20,7 @@ use crate::{
     jmap::{is_unauthorized, Connection, Event, EventStream},
     model::{ConnectionStatus, Reminder},
     notify::OnScreen,
-    Error, Result,
+    sync, Error, Result,
 };
 
 /// Remembers the last status and only passes on changes. The listener is called with no lock
@@ -78,11 +81,13 @@ struct Runner {
     deps: Deps,
     wake: Arc<Notify>,
     reporter: Arc<Reporter>,
+    /// A prefetch of bodies is running beside the loop: do not start a second one.
+    prefetching: Arc<AtomicBool>,
 }
 
 pub(super) async fn run(deps: Deps, wake: Arc<Notify>, reporter: Arc<Reporter>) {
     let mut health = Health::new(deps.timing.clone());
-    let runner = Runner { deps, wake, reporter };
+    let runner = Runner { deps, wake, reporter, prefetching: Arc::new(AtomicBool::new(false)) };
     loop {
         runner.reporter.set(ConnectionStatus::Connecting);
         let err = runner.session(&mut health).await;
@@ -154,8 +159,26 @@ impl Runner {
         }
     }
 
-    async fn pass(&self, conn: &Connection) -> Result<()> {
-        pass(&self.deps, conn, OnScreen::Unknown).await.map(drop)
+    async fn pass(&self, conn: &Arc<Connection>) -> Result<()> {
+        pass(&self.deps, conn, OnScreen::Unknown).await?;
+        self.prefetch(conn);
+        Ok(())
+    }
+
+    /// Fetches the bodies of the newest Inbox mail for reading offline, in a task of its own:
+    /// the loop goes straight back to the stream, so the next mail is announced on time
+    /// however long the bodies take. One at a time; a failure is dropped (the next pass tries
+    /// again).
+    fn prefetch(&self, conn: &Arc<Connection>) {
+        if self.prefetching.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (conn, store, running) = (conn.clone(), self.deps.store.clone(), self.prefetching.clone());
+        let account_id = self.deps.account.id.clone();
+        tokio::spawn(async move {
+            let _ = sync::prefetch_bodies(&conn, &store, &account_id).await;
+            running.store(false, Ordering::Release);
+        });
     }
 
     /// Handles one event. True when a pass is due.

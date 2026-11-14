@@ -85,6 +85,76 @@ pub struct MailboxRec {
     pub sort_order: u32,
 }
 
+/// A file in a message. `inline` ones sit in the body lists (a picture the HTML shows), the
+/// others in `attachments`, as a server sorts them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attachment {
+    pub blob_id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub cid: Option<String>,
+    pub inline: bool,
+    pub bytes: Vec<u8>,
+}
+
+/// What `Email/get` was asked about the body.
+#[derive(Default)]
+struct BodyOpts {
+    /// `bodyProperties`; all when absent.
+    part_props: Option<BTreeSet<String>>,
+    fetch_text: bool,
+    fetch_html: bool,
+    max_bytes: Option<usize>,
+}
+
+impl BodyOpts {
+    fn from_args(args: &Value) -> Result<BodyOpts, MethodError> {
+        let flag = |k: &str| args.get(k).and_then(Value::as_bool) == Some(true);
+        Ok(BodyOpts {
+            part_props: opt_strings(args.get("bodyProperties"))?.map(|v| v.into_iter().collect()),
+            fetch_text: flag("fetchTextBodyValues") || flag("fetchAllBodyValues"),
+            fetch_html: flag("fetchHTMLBodyValues") || flag("fetchAllBodyValues"),
+            max_bytes: args.get("maxBodyValueBytes").and_then(Value::as_u64).map(|n| n as usize),
+        })
+    }
+}
+
+/// One body part as `Email/get` shows it.
+#[derive(Clone)]
+struct Part {
+    part_id: String,
+    blob_id: String,
+    size: usize,
+    mime_type: String,
+    name: Option<String>,
+    cid: Option<String>,
+    disposition: Option<&'static str>,
+    /// The text of a text part.
+    text: Option<String>,
+}
+
+impl Part {
+    fn json(&self, wanted: Option<&BTreeSet<String>>) -> Value {
+        let all: [(&str, Value); 8] = [
+            ("partId", json!(self.part_id)),
+            ("blobId", json!(self.blob_id)),
+            ("size", json!(self.size)),
+            ("type", json!(self.mime_type)),
+            ("charset", json!(self.text.as_ref().map(|_| "utf-8"))),
+            ("name", json!(self.name)),
+            ("disposition", json!(self.disposition)),
+            ("cid", json!(self.cid)),
+        ];
+        let mut m = Map::new();
+        for (k, v) in all {
+            if wanted.is_none_or(|w| w.contains(k)) {
+                m.insert(k.into(), v);
+            }
+        }
+        Value::Object(m)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Email {
     pub id: String,
@@ -94,8 +164,14 @@ pub struct Email {
     pub keywords: BTreeSet<String>,
     pub from_name: String,
     pub from_email: String,
-    pub to_name: String,
-    pub to_email: String,
+    /// `(name, email)` pairs.
+    pub to: Vec<(String, String)>,
+    pub cc: Vec<(String, String)>,
+    /// `None`: the message is its own thread.
+    pub thread: Option<String>,
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub attachments: Vec<Attachment>,
     pub subject: String,
     pub preview: String,
     pub received_at: i64,
@@ -118,12 +194,75 @@ const DEFAULT_EMAIL_PROPS: &[&str] = &[
     "messageId",
 ];
 
+fn addresses(list: &[(String, String)]) -> Value {
+    if list.is_empty() {
+        return Value::Null;
+    }
+    list.iter().map(|(name, email)| json!({ "name": name, "email": email })).collect::<Vec<_>>().into()
+}
+
 impl Email {
     fn is_read(&self) -> bool {
         self.keywords.contains("$seen")
     }
 
-    fn json(&self, props: Option<&BTreeSet<String>>) -> Value {
+    pub fn thread_id(&self) -> String {
+        self.thread.clone().unwrap_or_else(|| format!("t{}", self.id))
+    }
+
+    /// The text and HTML parts and the files, as `(text_body, html_body, attachments)`. A message
+    /// with only one kind of text offers it in both lists, and the pictures its HTML shows are in
+    /// both lists too, as RFC 8621 says.
+    fn parts(&self) -> (Vec<Part>, Vec<Part>, Vec<Part>) {
+        let text = self.text.as_ref().map(|t| Part {
+            part_id: "1".into(),
+            blob_id: format!("bt{}", self.id),
+            size: t.len(),
+            mime_type: "text/plain".into(),
+            name: None,
+            cid: None,
+            disposition: None,
+            text: Some(t.clone()),
+        });
+        let html = self.html.as_ref().map(|h| Part {
+            part_id: "2".into(),
+            blob_id: format!("bh{}", self.id),
+            size: h.len(),
+            mime_type: "text/html".into(),
+            name: None,
+            cid: None,
+            disposition: None,
+            text: Some(h.clone()),
+        });
+        let mut text_body: Vec<Part> = text.clone().or_else(|| html.clone()).into_iter().collect();
+        let mut html_body: Vec<Part> = html.or(text).into_iter().collect();
+        let mut files = Vec::new();
+        for (n, a) in self.attachments.iter().enumerate() {
+            let part = Part {
+                part_id: format!("a{n}"),
+                blob_id: a.blob_id.clone(),
+                size: a.bytes.len(),
+                mime_type: a.mime_type.clone(),
+                name: Some(a.name.clone()).filter(|n| !n.is_empty()),
+                cid: a.cid.clone(),
+                disposition: Some(if a.inline { "inline" } else { "attachment" }),
+                text: None,
+            };
+            if a.inline {
+                text_body.push(part.clone());
+                html_body.push(part);
+            } else {
+                files.push(part);
+            }
+        }
+        (text_body, html_body, files)
+    }
+
+    fn has_attachment(&self) -> bool {
+        self.attachments.iter().any(|a| !a.inline)
+    }
+
+    fn json(&self, props: Option<&BTreeSet<String>>, body: &BodyOpts) -> Value {
         let mut m = Map::new();
         m.insert("id".into(), json!(self.id));
         let mut put = |k: &str, v: Value| {
@@ -137,18 +276,42 @@ impl Email {
         };
         let flags = |s: &BTreeSet<String>| s.iter().map(|k| (k.clone(), Value::Bool(true))).collect::<Map<_, _>>();
         put("blobId", json!(format!("b{}", self.id)));
-        put("threadId", json!(format!("t{}", self.id)));
+        put("threadId", json!(self.thread_id()));
         put("mailboxIds", Value::Object(flags(&self.mailbox_ids)));
         put("keywords", Value::Object(flags(&self.keywords)));
         put("size", json!(1200 + self.subject.len() + self.preview.len()));
         put("receivedAt", json!(rfc3339(self.received_at)));
         put("sentAt", json!(rfc3339(self.received_at - 5)));
         put("from", json!([{ "name": self.from_name, "email": self.from_email }]));
-        put("to", json!([{ "name": self.to_name, "email": self.to_email }]));
+        put("to", addresses(&self.to));
+        put("cc", addresses(&self.cc));
+        put("bcc", Value::Null);
+        put("replyTo", Value::Null);
         put("subject", json!(self.subject));
         put("preview", json!(self.preview));
-        put("hasAttachment", json!(false));
+        put("hasAttachment", json!(self.has_attachment()));
         put("messageId", json!([format!("{}@mock.example.test", self.id)]));
+
+        let (text_body, html_body, files) = self.parts();
+        let part_list = |parts: &[Part]| parts.iter().map(|p| p.json(body.part_props.as_ref())).collect::<Vec<_>>();
+        put("textBody", json!(part_list(&text_body)));
+        put("htmlBody", json!(part_list(&html_body)));
+        put("attachments", json!(part_list(&files)));
+        // Values of the text parts of the lists asked for, cut to `maxBodyValueBytes`.
+        let mut values = Map::new();
+        for (wanted, parts) in [(body.fetch_text, &text_body), (body.fetch_html, &html_body)] {
+            for part in parts.iter().filter(|p| wanted && p.text.is_some()) {
+                let text = part.text.as_deref().unwrap_or_default();
+                let mut end = body.max_bytes.map_or(text.len(), |max| max.min(text.len()));
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let value =
+                    json!({ "value": &text[..end], "isEncodingProblem": false, "isTruncated": end < text.len() });
+                values.insert(part.part_id.clone(), value);
+            }
+        }
+        put("bodyValues", Value::Object(values));
         Value::Object(m)
     }
 }
@@ -197,6 +360,8 @@ pub struct Mail {
     dirty_email: bool,
     dirty_mailbox: bool,
     pub push_enabled: bool,
+    /// `Email/get` that asks for body values fails (see `MockServer::set_bodies_fail`).
+    pub bodies_fail: bool,
     tx: broadcast::Sender<StreamMsg>,
 }
 
@@ -233,6 +398,7 @@ impl Mail {
             dirty_email: false,
             dirty_mailbox: false,
             push_enabled: true,
+            bodies_fail: false,
             tx,
         };
         let now = now_secs();
@@ -294,8 +460,12 @@ impl Mail {
                     keywords: if read { set_of(&["$seen"]) } else { BTreeSet::new() },
                     from_name: from_name.into(),
                     from_email: from_email.into(),
-                    to_name: to_name.into(),
-                    to_email: to_email.into(),
+                    to: vec![(to_name.into(), to_email.into())],
+                    cc: Vec::new(),
+                    thread: None,
+                    text: None,
+                    html: None,
+                    attachments: Vec::new(),
                     subject: subject.into(),
                     preview: preview.into(),
                     received_at: now - age,
@@ -320,6 +490,12 @@ impl Mail {
         self.email_log.entries.clear();
         self.mailbox_log.floor = self.mailbox_log.state;
         self.mailbox_log.entries.clear();
+    }
+
+    /// The type and bytes of an attachment, by blob id.
+    pub fn blob(&self, blob_id: &str) -> Option<(String, Vec<u8>)> {
+        let all = self.emails.values().flat_map(|e| e.attachments.iter());
+        all.into_iter().find(|a| a.blob_id == blob_id).map(|a| (a.mime_type.clone(), a.bytes.clone()))
     }
 
     pub fn mailbox_id_by_role(&self, role: &str) -> Option<String> {
@@ -391,8 +567,12 @@ impl Mail {
                 keywords: BTreeSet::new(),
                 from_name: from_name.into(),
                 from_email: from_email.into(),
-                to_name: "Alice Test".into(),
-                to_email: USERNAME.into(),
+                to: vec![("Alice Test".into(), USERNAME.into())],
+                cc: Vec::new(),
+                thread: None,
+                text: None,
+                html: None,
+                attachments: Vec::new(),
                 subject: subject.into(),
                 preview: preview.into(),
                 received_at,
@@ -464,6 +644,7 @@ impl Mail {
             "Email/query" => self.email_query(args),
             "Email/changes" => self.email_changes(args),
             "Email/set" => self.email_set(args),
+            "Thread/get" => self.thread_get(args),
             other => Err(merr("unknownMethod", format!("the mock does not implement '{other}'"))),
         };
         self.flush();
@@ -563,21 +744,42 @@ impl Mail {
     fn email_get(&self, args: &Value) -> MResult {
         let ids = opt_strings(args.get("ids"))?;
         let props = prop_set(args)?;
+        let body = BodyOpts::from_args(args)?;
+        if self.bodies_fail && (body.fetch_text || body.fetch_html) {
+            return Err(merr("serverFail", "the mock was told to fail body requests"));
+        }
         let mut list = Vec::new();
         let mut not_found = Vec::new();
         match ids {
             None => {
                 let mut all: Vec<&Email> = self.emails.values().collect();
                 all.sort_by_key(|e| e.seq);
-                list.extend(all.iter().map(|e| e.json(props.as_ref())));
+                list.extend(all.iter().map(|e| e.json(props.as_ref(), &body)));
             }
             Some(ids) => {
                 for id in ids {
                     match self.emails.get(&id) {
-                        Some(e) => list.push(e.json(props.as_ref())),
+                        Some(e) => list.push(e.json(props.as_ref(), &body)),
                         None => not_found.push(id),
                     }
                 }
+            }
+        }
+        Ok(json!({ "accountId": ACCOUNT_ID, "state": self.email_state(), "list": list, "notFound": not_found }))
+    }
+
+    fn thread_get(&self, args: &Value) -> MResult {
+        let ids = opt_strings(args.get("ids"))?.unwrap_or_default();
+        let mut list = Vec::new();
+        let mut not_found = Vec::new();
+        for id in ids {
+            let mut members: Vec<&Email> = self.emails.values().filter(|e| e.thread_id() == id).collect();
+            members.sort_by_key(|e| (e.received_at, e.seq));
+            if members.is_empty() {
+                not_found.push(id);
+            } else {
+                let email_ids: Vec<&str> = members.iter().map(|e| e.id.as_str()).collect();
+                list.push(json!({ "id": id, "emailIds": email_ids }));
             }
         }
         Ok(json!({ "accountId": ACCOUNT_ID, "state": self.email_state(), "list": list, "notFound": not_found }))
@@ -614,6 +816,17 @@ impl Mail {
                 "before" => parse_rfc3339(s).is_some_and(|t| e.received_at < t),
                 "after" => parse_rfc3339(s).is_some_and(|t| e.received_at >= t),
                 "subject" => e.subject.to_lowercase().contains(&s.to_lowercase()),
+                // Everything a person would look for: headers and both bodies.
+                "text" => {
+                    let s = s.to_lowercase();
+                    let has = |t: &str| t.to_lowercase().contains(&s);
+                    has(&e.subject)
+                        || has(&e.from_name)
+                        || has(&e.from_email)
+                        || e.to.iter().any(|(name, email)| has(name) || has(email))
+                        || e.text.as_deref().is_some_and(has)
+                        || e.html.as_deref().is_some_and(has)
+                }
                 "from" => {
                     let s = s.to_lowercase();
                     e.from_name.to_lowercase().contains(&s) || e.from_email.to_lowercase().contains(&s)

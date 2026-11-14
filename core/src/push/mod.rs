@@ -82,6 +82,10 @@ pub struct Deps {
     pub timing: Timing,
 }
 
+/// The longest [`check_once`] spends on [`sync::prefetch_bodies`] after its pass. The live
+/// loop has no such limit: there the prefetch runs beside the loop.
+const PREFETCH_BUDGET: Duration = Duration::from_secs(10);
+
 /// One pass without a stream: token, connect, send queued actions, sync, run the rule, report
 /// the plan to the listener (if it is not empty) and return it. A 401 is retried once with a
 /// renewed token.
@@ -98,7 +102,13 @@ pub async fn check_once(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
 async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     let token = deps.tokens.access_token().await?;
     let conn = Connection::connect(&deps.account.server_url, &token.token).await?;
-    pass(deps, &conn, on_screen).await
+    let plan = pass(deps, &conn, on_screen).await?;
+    // The plan is made and the listener was told; the bodies for reading offline come after
+    // and are optional. This call is the 15-minute job or the boot receiver, whose process may
+    // not live long, so the prefetch is done here, within a budget (each batch that arrived is
+    // kept), and nothing it does can fail the check.
+    let _ = tokio::time::timeout(PREFETCH_BUDGET, sync::prefetch_bodies(&conn, &deps.store, &deps.account.id)).await;
+    Ok(plan)
 }
 
 /// The work of one pass, shared by the loop and [`check_once`].

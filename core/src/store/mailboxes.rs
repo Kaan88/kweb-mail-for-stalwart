@@ -49,8 +49,12 @@ impl Store {
     pub fn delete_mailboxes(&self, account_id: &str, ids: &[String]) -> Result<()> {
         self.write(|c| {
             let mut stmt = c.prepare_cached("DELETE FROM mailboxes WHERE account_id = ?1 AND id = ?2")?;
+            // The window goes with its mailbox: a later mailbox with the same id starts clean.
+            let mut window =
+                c.prepare_cached("DELETE FROM mailbox_windows WHERE account_id = ?1 AND mailbox_id = ?2")?;
             for id in ids {
                 stmt.execute([account_id, id])?;
+                window.execute([account_id, id])?;
             }
             Ok(())
         })
@@ -82,10 +86,17 @@ impl Store {
     }
 
     /// Full resync: drops every mailbox of the account and stores `boxes`, in one transaction.
+    /// The windows of the mailboxes that are still there are kept; the others go.
     pub fn replace_mailboxes(&self, account_id: &str, boxes: &[Mailbox]) -> Result<()> {
         self.write(|c| {
             c.execute("DELETE FROM mailboxes WHERE account_id = ?1", [account_id])?;
-            upsert(c, account_id, boxes)
+            upsert(c, account_id, boxes)?;
+            c.execute(
+                "DELETE FROM mailbox_windows WHERE account_id = ?1
+                 AND mailbox_id NOT IN (SELECT id FROM mailboxes WHERE account_id = ?1)",
+                [account_id],
+            )?;
+            Ok(())
         })
     }
 }

@@ -263,3 +263,81 @@ async fn submit_offline_other_device_changes_sync_then_flush() {
     assert_eq!(notifiable_ids(&store), [new]);
     assert!(store.get_message(ACCOUNT, E3).unwrap().is_some());
 }
+
+fn flag(id: &str) -> Action {
+    Action::Flag { message_id: id.into() }
+}
+fn unflag(id: &str) -> Action {
+    Action::Unflag { message_id: id.into() }
+}
+fn move_to(id: &str, mailbox: &str) -> Action {
+    Action::Move { message_id: id.into(), mailbox_id: mailbox.into() }
+}
+
+#[tokio::test]
+async fn flag_and_unflag_reach_the_server() {
+    let (server, conn, store) = setup().await;
+    actions::submit(&store, ACCOUNT, &flag(E1)).unwrap();
+    assert!(store.get_message(ACCOUNT, E1).unwrap().unwrap().is_flagged);
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert!(server.keywords_of(E1).contains(&"$flagged".to_string()));
+
+    actions::submit(&store, ACCOUNT, &unflag(E1)).unwrap();
+    assert!(!store.get_message(ACCOUNT, E1).unwrap().unwrap().is_flagged);
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert!(!server.keywords_of(E1).contains(&"$flagged".to_string()));
+    assert_eq!(pending(&store), 0);
+}
+
+#[tokio::test]
+async fn move_reaches_the_server_and_leaves_the_other_mailboxes() {
+    let (server, conn, store) = setup().await;
+    actions::submit(&store, ACCOUNT, &move_to(E1, JUNK_ID)).unwrap();
+    assert_eq!(store.get_message(ACCOUNT, E1).unwrap().unwrap().mailbox_ids, vec![JUNK_ID.to_string()]);
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(server.mailboxes_of(E1), [JUNK_ID]);
+
+    // Back out of Junk (and Archive and Delete are undone the same way).
+    actions::submit(&store, ACCOUNT, &move_to(E1, INBOX_ID)).unwrap();
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(server.mailboxes_of(E1), [INBOX_ID]);
+}
+
+#[tokio::test]
+async fn queued_flag_and_move_survive_a_sync_that_overwrites_the_cache() {
+    let (server, conn, store) = setup().await;
+    server.set_down(true);
+    actions::submit(&store, ACCOUNT, &flag(E2)).unwrap();
+    actions::submit(&store, ACCOUNT, &move_to(E1, JUNK_ID)).unwrap();
+    server.set_down(false);
+    // Changes elsewhere make sync fetch both messages again, over the optimistic copies.
+    server.mark_read(E1);
+    server.mark_read(E2);
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    assert!(store.get_message(ACCOUNT, E2).unwrap().unwrap().is_flagged);
+    assert_eq!(store.get_message(ACCOUNT, E1).unwrap().unwrap().mailbox_ids, vec![JUNK_ID.to_string()]);
+
+    assert_eq!(actions::flush(&conn, &store, ACCOUNT).await.unwrap(), 2);
+    assert!(server.keywords_of(E2).contains(&"$flagged".to_string()));
+    assert_eq!(server.mailboxes_of(E1), [JUNK_ID]);
+}
+
+#[tokio::test]
+async fn submit_all_applies_in_order_and_stops_at_the_first_error() {
+    let (server, conn, store) = setup().await;
+    actions::submit_all(&store, ACCOUNT, &[read(E1), flag(E1), archive(E2)]).unwrap();
+    assert_eq!(pending(&store), 3);
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert!(server.is_read(E1));
+    assert_eq!(server.roles_of(E2), ["archive"]);
+
+    // No Archive mailbox is cached: the second action fails, the first stays queued, the
+    // third is never tried.
+    let bare = new_store(&server);
+    bare.upsert_messages(ACCOUNT, &[store.get_message(ACCOUNT, E3).unwrap().unwrap()]).unwrap();
+    let err = actions::submit_all(&bare, ACCOUNT, &[read(E3), archive(E3), flag(E3)]).unwrap_err();
+    assert!(matches!(err, Error::Invalid { .. }), "got {err:?}");
+    assert_eq!(bare.outbox_pending(ACCOUNT).unwrap().len(), 1);
+    assert!(!bare.get_message(ACCOUNT, E3).unwrap().unwrap().is_flagged);
+    assert!(actions::submit_all(&bare, ACCOUNT, &[]).is_ok());
+}

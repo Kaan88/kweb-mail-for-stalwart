@@ -1,14 +1,15 @@
 //! Message headers and their mailbox membership.
 
 use super::Store;
-use crate::model::MessageHeader;
+use crate::model::{Address, MessageHeader};
 use crate::Result;
 use rusqlite::{params, Connection, OptionalExtension, Row};
+use std::collections::HashSet;
 
 /// Column list shared by every query that returns headers; `mailbox_ids` is filled separately.
 /// Callers that join must qualify the table as `m`.
 pub(super) const COLUMNS: &str = "m.id, m.thread_id, m.from_name, m.from_email, m.subject, m.preview, \
-     m.received_at, m.is_unread, m.is_flagged, m.has_attachment, m.size";
+     m.received_at, m.is_unread, m.is_flagged, m.has_attachment, m.size, m.to_json";
 
 pub(super) fn from_row(r: &Row) -> rusqlite::Result<MessageHeader> {
     Ok(MessageHeader {
@@ -17,6 +18,8 @@ pub(super) fn from_row(r: &Row) -> rusqlite::Result<MessageHeader> {
         mailbox_ids: Vec::new(),
         from_name: r.get(2)?,
         from_email: r.get(3)?,
+        // An unreadable value is no recipients: the next sync writes it again.
+        to: serde_json::from_str::<Vec<Address>>(&r.get::<_, String>(11)?).unwrap_or_default(),
         subject: r.get(4)?,
         preview: r.get(5)?,
         received_at: r.get(6)?,
@@ -58,13 +61,14 @@ fn set_mailboxes(c: &Connection, account_id: &str, message_id: &str, mailbox_ids
 fn upsert(c: &Connection, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
     let mut stmt = c.prepare_cached(
         "INSERT INTO messages (account_id, id, thread_id, from_name, from_email, subject, preview,
-             received_at, is_unread, is_flagged, has_attachment, size)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             received_at, is_unread, is_flagged, has_attachment, size, to_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(account_id, id) DO UPDATE SET thread_id = ?3, from_name = ?4, from_email = ?5,
              subject = ?6, preview = ?7, received_at = ?8, is_unread = ?9, is_flagged = ?10,
-             has_attachment = ?11, size = ?12",
+             has_attachment = ?11, size = ?12, to_json = ?13",
     )?;
     for m in msgs {
+        let to_json = serde_json::to_string(&m.to).map_err(|e| crate::Error::store(e.to_string()))?;
         stmt.execute(params![
             account_id,
             m.id,
@@ -77,7 +81,8 @@ fn upsert(c: &Connection, account_id: &str, msgs: &[MessageHeader]) -> Result<()
             m.is_unread,
             m.is_flagged,
             m.has_attachment,
-            m.size as i64
+            m.size as i64,
+            to_json
         ])?;
         set_mailboxes(c, account_id, &m.id, &m.mailbox_ids)?;
     }
@@ -171,11 +176,20 @@ impl Store {
         })
     }
 
-    /// Full resync: drops every message of the account and stores `msgs`, in one transaction.
-    /// Shown and dismissed notification rows are kept: they describe what the user saw.
+    /// Full resync: stores `msgs` and drops the account's other messages, in one transaction.
+    /// A message that is in `msgs` keeps its cached body. Shown and dismissed notification rows
+    /// are kept: they describe what the user saw.
     pub fn replace_messages(&self, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
         self.write(|c| {
-            c.execute("DELETE FROM messages WHERE account_id = ?1", [account_id])?;
+            let keep: HashSet<&str> = msgs.iter().map(|m| m.id.as_str()).collect();
+            let cached: Vec<String> = c
+                .prepare("SELECT id FROM messages WHERE account_id = ?1")?
+                .query_map([account_id], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut delete = c.prepare_cached("DELETE FROM messages WHERE account_id = ?1 AND id = ?2")?;
+            for id in cached.iter().filter(|id| !keep.contains(id.as_str())) {
+                delete.execute([account_id, id])?;
+            }
             upsert(c, account_id, msgs)
         })
     }

@@ -1,9 +1,10 @@
-//! SQLite cache: mailboxes, messages, state strings, outbox, shown notifications.
+//! SQLite cache: mailboxes, messages, bodies, state strings, outbox, shown notifications.
 //!
 //! Calls are short and synchronous; the connection sits behind a mutex so one `Arc<Store>`
 //! can be shared by async tasks. Never hold the store across an `.await`.
 //! Every table is keyed by account id. Times are Unix seconds.
 
+mod bodies;
 mod bookkeeping;
 mod mailboxes;
 mod messages;
@@ -11,6 +12,7 @@ mod outbox;
 mod schema;
 #[cfg(test)]
 mod tests;
+mod threads;
 
 use crate::model::Account;
 use crate::Result;

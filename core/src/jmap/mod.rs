@@ -11,12 +11,15 @@ mod calendar;
 mod convert;
 mod errors;
 
-use std::{pin::Pin, time::Duration};
+use std::{io::Write, pin::Pin, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use jmap_client::{
     client::{Client, Credentials},
-    core::response::{EmailGetResponse, MailboxGetResponse},
+    core::{
+        query::Filter,
+        response::{EmailGetResponse, MailboxGetResponse, ThreadGetResponse},
+    },
     email,
     event_source::PushNotification,
     DataType,
@@ -24,11 +27,12 @@ use jmap_client::{
 
 use crate::{
     auth::{secure_url, server_base},
-    model::{Action, Mailbox, MessageHeader},
+    model::{Action, Mailbox, MessageBody, MessageHeader},
     Error, Result,
 };
 use convert::{
-    batch_size, header_properties, mailbox_properties, merge_pages, order_by_ids, to_header, to_mailbox, Page,
+    batch_size, body_part_properties, body_properties, header_properties, mailbox_properties, merge_pages,
+    order_by_ids, to_body, to_header, to_mailbox, Page,
 };
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_unauthorized};
@@ -40,7 +44,12 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 /// The server sends a ping this often (seconds) so a dead connection is noticed.
 const STREAM_PING_SECS: u32 = 60;
+/// The longest a blob download may stay silent before it is given up.
+const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SEEN: &str = "$seen";
+const FLAGGED: &str = "$flagged";
+/// A text or HTML part longer than this (bytes) arrives cut, and the body says so.
+const MAX_BODY_VALUE_BYTES: usize = 1_000_000;
 
 /// The answer of a /changes call, followed to the end (`hasMoreChanges` loops are done inside).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -83,6 +92,8 @@ pub struct Connection {
     client: Client,
     /// For the requests jmap-client has no methods for (calendars).
     http: reqwest::Client,
+    /// For blob downloads, which may take long: see [`download_http`].
+    downloads: reqwest::Client,
     account_id: String,
 }
 
@@ -106,7 +117,9 @@ impl Connection {
         // jmap-client defaults to an arbitrary primary account; pin it to the mail one.
         client.set_default_account_id(account_id.clone());
         let http = plain_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
-        Ok(Connection { client, http, account_id })
+        let downloads =
+            download_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
+        Ok(Connection { client, http, downloads, account_id })
     }
 
     /// The primary mail account.
@@ -204,6 +217,112 @@ impl Connection {
         Ok((out, state.unwrap_or_default()))
     }
 
+    /// Ids of up to `limit` messages of a mailbox that were received before `before_secs`
+    /// (exclusive), newest first, from `position` in that list.
+    pub async fn message_ids_before(
+        &self,
+        mailbox_id: &str,
+        before_secs: i64,
+        position: usize,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let filter =
+            Filter::and([email::query::Filter::in_mailbox(mailbox_id), email::query::Filter::before(before_secs)]);
+        self.query_ids(filter, position, limit).await
+    }
+
+    /// Ids of the messages the server finds for `query` (it searches headers and bodies), in one
+    /// mailbox or in all, newest first.
+    pub async fn search_ids(&self, query: &str, mailbox_id: Option<&str>, limit: usize) -> Result<Vec<String>> {
+        let text = email::query::Filter::text(query);
+        let filter = match mailbox_id {
+            Some(mailbox) => Filter::and([text, email::query::Filter::in_mailbox(mailbox)]),
+            None => text.into(),
+        };
+        self.query_ids(filter, 0, limit).await
+    }
+
+    async fn query_ids(
+        &self,
+        filter: Filter<email::query::Filter>,
+        position: usize,
+        limit: usize,
+    ) -> Result<Vec<String>> {
+        let position = i32::try_from(position).map_err(|_| Error::invalid("message position too large"))?;
+        let mut req = self.client.build();
+        req.query_email()
+            .filter(filter)
+            .sort([email::query::Comparator::received_at().descending()])
+            .position(position)
+            .limit(limit);
+        let mut resp = req.send_query_email().await.map_err(from_jmap)?;
+        Ok(resp.take_ids())
+    }
+
+    /// The bodies of these messages (recipients, text, HTML, files), batched like `messages`, in
+    /// the order asked. Ids the server does not know are left out.
+    pub async fn bodies(&self, ids: &[String]) -> Result<Vec<MessageBody>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(self.get_batch()) {
+            let mut req = self.client.build();
+            let get = req.get_email().ids(chunk.iter().cloned()).properties(body_properties());
+            get.arguments()
+                .body_properties(body_part_properties())
+                .fetch_text_body_values(true)
+                .fetch_html_body_values(true)
+                .max_body_value_bytes(MAX_BODY_VALUE_BYTES);
+            let mut resp = req.send_single::<EmailGetResponse>().await.map_err(from_jmap)?;
+            out.extend(resp.take_list().iter().filter_map(to_body));
+        }
+        Ok(order_by_ids(ids, out, |b| b.message_id.as_str()))
+    }
+
+    /// Ids of the messages of a thread, in the server's order. An unknown thread has none.
+    pub async fn thread_email_ids(&self, thread_id: &str) -> Result<Vec<String>> {
+        let mut req = self.client.build();
+        req.get_thread().ids([thread_id]);
+        let mut resp = req.send_single::<ThreadGetResponse>().await.map_err(from_jmap)?;
+        Ok(resp.take_list().pop().map(|t| t.email_ids().to_vec()).unwrap_or_default())
+    }
+
+    /// Writes a blob (an attachment, an inline picture) to `file`, piece by piece as it
+    /// arrives, so a large attachment is never held in memory. There is no limit on the whole
+    /// transfer, only on a silence in it. On an error `file` is left as far as it got: the
+    /// caller owns it.
+    pub async fn download_to(&self, blob_id: &str, file: &mut dyn Write) -> Result<()> {
+        let failed = |e: &dyn std::fmt::Display| Error::temporary(format!("download: {e}"));
+        let mut headers = self.client.headers().clone();
+        headers.remove(reqwest::header::CONTENT_TYPE);
+        let mut response =
+            self.downloads.get(self.download_url(blob_id)).headers(headers).send().await.map_err(|e| failed(&e))?;
+        match response.status().as_u16() {
+            200..=299 => {}
+            401 => return Err(errors::unauthorized("download")),
+            404 => return Err(Error::invalid("the server does not have this file")),
+            status => return Err(failed(&format!("the server answered {status}"))),
+        }
+        while let Some(chunk) = response.chunk().await.map_err(|e| failed(&e))? {
+            file.write_all(&chunk).map_err(|e| Error::store(format!("saving the file: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// The session's download URL with its placeholders filled in, as jmap-client does it.
+    fn download_url(&self, blob_id: &str) -> String {
+        use jmap_client::{blob::URLParameter, core::session::URLPart};
+        let mut url = String::new();
+        for part in self.client.download_url() {
+            match part {
+                URLPart::Value(text) => url.push_str(text),
+                URLPart::Parameter(URLParameter::AccountId) => url.push_str(&self.account_id),
+                URLPart::Parameter(URLParameter::BlobId) => url.push_str(blob_id),
+                URLPart::Parameter(URLParameter::Name) => url.push_str("none"),
+                URLPart::Parameter(URLParameter::Type) => url.push_str("application/octet-stream"),
+            }
+        }
+        url
+    }
+
     /// What changed in Email since `since_state`. See [`is_cannot_calculate_changes`].
     pub async fn email_changes(&self, since_state: &str) -> Result<Changes> {
         let mut pages = Vec::new();
@@ -232,15 +351,17 @@ impl Connection {
         })
     }
 
-    /// Applies one `model::Action`: MarkRead/MarkUnread set or clear `$seen`; Archive moves the
-    /// message to the archive mailbox (out of whatever it is in); Delete moves it to Trash;
-    /// Destroy removes it for good. A message the server no longer has gives
+    /// Applies one `model::Action`: MarkRead/MarkUnread set or clear `$seen`; Flag/Unflag set or
+    /// clear `$flagged`; Archive moves the message to the archive mailbox (out of whatever it is
+    /// in); Move to the mailbox the action names; Delete moves it to Trash; Destroy removes it
+    /// for good. A message the server no longer has gives
     /// `Error::Invalid`.
     pub async fn apply(&self, action: &Action, ctx: &ActionContext) -> Result<()> {
         let (id, plan) = plan(action, ctx)?;
         match plan {
             Plan::Nothing => Ok(()),
             Plan::Seen(set) => self.client.email_set_keyword(&id, SEEN, set).await.map(drop),
+            Plan::Flagged(set) => self.client.email_set_keyword(&id, FLAGGED, set).await.map(drop),
             Plan::MoveTo(mailbox) => self.client.email_set_mailboxes(&id, [mailbox]).await.map(drop),
             Plan::Destroy => self.client.email_destroy(&id).await,
         }
@@ -279,11 +400,22 @@ fn plain_http() -> std::result::Result<reqwest::Client, reqwest::Error> {
     reqwest::Client::builder().timeout(REQUEST_TIMEOUT).redirect(reqwest::redirect::Policy::none()).build()
 }
 
+/// Like [`plain_http`], but without a limit on the whole request: an attachment on a slow
+/// line takes as long as it takes. What ends a download is a server that stops sending.
+fn download_http() -> std::result::Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .connect_timeout(REQUEST_TIMEOUT)
+        .read_timeout(DOWNLOAD_IDLE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
 /// The API and push URLs come from the server's own answer; the bearer token must not be sent
 /// to a plain-http address just because the session says so.
 fn check_session_urls(client: &Client) -> Result<()> {
     let session = client.session();
-    for (what, url) in [("API", session.api_url()), ("push", session.event_source_url())] {
+    let urls = [("API", session.api_url()), ("push", session.event_source_url()), ("download", session.download_url())];
+    for (what, url) in urls {
         secure_url(url).map_err(|e| Error::temporary(format!("the server's JMAP {what} URL {e}")))?;
     }
     Ok(())
@@ -327,6 +459,7 @@ fn changed_types<'a>(types: impl Iterator<Item = &'a DataType>) -> (bool, bool) 
 #[derive(Debug, PartialEq)]
 enum Plan {
     Seen(bool),
+    Flagged(bool),
     MoveTo(String),
     Destroy,
     /// Already as wanted.
@@ -347,6 +480,12 @@ fn plan(action: &Action, ctx: &ActionContext) -> Result<(String, Plan)> {
             (message_id.clone(), Plan::MoveTo(trash))
         }
         Action::Destroy { message_id } => (message_id.clone(), Plan::Destroy),
+        Action::Flag { message_id } => (message_id.clone(), Plan::Flagged(true)),
+        Action::Unflag { message_id } => (message_id.clone(), Plan::Flagged(false)),
+        Action::Move { message_id, mailbox_id } => {
+            let already = ctx.current_mailbox_ids == [mailbox_id.clone()];
+            (message_id.clone(), if already { Plan::Nothing } else { Plan::MoveTo(mailbox_id.clone()) })
+        }
     })
 }
 
@@ -393,6 +532,24 @@ mod tests {
         let (_, p) = plan(&d, &ctx(&["trash"], None, Some("trash"))).unwrap();
         assert_eq!(p, Plan::MoveTo(id("trash")));
         assert!(matches!(plan(&d, &ctx(&["inbox"], None, None)), Err(Error::Invalid { .. })));
+    }
+
+    #[test]
+    fn flag_and_unflag_toggle_flagged() {
+        let c = ctx(&["inbox"], None, None);
+        assert_eq!(plan(&Action::Flag { message_id: id("m") }, &c).unwrap(), (id("m"), Plan::Flagged(true)));
+        assert_eq!(plan(&Action::Unflag { message_id: id("m") }, &c).unwrap(), (id("m"), Plan::Flagged(false)));
+    }
+
+    #[test]
+    fn move_sets_just_the_target_unless_it_is_already_exactly_there() {
+        let m = Action::Move { message_id: id("m"), mailbox_id: id("junk") };
+        let (_, p) = plan(&m, &ctx(&["inbox"], None, None)).unwrap();
+        assert_eq!(p, Plan::MoveTo(id("junk")));
+        let (_, p) = plan(&m, &ctx(&["junk"], None, None)).unwrap();
+        assert_eq!(p, Plan::Nothing);
+        let (_, p) = plan(&m, &ctx(&["junk", "inbox"], None, None)).unwrap();
+        assert_eq!(p, Plan::MoveTo(id("junk")));
     }
 
     #[test]

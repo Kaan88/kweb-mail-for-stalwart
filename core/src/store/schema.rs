@@ -93,6 +93,34 @@ pub(super) const MIGRATIONS: &[&str] = &[
         last_error TEXT
     );
     ",
+    // 2: M3 (reading). Recipients on messages, the target of a queued Move, cached bodies, and
+    // how far back each mailbox is cached.
+    "
+    ALTER TABLE messages ADD COLUMN to_json TEXT NOT NULL DEFAULT '[]';
+    ALTER TABLE outbox ADD COLUMN target TEXT;
+    CREATE INDEX messages_by_thread ON messages (account_id, thread_id);
+
+    -- A `MessageBody` as JSON. Goes away with its message.
+    CREATE TABLE message_bodies (
+        account_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        body       TEXT NOT NULL,
+        PRIMARY KEY (account_id, message_id),
+        FOREIGN KEY (account_id, message_id) REFERENCES messages(account_id, id) ON DELETE CASCADE
+    );
+
+    -- The cache holds the mailbox without gaps from now back to `oldest` (a received_at).
+    -- No row: the whole mailbox is cached.
+    CREATE TABLE mailbox_windows (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        mailbox_id TEXT NOT NULL,
+        oldest     INTEGER NOT NULL,
+        PRIMARY KEY (account_id, mailbox_id)
+    );
+
+    -- One full resync, which fills `to_json` and the windows.
+    DELETE FROM sync_state WHERE data_type = 'Email';
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

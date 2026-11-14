@@ -5,7 +5,7 @@ use std::{process, sync::Arc, thread};
 
 use kweb_core::{
     ffi::{Core, Shade},
-    model::{Account, Action, ConnectionStatus, MessageHeader, Reminder},
+    model::{Account, Action, Address, ConnectionStatus, MessageBody, MessageHeader, Reminder},
     notify::Plan,
     push::Listener,
 };
@@ -19,6 +19,8 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Status => status(core),
         Command::Inbox { count } => inbox(core, count),
         Command::Mailboxes => mailboxes(core),
+        Command::Show { id } => show(core, id),
+        Command::Search { query } => search(core, query),
         Command::Watch => watch(core),
         Command::Read { id } => act(core, Action::MarkRead { message_id: id }, "marked read"),
         Command::Unread { id } => act(core, Action::MarkUnread { message_id: id }, "marked unread"),
@@ -107,7 +109,13 @@ fn inbox(core: &Core, count: u32) -> Result<(), String> {
 fn message_line(m: &MessageHeader) -> String {
     let sender = if m.from_name.is_empty() { &m.from_email } else { &m.from_name };
     let marker = if m.is_unread { '*' } else { ' ' };
-    format!("{marker} {}  {sender}  {}  [{}]", timefmt::utc(m.received_at), m.subject, m.id)
+    format!(
+        "{marker} {}  {}  {}  [{}]",
+        timefmt::utc(m.received_at),
+        one_line(sender),
+        one_line(&m.subject),
+        one_line(&m.id)
+    )
 }
 
 fn mailboxes(core: &Core) -> Result<(), String> {
@@ -119,6 +127,98 @@ fn mailboxes(core: &Core) -> Result<(), String> {
         println!("{:<10} {:<24} {:>6} {:>7}  {}", role, m.name, m.total_emails, m.unread_emails, m.id);
     }
     Ok(())
+}
+
+/// How many matches `kweb search` lists.
+const SEARCH_LIMIT: u32 = 20;
+
+fn show(core: &Core, id: String) -> Result<(), String> {
+    // The header is only for the subject and the arrival time; the body is fetched if needed.
+    let header = core.message(id.clone()).map_err(|e| e.to_string())?;
+    let body = core.message_body(id).map_err(|e| e.to_string())?;
+    print!("{}", message_text(header.as_ref(), &body));
+    Ok(())
+}
+
+fn search(core: &Core, query: String) -> Result<(), String> {
+    let result = core.search(query, None, SEARCH_LIMIT).map_err(|e| e.to_string())?;
+    if result.from_cache {
+        println!("(the server could not be reached: only cached mail was searched, by sender, subject and preview)");
+    }
+    if result.messages.is_empty() {
+        println!("No matches.");
+    }
+    for message in &result.messages {
+        println!("{}", message_line(message));
+    }
+    Ok(())
+}
+
+/// What `kweb show` prints. Mail is written by strangers, so control characters (a terminal
+/// escape sequence) are left out of everything taken from it.
+fn message_text(header: Option<&MessageHeader>, body: &MessageBody) -> String {
+    let mut out = String::new();
+    let mut line = |label: &str, value: String| {
+        if !value.is_empty() {
+            out.push_str(&format!("{label:<9}{}\n", one_line(&value)));
+        }
+    };
+    if let Some(h) = header {
+        let from = Address { name: h.from_name.clone(), email: h.from_email.clone() };
+        line("From:", addresses(&[from]));
+    }
+    line("To:", addresses(&body.to));
+    line("Cc:", addresses(&body.cc));
+    let sent = body.sent_at.or(header.map(|h| h.received_at));
+    line("Date:", sent.map(|t| format!("{} UTC", timefmt::utc(t))).unwrap_or_default());
+    line("Subject:", header.map(|h| h.subject.clone()).unwrap_or_default());
+    out.push('\n');
+    match (&body.text, &body.html) {
+        (Some(text), _) => {
+            out.push_str(&printable(text));
+            out.push('\n');
+        }
+        (None, Some(_)) => out.push_str("(This message has only an HTML version, which kweb does not show.)\n"),
+        (None, None) => out.push_str("(This message has no text.)\n"),
+    }
+    if body.is_truncated {
+        out.push_str("(The text is longer than kweb fetches: the end is missing.)\n");
+    }
+    let files: Vec<_> = body.attachments.iter().filter(|a| !a.is_inline).collect();
+    if !files.is_empty() {
+        out.push_str("\nAttachments:\n");
+        for a in files {
+            let name = if a.name.is_empty() { "(no name)" } else { &a.name };
+            out.push_str(&format!("  {}  {}  {}\n", one_line(name), size_text(a.size), one_line(&a.mime_type)));
+        }
+    }
+    out
+}
+
+/// `Name <address>`, or just the address.
+fn addresses(list: &[Address]) -> String {
+    let one = |a: &Address| if a.name.is_empty() { a.email.clone() } else { format!("{} <{}>", a.name, a.email) };
+    list.iter().map(one).collect::<Vec<_>>().join(", ")
+}
+
+/// For a value that must stay on its line (a name, a subject): no control characters at all,
+/// so mail cannot add lines of its own or steer the terminal.
+fn one_line(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}')).collect()
+}
+
+/// For the text of a mail: keeps new lines and tabs, drops other control characters.
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect()
+}
+
+/// `512 B`, `1.5 KB`, `3.2 MB`.
+fn size_text(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
 }
 
 fn watch(core: &Core) -> Result<(), String> {
@@ -138,7 +238,10 @@ fn act(core: &Core, action: Action, done: &str) -> Result<(), String> {
         | Action::MarkUnread { message_id }
         | Action::Archive { message_id }
         | Action::Delete { message_id }
-        | Action::Destroy { message_id } => message_id.clone(),
+        | Action::Destroy { message_id }
+        | Action::Flag { message_id }
+        | Action::Unflag { message_id }
+        | Action::Move { message_id, .. } => message_id.clone(),
     };
     core.submit(action).map_err(|e| e.to_string())?;
     core.check_once(Shade::Unknown).map_err(|e| {
@@ -206,6 +309,7 @@ mod tests {
             mailbox_ids: vec!["mb1".into()],
             from_name: from_name.into(),
             from_email: "a@example.test".into(),
+            to: Vec::new(),
             subject: "Hello".into(),
             preview: String::new(),
             received_at: 0,
@@ -221,6 +325,84 @@ mod tests {
         let line = message_line(&header("Ann", true));
         assert_eq!(line, "* 1970-01-01 00:00  Ann  Hello  [e7]");
         assert!(message_line(&header("Ann", false)).starts_with("  1970"));
+    }
+
+    fn body() -> MessageBody {
+        MessageBody {
+            message_id: "e7".into(),
+            blob_id: "b".into(),
+            to: vec![Address { name: "Bo".into(), email: "bo@example.test".into() }],
+            cc: vec![Address { name: String::new(), email: "cy@example.test".into() }],
+            bcc: Vec::new(),
+            reply_to: Vec::new(),
+            sent_at: Some(0),
+            html: None,
+            text: Some("Hello\nthere".into()),
+            attachments: Vec::new(),
+            is_truncated: false,
+        }
+    }
+
+    fn attachment(name: &str, size: u64, is_inline: bool) -> kweb_core::model::Attachment {
+        kweb_core::model::Attachment {
+            blob_id: "x".into(),
+            name: name.into(),
+            mime_type: "application/pdf".into(),
+            size,
+            content_id: None,
+            is_inline,
+        }
+    }
+
+    #[test]
+    fn show_prints_headers_then_the_text() {
+        let text = message_text(Some(&header("Ann", true)), &body());
+        assert_eq!(
+            text,
+            "From:    Ann <a@example.test>\nTo:      Bo <bo@example.test>\nCc:      cy@example.test\n\
+             Date:    1970-01-01 00:00 UTC\nSubject: Hello\n\nHello\nthere\n"
+        );
+    }
+
+    #[test]
+    fn show_says_when_there_is_only_html_or_nothing() {
+        let mut b = body();
+        b.text = None;
+        b.html = Some("<p>x</p>".into());
+        assert!(message_text(None, &b).contains("only an HTML version"));
+        b.html = None;
+        assert!(message_text(None, &b).contains("no text"));
+        // Without the header there is no From or Subject line, and the sent time still shows.
+        assert!(!message_text(None, &b).contains("From:") && message_text(None, &b).contains("Date:"));
+    }
+
+    #[test]
+    fn show_lists_files_but_not_inline_pictures_and_says_when_the_text_is_cut() {
+        let mut b = body();
+        b.attachments =
+            vec![attachment("report.pdf", 1536, false), attachment("", 12, false), attachment("logo.png", 9, true)];
+        b.is_truncated = true;
+        let text = message_text(None, &b);
+        assert!(text.contains("Attachments:\n  report.pdf  1.5 KB  application/pdf\n  (no name)  12 B  "));
+        assert!(!text.contains("logo.png"));
+        assert!(text.contains("the end is missing"));
+    }
+
+    #[test]
+    fn terminal_escapes_in_mail_are_not_printed() {
+        let mut b = body();
+        b.text = Some("a\u{1b}[31mred\tb\r".into());
+        let text = message_text(Some(&header("An\u{7}n", true)), &b);
+        assert!(!text.contains('\u{1b}') && !text.contains('\u{7}') && !text.contains('\r'));
+        assert!(text.contains("a[31mred\tb"));
+    }
+
+    #[test]
+    fn sizes_are_short() {
+        assert_eq!(size_text(0), "0 B");
+        assert_eq!(size_text(1023), "1023 B");
+        assert_eq!(size_text(1024), "1.0 KB");
+        assert_eq!(size_text(5 * 1_048_576), "5.0 MB");
     }
 
     #[test]

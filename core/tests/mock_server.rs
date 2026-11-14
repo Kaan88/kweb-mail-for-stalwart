@@ -316,7 +316,7 @@ async fn unknown_method_is_a_method_error() {
     let token = server.issue_access_token();
     let body = json!({
         "using": ["urn:ietf:params:jmap:core"],
-        "methodCalls": [["Thread/get", { "accountId": ACCOUNT_ID, "ids": [] }, "c1"]]
+        "methodCalls": [["Identity/get", { "accountId": ACCOUNT_ID, "ids": [] }, "c1"]]
     });
     let v = body_json(
         post_json(&reqwest::Client::new(), format!("{}/jmap", server.url()), &body)

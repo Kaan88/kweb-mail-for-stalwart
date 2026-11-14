@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 
 use calendar::Calendar;
 use oauth::Oauth;
-use state::{resolve_refs, Mail, StreamMsg};
+use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 pub use state::{ACCOUNT_ID, USERNAME};
 
@@ -105,6 +105,7 @@ impl MockServer {
             .route("/revoke", post(revoke))
             .route("/.well-known/jmap", get(session))
             .route("/jmap", post(jmap))
+            .route("/jmap/download/{account}/{blob}/{name}", get(download))
             .route("/eventsource", get(eventsource))
             .layer(middleware::from_fn_with_state(shared.clone(), gate))
             .with_state(shared.clone());
@@ -185,6 +186,54 @@ impl MockServer {
             }),
             "no message '{id}'"
         );
+    }
+
+    /// Puts the messages in one thread. A message is its own thread until it is told otherwise.
+    pub fn set_thread(&self, id: &str, thread_id: &str) {
+        self.edit(id, |e| e.thread = Some(thread_id.to_string()));
+    }
+
+    /// The plain-text and HTML versions of a message; `None` leaves a version out.
+    pub fn set_bodies(&self, id: &str, text: Option<&str>, html: Option<&str>) {
+        self.edit(id, |e| {
+            e.text = text.map(str::to_string);
+            e.html = html.map(str::to_string);
+        });
+    }
+
+    /// `(name, email)` pairs for the To and Cc headers.
+    pub fn set_recipients(&self, id: &str, to: &[(&str, &str)], cc: &[(&str, &str)]) {
+        let pairs = |l: &[(&str, &str)]| l.iter().map(|(n, e)| (n.to_string(), e.to_string())).collect();
+        self.edit(id, |e| {
+            e.to = pairs(to);
+            e.cc = pairs(cc);
+        });
+    }
+
+    /// Adds a file to a message and returns its blob id. An `inline` file with a `cid` is one
+    /// the HTML shows: the server lists it with the body, not with the attachments.
+    pub fn add_attachment(
+        &self,
+        id: &str,
+        name: &str,
+        mime_type: &str,
+        bytes: &[u8],
+        cid: Option<&str>,
+        inline: bool,
+    ) -> String {
+        let mut blob_id = String::new();
+        self.edit(id, |e| {
+            blob_id = format!("blob-{id}-{}", e.attachments.len());
+            e.attachments.push(Attachment {
+                blob_id: blob_id.clone(),
+                name: name.into(),
+                mime_type: mime_type.into(),
+                cid: cid.map(str::to_string),
+                inline,
+                bytes: bytes.to_vec(),
+            });
+        });
+        blob_id
     }
 
     pub fn destroy(&self, id: &str) {
@@ -269,6 +318,12 @@ impl MockServer {
     /// state still works.
     pub fn forget_changes_before_now(&self) {
         self.shared.mail().forget_changes();
+    }
+
+    /// While set, `Email/get` that asks for body values fails with a server error; everything
+    /// else (headers, changes, actions) keeps working.
+    pub fn set_bodies_fail(&self, fail: bool) {
+        self.shared.mail().bodies_fail = fail;
     }
 
     /// With false, mutations stop producing push events: a stream that is open but dead.
@@ -558,6 +613,22 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
             "state": state::SESSION_STATE,
         }),
     )
+}
+
+/// A blob (an attachment) by the URL the session names.
+async fn download(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path((account, blob, _name)): axum::extract::Path<(String, String, String)>,
+) -> Response {
+    if let Err(r) = check_bearer(&s, &headers) {
+        return r;
+    }
+    let found = if account == ACCOUNT_ID { s.mail().blob(&blob) } else { None };
+    match found {
+        Some((mime_type, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, mime_type)], bytes).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
