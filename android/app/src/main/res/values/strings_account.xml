@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings -->
+    <string name="settings_security_server">Security and server</string>
+    <string name="settings_sign_in_again_account">Sign in again to manage masked addresses and security</string>
+    <string name="masked_count_of">%1$d of %2$d in use</string>
+    <plurals name="masked_count">
+        <item quantity="one">%d address</item>
+        <item quantity="other">%d addresses</item>
+    </plurals>
+
+    <!-- Common -->
+    <string name="account_delete">Delete</string>
+    <string name="account_copy">Copy</string>
+    <string name="account_save">Save</string>
+    <string name="account_done">Done</string>
+
+    <!-- Masked addresses -->
+    <string name="masked_title">Masked addresses</string>
+    <string name="masked_lede">Each address delivers to you. Switch one off and mail to it is turned away.</string>
+    <string name="masked_new">New masked address</string>
+    <string name="masked_receive_only">A masked address only receives; you cannot send from it.</string>
+    <plurals name="masked_limit_line">
+        <item quantity="one">This server allows one masked address. Delete it if you no longer need it, then make a new one.</item>
+        <item quantity="other">This server allows %d masked addresses. Delete one you no longer need, then make a new one.</item>
+    </plurals>
+    <string name="masked_empty">No masked addresses yet.</string>
+    <string name="masked_no_note">No note</string>
+    <string name="masked_menu">More about this address</string>
+    <string name="masked_switch">Mail to %1$s is delivered</string>
+    <string name="masked_copy">Copy address</string>
+    <string name="masked_change_note">Change note</string>
+    <string name="masked_delete_title">Delete this address?</string>
+    <string name="masked_delete_text">Mail to %1$s will be turned away from then on. This cannot be undone, and the same address cannot be made again.</string>
+    <string name="masked_note_title">Change note</string>
+    <string name="masked_sheet_title">New masked address</string>
+    <string name="masked_sheet_lede">A fresh address that delivers to you.</string>
+    <string name="masked_field_for">What is it for</string>
+    <string name="masked_field_site">Site (optional)</string>
+    <string name="masked_field_prefix">Starts with (optional)</string>
+    <string name="masked_prefix_help">The server adds its own letters and digits after it.</string>
+    <string name="masked_prefix_bad">Use letters, digits, dot, hyphen and underscore, at most 32.</string>
+    <string name="masked_create">Create</string>
+    <string name="masked_created_title">Your new address</string>
+    <string name="masked_created_for">For %1$s.</string>
+    <string name="masked_created_text">Mail to it is delivered to you from now on.</string>
+    <string name="masked_copied">Address copied</string>
+    <string name="masked_load_failed">The masked addresses could not be read.</string>
+    <string name="masked_none">Masked addresses are not offered here.</string>
+    <string name="masked_change_failed">The address could not be changed.</string>
+    <string name="masked_create_failed">The address could not be made.</string>
+    <string name="masked_delete_failed">The address could not be deleted.</string>
+
+    <!-- Account security -->
+    <string name="security_title">Account security</string>
+    <string name="security_load_failed">The security settings could not be read.</string>
+    <string name="security_none">The security settings are not available here.</string>
+    <string name="security_group_password">Password and two-step codes</string>
+    <string name="security_group_app_passwords">App passwords</string>
+    <string name="security_group_api_keys">API keys</string>
+    <string name="security_group_passkeys">Passkeys</string>
+    <string name="security_group_apps">Connected apps</string>
+    <string name="security_password_hint">Asks for the current one first</string>
+    <string name="security_two_step">Two-step codes</string>
+    <string name="security_two_step_detail">Authenticator app</string>
+    <string name="security_password_title">Password</string>
+    <string name="security_copied">Copied</string>
+    <string name="security_secret_close_warning">You have not copied it. Tap Done again to close anyway.</string>
+    <string name="security_settings_detail">Password, keys, apps</string>
+    <string name="security_two_step_switch_off">Switch off</string>
+    <string name="security_new_app_password">New app password</string>
+    <string name="security_new_api_key">New API key</string>
+    <string name="security_no_note">No note</string>
+    <string name="security_made">Made %1$s</string>
+    <string name="security_ends">Ends %1$s</string>
+    <string name="security_ended">Ended %1$s</string>
+    <string name="security_no_passkeys">No passkeys.</string>
+    <string name="security_no_apps">No connected apps.</string>
+    <string name="security_apps_note">Revoke takes the permission away. The app has to ask you again.</string>
+    <string name="security_rename">Rename</string>
+    <string name="security_this_app">This app</string>
+    <string name="security_revoke">Revoke</string>
+    <string name="security_may_reach">May reach: %1$s</string>
+    <string name="security_menu">More about %1$s</string>
+
+    <!-- What a connected app may reach -->
+    <string name="security_scope_mail">mail</string>
+    <string name="security_scope_calendars">calendars</string>
+    <string name="security_scope_contacts">contacts</string>
+    <string name="security_scope_files">files</string>
+    <string name="security_scope_settings">account settings</string>
+    <string name="security_scope_security">security</string>
+    <string name="security_scope_full">full access</string>
+    <string name="security_scope_stay">stay signed in</string>
+
+    <!-- Change password -->
+    <string name="security_pw_title">Change password</string>
+    <string name="security_pw_current">Current password</string>
+    <string name="security_pw_new">New password</string>
+    <string name="security_pw_again">New password again</string>
+    <string name="security_pw_mismatch">The two do not match.</string>
+    <string name="security_password_changed">Password changed.</string>
+    <string name="security_password_failed">The password could not be changed.</string>
+
+    <!-- Two-step codes -->
+    <string name="security_two_step_title">Set up two-step codes</string>
+    <string name="security_two_step_text">Add this secret to an authenticator app, then type the code the app shows.</string>
+    <string name="security_two_step_secret">Secret</string>
+    <string name="security_two_step_open">Open authenticator</string>
+    <string name="security_two_step_no_app">No authenticator app was found. Copy the secret and add it by hand.</string>
+    <string name="security_two_step_code">6-digit code</string>
+    <string name="security_two_step_current_code">Current 6-digit code from your authenticator app</string>
+    <string name="security_two_step_enable">Switch on</string>
+    <string name="security_two_step_off_title">Switch off two-step codes?</string>
+    <string name="security_two_step_off_text">Your account will be protected by the password alone. Type the current password to confirm.</string>
+    <string name="security_two_step_on">Two-step codes are on.</string>
+    <string name="security_two_step_off">Two-step codes are off.</string>
+    <string name="security_two_step_failed">Two-step codes could not be changed.</string>
+
+    <!-- App passwords and API keys -->
+    <string name="security_new_app_password_title">New app password</string>
+    <string name="security_new_api_key_title">New API key</string>
+    <string name="security_new_note">What is it for</string>
+    <string name="security_expiry">Ends</string>
+    <string name="security_expiry_never">Never</string>
+    <string name="security_expiry_30_days">In 30 days</string>
+    <string name="security_expiry_1_year">In 1 year</string>
+    <string name="security_make">Make</string>
+    <string name="security_api_key_text">An API key has all the rights of your account.</string>
+    <string name="security_secret_title_app_password">Your new app password</string>
+    <string name="security_secret_title_api_key">Your new API key</string>
+    <string name="security_secret_text">Copy it now. It will not be shown again.</string>
+    <string name="security_delete_app_password_title">Delete this app password?</string>
+    <string name="security_delete_api_key_title">Delete this API key?</string>
+    <string name="security_delete_credential_text">%1$s will stop working at once. This cannot be undone.</string>
+    <string name="security_app_password_failed">The app password could not be made.</string>
+    <string name="security_api_key_failed">The API key could not be made.</string>
+    <string name="security_delete_failed">It could not be deleted.</string>
+
+    <!-- Passkeys and connected apps -->
+    <string name="security_rename_title">Rename passkey</string>
+    <string name="security_rename_label">Name</string>
+    <string name="security_rename_failed">The passkey could not be renamed.</string>
+    <string name="security_delete_passkey_title">Delete this passkey?</string>
+    <string name="security_delete_passkey_text">%1$s will no longer sign you in. Without another way to sign in you may be locked out.</string>
+    <string name="security_delete_passkey_last">This is your last passkey. Without another way to sign in you may be locked out.</string>
+    <string name="security_revoke_title">Revoke this app?</string>
+    <string name="security_revoke_text">%1$s loses its access to your account and has to ask you again.</string>
+    <string name="security_revoke_failed">The app could not be revoked.</string>
+</resources>

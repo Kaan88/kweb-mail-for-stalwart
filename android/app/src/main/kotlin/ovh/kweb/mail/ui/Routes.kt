@@ -91,14 +91,26 @@ sealed interface Route {
     /** The addresses the user sends as, with their names and signatures, reached from Settings. */
     data object Senders : Route
 
+    /** The masked addresses of the account, reached from Settings. */
+    data object MaskedAddresses : Route
+
+    /** The account's own security (password, two-step codes, app passwords, keys, passkeys, connected apps), reached from Settings. */
+    data object AccountSecurity : Route
+
     /** The settings of the AI assistant, reached from Settings. */
     data object Assistant : Route
+
+    /** A screen a licensed server adds (dashboard, delivery history, recovery, alerts, tenants), opened from the admin home. */
+    data class Enterprise(val page: ovh.kweb.mail.ui.enterprise.EnterprisePage) : Route
 
     data object Search : Route
 
     data object DeliveryCheck : Route
 
     data object Settings : Route
+
+    /** One screen of the admin area (server administration), reached from Settings. */
+    data class Admin(val screen: ovh.kweb.mail.ui.admin.AdminScreen) : Route
 
     /**
      * A message being written: the draft the core made, by id. [prefillTo] is a recipient the screen puts
@@ -152,7 +164,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top is Route.Filters
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top is Route.Filters || top == Route.AccountSecurity || (top is Route.Admin && top.screen.holdsInput)
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

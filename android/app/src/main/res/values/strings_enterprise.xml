@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Texts of the Enterprise admin screens: dashboard, delivery history, recovery of deleted items, alerts, tenants. -->
+<resources>
+    <string name="ent_dismiss">Dismiss</string>
+    <string name="ent_clear">Clear</string>
+    <string name="ent_none">-</string>
+    <string name="ent_load_more">Load more</string>
+
+    <string name="ent_range_24h">24 hours</string>
+    <string name="ent_range_7d">7 days</string>
+    <string name="ent_range_30d">30 days</string>
+    <string name="ent_range_today">Today</string>
+
+    <!-- Dashboard -->
+    <string name="ent_dash_title">Dashboard</string>
+    <string name="ent_dash_live_failed">The live figures could not be followed.</string>
+    <string name="ent_dash_history_failed">The history could not be read.</string>
+    <string name="ent_pill_live">Live</string>
+    <string name="ent_pill_paused">Paused</string>
+    <string name="ent_pill_connecting">Connecting</string>
+    <string name="ent_fig_queue">In the queue</string>
+    <string name="ent_fig_connections">Connections</string>
+    <string name="ent_fig_users">Users</string>
+    <string name="ent_fig_memory">Memory</string>
+    <string name="ent_chart_messages_hour">Messages per hour</string>
+    <string name="ent_chart_messages_day">Messages per day</string>
+    <string name="ent_legend_received">Received %1$s</string>
+    <string name="ent_legend_delivered">Delivered %1$s</string>
+    <string name="ent_chart_delivery_time">Delivery time</string>
+    <string name="ent_chart_average">average %1$s</string>
+    <string name="ent_chart_empty">The server has no figures for this time.</string>
+    <string name="ent_chart_messages_description">%1$s: %2$s received, %3$s delivered</string>
+    <string name="ent_chart_time_description">Delivery time, average %1$s</string>
+
+    <!-- Delivery history -->
+    <string name="ent_deliveries_title">Delivery history</string>
+    <string name="ent_deliveries_hint">Address or queue id</string>
+    <string name="ent_deliveries_failed">The delivery history could not be read.</string>
+    <string name="ent_deliveries_none">Nothing found</string>
+    <string name="ent_deliveries_none_body">The server handled no message that matches in this time.</string>
+    <plurals name="ent_deliveries_count">
+        <item quantity="one">%1$d message</item>
+        <item quantity="other">%1$d messages</item>
+    </plurals>
+    <string name="ent_status_delivered">Delivered</string>
+    <string name="ent_status_retrying">Will retry</string>
+    <string name="ent_status_failed">Failed</string>
+    <string name="ent_status_unknown">Unknown</string>
+    <string name="ent_to">to %1$s</string>
+    <string name="ent_to_more">to %1$s and %2$d more</string>
+    <string name="ent_delivery_title">Delivery</string>
+    <string name="ent_delivery_failed">This delivery could not be read.</string>
+    <string name="ent_delivery_no_steps">The server has no steps for this message.</string>
+    <string name="ent_show_raw">Show the server\'s own lines</string>
+    <string name="ent_hide_raw">Show the steps in words</string>
+
+    <!-- Recovery -->
+    <string name="ent_recovery_title">Recover deleted items</string>
+    <string name="ent_recovery_failed">The deleted items could not be read.</string>
+    <string name="ent_recovery_off">Recovery is switched off</string>
+    <string name="ent_recovery_off_body">This server does not keep deleted items. An administrator can switch it on in the server\'s settings by choosing how long they are kept.</string>
+    <string name="ent_recovery_off_note">Items deleted before that are gone.</string>
+    <string name="ent_recovery_none">The server keeps no deleted items for this account.</string>
+    <string name="ent_account_own">Your own account</string>
+    <string name="ent_account_other">Another account</string>
+    <string name="ent_account_caption">Deleted from this account</string>
+    <string name="ent_account_choose">Choose the account</string>
+    <string name="ent_account_search">Search accounts</string>
+    <string name="ent_account_search_help">A name, an address or a word of the description</string>
+    <string name="ent_account_search_failed">The accounts could not be searched.</string>
+    <string name="ent_account_id_needed">Pick an account from the list.</string>
+    <string name="ent_account_show">Show</string>
+    <plurals name="ent_kept_for">
+        <item quantity="one">Kept for %1$d day</item>
+        <item quantity="other">Kept for %1$d days</item>
+    </plurals>
+    <plurals name="ent_days_left">
+        <item quantity="zero">Goes today</item>
+        <item quantity="one">Kept %1$d more day</item>
+        <item quantity="other">Kept %1$d more days</item>
+    </plurals>
+    <string name="ent_deleted_on">Deleted %1$s</string>
+    <string name="ent_untitled">(no title)</string>
+    <string name="ent_kind_mail">Mail</string>
+    <string name="ent_kind_event">Events</string>
+    <string name="ent_kind_contact">Contacts</string>
+    <string name="ent_kind_file">Files</string>
+    <string name="ent_kind_other">Other</string>
+    <string name="ent_restore">Restore</string>
+    <string name="ent_restore_title">Restore this item?</string>
+    <string name="ent_restore_body">%1$s will be put back where it was.</string>
+    <string name="ent_restored">Put back where it was.</string>
+    <string name="ent_restore_failed">The item could not be restored.</string>
+
+    <!-- Alerts -->
+    <string name="ent_alerts_title">Alerts</string>
+    <string name="ent_alerts_failed">The alerts could not be read.</string>
+    <string name="ent_alert_failed">The alert could not be changed.</string>
+    <string name="ent_alerts_none">No alerts</string>
+    <string name="ent_alerts_none_body">The server has no alerts set up.</string>
+    <string name="ent_alerts_note">An alert that is sent by mail arrives as an ordinary message and notifies as usual.</string>
+
+    <!-- Tenants -->
+    <string name="ent_tenants_title">Tenants</string>
+    <string name="ent_tenants_failed">The tenants could not be read.</string>
+    <string name="ent_tenants_none">No tenants</string>
+    <string name="ent_tenants_none_body">The server has no tenants.</string>
+    <string name="ent_tenant_of">%1$s of %2$s</string>
+    <string name="ent_tenant_no_limit">%1$s used, no limit</string>
+    <string name="ent_tenant_limit_only">Limit %1$s</string>
+</resources>

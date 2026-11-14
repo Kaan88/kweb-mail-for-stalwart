@@ -3,9 +3,17 @@ package ovh.kweb.mail.ui
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import ovh.kweb.mail.ui.admin.AdminScreen
 
 class BackStackTest {
     private val thread = Route.Thread("t1", "inbox", null)
+
+    @Test
+    fun aNewAccountFormIsNotReplacedByAnIncomingScreen() {
+        val stack = BackStack.initial + Route.Admin(AdminScreen.Home) + Route.Admin(AdminScreen.NewAccount)
+        val shown = BackStack.showOver(stack, BackStack.forNotification("t", null, "m"))
+        assertEquals(stack + Route.Thread("t", null, "m"), shown)
+    }
 
     @Test fun startsAtTheMailList() = assertEquals(listOf(Route.MailList), BackStack.initial)
 

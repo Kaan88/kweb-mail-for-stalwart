@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
@@ -60,6 +61,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.account.FeaturesRow
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
@@ -86,6 +88,10 @@ fun SettingsScreen(
     onOpenAssistant: () -> Unit,
     onOpenScheduled: () -> Unit,
     onOpenSenders: () -> Unit,
+    onOpenAdmin: () -> Unit,
+    onOpenMasked: () -> Unit,
+    onOpenSecurity: () -> Unit,
+    onSignInAgain: () -> Unit,
     onAddAccount: (() -> Unit)? = null,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
@@ -142,6 +148,8 @@ fun SettingsScreen(
                     )
                 }
             }
+
+            SecurityGroup(state, onOpenMasked, onOpenSecurity, onSignInAgain, onOpenAdmin)
 
             SectionTitle(stringResource(R.string.settings_storage))
             StorageGroup(state.storage)
@@ -218,6 +226,64 @@ fun SettingsScreen(
     if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
     signOutPrompt?.let {
         SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size))
+    }
+}
+
+/**
+ * "Security and server", one group under one title: masked addresses and the account's security when the server
+ * offers them to this sign-in, or one row that signs in again when it would offer them after that, and always last
+ * the row for server administration (it is there for every signed-in account). The shapes follow the rows shown.
+ */
+@Composable
+private fun SecurityGroup(
+    state: SettingsState,
+    onOpenMasked: () -> Unit,
+    onOpenSecurity: () -> Unit,
+    onSignInAgain: () -> Unit,
+    onOpenAdmin: () -> Unit,
+) {
+    val features = state.features
+    val offered = features as? FeaturesRow.Offered
+    val showMasked = offered?.masked == true
+    val showSecurity = offered?.security == true
+    val showSignInAgain = features == FeaturesRow.SignInAgain
+    val count = listOf(showMasked, showSecurity, showSignInAgain).count { it } + 1
+    var index = 0
+    SectionTitle(stringResource(R.string.settings_security_server))
+    Group {
+        if (showSignInAgain) {
+            SettingsRow(
+                Groups.shape(index++, count),
+                stringResource(R.string.settings_sign_in_again_account),
+                icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                onClick = onSignInAgain,
+            )
+        }
+        if (showMasked) {
+            val used = state.maskedUsed
+            val limit = state.maskedLimit
+            SettingsRow(
+                Groups.shape(index++, count),
+                stringResource(R.string.masked_title),
+                when {
+                    used == null -> null
+                    limit != null -> stringResource(R.string.masked_count_of, used, limit)
+                    else -> pluralStringResource(R.plurals.masked_count, used, used)
+                },
+                icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                onClick = onOpenMasked,
+            )
+        }
+        if (showSecurity) {
+            SettingsRow(
+                Groups.shape(index++, count),
+                stringResource(R.string.security_title),
+                stringResource(R.string.security_settings_detail),
+                icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                onClick = onOpenSecurity,
+            )
+        }
+        ovh.kweb.mail.ui.admin.AdminSettingsRow(Groups.shape(index++, count), onOpenAdmin)
     }
 }
 

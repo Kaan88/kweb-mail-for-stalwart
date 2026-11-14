@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings -->
+    <string name="admin_title">Server administration</string>
+    <string name="admin_row_locked">Locked · needs a key</string>
+    <string name="admin_row_open">Open</string>
+    <string name="admin_row_refused">Key not accepted</string>
+
+    <!-- Common -->
+    <string name="admin_dismiss">Dismiss</string>
+    <string name="admin_loading">Loading…</string>
+    <string name="admin_load_more">Load more</string>
+    <string name="admin_refresh">Read again</string>
+    <string name="admin_load_failed">The server did not answer. Try again.</string>
+    <string name="admin_save">Save</string>
+    <string name="admin_edit">Change</string>
+    <string name="admin_description">Description</string>
+
+    <!-- Access -->
+    <string name="admin_access_title">Administration</string>
+    <string name="admin_locked">Locked</string>
+    <string name="admin_locked_note">Your sign-in opens your mail only. The server keeps its admin area closed to apps until you bring a key.</string>
+    <string name="admin_step_1">Open the server\'s web page</string>
+    <string name="admin_step_2">Make an API key there</string>
+    <string name="admin_step_3">Copy the key and come back</string>
+    <string name="admin_paste_key">Paste an API key</string>
+    <string name="admin_key_storage_note">The key stays in this phone\'s secure storage and is never shown again.</string>
+    <string name="admin_key_not_accepted">Key not accepted</string>
+    <string name="admin_key_refused_default">The server did not accept this key. It may have run out or been deleted. Make a new one and paste it.</string>
+    <string name="admin_clipboard_no_key">The clipboard holds no key. Copy the key in the server\'s web page first.</string>
+    <string name="admin_connect_failed">The key could not be checked just now. Try again.</string>
+    <string name="admin_confirm_key_title">Use this key?</string>
+    <string name="admin_confirm_key_text">The server checks it, and the phone keeps it in its secure storage for the admin work of this account only.</string>
+    <string name="admin_confirm_key_use">Use key</string>
+    <string name="admin_unlocked">Unlocked</string>
+    <string name="admin_edition">Server edition</string>
+    <string name="admin_edition_enterprise">Enterprise</string>
+    <string name="admin_edition_community">Community</string>
+    <string name="admin_edition_oss">Open source</string>
+    <string name="admin_edition_unknown">Unknown</string>
+    <string name="admin_key_label">Key</string>
+    <string name="admin_key_kept">Kept on this phone</string>
+    <string name="admin_may_title">What this key may do</string>
+    <string name="admin_may_queue">Mail queue</string>
+    <string name="admin_may_queue_detail">look, retry, cancel</string>
+    <string name="admin_may_accounts">Accounts</string>
+    <string name="admin_may_accounts_detail">look, change</string>
+    <string name="admin_may_blocked">Blocked addresses</string>
+    <string name="admin_may_blocked_detail">look, unblock</string>
+    <string name="admin_may_logs">Logs</string>
+    <string name="admin_may_logs_detail">read</string>
+    <string name="admin_may_maintenance">Maintenance</string>
+    <string name="admin_may_maintenance_detail">reload settings and certificates</string>
+    <string name="admin_may_enterprise">Enterprise areas</string>
+    <string name="admin_may_enterprise_detail">some or all</string>
+    <string name="admin_may_not">not in this key</string>
+    <string name="admin_forget_row">Remove key from this phone</string>
+    <string name="admin_forget_title">Remove the key?</string>
+    <string name="admin_forget_text">The admin area of this account locks again. The key itself stays valid on the server, and your mail account is not touched.</string>
+    <string name="admin_forget_confirm">Remove</string>
+    <string name="admin_forget_failed">The key could not be removed. Try again.</string>
+
+    <!-- Home -->
+    <string name="admin_home_title">Admin</string>
+    <string name="admin_nothing_allowed">This key opens no admin area.</string>
+    <string name="admin_need_licence">These need an Enterprise licence.</string>
+    <string name="admin_enterprise_section">Enterprise</string>
+    <string name="admin_area_queue">Mail queue</string>
+    <string name="admin_area_accounts">Server accounts</string>
+    <string name="admin_area_blocked">Blocked IP addresses</string>
+    <string name="admin_area_logs">Logs</string>
+    <string name="admin_area_maintenance">Maintenance</string>
+    <string name="admin_area_dashboard">Dashboard</string>
+    <string name="admin_area_history">Delivery history</string>
+    <string name="admin_area_recovery">Recover deleted items</string>
+    <string name="admin_area_alerts">Alerts</string>
+    <string name="admin_area_tenants">Tenants</string>
+
+    <!-- Queue -->
+    <string name="admin_queue_load_failed">The mail queue could not be read.</string>
+    <string name="admin_queue_empty">Nothing is waiting</string>
+    <string name="admin_queue_empty_hint">Every message has been handed on. Pull down to look again.</string>
+    <plurals name="admin_queue_waiting">
+        <item quantity="one">%1$d waiting</item>
+        <item quantity="other">%1$d waiting</item>
+    </plurals>
+    <plurals name="admin_queue_waiting_next">
+        <item quantity="one">%1$d waiting · next try %2$s</item>
+        <item quantity="other">%1$d waiting · next try %2$s</item>
+    </plurals>
+    <plurals name="admin_queue_paused_line">
+        <item quantity="one">%1$d waiting · nothing is sent</item>
+        <item quantity="other">%1$d waiting · nothing is sent</item>
+    </plurals>
+    <plurals name="admin_in_minutes">
+        <item quantity="one">in %1$d minute</item>
+        <item quantity="other">in %1$d minutes</item>
+    </plurals>
+    <plurals name="admin_in_hours">
+        <item quantity="one">in %1$d hour</item>
+        <item quantity="other">in %1$d hours</item>
+    </plurals>
+    <plurals name="admin_in_days">
+        <item quantity="one">in %1$d day</item>
+        <item quantity="other">in %1$d days</item>
+    </plurals>
+    <plurals name="admin_tried">
+        <item quantity="one">Tried %1$d time</item>
+        <item quantity="other">Tried %1$d times</item>
+    </plurals>
+    <plurals name="admin_tried_next">
+        <item quantity="one">Tried %1$d time · next try %2$s</item>
+        <item quantity="other">Tried %1$d times · next try %2$s</item>
+    </plurals>
+    <string name="admin_not_tried">Not tried yet</string>
+    <string name="admin_no_sender">No sender</string>
+    <string name="admin_since">since %1$s</string>
+    <string name="admin_to">to %1$s</string>
+    <string name="admin_to_and_more">to %1$s and %2$d more</string>
+    <string name="admin_cancel_message">Cancel message</string>
+    <string name="admin_cancel_title">Cancel this message?</string>
+    <string name="admin_cancel_text">The message from %1$s is taken out of the queue and is not delivered. This cannot be undone.</string>
+    <string name="admin_cancel_confirm">Cancel message</string>
+    <string name="admin_cancel_done">The message was taken out of the queue.</string>
+    <string name="admin_cancel_failed">The message could not be cancelled.</string>
+    <string name="admin_retry_done">The server tries again now.</string>
+    <string name="admin_retry_failed">The message could not be sent again.</string>
+    <string name="admin_pause">Pause</string>
+    <string name="admin_resume">Resume</string>
+    <string name="admin_resume_menu">Resume sending</string>
+    <string name="admin_paused_bar">Sending is paused</string>
+    <string name="admin_pause_title">Pause sending?</string>
+    <string name="admin_pause_text">The server stops sending all outgoing mail until you resume. Mail that comes in is not affected.</string>
+    <string name="admin_pause_confirm">Pause</string>
+    <string name="admin_paused_done">Sending is paused.</string>
+    <string name="admin_resumed_done">Sending goes on.</string>
+    <string name="admin_pause_failed">The queue could not be paused or resumed.</string>
+    <string name="admin_queued_title">Queued message</string>
+    <string name="admin_from">From</string>
+    <string name="admin_arrived">Arrived</string>
+    <string name="admin_size">Size</string>
+    <string name="admin_queue_id">Queue id</string>
+    <string name="admin_next_try">Next try</string>
+    <string name="admin_next_try_due">Any moment now</string>
+    <string name="admin_recipients">Recipients</string>
+    <string name="admin_rcpt_waiting">Waiting</string>
+    <string name="admin_rcpt_retry">Will retry</string>
+    <string name="admin_rcpt_delivered">Delivered</string>
+    <string name="admin_rcpt_failed">Failed</string>
+
+    <!-- Accounts -->
+    <string name="admin_accounts_load_failed">The accounts could not be read.</string>
+    <string name="admin_accounts_none">No account found</string>
+    <string name="admin_search_accounts_plain">Search accounts</string>
+    <plurals name="admin_search_accounts">
+        <item quantity="one">Search %1$d account</item>
+        <item quantity="other">Search %1$d accounts</item>
+    </plurals>
+    <string name="admin_new_account">New account</string>
+    <string name="admin_pill_admin">Admin</string>
+    <string name="admin_pill_suspended">Suspended</string>
+    <string name="admin_pill_group">Group</string>
+    <string name="admin_account_title">Account</string>
+    <string name="admin_kind_user">user</string>
+    <string name="admin_kind_group">group</string>
+    <string name="admin_storage_limit">Storage limit</string>
+    <string name="admin_no_limit">No limit</string>
+    <string name="admin_used_no_limit">%1$s used, no limit</string>
+    <string name="admin_used_of">%1$s of %2$s used</string>
+    <string name="admin_other_addresses">Other addresses</string>
+    <string name="admin_groups">Groups</string>
+    <string name="admin_reset_password">Reset password</string>
+    <string name="admin_suspend">Suspend</string>
+    <string name="admin_lift_suspension">Lift suspension</string>
+    <string name="admin_delete_account">Delete account</string>
+    <string name="admin_edit_title">Change account</string>
+    <string name="admin_edit_text">The description and the storage limit.</string>
+    <string name="admin_limit_field">Storage limit</string>
+    <string name="admin_limit_hint">In GB (or write 500 MB). Empty: no limit.</string>
+    <string name="admin_limit_invalid">Write a number, for example 5 or 500 MB.</string>
+    <string name="admin_account_saved">The account was changed.</string>
+    <string name="admin_account_save_failed">The account could not be changed.</string>
+    <string name="admin_reset_title">Reset password</string>
+    <string name="admin_reset_text">Sets a new password for %1$s. The old one stops working at once.</string>
+    <string name="admin_reset_confirm">Set password</string>
+    <string name="admin_new_password">New password</string>
+    <string name="admin_repeat_password">Type it again</string>
+    <string name="admin_password_short">At least %1$d characters</string>
+    <string name="admin_password_different">The two are not the same</string>
+    <string name="admin_password_done">The password was changed.</string>
+    <string name="admin_password_failed">The password could not be changed.</string>
+    <string name="admin_suspend_title">Suspend %1$s?</string>
+    <string name="admin_suspend_text">The account cannot sign in until the suspension is lifted. Everything it holds stays as it is.</string>
+    <string name="admin_suspended_done">The account is suspended.</string>
+    <string name="admin_lifted_done">The suspension is lifted.</string>
+    <string name="admin_suspend_failed">The account could not be changed.</string>
+    <string name="admin_delete_title">Delete %1$s?</string>
+    <string name="admin_delete_text">The account and all its mail, calendars, contacts and files are deleted. The app cannot bring it back.</string>
+    <string name="admin_delete">Delete</string>
+    <string name="admin_type_name">Type the name to confirm</string>
+    <string name="admin_delete_failed">The account could not be deleted.</string>
+    <string name="admin_new_account_note">The name is the part before the @. Use letters, digits, dot, hyphen and underscore.</string>
+    <string name="admin_name_field">Name</string>
+    <string name="admin_name_empty">Write a name</string>
+    <string name="admin_name_bad">Only letters, digits, dot, hyphen and underscore</string>
+    <string name="admin_domain_field">Domain</string>
+    <string name="admin_domain_none">No domain on this server</string>
+    <string name="admin_domains_failed">The domains could not be read.</string>
+    <string name="admin_password">Password</string>
+    <string name="admin_create_account">Create account</string>
+    <string name="admin_create_failed">The account could not be made.</string>
+
+    <!-- Blocked -->
+    <string name="admin_blocked_load_failed">The blocked addresses could not be read.</string>
+    <string name="admin_blocked_none">No address is blocked</string>
+    <string name="admin_blocked_note">Internet addresses the server has shut out, mostly after too many failed sign-ins. Unblock one when a person is locked out.</string>
+    <string name="admin_unblock">Unblock</string>
+    <string name="admin_unblock_title">Unblock %1$s?</string>
+    <string name="admin_unblock_text">Whoever uses this address can try to sign in again.</string>
+    <string name="admin_unblock_done">The address is unblocked.</string>
+    <string name="admin_unblock_failed">The address could not be unblocked.</string>
+
+    <!-- Logs -->
+    <string name="admin_logs_search">A login or an address</string>
+    <string name="admin_logs_load_failed">The log could not be read.</string>
+    <string name="admin_logs_none">No entry of this kind among those loaded.</string>
+    <plurals name="admin_logs_note">
+        <item quantity="one">Finds the exact text of a log line. %1$d entry loaded.</item>
+        <item quantity="other">Finds the exact text of a log line. %1$d entries loaded.</item>
+    </plurals>
+    <string name="admin_level_all">All</string>
+    <string name="admin_level_errors">Errors</string>
+    <string name="admin_level_warnings">Warnings</string>
+    <string name="admin_level_error">Error</string>
+    <string name="admin_level_warning">Warning</string>
+
+    <!-- Maintenance -->
+    <string name="admin_maintenance_note">Each action asks first. Pause and Resume of the mail queue are in the queue screen.</string>
+    <string name="admin_reload_settings">Reload settings</string>
+    <string name="admin_reload_settings_detail">Makes the server read its configuration again</string>
+    <string name="admin_reload_settings_title">Reload the settings?</string>
+    <string name="admin_reload_settings_text">The server reads its configuration again and uses it at once.</string>
+    <string name="admin_reload_settings_done">The settings were reloaded.</string>
+    <string name="admin_reload_certs">Reload certificates</string>
+    <string name="admin_reload_certs_detail">Makes the server read its TLS certificates again</string>
+    <string name="admin_reload_certs_title">Reload the certificates?</string>
+    <string name="admin_reload_certs_text">The server reads its TLS certificates again and uses them at once.</string>
+    <string name="admin_reload_certs_done">The certificates were reloaded.</string>
+    <string name="admin_reload_confirm">Reload</string>
+    <string name="admin_maintenance_failed">The server did not do it.</string>
+</resources>

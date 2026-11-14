@@ -15,6 +15,8 @@ import java.time.ZoneId
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.account.AccountRules
+import ovh.kweb.mail.ui.account.FeaturesRow
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
@@ -62,6 +64,11 @@ data class SettingsState(
     val filters: FiltersRowState = FiltersRowState.Loading,
     /** How many messages are held back to be sent later; null until read or when it could not be. */
     val scheduled: Int? = null,
+    /** What the server offers beyond mail; the "Security and server" group shows only for [FeaturesRow.Offered] and [FeaturesRow.SignInAgain]. */
+    val features: FeaturesRow = FeaturesRow.Unknown,
+    /** Masked addresses in use and the server's limit (null: not read or not given). */
+    val maskedUsed: Int? = null,
+    val maskedLimit: Int? = null,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -73,6 +80,9 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
     /** Counts sign-outs: a read started before one is about the old account and is dropped. */
     @Volatile
     private var generation = 0
+
+    /** Counts reads of the features; a late answer of an older read is dropped. */
+    private var featuresTicket = 0
 
     init {
         viewModelScope.launch {
@@ -160,6 +170,43 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
             }
             if (asked != generation) return@launch
             stateFlow.update { if (result is AssistantRowState.Unknown && it.assistant is AssistantRowState.Known) it else it.copy(assistant = result) }
+        }
+        readFeatures(asked)
+    }
+
+    /**
+     * Asks the server once what it offers this account (and, when masked addresses are offered, how many are in
+     * use). A failure shows nothing and does not replace what an earlier read found.
+     */
+    private fun readFeatures(asked: Int) {
+        val mine = ++featuresTicket
+        viewModelScope.launch {
+            val row = try {
+                withContext(Dispatchers.IO) { session.core.accountFeatures() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the account features failed: ${e.javaClass.simpleName}")
+                null
+            }
+            if (asked != generation || mine != featuresTicket) return@launch
+            if (row == null) return@launch
+            val shown = AccountRules.row(row)
+            stateFlow.update { it.copy(features = shown) }
+            if (shown !is FeaturesRow.Offered || !shown.masked) {
+                stateFlow.update { it.copy(maskedUsed = null, maskedLimit = null) }
+                return@launch
+            }
+            val masked = try {
+                withContext(Dispatchers.IO) { session.core.maskedAddresses() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the masked addresses failed: ${e.javaClass.simpleName}")
+                null
+            }
+            if (asked != generation || mine != featuresTicket || masked == null) return@launch
+            stateFlow.update { it.copy(maskedUsed = masked.addresses.size, maskedLimit = masked.limit?.toInt()) }
         }
     }
 }

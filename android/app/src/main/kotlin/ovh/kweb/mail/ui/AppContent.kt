@@ -35,6 +35,8 @@ import ovh.kweb.mail.ui.contacts.ContactsScreen
 import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
 import ovh.kweb.mail.ui.files.FilesScreen
+import ovh.kweb.mail.ui.account.MaskedScreen
+import ovh.kweb.mail.ui.account.SecurityScreen
 import ovh.kweb.mail.ui.filters.FiltersScreen
 import ovh.kweb.mail.ui.folders.FoldersScreen
 import ovh.kweb.mail.ui.list.MailListScreen
@@ -314,9 +316,11 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AwayScreen(onBack = app::back)
                 }
+                is Route.Admin -> key(route) { CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { ovh.kweb.mail.ui.admin.AdminRoutes(route.screen, onBack = app::back, onOpen = { app.open(Route.Admin(it)) }, onOpenEnterprise = { app.open(Route.Enterprise(it)) }) } }
                 is Route.Filters -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     FiltersScreen(route, onBack = app::back)
                 }
+                is Route.Enterprise -> key(route) { CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { ovh.kweb.mail.ui.enterprise.EnterpriseScreen(route.page, onBack = app::back, onOpen = { app.open(Route.Enterprise(it)) }) } }
                 is Route.Folders -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                         FoldersScreen(route, onBack = app::back)
@@ -336,6 +340,12 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AssistantScreen(onBack = app::back)
                 }
+                Route.MaskedAddresses -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    MaskedScreen(onBack = app::back)
+                }
+                Route.AccountSecurity -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    SecurityScreen(onBack = app::back)
+                }
                 // One thread replacing another (a notification tap) must not inherit the first one's state.
                 is Route.Thread -> key(route) {
                     ThreadScreen(
@@ -352,9 +362,13 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenAway = { app.open(Route.Away) },
                     onOpenFilters = { app.open(Route.Filters()) },
+                    onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
                     onOpenAssistant = { app.open(Route.Assistant) },
                     onOpenScheduled = { app.open(Route.Scheduled) },
                     onOpenSenders = { app.open(Route.Senders) },
+                    onOpenMasked = { app.open(Route.MaskedAddresses) },
+                    onOpenSecurity = { app.open(Route.AccountSecurity) },
+                    onSignInAgain = { app.open(Route.SignInAgain) },
                     onAddAccount = { app.open(Route.AddAccount) },
                 )
                 Route.Search -> SearchScreen(
