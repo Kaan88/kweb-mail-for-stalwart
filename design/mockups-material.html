@@ -1,3 +1,5 @@
+<!doctype html>
+<meta charset="utf-8">
 <title>kweb Material Second Pass</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=Roboto+Flex:opsz,wght@8..144,400..800&display=swap">
@@ -151,12 +153,50 @@ h2{font-size:21px;margin:8px 0 0;font-weight:700}
 .tb2{display:flex;align-items:center;gap:6px;padding:4px 10px 0 20px;flex:none}
 h2.sec{font-size:20px;margin:6px 0 0}
 .tl.ok{background:var(--m-terc);color:var(--m-oterc)}
+/* admin pass. Groups as the app draws them now (ui/list/Groups.kt): rows on the low container, 28dp outer and 8dp inner corners, a 3dp gap, no lines. Then: switch off, text buttons, bottom sheet, outlined field, dialog, timeline, chart legend, empty state. */
+.tb .t.ell{min-width:0}.tb>.pill,.tb>.ab{margin-right:10px}
+.gp{display:flex;flex-direction:column;gap:3px;padding:0 12px;flex:none}
+.gr{background:var(--m-scl);border-radius:8px;min-height:50px;padding:8px 16px;display:flex;gap:12px;align-items:center;font-size:13.5px}
+.gr:first-child{border-top-left-radius:28px;border-top-right-radius:28px}.gr:last-child{border-bottom-left-radius:28px;border-bottom-right-radius:28px}
+.gr.sl{min-height:41px;padding:6px 16px}
+.gr.col{flex-direction:column;align-items:stretch;gap:4px;padding:11px 16px}
+.gr .m{flex:1;min-width:0}.gr small{display:block;color:var(--m-var);font-size:12px}
+.gr>.i{color:var(--m-var)}.gr>.i.cx{width:16px;height:16px;margin-left:-6px}
+.gr .ib{color:var(--m-var);margin:-4px -10px -4px -8px}
+.gr .l{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.gr .l small{flex:none}
+.gr .fg{color:var(--m-var);font-size:12.5px;flex:none}
+.gr.add,.gr.add>.i{color:var(--m-pri)}.gr.del,.gr.del>.i{color:var(--m-err)}
+.gr.dim{opacity:.42}
+.sh{padding:12px 28px 6px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--m-var);flex:none}
+.nt{padding:6px 28px 8px;color:var(--m-var);font-size:12.5px;flex:none}
+.mono{font-family:ui-monospace,"Roboto Mono","DejaVu Sans Mono",Menlo,Consolas,monospace;font-weight:600;font-size:11px;letter-spacing:-.2px}
+.swt.no{background:var(--m-sch);box-shadow:inset 0 0 0 2px var(--m-out)}
+.swt.no::after{right:auto;left:6px;top:6px;width:16px;height:16px;background:var(--m-out)}
+.ab{height:30px;padding:0 12px;border-radius:15px;display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12px;flex:none;color:var(--m-pri);white-space:nowrap}
+.ab.t{background:var(--m-secc);color:var(--m-osecc)}.ab.p{background:var(--m-pri);color:var(--m-opri)}.ab.e{color:var(--m-err)}.ab .i{width:16px;height:16px}
+.acts{display:flex;gap:6px;justify-content:flex-end;align-items:center}
+.sht{z-index:2;position:absolute;left:0;right:0;bottom:0;background:var(--m-sc);border-radius:28px 28px 0 0;padding:10px 0 20px;display:flex;flex-direction:column}
+.sht::before{content:"";width:32px;height:4px;border-radius:2px;background:var(--m-out);align-self:center;margin-bottom:14px;opacity:.6}
+.sht h3{margin:0;font-size:20px;font-weight:400;padding:0 24px 6px}
+.fld{margin:5px 16px;border:1px solid var(--m-out);border-radius:12px;padding:6px 14px;display:flex;flex-direction:column;flex:none;font-size:14px}
+.fld small{font-size:11px;color:var(--m-var)}.fld.on{border:2px solid var(--m-pri);padding:5px 13px}.fld.on small{color:var(--m-pri)}
+.dlg{z-index:2;position:absolute;left:22px;right:22px;top:50%;transform:translateY(-50%);background:var(--m-sch);border-radius:28px;padding:22px 8px 14px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.dlg>b{font-size:19px;font-weight:400;padding:0 14px}.dlg>span{color:var(--m-var);padding:0 14px}.dlg .fld{margin:4px 14px}.dlg .acts{padding:4px 8px 0}
+.tln{display:flex;flex-direction:column;padding:10px 20px 0 24px;flex:none}
+.te{display:flex;gap:14px;position:relative;padding-bottom:12px;align-items:flex-start}
+.te::before{content:"";position:absolute;left:5px;top:16px;bottom:0;width:2px;border-radius:1px;background:var(--m-outv)}.te:last-child::before{display:none}
+.te i{width:12px;height:12px;border-radius:50%;background:var(--m-pri);flex:none;margin-top:3px}
+.te div{flex:1;min-width:0;font-size:13.5px}.te small{display:block;color:var(--m-var);font-size:12px}.te em{font-style:normal;color:var(--m-var);font-size:11px;flex:none;padding-top:2px}
+.lg{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--m-var);margin-right:10px}.lg i{width:8px;height:8px;border-radius:3px}
+.emp{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:0 34px 50px}
+.emp .blob{width:58px;height:58px;background:var(--m-sch);color:var(--m-var);display:grid;place-items:center;border-radius:62% 38% 55% 45%/48% 58% 42% 52%}.emp .blob .i{width:28px;height:28px}
+.emp b{font-size:16px;font-weight:600}.emp span{color:var(--m-var)}
 </style>
 
 <div class="wrap">
 <header>
   <h1>kweb mail in Material You, second pass</h1>
-  <p class="lede">A review of the first Material 3 Expressive pages, and the same direction carried through the reading milestone (M3) as it is built today. Twelve screens. Switch the colour source and light or dark below; every screen says where it stands.</p>
+  <p class="lede">A review of the first Material 3 Expressive pages, and the same direction carried through the reading milestone (M3) as it is built today. Switch the colour source and light or dark below; every screen says where it stands.</p>
 </header>
 <section class="grp">
 <h2>What the review found</h2>
@@ -180,8 +220,14 @@ h2.sec{font-size:20px;margin:6px 0 0}
 <div class="wall" id="reading"></div>
 <section class="grp"><h2>Notifications and delivery</h2><p class="lede">Milestone M2, the first priority of the project.</p></section>
 <div class="wall" id="notify"></div>
-<section class="grp"><h2>Still to come</h2><p class="lede">Sending is next (M4). Calendar and contacts follow. The overview is a proposal.</p></section>
+<section class="grp"><h2>Sending, calendar and contacts</h2><p class="lede">Milestones M4 to M6, built since this page was first drawn. The overview is a proposal.</p></section>
 <div class="wall" id="later"></div>
+<section class="grp"><h2>Planned: for every user</h2><p class="lede">Nothing below this line is built. These are the planned admin and Enterprise features of <code>design/admin-features.md</code>, drawn to be looked at first. This first group needs no setup on the server: masked addresses and the account's own security, both reached from Settings.</p></section>
+<div class="wall" id="adm1"></div>
+<section class="grp"><h2>Planned: for administrators</h2><p class="lede">The admin area of one account. It opens once with a key from the server and then works on any Stalwart server, licensed or not.</p></section>
+<div class="wall" id="adm2"></div>
+<section class="grp"><h2>Planned: Enterprise</h2><p class="lede">Areas that need an Enterprise licence on the server. The app draws them itself from the server's data.</p></section>
+<div class="wall" id="adm3"></div>
 </div>
 <section class="grp">
 <h2>For the build</h2>
@@ -211,7 +257,9 @@ const P={
   l:'#fff8f5 #221a15 #52443c #8e4e1c #ffffff #ffdcc6 #301400 #f8dccd #2a1709 #e2e4b3 #1c1d00 #fff1ea #fbebe3 #f5e5dc #85736a #d7c2b8 #382e29 #ffede4 #ffb68a #ba1a1a',
   d:'#19120d #efded5 #d7c2b8 #ffb68a #4f2500 #703700 #ffdcc6 #5a4235 #f8dccd #494a1e #e2e4b3 #211a15 #261e19 #312823 #9f8d83 #52443c #efded5 #382e29 #8e4e1c #ffb4ab'}
 };
-const IC={back:'M15 5l-7 7 7 7',arch:'M4 5h16v4H4zM6 9v10h12V9M10 13h4',del:'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13',more:'M12 5v.01M12 12v.01M12 19v.01',find:'M16 16l4 4M5 11a6 6 0 1012 0 6 6 0 10-12 0',mail:'M4 6h16v12H4zM4 7l8 6 8-6',cal:'M5 6h14v14H5zM5 10h14M9 4v4M15 4v4',ppl:'M8 9a4 4 0 108 0 4 4 0 10-8 0M5 20c1-4 4-5 7-5s6 1 7 5',pen:'M5 19l1-4L16 5l3 3L9 18z',clip:'M8 12l6-6a3 3 0 014 4l-8 8a5 5 0 01-7-7l7-7',x:'M6 6l12 12M18 6L6 18',re:'M10 7l-5 5 5 5M5 12h9a5 5 0 015 5v1',fw:'M14 7l5 5-5 5M19 12h-9a5 5 0 00-5 5v1',ok:'M5 12l5 5 9-10',plus:'M12 5v14M5 12h14',menu:'M4 7h16M4 12h16M4 17h16',send:'M4 12l16-8-6 16-3-7z',bell:'M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4',wifi:'M3 9a14 14 0 0118 0M6 12.5a9 9 0 0112 0M9 16a4 4 0 016 0M12 19v.01',bold:'M7 5h6a3.5 3.5 0 010 7H7zM7 12h7a3.5 3.5 0 010 7H7z',link:'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',bolt:'M13 3L5 14h6l-1 7 8-11h-6z',shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z',sync:'M4 12a8 8 0 0114-5M20 4v4h-4M20 12a8 8 0 01-14 5M4 20v-4h4',snz:'M7 5h8L7 13h8M16 14h4l-4 5h4',star:'M12 4l2.5 5.2 5.5.8-4 4 1 5.6-5-2.8-5 2.8 1-5.6-4-4 5.5-.8z',inb:'M4 13l2-8h12l2 8v6H4zM4 13h5l1 2h4l1-2h5',doc:'M7 4h7l4 4v12H7zM14 4v4h4',fold:'M4 7h6l2 2h8v10H4z',warn:'M12 5l8 14H4zM12 10v4M12 17v.01',cog:'M9 12a3 3 0 106 0 3 3 0 10-6 0M12 4v2M12 18v2M4 12h2M18 12h2'};
+const IC={back:'M15 5l-7 7 7 7',arch:'M4 5h16v4H4zM6 9v10h12V9M10 13h4',del:'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13',more:'M12 5v.01M12 12v.01M12 19v.01',find:'M16 16l4 4M5 11a6 6 0 1012 0 6 6 0 10-12 0',mail:'M4 6h16v12H4zM4 7l8 6 8-6',cal:'M5 6h14v14H5zM5 10h14M9 4v4M15 4v4',ppl:'M8 9a4 4 0 108 0 4 4 0 10-8 0M5 20c1-4 4-5 7-5s6 1 7 5',pen:'M5 19l1-4L16 5l3 3L9 18z',clip:'M8 12l6-6a3 3 0 014 4l-8 8a5 5 0 01-7-7l7-7',x:'M6 6l12 12M18 6L6 18',re:'M10 7l-5 5 5 5M5 12h9a5 5 0 015 5v1',fw:'M14 7l5 5-5 5M19 12h-9a5 5 0 00-5 5v1',ok:'M5 12l5 5 9-10',plus:'M12 5v14M5 12h14',menu:'M4 7h16M4 12h16M4 17h16',send:'M4 12l16-8-6 16-3-7z',bell:'M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4',wifi:'M3 9a14 14 0 0118 0M6 12.5a9 9 0 0112 0M9 16a4 4 0 016 0M12 19v.01',bold:'M7 5h6a3.5 3.5 0 010 7H7zM7 12h7a3.5 3.5 0 010 7H7z',link:'M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1',bolt:'M13 3L5 14h6l-1 7 8-11h-6z',shield:'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z',sync:'M4 12a8 8 0 0114-5M20 4v4h-4M20 12a8 8 0 01-14 5M4 20v-4h4',snz:'M7 5h8L7 13h8M16 14h4l-4 5h4',star:'M12 4l2.5 5.2 5.5.8-4 4 1 5.6-5-2.8-5 2.8 1-5.6-4-4 5.5-.8z',inb:'M4 13l2-8h12l2 8v6H4zM4 13h5l1 2h4l1-2h5',doc:'M7 4h7l4 4v12H7zM14 4v4h4',fold:'M4 7h6l2 2h8v10H4z',warn:'M12 5l8 14H4zM12 10v4M12 17v.01',cog:'M9 12a3 3 0 106 0 3 3 0 10-6 0M12 4v2M12 18v2M4 12h2M18 12h2',
+ /* admin pass */
+ key:'M11 9a4 4 0 108 0 4 4 0 10-8 0M12.2 11.8L4 20M7 17l2 2M10 14l2 2',lock:'M6 11h12v9H6zM9 11V8a3 3 0 016 0v3',hide:'M3 12s3-6 9-6 9 6 9 6-3 6-9 6-9-6-9-6M4 4l16 16',copy:'M9 9h10v11H9zM5 15V4h10',chart:'M5 19V5M5 19h14M9 15v-4M13 15V8M17 15v-6',clock:'M12 4a8 8 0 100 16 8 8 0 000-16M12 8v4l3 2',block:'M12 4a8 8 0 100 16 8 8 0 000-16M6.5 6.5l11 11',log:'M5 6h14M5 10h14M5 14h9M5 18h6',pause:'M9 6v12M15 6v12',chev:'M9 6l6 6-6 6',srv:'M5 5h14v6H5zM5 13h14v6H5zM8 8v.01M8 16v.01',undo:'M8 7l-4 4 4 4M4 11h10a5 5 0 010 10h-3',app:'M8 3h8v18H8zM11 18h2',bld:'M5 20V6h8v14M13 10h6v10M4 20h16M8 9v.01M8 13v.01M10 9v.01M10 13v.01M16 14v.01',tool:'M14 6a4 4 0 00-5 5l-5 5 2 2 5-5a4 4 0 005-5l-2.5 2.5-2-2z',down:'M6 9l6 6 6-6'};
 const ic=(n,c='')=>`<svg class="i ${c}" viewBox="0 0 24 24"><path d="${IC[n]}"/></svg>`;
 const sb=(t='9:41')=>`<div class="sb"><span>${t}</span><span>▂▄▆ 82%</span></div>`;
 const nav=a=>`<div class="nv">${[['mail','Mail'],['cal','Calendar'],['ppl','Contacts']].map((x,k)=>`<div class="${k==a?'on':''}"><span>${ic(x[0])}</span>${x[1]}${k==0?'<i class="bg">3</i>':''}</div>`).join('')}</div>`;
@@ -227,27 +275,27 @@ const row=m=>`<div class="it ${m.u?'u':''}"><div class="av ${m.u?'sq':''}">${m.i
 
 const S=[];const tbar=`<div class="tb"><div class="ib">${ic('back')}</div><span class="t"></span><div class="ib">${ic('arch')}</div><div class="ib">${ic('del')}</div><div class="ib">${ic('more')}</div></div>`;
 const reply=`<div class="ftb"><div class="bgrp"><div>${ic('re')}Reply</div><div>Reply all</div><div>${ic('fw')}</div></div></div>`;
-S.push(['Inbox','Built · M3','built','Conversations. Unread is a rounded square on a raised surface, read a circle; a star and a clip mark flagged mail and files. Swipe right archives, left deletes, both with Undo. The first chip names the folder. The Compose button comes with M4, the bottom bar with M5.',
+S.push(['Inbox','Built · M3','built','Conversations. Unread is a rounded square on a raised surface, read a circle; a star and a clip mark flagged mail and files. Swipe right archives, left deletes, both with Undo. The first chip names the folder.',
 `<div class="s">${sb()}<div class="sr">${ic('menu')}<span>Search mail</span><div class="av">K</div></div>
  <div class="ch"><div class="c on">${ic('ok')}Inbox</div><div class="c">Unread</div><div class="c">Flagged</div><div class="c">Files</div></div>
  <div class="lst">${row(M[0])}${row(M[1])}${row(M[2])}<div class="swp"><div class="bk">${ic('arch')}Archive</div>${row(M[3])}</div>${row(M[4])}${row(M[5])}</div>
  <div class="fab">${ic('pen')}Compose</div>${nav(0)}</div>`]);
 const di=(i,n,c,x='')=>`<div class="di ${x}">${i?ic(i):''}<span>${n}</span>${c?`<em>${c}</em>`:''}</div>`;
-S.push(['Folders','Built · M3','built','A standard navigation drawer. System folders first in a fixed order, then your own as a tree, each with its unread count; the current one sits in the secondary container. Delivery check is here with its state in one word. Settings joins in M4.',
+S.push(['Folders','Built · M3','built','A standard navigation drawer. System folders first in a fixed order, then your own as a tree, each with its unread count; the current one sits in the secondary container. Delivery check is here with its state in one word, and Settings under it.',
 `<div class="s">${sb()}<div class="sr">${ic('menu')}<span>Search mail</span><div class="av">K</div></div><div class="lst">${row(M[0])}${row(M[1])}</div>
  <div class="scr"></div><div class="dr"><div class="ac"><div class="av sq">K</div><div><b>Kaan</b><small>you@kweb.ovh</small></div></div>
  ${di('inb','Inbox',3,'on')}${di('','Work',1,'sub')}${di('doc','Drafts',2)}${di('send','Sent')}${di('arch','Archive')}${di('warn','Spam',12)}${di('del','Trash')}
  <div class="dl"></div>${di('fold','Receipts')}${di('fold','School',4)}${di('','Grade 3','','sub')}
  <div class="dl" style="margin-top:auto"></div>${di('bell','Delivery check','Live')}${di('cog','Settings')}</div></div>`]);
 const ar=(i,n,h,c,on,w)=>`<div class="di ${on?'on':''}" style="height:60px;border-radius:12px;margin-bottom:3px;${on?'':'background:var(--m-scl)'}"><div class="av ${on?'sq':''}">${i}</div><span style="flex:1;min-width:0"><b class="ell" style="display:block">${n}</b><small style="display:block;font-weight:400;${w?'color:var(--m-err)':''}">${w?'Sign-in needed':h}</small></span>${c?`<em>${c}</em>`:''}${on?ic('ok'):''}</div>`;
-S.push(['Accounts','Built · M10','','Several accounts in one app. The round letter in the search field opens a sheet with every account as one group: letter, login, server, the unread count of its Inbox, a check on the one that is shown and a warning when its sign-in is no longer valid. Add account follows the rows. The drawer head is the shown account with a chevron that unfolds the same list. Names appear only with more than one account; with one, nothing changes. A tap on a notification of another account switches to it; a message being written is kept as a draft in its own account.',
+S.push(['Accounts','Built · M10','built','Several accounts in one app. The round letter in the search field opens a sheet with every account as one group: letter, login, server, the unread count of its Inbox, a check on the one that is shown and a warning when its sign-in is no longer valid. Add account follows the rows. The drawer head is the shown account with a chevron that unfolds the same list. Names appear only with more than one account; with one, nothing changes. A tap on a notification of another account switches to it; a message being written is kept as a draft in its own account.',
 `<div class="s">${sb()}<div class="sr">${ic('menu')}<span>Search mail</span><div class="av">K</div></div><div class="lst">${row(M[0])}${row(M[1])}</div>
  <div class="scr"></div><div style="position:absolute;left:0;right:0;bottom:0;background:var(--m-sc);border-radius:28px 28px 0 0;padding:16px 12px 22px">
  <div style="font-size:20px;padding:0 16px 12px">Accounts</div>
  ${ar('K','kaan','mail.kweb.ovh','3',1)}${ar('B','bob','mail.example.org','12')}${ar('A','ada','mail.kweb.ovh','',0,1)}
  <div class="di" style="height:56px;border-radius:12px;background:var(--m-scl);color:var(--m-pri)">${ic('plus')}<span>Add account</span></div></div></div>`]);
 const cc=(i,n,p,t,sq)=>`<div class="cc"><div class="av ${sq?'sq':''}" style="width:34px;height:34px;font-size:13px">${i}</div><div class="m"><div class="l" style="display:flex;justify-content:space-between;gap:8px"><b class="ell">${n}</b><span class="pv">${t}</span></div><div class="pv ell">${p}</div></div></div>`;
-S.push(['Conversation','Built · M3','built','The whole thread as one group, your own replies from Sent included. Unread messages and the last one open by themselves; a tap opens or folds the others. Opening marks it read on the server. The reply group comes with M4.',
+S.push(['Conversation','Built · M3','built','The whole thread as one group, your own replies from Sent included. Unread messages and the last one open by themselves; a tap opens or folds the others. Opening marks it read on the server.',
 `<div class="s">${sb()}${tbar}<div class="subj">Saturday plans</div>
  <div class="cv">${cc('D','Deniz Arslan','Board games at mine on Saturday? I have the new…','Tue')}${cc('K','me',"I'm in. Should I bring anything?",'Tue')}${cc('D','Deniz Arslan','Snacks would be great. Okan, are you coming?','Wed')}
  <div class="cc open"><div class="hd"><div class="av sq">O</div><div style="flex:1;min-width:0"><b>Okan Yıldız</b><small>to Deniz, me</small></div><small>08:55</small></div><div class="txt"><p>Works for me, I'll bring the projector.</p><p>See you at seven.</p></div></div></div>${reply}</div>`]);
@@ -279,7 +327,7 @@ S.push(['Notifications','Built · M2','built','Android draws the shade, but this
   <div class="n l"><div class="h"><i>${ic('cal')}</i>kweb mail · Reminder</div><b>Dentist in 15 minutes</b><span>10:00 – 10:45 · Çankaya</span><div class="a"><div>Snooze 10 min</div><div>Open</div></div></div>
   <div class="n gone"><div class="h">Deniz, Okan · Saturday plans</div><span>Read on another device at 09:40. Removed here about a second later, without a sound.</span></div>
   <div class="n q">${ic('sync')}kweb mail · Connected · silent</div></div></div>`]);
-S.push(['Compose','Planned · M4','','Send is a filled pill with an icon. The recipient is a chip with the contact photo, completion opens as a floating menu, and the draft notice is a standard snackbar.',
+S.push(['Compose','Built · M4','built','Send is a filled pill with an icon. The recipient is a chip with the contact photo, completion opens as a floating menu, and the draft notice is a standard snackbar.',
 `<div class="s">${sb('9:42')}<div class="tb"><div class="ib">${ic('x')}</div><span class="t">New message</span><div class="ib">${ic('clip')}</div><div class="send">${ic('send')}Send</div></div>
  <div class="f"><label>From</label><span>you@kweb.ovh ▾</span></div>
  <div class="f"><label>To</label><span class="tok"><span class="av sm" style="width:24px;height:24px;font-size:10px">M</span>Merve Aydın</span><span>sel|</span></div>
@@ -288,7 +336,7 @@ S.push(['Compose','Planned · M4','','Send is a filled pill with an icon. The re
  <div class="body" style="padding-top:14px"><p>Hi Merve,</p><p>This works. Please send the contract over.</p><p style="color:var(--m-var)">Kaan</p></div>
  <div class="snk">${ic('ok')}Draft saved to the server · 09:42<b>View</b></div>
  <div class="fmt"><div class="ib">${ic('bold')}</div><div class="ib">${ic('link')}</div><div class="ib">${ic('clip')}</div></div></div>`]);
-S.push(['Calendar','Planned · M5','','The week strip uses a filled circle for today. Events are rounded containers in three tonal colours, so each calendar is recognisable without borders. Today and the add button use the primary colour.',
+S.push(['Calendar','Built · M5','built','The week strip uses a filled circle for today. Events are rounded containers in three tonal colours, so each calendar is recognisable without borders. Today and the add button use the primary colour.',
 `<div class="s">${sb()}<div class="tb"><span class="t" style="font-size:24px">November 2026</span><div class="ib">${ic('find')}</div><div class="c on" style="height:34px;border-radius:17px">Today</div></div>
  <div class="wk"><div>M<b>9</b></div><div>T<b>10</b></div><div>W<b>11</b></div><div class="on">T<b>12</b></div><div>F<b>13</b></div><div>S<b>14</b></div><div>S<b>15</b></div></div>
  <div class="dh">Today · Thu 12</div><div class="ev"><b>Dentist</b><small>10:00 – 10:45 · Çankaya · reminder 15 min before</small></div><div class="ev b"><b>Department meeting</b><small>14:30 – 15:30 · Room 204 · 6 guests</small></div>
@@ -297,7 +345,7 @@ S.push(['Calendar','Planned · M5','','The week strip uses a filled circle for t
  <div class="dh">Sat 21</div><div class="ev"><b>Flight ESB → ADB</b><small>07:55 – 09:10</small></div>
  <div class="fab r">${ic('plus')}</div>${nav(1)}</div>`]);
 const C=[['A',['Ayşe Demir','ayse@example.org · school']],['D',['Deniz Arslan','deniz@example.org']],['M',['Merve Aydın','merve@example.org · +90 312 555 01 42']],['O',['Okan Yıldız','okan@example.org']],['S',['Selin Kaya','selin@example.org']]];
-S.push(['Contacts','Planned · M6','','Large primary-colour letters head each group, avatars are tonal circles, and an index runs down the right edge. Same address books as before.',
+S.push(['Contacts','Built · M6','built','Large primary-colour letters head each group, avatars are tonal circles, and an index runs down the right edge. Same address books as before.',
 `<div class="s">${sb()}<div class="sr">${ic('find')}<span>Search contacts</span></div>
  ${C.map(c=>`<div class="lt">${c[0]}</div><div class="ci"><div class="av">${c[0]}</div><div class="m"><b>${c[1][0]}</b><small class="ell">${c[1][1]}</small></div></div>`).join('')}
  <div class="idx">${'ADMOS'.split('').map(x=>`<span>${x}</span>`).join('')}</div>
@@ -322,10 +370,162 @@ S.push(['Home overview','Optional · proposed','','A start screen of tiles, off 
  </div>${nav(0)}</div>`]);
 
 
-const G=[['reading','Reading mail',[0,1,2,3,4]],['notify','Notifications and delivery',[6,5,10]],['later','Still to come',[7,8,9,11]]];
-/* S order: 0 inbox 1 folders 2 conversation 3 message 4 search 5 delivery 6 notifications 7 compose 8 calendar 9 contacts 10 delivery-bad 11 home */
+/* ---- admin pass: planned admin and Enterprise screens (design/admin-features.md). Nothing here is built. ---- */
+const PA='Planned · admin';
+const bar=(t,x='')=>`<div class="tb"><div class="ib">${ic('back')}</div><span class="t ell">${t}</span>${x}</div>`;
+const gp=(...r)=>`<div class="gp">${r.join('')}</div>`;
+const gr=(i,a,b='',t='',x='')=>`<div class="gr ${x}">${i?ic(i):''}<div class="m"><div class="ell">${a}</div>${b?`<small class="ell">${b}</small>`:''}</div>${t}</div>`;
+const sh=t=>`<div class="sh">${t}</div>`;
+const nt=(t,x='')=>`<div class="nt" style="${x}">${t}</div>`;
+const pl=(t,bad)=>`<span class="pill ${bad?'bad':''}">${t}</span>`;
+const ab=(t,k='',i='')=>`<span class="ab ${k}">${i?ic(i):''}${t}</span>`;
+const swo=()=>`<span class="swt no"></span>`;
+const cv=ic('chev','cx'),dots=`<div class="ib">${ic('more')}</div>`;
+const fld=(l,v,on)=>`<div class="fld ${on?'on':''}"><small>${l}</small><span>${v}</span></div>`;
+const sheet=(t,h)=>`<div class="scr" style="z-index:2"></div><div class="sht"><h3>${t}</h3>${h}</div>`;
+const te=(t,a,b='')=>`<div class="te"><i></i><div>${a}${b?`<small>${b}</small>`:''}</div><em>${t}</em></div>`;
+const kv=(k,v)=>gr('',k,'',`<span class="fg">${v}</span>`,'sl');
+const big=(t,x='')=>`<div class="btnf" style="margin:14px 12px 0;${x}">${t}</div>`;
+/* the hero card of Delivery check, with the side margin of the groups under it */
+const hero=(i,a,b,bad)=>`<div class="hero ${bad?'bad':''}" style="margin:6px 12px 8px"><div class="blob">${ic(i)}</div><div><b>${a}</b><small>${b}</small></div></div>`;
+const emp=(i,a,...t)=>`<div class="emp"><div class="blob">${ic(i)}</div><b>${a}</b>${t.map(x=>`<span>${x}</span>`).join('')}</div>`;
+
+/* Tier 1: every user */
+/* The address is shown whole, on two lines: the server makes it from the prefix and about 25 generated characters. The note is the user's own text; the date beside it is the server's. */
+const mrow=(a,n,d,on)=>`<div class="gr" style="gap:8px"><div class="m" style="${on?'':'opacity:.5'}"><div class="mono" style="word-break:break-all">${a}@example.org</div><div class="l"><small class="ell" style="flex:1 1 auto;min-width:0${n?'':';font-style:italic'}">${n||'No note'}</small><small>${d}</small></div></div>${on?sw():swo()}${dots}</div>`;
+const MA=[['shopx7k2m9qf4t8wz3vb6n1j5rh8d','Bookshop','2 Oct',1],['newsq4w8e2r6t1y9u3i7o5p0a2s4d','Newsletters','14 Sep',1],['forumm2n4b6v8c0x1z3l5k7j9h2g4f','Forum','3 Jun',0],['t9c5hk2p7d3f8g1j6l0z4x9c8v','','today',1]];
+const maList=`${sb()}${bar('Masked addresses')}${nt('Each address delivers to you. Switch one off and mail to it is turned away.')}${sh('4 of 5 in use')}${gp(...MA.map(a=>mrow(...a)))}${big(ic('plus')+'New masked address')}${nt('A masked address only receives; you cannot send from it.','padding-top:12px')}`;
+S.push(['Masked addresses',PA,'',`A screen in Settings for addresses you hand to shops and sign-up forms instead of your own. Mail to one is delivered to you like any other mail. Each row shows the whole address the server made, under it your own note at the left and the day it was made at the right, and a switch: off means mail to it is turned away, so one that started to get spam is silenced without touching the others. The three dots hold Copy address, Change note and Delete. Delete asks first, because a deleted address is gone for good and the same one cannot be made again. The heading counts the addresses against the server's limit (five unless the server says otherwise), and the button makes a new one. The row in Settings is only there when the server offers the feature.`,
+`<div class="s">${maList}</div>`]);
+S.push(['Masked addresses, at the limit',PA,'',`The same list when the server's limit is reached. The button is switched off and the line under it says why and what helps, in plain words, instead of letting you fill in the sheet and then showing the server's refusal. If the limit is reached from another device in the meantime, the sheet shows the same sentence.`,
+`<div class="s">${sb()}${bar('Masked addresses')}${sh('5 of 5 in use')}${gp(...[['bankr8t3y6u1i9o4p2a7s5d0f3g6h','Bank','today',1],...MA].map(a=>mrow(...a)))}${big(ic('plus')+'New masked address','opacity:.38')}${nt('This server allows five masked addresses. Delete one you no longer need, then make a new one.','padding-top:12px')}</div>`]);
+S.push(['New masked address',PA,'',`The sheet behind the button. You say what the address is for (the note you will recognise it by later), optionally the site it is meant for, and optionally how it should begin; the server puts its own generated letters and digits right after that beginning. Nothing else is asked: the server can also end an address on a date, which is not planned here. Create makes it on the server.`,
+`<div class="s">${maList}${sheet('New masked address',`${nt('A fresh address that delivers to you.','padding:0 24px 8px')}${fld('What is it for','Bookshop|',1)}${fld('Site (optional)','example.com')}${fld('Starts with (optional)','shop')}${nt('The server adds its own letters and digits after it.','padding:2px 30px 8px;font-size:12px')}<div class="acts" style="padding:4px 16px 0">${ab('Cancel')}${ab('Create','p')}</div>`)}</div>`]);
+S.push(['Masked address, created',PA,'',`What the sheet turns into once the server has made the address. The whole address is shown large, because this is the moment you paste it into the shop's form, with one Copy button. Done closes the sheet; the new address is then the first row of the list and already switched on.`,
+`<div class="s">${maList}${sheet('Your new address',`<div class="mono" style="margin:8px 16px 4px;padding:16px;border-radius:20px;background:var(--m-sch);font-size:17px;line-height:1.4;word-break:break-all;letter-spacing:0">shopx7k2m9qf4t8wz3vb6n1j5rh8d@example.org</div>${nt('For Bookshop · example.com. Mail to it is delivered to you from now on.','padding:6px 24px 4px')}${big(ic('copy')+'Copy address','margin:10px 16px 0')}<div class="acts" style="justify-content:center;padding-top:8px">${ab('Done')}</div>`)}</div>`]);
+const addRow=t=>gr('plus',t,'','','sl add');
+S.push(['Account security',PA,'',`One screen in Settings for how you get into your account, in five groups; this is its upper part. Password and two-step codes: change the password (the server wants the current one first) and switch codes from an authenticator app on or off. App passwords: separate passwords for programs that cannot use the normal sign-in, to delete one or make a new one. API keys: the same for keys, with what each may do and, if it has an end date, when it runs out. The server allows five API keys and the heading counts them; for app passwords no limit was tested, so none is shown. Every Delete in the three-dot menus asks first, and the question says so when the key is the one this phone's admin area runs on. What the server tells about each entry beyond its name (an end date was seen for API keys only) is assumed.`,
+`<div class="s">${sb()}${bar('Account security')}${sh('Password and two-step codes')}${gp(gr('lock','Password','Asks for the current one first',cv),gr('clock','Two-step codes','Authenticator app',sw()))}
+ ${sh('App passwords')}${gp(gr('app','Printer at home','',dots),gr('app','Old mail program','Ends 31 Dec',dots),addRow('New app password'))}
+ ${sh('API keys · 1 of 5')}${gp(gr('key','Admin on my phone','Everything I may do',dots),addRow('New API key'))}</div>`]);
+const capp=(n,r)=>`<div class="gr"><div class="m"><div class="ell">${n}</div><small>May reach: ${r}</small></div>${ab('Revoke','e')}</div>`;
+S.push(['Account security, further down',PA,'',`The same screen scrolled on. Passkeys: the devices that can sign you in without a password, to rename or delete; deleting the last one is said in the question before it happens. Connected apps: every app you once allowed into your account, by the name it gave, with what it may reach. Revoke takes the permission away after asking; the app then has to ask you again. Whether an app that is signed in at that moment is cut off at once or only when its sign-in runs out (up to an hour) has not been tested, so the screen does not promise it. Revoking this app itself is the same as signing out, and the question says so. That the server tells what an app may reach is assumed; only the list of apps with their names was seen.`,
+`<div class="s">${sb()}${bar('Account security')}${sh('Passkeys')}${gp(gr('shield','Phone','',dots),gr('shield','Laptop','',dots))}
+ ${sh('Connected apps')}${gp(capp('kweb mail · this app','mail, calendars, contacts, files, account settings and security'),capp('Calendar on the tablet','calendars'),capp('Backup tool','everything in your account'))}
+ ${nt('Revoke takes the permission away. The app has to ask you again.','padding-top:12px')}</div>`]);
+
+/* Tier 2: administrators */
+S.push(['Server administration, in Settings',PA,'',`Where the new things are found: the built Settings screen with one group added after Account. It holds Masked addresses, Account security and, last, Server administration. That row is there for every account, because the app cannot know beforehand who is an administrator; its second line says whether the admin area of this account is locked or open. The Masked addresses row is only there on a server that offers them. With several accounts each has its own row and its own key. Below, the screen goes on as it is built: the other rows of Mail, then This app.`,
+`<div class="s">${sb()}${bar('Settings')}${sh('Account')}${gp(gr('','Login','ada@example.org'),gr('','Server','mail.example.org'))}
+ ${sh('Security and server')}${gp(gr('','Masked addresses','4 of 5 in use'),gr('','Account security','Password, keys, apps'),gr('','Server administration','Locked · needs a key'))}
+ ${sh('Storage')}${gp(gr('','Mail storage','1.2 GB of 5 GB used'))}
+ ${sh('Mail')}<div class="gp"><div class="gr" style="border-radius:28px 28px 8px 8px"><div class="m"><div class="ell">Away message</div><small class="ell">Off</small></div></div></div></div>`]);
+const step=(n,t)=>`<div class="gr sl"><b style="width:22px;text-align:center;color:var(--m-var);flex:none">${n}</b><div class="m">${t}</div></div>`;
+const admLocked=(h,n)=>`${sb()}${bar('Administration')}${h}${nt(n)}
+ ${gp(step(1,'Open the server\'s web page'),step(2,'Make an API key there'),step(3,'Copy the key and come back'))}
+ ${big(ic('key')+'Paste an API key')}
+ <div class="btnf" style="margin:8px 12px 0;background:transparent;color:var(--m-pri);box-shadow:inset 0 0 0 1px var(--m-out);opacity:.55">Create a key for this app</div>
+ ${nt('The key stays in this phone\'s secure storage and is never shown again.','padding-top:10px')}`;
+S.push(['Admin access, locked',PA,'',`What the row opens the first time. It says in plain words why a key is needed: the normal sign-in opens your mail only, and the server keeps its admin area away from any app until an administrator hands over a key. Three steps say what to do in the server's web page; where exactly the key is made there is not written out, because that page was not checked. Paste an API key takes it from the clipboard, checks it against the server and stores it in the phone's secure storage; it is then used for admin work of this account only. An app password of the administrator's account is accepted in the same place. The second button is what the app may offer later: making the key itself after a normal sign-in, so nothing has to be copied. It is drawn faded because it is not decided. The design's other way in, an app the administrator registers on the server and that is entered here as a short client id, comes after the key and is not drawn.`,
+`<div class="s">${admLocked(hero('lock','Locked','ada on mail.example.org'),'Your sign-in opens your mail only. The server keeps its admin area closed to apps until you bring a key.')}</div>`]);
+S.push(['Admin access, key not accepted',PA,'',`The same screen after a key the server turned down. The card takes the error colour and says which of the two cases it is. Either the server no longer knows the key, because it ran out or was deleted, as drawn here; or the key is good but its account may do nothing in the admin area, and the card then reads "This key opens no admin area". Nothing is stored in either case. The same card appears later if a stored key stops working, and the admin area locks again.`,
+`<div class="s">${admLocked(hero('warn','Key not accepted','ada on mail.example.org',1),'The server no longer knows this key. It may have run out or been deleted. Make a new one and paste it.')}</div>`]);
+const may=(t,v,no)=>`<div class="gr sl ${no?'dim':''}">${ic(no?'x':'ok')}<div class="m">${t}</div><span class="fg">${v}</span></div>`;
+S.push(['Admin access, unlocked',PA,'',`The same screen once a key is in. The server's edition is a pill: Enterprise on a licensed server, Community on one without a licence, Open source on a server built without the Enterprise parts. The edition decides whether the Enterprise areas are offered. Under it the screen says only that a key is kept on this phone: the app cannot ask the server which key it is or when it runs out, and it never shows any part of it. Then what this key may do, read from the server: an administrator can hand out a key that only looks at the queue, and the app then shows only that. Remove key asks first, then locks the admin area again and leaves the mail account alone.`,
+`<div class="s">${sb()}${bar('Administration')}${hero('ok','Unlocked','ada on mail.example.org')}
+ ${gp(gr('','Server edition','',pl('Enterprise'),'sl'),kv('Key','Kept on this phone'))}
+ ${sh('What this key may do')}${gp(may('Mail queue','look, retry, cancel'),may('Accounts','look, change'),may('Logs and reports','read'),may('Enterprise areas','all'),may('Server settings','not in this key',1))}
+ <div class="gp" style="padding-top:14px">${gr('del','Remove key from this phone','','','sl del')}</div></div>`]);
+const ah=(i,a,f='',x='')=>gr(i,a,'',`${f?`<span class="fg">${f}</span>`:''}${x=='dim'?'':cv}`,'sl '+x);
+const A1=[['send','Mail queue','3 waiting'],['ppl','Server accounts','42'],['block','Blocked IP addresses','2'],['log','Logs'],['doc','Reports','DMARC, TLS'],['tool','Maintenance']];
+const A2=[['chart','Dashboard'],['clock','Delivery history'],['undo','Recover deleted items'],['bell','Alerts','2 on'],['bld','Tenants','3']];
+S.push(['Admin home',PA,'',`The start of the admin area: a plain list of what can be done, not a dashboard. Each area that has a number worth knowing shows it at the right, read when the screen opens and again on pulling down (the server does not announce changes here): how many messages wait in the queue, how many accounts there are, how many internet addresses are blocked. The lower group holds the areas a licensed server adds. The pill in the top bar is the server's edition. With a key that may do less, only the rows it allows are listed. Reports, Maintenance, Alerts and Tenants are rows only; their screens are not drawn yet, and Maintenance (reload settings, renew certificates) will ask before each action. Domains and DKIM from the design would be one more row and is left out of this picture.`,
+`<div class="s">${sb()}${bar('Admin',pl('Enterprise'))}${gp(...A1.map(a=>ah(...a)))}${sh('Enterprise')}${gp(...A2.map(a=>ah(...a)))}</div>`]);
+S.push(['Admin home, no licence',PA,'',`The same list on a server without an Enterprise licence. The upper group works as before. The Enterprise areas stay in view but faded and without the arrow, with one line saying why, so an administrator sees what a licence would add without the app nagging; a tap on a faded row does nothing. This is a choice made here and yours to change: the app goes by the edition the server reports and fades all five, although such a server was seen to answer the Alerts and Tenants lists without complaint. On a server built without the Enterprise parts the lower group is left out.`,
+`<div class="s">${sb()}${bar('Admin',pl('Community'))}${gp(...A1.map(a=>ah(...a)))}${nt('These need an Enterprise licence.','padding:14px 28px 8px')}${gp(...A2.map(a=>ah(a[0],a[1],'','dim')))}</div>`]);
+const qm=(f,t,to,tr,er,bad)=>`<div class="gr col"><div class="l"><b class="ell">${f}</b><small>${t}</small></div><small class="ell">to ${to}</small><small>${tr}</small><div style="display:flex"><span class="pill ${bad?'bad':''} ell" style="min-width:0;flex:0 1 auto">${er}</span></div><div class="acts">${ab('Cancel message','e')}${ab('Retry','t')}</div></div>`;
+const Q=[qm('news@example.org','since 09:12','bob@example.net and 2 more','Tried 3 times · next try in 4 min','example.net did not answer',1),qm('ada@example.org','since 08:40','dave@example.com','Tried 5 times · next try 10:40','Their server says: mailbox full',1),qm('carol@example.org','since 09:50','erin@example.net','Not tried yet','Waiting its turn')];
+S.push(['Mail queue',PA,'',`The messages the server has not managed to deliver yet: the thing an administrator is called for. Each one shows who sent it, to whom, since when it waits, how often the server tried and when it tries next, and the reason of the last failure put in plain words in a pill. Retry tries at once. Cancel message takes the message out of the queue after asking. Pause in the top bar stops all outgoing mail of the server until Resume, for when a neighbour's server is down and retrying only makes noise; because it reaches furthest it asks first too. The queue was never seen with a message in it and Pause was never run, so the reason texts and the way a paused queue reports itself are assumed.`,
+`<div class="s">${sb()}${bar('Mail queue',ab('Pause','',`pause`))}${nt('3 waiting · next try in 4 minutes','padding-top:0')}
+ ${gp(...Q)}</div>`]);
+S.push(['Mail queue, paused',PA,'',`The queue after Pause. A bar in the tertiary colour says that nothing is sent and holds Resume, so the state cannot be overlooked and the way back is one tap; Resume does not ask. The messages stay listed and can still be cancelled. Mail that comes in is not affected.`,
+`<div class="s">${sb()}${bar('Mail queue')}<div class="rb" style="margin:0 12px 10px"><span>Sending is paused</span><b>Resume</b></div>${nt('3 waiting · nothing is sent','padding-top:0')}
+ ${gp(Q[0],Q[1])}</div>`]);
+S.push(['Mail queue, empty',PA,'',`What the queue looks like most of the time: nothing waits. The screen says so instead of showing a blank list, and pulling down reads the queue again. Pause stays in the top bar.`,
+`<div class="s">${sb()}${bar('Mail queue',ab('Pause','',`pause`))}${emp('ok','Nothing is waiting','Every message has been handed on.','Pull down to look again.')}</div>`]);
+S.push(['Queued message',PA,'',`One message of the queue. The upper group is what the server knows about it; the lower one lists every recipient with its own state, because one message can be delivered to one person and stuck for another. The server knows four states and each has one pill: Waiting (not tried yet), Will retry (a failure that may pass, with the reason under the address), Delivered, and Failed for a recipient the other server refused for good, which is not tried again. Only Failed takes the error colour. Retry and Cancel message act on the whole message; Cancel message asks first.`,
+`<div class="s">${sb()}${bar('Queued message')}${gp(kv('From','news@example.org'),kv('Arrived','today 09:12'),kv('Size','48 KB'),kv('Queue id','1F3A9C'))}
+ ${sh('Recipients')}${gp(gr('','bob@example.net','No answer · next try 09:55',pl('Will retry')),gr('','carol@example.net','Accepted at 09:12',pl('Delivered')),gr('','erin@example.net','No such mailbox',pl('Failed',1)))}
+ ${big(ic('sync')+'Retry')}<div class="acts" style="justify-content:center;padding-top:8px">${ab('Cancel message','e')}</div></div>`]);
+const acc=(i,n,a,p='',sq)=>`<div class="gr"><div class="av ${sq?'sq':''}" style="width:34px;height:34px;font-size:13px">${i}</div><div class="m"><div class="l" style="justify-content:flex-start;align-items:center"><span class="ell">${n}</span>${p}</div><small class="ell">${a}</small></div></div>`;
+S.push(['Server accounts',PA,'',`Everyone and everything that has a mailbox on the server, in one list with a search field. It is called Server accounts so that it is not mistaken for the app's own list of signed-in accounts. The app fetches the list once and searches it on the phone, so a few letters of a name or an address are enough. A pill beside the name marks what is not an ordinary user: an administrator, a suspended account, a group. The plus in the top bar makes a new account; its form is not drawn yet. It will ask for the name, the domain and a password of at least eight characters, and the app checks the name itself, because the server quietly rewrites a name it does not like. Mailing lists from the design are not in this picture.`,
+`<div class="s">${sb()}${bar('Server accounts',`<div class="ib">${ic('plus')}</div>`)}<div class="sr">${ic('find')}<span>Search 42 accounts</span></div>
+ ${gp(acc('A','ada','ada@example.org',pl('Admin')),acc('B','bob','bob@example.org'),acc('C','carol','carol@example.org'),acc('D','dave','dave@example.org'),acc('E','erin','erin@example.org'),acc('I','ian','ian@example.org',pl('Suspended',1)),acc('S','sales','4 members',pl('Group'),1),acc('S','staff','12 members',pl('Group'),1))}</div>`]);
+const acct=su=>`${sb()}${bar('Account',`<div class="ib">${ic('pen')}</div>`)}<div class="who"><div class="av sq">B</div><div><b>bob</b><small>bob@example.org${su?'':' · user'}</small></div>${su?pl('Suspended',1):''}</div>
+ ${gp(gr('','Storage limit','',`<span class="fg">5 GB</span>${cv}`,'sl'))}
+ ${sh('Other addresses')}${gp(kv('bobby@example.org',''),kv('orders@example.org',''))}
+ ${sh('Groups')}${gp(gr('ppl','sales, staff','','','sl'))}
+ <div class="gp" style="padding-top:14px">${gr('lock','Reset password','','','sl')}${su?gr('ok','Lift suspension','','','sl add'):gr('block','Suspend','','','sl')}${gr('del','Delete account','','','sl del')}</div>`;
+S.push(['One account',PA,'',`One account as the administrator sees it: its storage limit, which a tap changes; the other addresses that lead to it; the groups it belongs to. How much of the limit is used is not shown, because the server was only seen to give the limit of another person's account, not the use. The last group holds what an administrator is asked for most. Reset password sets a new one of at least eight characters and shows it once to pass on. Suspend stops the account from signing in until it is lifted again. Delete removes it. All three ask first. A group is opened the same way; one that still has members cannot be deleted, and the app says "Take the members out first" instead of the server's refusal.`,
+`<div class="s">${acct()}</div>`]);
+S.push(['Account, suspended',PA,'',`The same account while it is suspended. A pill in the error colour beside the name says so, and the Suspend row has become Lift suspension, which works on one tap because it only gives back what was there. A suspended account cannot sign in; everything it holds stays as it is.`,
+`<div class="s">${acct(1)}</div>`]);
+S.push(['Account, asking first',PA,'',`Nothing that cannot be taken back happens on one tap. Suspend and Reset password ask with a short dialog. Delete asks more: it says what is lost and wants the account's name typed before its button works. The sentence promises only what is true on every server: some servers keep a deleted account for a while, but the app has no way to bring one back. The same rule holds in the whole admin area and in Account security: pausing the queue, cancelling a queued message, unblocking, removing the key, revoking an app and deleting a key or passkey each ask first. Those shorter dialogs are not drawn.`,
+`<div class="s">${acct()}<div class="scr" style="z-index:2"></div><div class="dlg"><b>Delete bob?</b><span>The account and all its mail, calendars, contacts and files are deleted. The app cannot bring it back.</span>${fld('Type the name to confirm','bob|',1)}<div class="acts">${ab('Cancel')}${ab('Delete','e')}</div></div></div>`]);
+const blk=a=>`<div class="gr"><div class="m"><div class="mono ell" style="font-size:12.5px">${a}</div></div>${ab('Unblock','t')}</div>`;
+S.push(['Blocked IP addresses',PA,'',`The internet addresses (IP addresses) the server has shut out, usually after too many wrong passwords. They are computers and networks, not mail senders: blocking a sender is a different thing and stays in the mail list. This is the screen for "I am locked out": find the address and Unblock it, which asks once and names the address. Nothing can be added here; blocking is the server's own job. Only the addresses are drawn: whether the server also tells why and since when one is blocked was not looked at, and if it does, that goes under the address. With nothing blocked the screen says "No address is blocked".`,
+`<div class="s">${sb()}${bar('Blocked IP addresses')}${nt('Internet addresses the server has shut out, mostly after too many failed sign-ins. Unblock one when a person is locked out.')}
+ ${gp(blk('203.0.113.45'),blk('198.51.100.23'))}</div>`]);
+const lg=(lv,e,t,d)=>`<div class="gr col" style="gap:2px;padding:8px 16px"><div class="l" style="align-items:center"><span style="display:flex;gap:8px;align-items:center;min-width:0">${lv=='e'?pl('Error',1):lv=='w'?pl('Warning'):'<span class="fg" style="font-weight:700;font-size:11.5px">Info</span>'}<span class="mono ell">${e}</span></span><small>${t}</small></div><small style="word-break:break-word">${d}</small></div>`;
+S.push(['Logs',PA,'',`A first look at a problem without opening a terminal. The entries are shown as the server writes them, its own event name and its own detail line, because the search finds exactly that text and nothing else: type a login or an internet address as it stands in a line, and mind capital letters. The line under the field says so. The server cannot filter by level, so the chips only narrow the entries already loaded, and the screen says how many those are. The app sorts them by time itself, since the server does not hand them over newest first, and Load more at the end fetches the next batch. An error carries a pill in the error colour, a warning one in the tertiary colour, everything else none. Only sign-in events were seen in a real log; the other event names here are examples.`,
+`<div class="s">${sb()}${bar('Logs',`<div class="ib">${ic('sync')}</div>`)}<div class="sr">${ic('find')}<span>A login or an address</span></div>
+ <div class="ch"><div class="c on">${ic('ok')}All</div><div class="c">Errors</div><div class="c">Warnings</div></div>
+ ${nt('Finds the exact text of a log line. 500 entries loaded.','padding-top:0')}
+ ${gp(lg('e','delivery.attempt-end','09:51','domain = example.net, reason = timeout'),lg('w','auth.failed','09:48','accountName = bob, remoteIp = 203.0.113.45'),lg('i','auth.success','09:41','accountName = ada, remoteIp = 192.0.2.10'),lg('i','delivery.completed','09:38','to = bob@example.org, elapsed = 1.2s'),lg('i','queue.message-queued','09:12','from = news@example.org, size = 48211'))}</div>`]);
+
+/* Tier 3: Enterprise */
+/* Charts: a value scale at the left (top value, half, 0), hour labels under the baseline. One series is bars, a second one a line, so the two are told apart by shape and not by colour alone. */
+const CX=24,CW=204,cy=(v,mx)=>(58-v/mx*50).toFixed(1);
+const cht=(o,l,mx,u='')=>`<svg viewBox="0 0 228 74" style="display:block;width:100%;margin-top:4px"><path d="M${CX} 8.5h${CW}M${CX} 33.5h${CW}M${CX} 58.5h${CW}" style="stroke:var(--m-outv);fill:none"/>${[[mx,12],[mx/2,37],[0,62]].map(y=>`<text x="0" y="${y[1]}" style="fill:var(--m-var);font-size:10.5px">${y[0]}${y[0]?u:''}</text>`).join('')}${o}${l.map((t,k)=>`<text x="${(CX+k*CW/(l.length-1)).toFixed(0)}" y="72" text-anchor="${k==0?'start':k==l.length-1?'end':'middle'}" style="fill:var(--m-var);font-size:10.5px">${t}</text>`).join('')}</svg>`;
+const bars=(a,mx)=>a.map((v,k)=>`<rect x="${(CX+k*CW/a.length+1.5).toFixed(1)}" y="${cy(v,mx)}" width="${(CW/a.length-3).toFixed(1)}" height="${(v/mx*50).toFixed(1)}" rx="2" style="fill:var(--m-pri)"/>`).join('');
+const pts=(d,mx)=>d.map((v,k)=>`${(CX+(k+.5)*CW/d.length).toFixed(1)} ${cy(v,mx)}`).join('L');
+const line=(d,mx,c='pri')=>`<path d="M${pts(d,mx)}" style="fill:none;stroke:var(--m-${c});stroke-width:2;stroke-linejoin:round;stroke-linecap:round"/>`;
+const area=(d,mx)=>`<path d="M${pts(d,mx)}L${(CX+CW-CW/d.length/2).toFixed(1)} 58L${(CX+CW/d.length/2).toFixed(1)} 58Z" style="fill:var(--m-pri);opacity:.16"/>${line(d,mx)}`;
+const sum=a=>a.reduce((x,y)=>x+y,0);
+const HR=['10:00','16:00','22:00','04:00','now'];
+const RCV=[9,7,6,8,12,10,9,6,4,3,2,1,1,1,2,2,4,7,12,16,18,15,13,11],DLV=[6,5,4,6,8,9,6,4,3,2,1,1,0,1,1,2,3,5,9,12,14,12,10,8],DT=[1.1,1.2,1.0,1.3,1.2,1.4,1.2,1.1,1.0,0.9,0.9,0.8,0.9,0.8,0.9,1.0,1.1,1.3,2.6,3.4,1.9,1.3,1.2,1.2];
+const live=`<span class="pill" style="display:inline-flex;align-items:center;gap:5px"><i style="width:6px;height:6px;border-radius:50%;background:currentColor"></i>Live</span>`;
+S.push(['Dashboard',PA,'',`How the server is doing, for a licensed server. The upper group is four plain figures that move while the screen is open: messages in the queue, open connections, users, memory. Queue, users and memory were seen in the server's live stream; connections is in the design and still has to be found there. The Live pill says the stream is running; it reads "Paused" when the connection drops and the figures stop. Under it charts of the past, with a scale at the left so a value can be read: messages received (bars) and delivered (line) per hour with the totals of the chosen time, and how long a delivery took on average, which is all the server's stored numbers allow. The chips choose the last 24 hours, 7 days or 30 days; a span longer than the server keeps its numbers is not offered. The two charts are examples: the app reads from the server which charts it publishes and draws those itself.`,
+`<div class="s">${sb()}${bar('Dashboard',live)}${gp(kv('In the queue','3'),kv('Connections','18'),kv('Users','42'),kv('Memory','412 MB'))}
+ <div class="ch" style="padding:12px 12px 10px"><div class="c on">${ic('ok')}24 hours</div><div class="c">7 days</div><div class="c">30 days</div></div>
+ ${gp(`<div class="gr col"><b>Messages per hour</b><div><span class="lg"><i style="background:var(--m-pri)"></i>Received ${sum(RCV)}</span><span class="lg"><i style="background:var(--m-fg);height:2px;width:12px;border-radius:1px"></i>Delivered ${sum(DLV)}</span></div>${cht(bars(RCV,20)+line(DLV,20,'fg'),HR,20)}</div>`,
+ `<div class="gr col"><div class="l"><b>Delivery time</b><small>average ${(sum(DT)/DT.length).toFixed(1)} s</small></div>${cht(area(DT,4),HR,4,' s')}</div>`)}</div>`]);
+const pt=(p,w,bad)=>`<div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none">${pl(p,bad)}<small>${w}</small></div>`;
+const dh=(f,t,w,p,bad)=>gr('',f,`to ${t}`,pt(p,w,bad));
+S.push(['Delivery history',PA,'',`The answer to "where is my mail". Type an address or the queue id from a bounce message, choose how far back to look with the chips, and the server lists every message it handled that matches, with who it was from, who it was for and when. The pill is worked out by the app from what happened to the message, since the server stores the steps and not a verdict, and there are three: Delivered when it reached every recipient, whether a mailbox on this server or another server; Will retry while a delivery is still being tried; Failed when it was given up. Only Failed takes the error colour. A tap opens what happened to that message step by step. How far back this goes is the server's setting for keeping history, and the line at the end names it; chips beyond it are not offered.`,
+`<div class="s">${sb()}${bar('Delivery history')}<div class="sr" style="color:var(--m-fg)">${ic('find')}<span>bob@example.org|</span>${ic('x')}<i style="width:8px"></i></div>
+ <div class="ch"><div class="c on">${ic('ok')}Today</div><div class="c">7 days</div><div class="c">30 days</div></div>
+ ${gp(dh('ada@example.org','bob@example.org','09:38','Delivered'),dh('bob@example.org','erin@example.net','09:20','Will retry'),dh('news@example.com','bob@example.org','09:12','Delivered'),dh('bob@example.org','dave@example.com','08:40','Failed',1),dh('carol@example.org','bob@example.org','08:05','Delivered'),dh('bob@example.org','sales@example.org','07:52','Delivered'))}
+ ${nt('6 today · the server keeps 30 days','padding-top:10px')}</div>`]);
+S.push(['One delivery',PA,'',`One message followed through the server, as a line of events from top to bottom with their times. The server reports these as technical event names; the app puts each into a sentence and keeps the useful detail under it. Drawn is the case that was really seen, a message to a mailbox on the same server: delivery starts, the server takes the recipient's domain as its own, puts the message into the mailbox, confirms the recipient and finishes. A message to another server has other steps (which server was contacted and what it answered), and a step that failed is marked in the error colour and says why; neither is drawn, because no such delivery has been looked at yet. The link at the end shows the server's own lines for someone who wants them.`,
+`<div class="s">${sb()}${bar('Delivery')}${gp(`<div class="gr"><div class="m"><div class="ell">ada@example.org</div><small class="ell">to bob@example.org</small></div>${pt('Delivered','09:38')}</div>`)}
+ <div class="tln">${te('09:38:02','Delivery started','queue id 1F3A9C · 48 KB')}${te('09:38:02','Delivering to example.org','a domain of this server')}${te('09:38:03','Put into bob\'s mailbox','not spam · took 0.2 s')}${te('09:38:03','Accepted for bob','by mail.example.org')}${te('09:38:03','Completed in 1.2 s','nothing left to do')}</div>
+ <div class="acts" style="justify-content:flex-start;padding:2px 12px 0 38px">${ab('Show the server\'s own lines')}</div></div>`]);
+const di2=(i,n,w,left)=>`<div class="gr">${ic(i)}<div class="m"><div class="ell">${n}</div><small class="ell">Deleted ${w}</small><small class="ell">Kept ${left}</small></div>${ab('Restore','t')}</div>`;
+S.push(['Recover deleted items',PA,'',`For "I deleted it by mistake" after the Trash was emptied. Choose the account at the top; the list shows what the server still keeps of its deleted mail, events, contacts and files, each with an icon for what it is, the day it was deleted and how much longer it is kept. Restore brings the item back and says in a bar at the bottom where it went. It sits in the admin area because the server only lets an administrator do this, although it is each person's own data. This screen is a guess: recovery was switched off on every server looked at, so no kept item has been seen, and what the server tells about one, and where a restored item lands, has to be checked before this is built.`,
+`<div class="s">${sb()}${bar('Recover deleted items')}${gp(gr('ppl','bob@example.org','Deleted from this account',ic('down','cx')))}${sh('Kept for 30 days')}
+ ${gp(di2('mail','Invoice 2026-114','13 Nov','29 more days'),di2('mail','Re: Room booking','13 Nov','29 more days'),di2('cal','Staff meeting','12 Nov','28 more days'),di2('ppl','carol','9 Nov','25 more days'),di2('doc','Offer-2026.pdf','17 Oct','2 more days'))}</div>`]);
+S.push(['Recovery switched off',PA,'',`The same screen on a server that does not keep deleted items, which is how a server starts out. There is nothing to choose an account for, so the chooser is left out. Instead of an empty list the screen says what is the case and what would change it: an administrator sets, in the server's settings, for how long deleted items are kept. What was deleted before that cannot be brought back, and the screen says that too rather than letting someone search in vain.`,
+`<div class="s">${sb()}${bar('Recover deleted items')}${emp('undo','Recovery is switched off','This server does not keep deleted items. An administrator can switch it on in the server\'s settings by choosing how long they are kept.','Items deleted before that are gone.')}</div>`]);
+
+/* The walls name their screens, so a screen added in the middle of S cannot shift the others. */
+const G=[['reading',['Inbox','Folders','Accounts','Conversation','Message','Search']],['notify',['Notifications','Delivery check','Delivery check, a problem']],['later',['Compose','Calendar','Contacts','Home overview']],
+ ['adm1',['Masked addresses','Masked addresses, at the limit','New masked address','Masked address, created','Account security','Account security, further down']],
+ ['adm2',['Server administration, in Settings','Admin access, locked','Admin access, key not accepted','Admin access, unlocked','Admin home','Admin home, no licence','Mail queue','Mail queue, paused','Mail queue, empty','Queued message','Server accounts','One account','Account, suspended','Account, asking first','Blocked IP addresses','Logs']],
+ ['adm3',['Dashboard','Delivery history','One delivery','Recover deleted items','Recovery switched off']]];
+const byName=n=>{const s=S.find(x=>x[0]==n);if(!s)throw new Error('no screen '+n);return s};
 const fig=s=>`<figure><div class="phone">${s[4]}</div><figcaption><b>${s[0]}<span class="tag ${s[2]}">${s[1]}</span></b>${s[3]}</figcaption></figure>`;
-G.forEach(g=>{document.getElementById(g[0]).innerHTML=g[2].map(k=>fig(S[k])).join('')});
+G.forEach(g=>{document.getElementById(g[0]).innerHTML=g[1].map(n=>fig(byName(n))).join('')});
 const root=document.getElementById('screens');let pal='ward',mode=matchMedia('(prefers-color-scheme:dark)').matches?'d':'l';
 if(document.documentElement.dataset.theme)mode=document.documentElement.dataset.theme=='dark'?'d':'l';
 function apply(){const v=P[pal][mode].split(' ');K.forEach((k,j)=>root.style.setProperty('--m-'+k,v[j]));
