@@ -125,6 +125,8 @@ Done when all of these pass on the real phone:
 | Mark read / Archive / Reply from the notification | Applied on the server; notification goes |
 | Calendar reminder with the app closed | Shown on time; Snooze works |
 
+The owner confirmed on the phone (2026-11-14) that these work: read elsewhere removes the notification, a swiped notification stays away, overnight idle, and calendar reminders including tasks. M2 is done.
+
 ### M3: reading
 
 Inbox, threads, message view (HTML in a sandboxed WebView, remote images off by default), folders, search, swipe actions, offline reading of recent mail.
@@ -217,6 +219,13 @@ Researched 2026-11-14 against Bulwark's source (`lib/sieve/`, `stores/filter-sto
 - The core gets: list scripts, get and put text, validate, activate, deactivate, delete, rename, and the rule list with its Sieve generator, all tested against the mock server and the local Stalwart. Stalwart's error names (`invalidScript`, `scriptIsActive`) differ from the RFC's (`invalidSieve`, `sieveIsActive`): accept both and check on the test server.
 - Stalwart's limits are low (one redirect and three outgoing messages per run, a script size cap): check the generated rules against them.
 
+**Built 2026-11-14.** Settings has "Mail filters": a switch, the rules in order with up, down and a switch each, and an editor (all or any of: From, To or Cc, Subject, another header; contains, is, begins with, ends with; then move to a folder, mark read, star, delete, stop). "Filter mail like this" on a message starts a rule from it. The rules are stored as JSON in a comment at the top of the one script the app owns (`kweb-filters`), followed by the Sieve generated from them; the app never parses Sieve, and a script that is not byte for byte what the rules give counts as edited by hand and is only replaced after a confirmation.
+
+- Decided without asking: filters and the away message exclude each other (the server runs one script) and both screens say so; a folder is named in the script by its path and looked up again from its id at every save, so a renamed folder shows as "out of date" with an Update button and a deleted one blocks the save; Delete moves to the Trash; "From" looks at the whole From line, "To or Cc" at the addresses; no spam check, no forward, no body or size tests in this version; a write is refused unless the filters were read first in the same run, so a change made elsewhere is never overwritten.
+- Checked: 818 core tests (with property tests that nothing a user types can add a statement to the script) and 769 Android unit tests. On the local server with the CLI as the tester: add a rule from a message, switch on, read the script back, change it while active, switch off. On the emulator as the second user: a rule made in the editor (From contains, mark read, star), switched on, and a mail then sent to that user arrived marked read and starred.
+- Not checked: move to a folder and Delete on real delivery, the banners for a foreign script and for a hand-edited one on a device, reordering, "Filter mail like this".
+- Left on the test server: the tester and the second user each have a `kweb-filters` script, switched off.
+
 ### M9: optional S/MIME and OpenPGP
 
 For people who use them; the owner does not. Off by default and independent of the server: it works over plain JMAP (`Email/get`, blob download), so nothing here needs Stalwart's help. Stalwart's own encryption is at rest only: the user uploads a public key, the server encrypts incoming mail with it, and it never holds a private key. Researched 2026-11-14; the sizes are estimates, not sourced.
@@ -231,6 +240,27 @@ For people who use them; the owner does not. Off by default and independent of t
 | 5 | Only if asked for: hardware tokens, certificate chain validation against the system store with revocation. | |
 
 Not planned: depending on OpenKeychain (maintenance mode, GPL). To check before starting: rPGP's detached-signature support and Android build, and the `cms` crate's maturity with old `.p12` algorithms.
+
+### M10: everyday features (owner, 2026-11-14)
+
+Asked for by the owner after M8, to be built as fast as possible, in this order of dependence:
+
+1. **Notify for chosen folders**, switchable per folder. Important: once filters move mail out of the Inbox it would otherwise never notify.
+2. **Folder management**: create, rename, move, delete.
+3. **Report spam / not spam** (move to and from Junk, which trains the server's filter) and **Block sender** (a filter rule from a message; needs M8).
+4. **One-tap unsubscribe** (List-Unsubscribe, RFC 8058).
+5. **Labels** (custom keywords on messages).
+6. **Search result highlights** (SearchSnippet).
+7. **Send later and a real undo**: the server holds the message and can cancel it.
+8. **Signatures and sender names** (identities on the server).
+9. **Share into the app** from other apps.
+10. **Several accounts.** Last, because it reaches through the whole core.
+
+For later consideration: adding an invitation or contact from an attachment (`.ics`, `.vcf`), Turkish, app lock.
+
+Maybe: home screen widgets, delivery status on sent mail, quiet hours and VIP senders, print or save a message as PDF or `.eml`, tablet and landscape layout, read receipts.
+
+M9 (S/MIME and OpenPGP) is left alone for now (owner).
 
 ## Scope
 
@@ -324,7 +354,8 @@ M7
 - **Decided without asking, sharing (next).** Shared mail, calendars and address books will be read live in a "Shared with me" area and never synced into the cache: the server does not push for them and a second full sync would mean an account on every call of the core. Shared mail does not notify. No sending as a shared mailbox. Giving a share to someone is offered only where the server lets the app look users up.
 - **"Shared with me", built 2026-11-14.** A row in the folder drawer opens the accounts of other users that share something, each with Mail, Calendar and Contacts where it shares them. Mail: the shared folders, their messages in pages, a message with its attachments; mark read or unread, star, move within that account and delete, each only where the folder's rights allow, sent at once (no queue). Opening a message does not mark it read, because marks are the owner's too. Calendar and contacts are shown only. Nothing of a shared account is cached, notified or used for suggestions. Decided without asking: no reply, forward or archive from a shared message in this stage; shared events and contacts cannot be changed; a shared calendar is shown even though the server marks it "not subscribed" (the app cannot set that yet); giving shares to others is not built (it needs the user lookup that servers switch off by default).
 - **"Shared with me", checked and not checked.** Core: 772 tests with a mock written from the notes. By hand as the second test user against the local server, with the CLI (accounts, folders with rights, a folder's messages, a message with an attachment, agenda, contacts) and on the emulator (the same screens, and Mark read, confirmed on the server). Not checked: move, delete and star on a device, a read-only folder's refusals against the real server, a share taken back while the screen is open, the attachment opened or saved.
-- **UnifiedPush is put off.** It cannot be tested here (see above) and its decryption would be written blind. It needs a Stalwart that can reach a public https address; the owner's server is not for experiments. The connection the app keeps today stays the only transport.
+- **Open, for the owner to decide later: push without the always-on notification.** Only Google's push (FCM) removes the foreground service: it needs Play services, a Firebase project and a small relay on a public https address between Stalwart's web push and Google. Until then the user can switch off the "Connection" notification channel in Android's settings; the connection keeps running.
+- **UnifiedPush is dropped (owner, 2026-11-14).** It needs a second app on the phone that keeps its own connection open, which a phone that kills background apps would kill just the same, and it only saves anything when several apps share that connection. The app's own connection works on the owner's phone, overnight and after a restart. It also could not be tested on the local server, which pushes only to public https addresses (`dev/notes/stalwart-webpush.md` keeps what was found, should a phone ever need it).
 - **Found by the emulator check (2026-11-14).** The assistant settings and the away message screens crashed when opened: screens that live in a per-route store could not build a view model that takes the application. Fixed in `ui/ScreenStores.kt`. Both had passed every unit test, which is why new screens get opened on the emulator before they are called built.
 - **Stalwart and AI for clients, checked in the v1.1.0 source (2026-11-14).** There is no HTTP or JMAP call that takes a prompt: the model is used by the spam filter and by the Sieve function `llm_prompt`, and `AiModel` objects are only managed over the registry. One narrow way in exists: `llm_prompt` is registered for users' own Sieve scripts too, for accounts with the `InteractAi` permission (Enterprise). So a user's filter can ask the server's model about incoming mail at delivery time; nothing can ask it on demand. That is of no use to the assistant, but it could become an action in the filter editor (M8) on servers that have it. Server-side, Stalwart talks to OpenAI (also Azure and vLLM), Anthropic, Gemini and Ollama.
 - The key is kept by the host's secret store (Android Keystore) under its own name and never written to the cache or a log.
