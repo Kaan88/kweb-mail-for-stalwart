@@ -10,8 +10,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -67,11 +69,12 @@ import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.MoveDialog
 import uniffi.kweb_core.Attachment
+import uniffi.kweb_core.DraftKind
 
 /** One conversation: its messages oldest first as cards, and what can be done with the thread. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThreadScreen(route: Route.Thread, onBack: () -> Unit) {
+fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit) {
     val context = LocalContext.current
     val vm: ThreadViewModel = viewModel(
         key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
@@ -98,6 +101,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit) {
             when (event) {
                 is ThreadEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
                 ThreadEvent.Close -> onBack()
+                is ThreadEvent.OpenDraft -> onCompose(event.draftId)
             }
         }
     }
@@ -195,6 +199,8 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit) {
     val targets = remember(state.messages, state.mailboxes) { state.targets(route.mailboxId) }
     val canAct = state.loaded && targets.isNotEmpty()
     val hasMessages = state.messages.isNotEmpty()
+    // Reply, Reply all and Forward of the bar act on the newest message of the thread.
+    val replyTarget = remember(state.messages, state.mailboxes) { ThreadRules.replyTarget(state.messages, state.mailboxes) }
 
     Scaffold(
         topBar = {
@@ -255,7 +261,8 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+        Box(Modifier.padding(padding).fillMaxSize()) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Text(
                 state.subject.ifEmpty { stringResource(R.string.list_no_subject) },
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
@@ -288,10 +295,23 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit) {
                                     saver.launch(FileNames.safe(it.name))
                                 }
                             },
+                            onReply = { vm.startDraft(DraftKind.Reply(header.id)) },
+                            onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
+                            onForward = { vm.startDraft(DraftKind.Forward(header.id)) },
                         ),
                     )
                 }
             }
+            // Room under the last card for the floating bar.
+            Spacer(Modifier.height(96.dp))
+        }
+        ReplyBar(
+            enabled = replyTarget != null,
+            onReply = { replyTarget?.let { vm.startDraft(DraftKind.Reply(it.id)) } },
+            onReplyAll = { replyTarget?.let { vm.startDraft(DraftKind.ReplyAll(it.id)) } },
+            onForward = { replyTarget?.let { vm.startDraft(DraftKind.Forward(it.id)) } },
+            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+        )
         }
     }
 

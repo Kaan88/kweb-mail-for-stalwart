@@ -55,3 +55,19 @@ object NotificationFix {
     fun shouldAskOnArrival(sdk: Int, permissionGranted: Boolean, askedBefore: Boolean): Boolean =
         sdk >= RUNTIME_PERMISSION_SDK && !permissionGranted && !askedBefore
 }
+
+/** What signing out would lose: mail that never reached the server. */
+data class Unsent(val messages: Int, val drafts: Int) {
+    val any: Boolean get() = messages > 0 || drafts > 0
+}
+
+object SignOutRules {
+    /**
+     * The messages held back or waiting, and the drafts that exist only on this phone. A held
+     * message is also stored as a draft: it counts once, as a message.
+     */
+    fun unsent(pending: List<uniffi.kweb_core.PendingSend>, drafts: List<uniffi.kweb_core.Draft>): Unsent {
+        val held = pending.map { it.draftId }.toSet()
+        return Unsent(pending.size, drafts.count { it.serverId == null && it.id !in held })
+    }
+}

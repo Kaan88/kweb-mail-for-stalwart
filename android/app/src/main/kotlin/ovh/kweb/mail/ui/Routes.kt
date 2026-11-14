@@ -16,6 +16,11 @@ sealed interface Route {
 
     data object DeliveryCheck : Route
 
+    data object Settings : Route
+
+    /** A message being written: the draft the core made, by id. */
+    data class Compose(val draftId: String) : Route
+
     /** Signing in again to the same account (the token was refused). */
     data object SignInAgain : Route
 }
@@ -32,4 +37,13 @@ object BackStack {
     /** What a tap on the notification of a cached message shows: the message over the list. */
     fun forNotification(threadId: String, inboxId: String?, messageId: String): List<Route> =
         initial + Route.Thread(threadId, inboxId, messageId)
+
+    /** What the Reply button of a notification shows: the new message over the list. */
+    fun forCompose(draftId: String): List<Route> = initial + Route.Compose(draftId)
+
+    /**
+     * After a message was sent: the mail list, where Undo is offered, whatever the message was
+     * written from (a thread, a search, an Undo that opened it again).
+     */
+    fun afterSend(): List<Route> = initial
 }

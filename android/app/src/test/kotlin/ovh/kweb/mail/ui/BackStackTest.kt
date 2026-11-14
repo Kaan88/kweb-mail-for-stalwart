@@ -28,4 +28,22 @@ class BackStackTest {
         listOf(Route.MailList, Route.Thread("t9", "inbox", "m9")),
         BackStack.forNotification("t9", "inbox", "m9"),
     )
+
+    @Test fun aNotificationReplyOpensTheDraftOverTheList() =
+        assertEquals(listOf(Route.MailList, Route.Compose("d1")), BackStack.forCompose("d1"))
+
+    @Test fun composeOverAThreadGoesBackToTheThread() {
+        val stack = BackStack.push(BackStack.push(BackStack.initial, thread), Route.Compose("d1"))
+        assertEquals(listOf(Route.MailList, thread), BackStack.pop(stack))
+    }
+
+    @Test fun theSameDraftTwiceCountsOnce() {
+        val once = BackStack.push(BackStack.initial, Route.Compose("d1"))
+        assertEquals(once, BackStack.push(once, Route.Compose("d1")))
+    }
+
+    @Test fun sendingReturnsToTheList() = assertEquals(BackStack.initial, BackStack.afterSend())
+
+    @Test fun settingsIsAScreenOverTheList() =
+        assertEquals(listOf(Route.MailList, Route.Settings), BackStack.push(BackStack.initial, Route.Settings))
 }

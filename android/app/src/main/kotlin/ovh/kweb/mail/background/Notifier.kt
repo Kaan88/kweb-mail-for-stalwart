@@ -55,6 +55,8 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
 
     /** Removes one mail notification at once (the user acted on it) and the summary if it was the last. */
     fun cancelMail(androidId: Int) = synchronized(LOCK) {
+        // The id comes from an intent the exported activity received: it must not reach the app's own entries.
+        if (androidId < FIRST_MAIL_ID) return@synchronized
         manager.cancel(androidId)
         updateSummary((activeMailIds().toSet() - androidId).size, groupKey())
     }
@@ -117,6 +119,7 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
             .setDeleteIntent(NotificationIntents.forMessage(context, ActionReceiver.ACTION_SWIPED, n.androidId, n.messageId))
             .addAction(0, context.getString(R.string.action_archive), forMessage(ActionReceiver.ACTION_ARCHIVE, n))
             .addAction(0, context.getString(R.string.action_mark_read), forMessage(ActionReceiver.ACTION_MARK_READ, n))
+            .addAction(0, context.getString(R.string.action_reply), NotificationIntents.reply(context, n.androidId, n.messageId))
         return builder.build()
     }
 
@@ -166,6 +169,12 @@ class Notifier(context: Context, private val settings: Settings = Settings.of(co
     companion object {
         /** Extra of the intent that opens the app from a mail notification: the JMAP message id (String). */
         const val EXTRA_MESSAGE_ID = "ovh.kweb.mail.extra.MESSAGE_ID"
+
+        /** Extra of the intent behind the Reply button of a mail notification: the JMAP message id (String). */
+        const val EXTRA_REPLY_MESSAGE_ID = "ovh.kweb.mail.extra.REPLY_MESSAGE_ID"
+
+        /** Extra next to [EXTRA_REPLY_MESSAGE_ID]: the Android id of the notification to remove (Int). */
+        const val EXTRA_REPLY_ANDROID_ID = "ovh.kweb.mail.extra.REPLY_ANDROID_ID"
 
         /** Extra of the intent that opens the app from a reminder: the event or task id (String). */
         const val EXTRA_EVENT_ID = "ovh.kweb.mail.extra.EVENT_ID"

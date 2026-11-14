@@ -30,15 +30,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -81,6 +84,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -91,7 +95,7 @@ import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.delivery.NotificationFix
-import ovh.kweb.mail.ui.theme.ThemePickerDialog
+import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.ListFilter
 import uniffi.kweb_core.ThreadRow
 
@@ -105,6 +109,8 @@ fun MailListScreen(
     onOpenThread: (threadId: String, mailboxId: String) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onCompose: (draftId: String) -> Unit,
     vm: MailListViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -115,8 +121,6 @@ fun MailListScreen(
     val resources = LocalResources.current
     var moving by remember { mutableStateOf<ThreadRow?>(null) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
-    var pickingTheme by remember { mutableStateOf(false) }
-    if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
 
     // Coming back from a thread does not resume the activity, so ask for a fresh read here.
     LaunchedEffect(vm) { vm.reload() }
@@ -139,6 +143,7 @@ fun MailListScreen(
             launch {
                 when (event) {
                     is ListEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
+                    is ListEvent.OpenDraft -> onCompose(event.draftId)
                     is ListEvent.Undo -> {
                         val result = snackbar.showSnackbar(
                             resources.getString(event.textRes),
@@ -189,9 +194,9 @@ fun MailListScreen(
                     scope.launch { drawerState.close() }
                     onOpenDeliveryCheck()
                 },
-                onTheme = {
+                onSettings = {
                     scope.launch { drawerState.close() }
-                    pickingTheme = true
+                    onOpenSettings()
                 },
             )
         },
@@ -208,49 +213,76 @@ fun MailListScreen(
                 }
             },
             snackbarHost = { SnackbarHost(snackbar) },
+            floatingActionButton = {
+                // The primary container, a pen and a word, at the bottom right, as in the Inbox figure.
+                ExtendedFloatingActionButton(
+                    onClick = { vm.startDraft(DraftKind.New) },
+                    icon = { Icon(Icons.Filled.Create, contentDescription = null) },
+                    text = { Text(stringResource(R.string.compose_button)) },
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            },
         ) { padding ->
-            PullToRefreshBox(
-                isRefreshing = state.refreshing,
-                onRefresh = vm::refresh,
-                modifier = Modifier.padding(padding).fillMaxSize(),
-            ) {
-                LazyColumn(
-                    Modifier.fillMaxSize(),
-                    state = listState,
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+            Column(Modifier.padding(padding).fillMaxSize()) {
+                // A message the server refused comes first, then a quiet count of what is only waiting.
+                state.failedDraftId?.let { id -> OutboxBar(failed = true, count = 0, onClick = { onCompose(id) }) }
+                // The message held back for Undo has its own bar; the count is of the others.
+                state.holding?.let { SendingBar(onUndo = { vm.undoSend(it.draftId) }) }
+                val others = state.waiting - if (state.holding != null) 1 else 0
+                if (others > 0) OutboxBar(failed = false, count = others, onClick = null)
+                PullToRefreshBox(
+                    isRefreshing = state.refreshing,
+                    onRefresh = vm::refresh,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                 ) {
-                    if (state.rows.isEmpty()) {
-                        item { EmptyState(state, Modifier.fillParentMaxSize()) }
-                    }
-                    itemsIndexed(state.rows, key = { _, row -> row.newest.threadId }) { index, row ->
-                        key(state.swipeEpoch) {
-                            ConversationItem(
-                                row = row,
-                                shape = Groups.shape(index, state.rows.size),
-                                role = current?.role,
-                                junkAvailable = junk != null && current?.id != junk.id,
-                                onOpen = { current?.let { onOpenThread(row.newest.threadId, it.id) } },
-                                onArchive = { vm.archive(row) },
-                                onDelete = { if (inTrash) deleting = row else vm.delete(row) },
-                                onToggleRead = { vm.toggleRead(row) },
-                                onToggleFlag = { vm.toggleFlag(row) },
-                                onMove = { moving = row },
-                                onSpam = { vm.spam(row) },
-                            )
+                    LazyColumn(
+                        Modifier.fillMaxSize(),
+                        state = listState,
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 88.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        if (state.rows.isEmpty()) {
+                            item { EmptyState(state, Modifier.fillParentMaxSize()) }
                         }
-                    }
-                    if (state.olderPaused && !state.loadingOlder) {
-                        item {
-                            TextButton(onClick = vm::loadOlderNow, modifier = Modifier.fillMaxWidth()) {
-                                Text(stringResource(R.string.list_load_older))
+                        itemsIndexed(state.rows, key = { _, row -> row.newest.threadId }) { index, row ->
+                            key(state.swipeEpoch) {
+                                ConversationItem(
+                                    row = row,
+                                    shape = Groups.shape(index, state.rows.size),
+                                    role = current?.role,
+                                    junkAvailable = junk != null && current?.id != junk.id,
+                                    onOpen = {
+                                        current?.let {
+                                            if (ListRules.opensCompose(it.role)) {
+                                                vm.startDraft(DraftKind.Existing(row.newest.id))
+                                            } else {
+                                                onOpenThread(row.newest.threadId, it.id)
+                                            }
+                                        }
+                                    },
+                                    onArchive = { vm.archive(row) },
+                                    onDelete = { if (inTrash) deleting = row else vm.delete(row) },
+                                    onToggleRead = { vm.toggleRead(row) },
+                                    onToggleFlag = { vm.toggleFlag(row) },
+                                    onMove = { moving = row },
+                                    onSpam = { vm.spam(row) },
+                                )
                             }
                         }
-                    }
-                    if (state.loadingOlder) {
-                        item {
-                            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(Modifier.size(24.dp))
+                        if (state.olderPaused && !state.loadingOlder) {
+                            item {
+                                TextButton(onClick = vm::loadOlderNow, modifier = Modifier.fillMaxWidth()) {
+                                    Text(stringResource(R.string.list_load_older))
+                                }
+                            }
+                        }
+                        if (state.loadingOlder) {
+                            item {
+                                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(Modifier.size(24.dp))
+                                }
                             }
                         }
                     }
@@ -278,6 +310,64 @@ fun MailListScreen(
             },
             onDismiss = { deleting = null },
         )
+    }
+}
+
+/**
+ * A line above the list about mail that is on its way out. [failed]: the server refused one, an
+ * error container that opens it. Otherwise a quiet bar that says how many are waiting.
+ */
+@Composable
+private fun OutboxBar(failed: Boolean, count: Int, onClick: (() -> Unit)?) {
+    val colors = MaterialTheme.colorScheme
+    val text = if (failed) stringResource(R.string.outbox_failed) else pluralStringResource(R.plurals.outbox_waiting, count, count)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (failed) colors.errorContainer else colors.surfaceContainerHigh)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            modifier = Modifier.weight(1f),
+            color = if (failed) colors.onErrorContainer else colors.onSurfaceVariant,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        if (failed) {
+            Text(
+                stringResource(R.string.outbox_open),
+                color = colors.onErrorContainer,
+                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
+/** "Sending…" with Undo, for as long as the core holds the message back. */
+@Composable
+private fun SendingBar(onUndo: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(colors.inverseSurface)
+            .padding(start = 14.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            stringResource(R.string.send_sending),
+            modifier = Modifier.weight(1f),
+            color = colors.inverseOnSurface,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        TextButton(onClick = onUndo) { Text(stringResource(R.string.action_undo), color = colors.inversePrimary) }
     }
 }
 
@@ -354,7 +444,7 @@ private fun DrawerContent(
     currentId: String?,
     onFolder: (String) -> Unit,
     onDeliveryCheck: () -> Unit,
-    onTheme: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     ModalDrawerSheet {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
@@ -392,10 +482,10 @@ private fun DrawerContent(
                 onClick = onDeliveryCheck,
             )
             NavigationDrawerItem(
-                label = { Text(stringResource(R.string.theme_title)) },
-                icon = { Icon(painterResource(R.drawable.ic_palette), contentDescription = null) },
+                label = { Text(stringResource(R.string.settings_title)) },
+                icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                 selected = false,
-                onClick = onTheme,
+                onClick = onSettings,
             )
         }
     }

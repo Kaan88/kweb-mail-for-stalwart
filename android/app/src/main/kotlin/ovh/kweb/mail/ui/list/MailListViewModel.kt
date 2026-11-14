@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -20,10 +21,15 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.ui.MailActions
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.compose.DraftLauncher
+import ovh.kweb.mail.ui.compose.Outbox
+import ovh.kweb.mail.ui.compose.SendRules
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.ConnectionStatus
+import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.ListFilter
 import uniffi.kweb_core.Mailbox
+import uniffi.kweb_core.PendingSend
 import uniffi.kweb_core.ThreadRow
 import uniffi.kweb_core.Exception as CoreException
 
@@ -55,6 +61,12 @@ data class MailListState(
     val generation: Int = 0,
     /** Bumped when an action failed, so a swiped row comes back. */
     val swipeEpoch: Int = 0,
+    /** A draft the server refused to send; the list offers to open it. */
+    val failedDraftId: String? = null,
+    /** Messages that are held back or wait for a connection to be sent. */
+    val waiting: Int = 0,
+    /** The message just sent whose Undo is still on offer; cleared by a timer when the core lets it go. */
+    val holding: PendingSend? = null,
 )
 
 /** What the screen shows once, as a snackbar. */
@@ -63,6 +75,9 @@ sealed interface ListEvent {
 
     /** [messageIds] were taken out of [mailboxId]; undoing moves them back. */
     data class Undo(val textRes: Int, val messageIds: List<String>, val mailboxId: String) : ListEvent
+
+    /** Open the compose screen on this draft (a new one, an answer, or one taken back by Undo). */
+    data class OpenDraft(val draftId: String) : ListEvent
 }
 
 /** The conversations of one folder from the local cache, and the things a row can do. */
@@ -70,6 +85,8 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(MailListState())
     private val reloads = Channel<Unit>(Channel.CONFLATED)
     private val eventChannel = Channel<ListEvent>(Channel.BUFFERED)
+    private var startingDraft = false
+    private var holdJob: Job? = null
 
     val state: StateFlow<MailListState> get() = stateFlow
 
@@ -79,11 +96,15 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         // One loader, so that a burst of changes costs one read and loads never overlap.
         viewModelScope.launch { reloads.receiveAsFlow().collect { load() } }
         viewModelScope.launch { Background.cacheChanges.collect { reload() } }
+        viewModelScope.launch { Outbox.sent.collect { hold(it) } }
         viewModelScope.launch {
             SessionState.signedIn.collect { signedIn ->
                 when (signedIn) {
                     true -> reload()
-                    false -> stateFlow.value = MailListState()
+                    false -> {
+                        holdJob?.cancel()
+                        stateFlow.value = MailListState()
+                    }
                     null -> Unit
                 }
             }
@@ -210,6 +231,63 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         submit(MailActions.move(row.messageIds, junk.id))
     }
 
+    /** Starts a draft of [kind] and has the screen open it. One at a time: a double tap makes one draft. */
+    fun startDraft(kind: DraftKind) {
+        if (startingDraft) return
+        startingDraft = true
+        viewModelScope.launch {
+            try {
+                eventChannel.send(ListEvent.OpenDraft(DraftLauncher.create(getApplication(), kind)))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "starting a draft failed", e)
+                eventChannel.send(ListEvent.Message(R.string.compose_start_failed))
+            } finally {
+                startingDraft = false
+            }
+        }
+    }
+
+    /**
+     * [pending] is held back: the list shows "Sending…" with Undo from its state until the core lets
+     * it go. A timer here clears it, so a rotation or another event does not take the offer away.
+     */
+    private fun hold(pending: PendingSend) {
+        val left = SendRules.remainingMillis(pending.sendAt, System.currentTimeMillis())
+        if (left <= 0) return
+        if (stateFlow.value.holding == pending) return
+        holdJob?.cancel()
+        stateFlow.update { it.copy(holding = pending) }
+        holdJob = viewModelScope.launch {
+            delay(left)
+            stateFlow.update { if (it.holding?.draftId == pending.draftId) it.copy(holding = null) else it }
+            reload()
+        }
+    }
+
+    /** Undo on "Sending…": the core hands the message back as a draft and the screen opens it. */
+    fun undoSend(draftId: String) {
+        if (stateFlow.value.holding?.draftId == draftId) {
+            holdJob?.cancel()
+            stateFlow.update { it.copy(holding = null) }
+        }
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { Background.core(getApplication()).undoSend(draftId) }
+                eventChannel.send(ListEvent.OpenDraft(draftId))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: CoreException.Invalid) {
+                eventChannel.send(ListEvent.Message(R.string.send_undo_too_late))
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "undoing a send failed", e)
+                eventChannel.send(ListEvent.Message(R.string.send_undo_failed))
+            }
+            reload()
+        }
+    }
+
     fun undo(event: ListEvent.Undo) = submit(MailActions.move(event.messageIds, event.mailboxId))
 
     private fun removeFromFolder(row: ThreadRow, actions: List<Action>, undoText: Int?) {
@@ -249,6 +327,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun load() {
         val asked = stateFlow.value
+        readOutbox()
         try {
             val read = withContext(Dispatchers.IO) { read(asked) }
             // A newer choice is already queued to be read; this answer is about an older one.
@@ -264,6 +343,32 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
             eventChannel.send(ListEvent.Message(R.string.list_read_failed))
         }
     }
+
+    /** The drafts the server refused and the messages waiting to go out. A failure only means the bars stay as they were. */
+    private suspend fun readOutbox() {
+        val outbox = withContext(Dispatchers.IO) {
+            try {
+                val core = Background.core(getApplication())
+                val pending = core.pendingSends()
+                OutboxRead(ListRules.failedDraft(core.drafts())?.id, ListRules.waiting(pending), ListRules.holding(pending, System.currentTimeMillis()), pending.map { it.draftId }.toSet())
+            } catch (e: CoreException) {
+                Log.d(Background.TAG, "reading the outbox failed: ${e.javaClass.simpleName}")
+                null
+            }
+        } ?: return
+        // A held message the core no longer has (taken back, or gone out) loses its Undo.
+        stateFlow.update {
+            it.copy(
+                failedDraftId = outbox.failedDraftId,
+                waiting = outbox.waiting,
+                holding = it.holding?.takeIf { held -> held.draftId in outbox.pendingIds },
+            )
+        }
+        // A message sent before the list was on screen (or before a restart of the process) is still held.
+        outbox.holding?.let { hold(it) }
+    }
+
+    private class OutboxRead(val failedDraftId: String?, val waiting: Int, val holding: PendingSend?, val pendingIds: Set<String>)
 
     private fun MailListState.sameQuestion(asked: MailListState) =
         selectedId == asked.selectedId && filter == asked.filter && limit == asked.limit && generation == asked.generation

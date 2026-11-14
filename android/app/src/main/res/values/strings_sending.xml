@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Ways into Compose -->
+    <string name="compose_button">Compose</string>
+    <string name="action_reply">Reply</string>
+    <string name="action_reply_all">Reply all</string>
+    <string name="action_forward">Forward</string>
+    <string name="compose_start_failed">The message could not be started. Try again.</string>
+
+    <!-- Compose screen -->
+    <string name="compose_title_new">New message</string>
+    <string name="compose_title_reply">Reply</string>
+    <string name="compose_title_forward">Forward</string>
+    <string name="compose_close">Close and save the draft</string>
+    <string name="compose_attach">Attach a file</string>
+    <string name="compose_send">Send</string>
+    <string name="compose_from">From</string>
+    <string name="compose_choose_sender">Choose who to send as</string>
+    <string name="compose_to">To</string>
+    <string name="compose_cc">Cc</string>
+    <string name="compose_bcc">Bcc</string>
+    <string name="compose_cc_bcc">Cc Bcc</string>
+    <string name="compose_subject">Subject</string>
+    <string name="compose_body_hint">Write your message</string>
+    <string name="compose_invalid_address">This is not a valid address</string>
+    <string name="compose_remove_recipient">Remove %1$s</string>
+    <string name="compose_remove_attachment">Remove %1$s</string>
+    <string name="compose_uploading">Adding…</string>
+    <string name="compose_draft_saved">Draft saved · %1$s</string>
+    <string name="compose_save_failed">The draft could not be saved</string>
+    <string name="compose_load_failed">The draft could not be read.</string>
+    <string name="compose_missing">This draft is no longer there.</string>
+    <string name="compose_dismiss">Dismiss</string>
+    <string name="compose_leave_anyway">Leave anyway</string>
+    <string name="compose_leave_save_failed">The draft could not be saved, so leaving would lose what you wrote.</string>
+    <string name="compose_error_bad_address">Fix or remove the address that is not valid before sending.</string>
+    <string name="compose_send_failed">The message could not be handed over for sending. Try again.</string>
+    <string name="compose_send_failed_before">This message was not sent: %1$s</string>
+    <string name="compose_attach_failed">%1$s could not be attached.</string>
+    <string name="compose_attach_refused">%1$s is larger than the server accepts.</string>
+
+    <!-- Mail list: sending and drafts -->
+    <string name="send_sending">Sending…</string>
+    <string name="send_undo_too_late">It has already gone out.</string>
+    <string name="send_undo_failed">The message could not be taken back.</string>
+    <string name="outbox_failed">A message could not be sent</string>
+    <string name="outbox_open">Open</string>
+    <plurals name="outbox_waiting">
+        <item quantity="one">%d message is waiting to be sent</item>
+        <item quantity="other">%d messages are waiting to be sent</item>
+    </plurals>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_account">Account</string>
+    <string name="settings_name">Name</string>
+    <string name="settings_server">Server</string>
+    <string name="settings_storage">Storage</string>
+    <string name="settings_storage_loading">Reading how much is used…</string>
+    <string name="settings_storage_unavailable">Storage use could not be read. You may be offline.</string>
+    <string name="settings_storage_none">The server reports no limits.</string>
+    <string name="settings_storage_mail">Mail storage</string>
+    <string name="settings_storage_count">Items</string>
+    <string name="quota_used_of">%1$s of %2$s used</string>
+    <string name="quota_no_limit">%1$s used · No limit</string>
+    <string name="settings_app">This app</string>
+    <string name="settings_delivery_detail">Notifications and the connection</string>
+    <string name="settings_signing_out">Signing out…</string>
+</resources>

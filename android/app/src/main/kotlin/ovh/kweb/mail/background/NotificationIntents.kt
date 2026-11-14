@@ -29,6 +29,20 @@ internal object NotificationIntents {
         return PendingIntent.getActivity(context, requestCode, intent, FLAGS)
     }
 
+    /**
+     * The Reply button: opens [MainActivity] on a new answer to [messageId]. It carries the
+     * notification's id too, because an action button does not always remove its notification and
+     * the activity then has to.
+     */
+    fun reply(context: Context, androidId: Int, messageId: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setData(uri("reply", messageId))
+            .putExtra(Notifier.EXTRA_REPLY_MESSAGE_ID, messageId)
+            .putExtra(Notifier.EXTRA_REPLY_ANDROID_ID, androidId)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(context, androidId, intent, FLAGS)
+    }
+
     /** Opens [MainActivity] without extras (the group summary and the "Connected" entry). */
     fun openAppPlain(context: Context, requestCode: Int): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)

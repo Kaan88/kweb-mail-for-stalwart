@@ -87,6 +87,12 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     /** Short texts for a snackbar, as string resource ids. */
     val messages: Flow<Int> get() = messageChannel.receiveAsFlow()
 
+    /** Set while the sign-out question is open: what signing out would lose. */
+    val signOutPrompt: StateFlow<Unsent?> get() = promptFlow
+
+    private val promptFlow = MutableStateFlow<Unsent?>(null)
+    private var asking = false
+
     init {
         viewModelScope.launch {
             val (host, version) = withContext(Dispatchers.IO) {
@@ -137,8 +143,38 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         if (!delivered) messageChannel.trySend(R.string.delivery_test_off)
     }
 
+    /**
+     * The first step of signing out, for both screens: reads what has not reached the server, then
+     * [signOutPrompt] opens the question. When that cannot be read the question does not open,
+     * because it could not say what is lost.
+     */
+    fun askSignOut() {
+        if (asking || extras.value.signingOut) return
+        asking = true
+        viewModelScope.launch {
+            try {
+                promptFlow.value = withContext(Dispatchers.IO) {
+                    val core = Background.core(getApplication())
+                    SignOutRules.unsent(core.pendingSends(), core.drafts())
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the unsent mail failed", e)
+                messageChannel.send(R.string.sign_out_check_failed)
+            } finally {
+                asking = false
+            }
+        }
+    }
+
+    fun dismissSignOutPrompt() {
+        promptFlow.value = null
+    }
+
     /** Signs out of the core, tidies the background half, and sends the app to the sign-in screen. */
     fun signOut() {
+        promptFlow.value = null
         if (extras.value.signingOut) return
         extras.update { it.copy(signingOut = true) }
         viewModelScope.launch {

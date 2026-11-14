@@ -23,9 +23,11 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.MailActions
 import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.list.Folders
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.Attachment
+import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.MessageBody
 import uniffi.kweb_core.MessageHeader
@@ -69,6 +71,9 @@ sealed interface ThreadEvent {
 
     /** Leave the screen: the thread was acted on or is gone. */
     data object Close : ThreadEvent
+
+    /** A draft was started for a reply or a forward: open the compose screen on it. */
+    data class OpenDraft(val draftId: String) : ThreadEvent
 }
 
 /**
@@ -85,6 +90,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private var session: CoroutineScope? = null
     private var markedRead = false
     private var closeSent = false
+    private var startingDraft = false
 
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
@@ -137,6 +143,26 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     }
 
     fun allowRemote(messageId: String) = stateFlow.update { it.copy(remoteAllowed = it.remoteAllowed + messageId) }
+
+    // ---- Replying ----
+
+    /** Starts a reply, reply all or forward and has the screen open it. One at a time: a double tap makes one draft. */
+    fun startDraft(kind: DraftKind) {
+        if (startingDraft) return
+        startingDraft = true
+        viewModelScope.launch {
+            try {
+                eventChannel.send(ThreadEvent.OpenDraft(DraftLauncher.create(getApplication(), kind)))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "starting a draft failed", e)
+                eventChannel.send(ThreadEvent.Message(R.string.compose_start_failed))
+            } finally {
+                startingDraft = false
+            }
+        }
+    }
 
     // ---- Actions on the thread ----
 

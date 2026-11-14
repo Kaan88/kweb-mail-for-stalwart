@@ -27,8 +27,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         ThemeState.load(this)
         setContent { KwebTheme { AppContent(app) } }
-        // After a recreation (rotation) the intent is the one that was handled already.
-        if (savedInstanceState == null) handleNotificationIntent(intent)
+        // After a recreation (rotation) or a relaunch from Recents the intent is the one that was handled already.
+        if (savedInstanceState == null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
+            handleNotificationIntent(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -45,8 +47,23 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) { Background.onAppForeground(appContext) }
     }
 
+    /**
+     * The Reply button of a mail notification: a new answer opens over the Inbox. Like a tap, it
+     * takes the notification away and tells the core that was on purpose, once the draft exists.
+     */
+    private fun handleReplyIntent(intent: Intent): Boolean {
+        val messageId = intent.getStringExtra(Notifier.EXTRA_REPLY_MESSAGE_ID) ?: return false
+        val androidId = intent.getIntExtra(Notifier.EXTRA_REPLY_ANDROID_ID, 0)
+        intent.removeExtra(Notifier.EXTRA_REPLY_MESSAGE_ID)
+        intent.removeExtra(Notifier.EXTRA_REPLY_ANDROID_ID)
+        mailList.showInbox()
+        app.replyTo(messageId, androidId)
+        return true
+    }
+
     /** A tap on a mail notification names its message: it opens over the Inbox. */
     private fun handleNotificationIntent(intent: Intent) {
+        if (handleReplyIntent(intent)) return
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
         intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
         mailList.showInbox()

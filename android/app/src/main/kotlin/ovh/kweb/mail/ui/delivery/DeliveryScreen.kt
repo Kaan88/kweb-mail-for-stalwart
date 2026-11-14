@@ -66,6 +66,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -114,7 +115,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     val now by rememberNowMillis()
     val resources = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
-    var confirmSignOut by remember { mutableStateOf(false) }
+    val signOutPrompt by vm.signOutPrompt.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
 
     // The user comes back from the system settings: read the permission and battery state again.
@@ -147,7 +148,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.sign_out)) },
                             enabled = !state.signingOut,
-                            onClick = { menuOpen = false; confirmSignOut = true },
+                            onClick = { menuOpen = false; vm.askSignOut() },
                         )
                     }
                 },
@@ -183,12 +184,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
         }
     }
 
-    if (confirmSignOut) {
-        SignOutDialog(
-            onConfirm = { confirmSignOut = false; vm.signOut() },
-            onDismiss = { confirmSignOut = false },
-        )
-    }
+    signOutPrompt?.let { SignOutDialog(it, onConfirm = vm::signOut, onDismiss = vm::dismissSignOutPrompt) }
 }
 
 /** What a tap on a failed row does. */
@@ -486,13 +482,28 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
+/** The question before signing out, shared with the Settings screen. */
 @Composable
-private fun SignOutDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun SignOutDialog(unsent: Unsent, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val lost = if (unsent.any) {
+        val parts = buildList {
+            if (unsent.messages > 0) add(pluralStringResource(R.plurals.sign_out_lost_messages, unsent.messages, unsent.messages))
+            if (unsent.drafts > 0) add(pluralStringResource(R.plurals.sign_out_lost_drafts, unsent.drafts, unsent.drafts))
+        }
+        stringResource(R.string.sign_out_lost, parts.joinToString(stringResource(R.string.sign_out_lost_and)))
+    } else {
+        stringResource(R.string.sign_out_text)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.sign_out_title)) },
-        text = { Text(stringResource(R.string.sign_out_text)) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.sign_out)) } },
+        text = { Text(lost) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                val label = if (unsent.any) R.string.sign_out_anyway else R.string.sign_out
+                Text(stringResource(label), color = if (unsent.any) MaterialTheme.colorScheme.error else Color.Unspecified)
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

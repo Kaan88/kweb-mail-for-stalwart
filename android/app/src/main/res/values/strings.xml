@@ -93,5 +93,17 @@
 
     <string name="sign_out_title">Sign out?</string>
     <string name="sign_out_text">This removes your mail from this phone and stops notifications. Your mail stays on the server.</string>
+    <string name="sign_out_check_failed">Could not check for unsent mail. Try again.</string>
+    <string name="sign_out_lost">%1$s on this phone has not reached the server and will be lost. Your other mail stays on the server.</string>
+    <string name="sign_out_lost_and">" and "</string>
+    <string name="sign_out_anyway">Sign out anyway</string>
+    <plurals name="sign_out_lost_messages">
+        <item quantity="one">%d unsent message</item>
+        <item quantity="other">%d unsent messages</item>
+    </plurals>
+    <plurals name="sign_out_lost_drafts">
+        <item quantity="one">%d unsaved draft</item>
+        <item quantity="other">%d unsaved drafts</item>
+    </plurals>
     <string name="delivery_sign_out_failed">Signing out did not work. Try again.</string>
 </resources>

@@ -39,6 +39,16 @@ object ThreadRules {
         return (others.ifEmpty { messages }).map { it.id }
     }
 
+    /**
+     * The message Reply, Reply all and Forward of the thread act on: the newest one, except that a
+     * draft saved in the thread is not something to answer, so the newest message outside Drafts
+     * counts (when every message is a draft, the newest of them). [messages] are oldest first.
+     */
+    fun replyTarget(messages: List<MessageHeader>, mailboxes: List<Mailbox>): MessageHeader? {
+        val drafts = mailboxes.filter { it.role == "drafts" }.map { it.id }.toSet()
+        return messages.lastOrNull { m -> m.mailboxIds.none { it in drafts } } ?: messages.lastOrNull()
+    }
+
     /** Delete on any of these removes mail for good: one of them is in Trash. */
     fun deletesForever(messages: List<MessageHeader>, targetIds: List<String>, mailboxes: List<Mailbox>): Boolean {
         val trash = mailboxes.firstOrNull { it.role == "trash" }?.id ?: return false

@@ -101,4 +101,19 @@ class ThreadRulesTest {
     @Test fun aSizeThatRoundsUpMovesToTheNextUnit() = assertEquals("1.0 MB", SizeFormat.format(999_999, Locale.UK))
 
     @Test fun theLocaleSetsTheDecimalSeparator() = assertEquals("1,5 KB", SizeFormat.format(1_500, Locale.GERMANY))
+
+    @Test fun repliesActOnTheNewestMessage() =
+        assertEquals("c", ThreadRules.replyTarget(listOf(msg("a"), msg("b"), msg("c")), boxes)?.id)
+
+    @Test fun aDraftSavedInTheThreadIsNotAnswered() {
+        val messages = listOf(msg("a"), msg("b"), msg("draft", boxes = listOf("drafts")))
+        assertEquals("b", ThreadRules.replyTarget(messages, listOf(box("inbox", "inbox"), box("drafts", "drafts")))?.id)
+    }
+
+    @Test fun whenEveryMessageIsADraftTheNewestOfThemIsUsed() {
+        val messages = listOf(msg("d1", boxes = listOf("drafts")), msg("d2", boxes = listOf("drafts")))
+        assertEquals("d2", ThreadRules.replyTarget(messages, listOf(box("drafts", "drafts")))?.id)
+    }
+
+    @Test fun anEmptyThreadHasNothingToAnswer() = assertNull(ThreadRules.replyTarget(emptyList(), boxes))
 }

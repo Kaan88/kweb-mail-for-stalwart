@@ -16,12 +16,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -66,6 +71,9 @@ class CardActions(
     val onOpenLink: (String) -> Unit,
     val onOpenAttachment: (Attachment) -> Unit,
     val onSaveAttachment: (Attachment) -> Unit,
+    val onReply: () -> Unit,
+    val onReplyAll: () -> Unit,
+    val onForward: () -> Unit,
 )
 
 /**
@@ -117,7 +125,7 @@ fun MessageCard(
                 )
             }
         } else {
-            ExpandedHeader(header, sender, initial, body, myAddress, actions.onToggle)
+            ExpandedHeader(header, sender, initial, body, myAddress, actions)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                 BodyView(header, body, remoteAllowed, busyBlobId, actions)
             }
@@ -132,7 +140,7 @@ private fun ExpandedHeader(
     initial: String,
     body: BodyState?,
     myAddress: String?,
-    onToggle: () -> Unit,
+    actions: CardActions,
 ) {
     var showDetails by remember(header.id) { mutableStateOf(false) }
     val loaded = (body as? BodyState.Loaded)?.body
@@ -146,7 +154,7 @@ private fun ExpandedHeader(
     val time = remember(header.receivedAt, yesterday) {
         RowTime.format(header.receivedAt, System.currentTimeMillis(), ZoneId.systemDefault(), Locale.getDefault(), yesterday)
     }
-    Column(Modifier.fillMaxWidth().clickable(onClick = onToggle).padding(12.dp)) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = actions.onToggle).padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Avatar(initial, size = 36.dp, strong = true)
             Column(Modifier.weight(1f)) {
@@ -163,6 +171,7 @@ private fun ExpandedHeader(
                 }
             }
             Text(time, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+            MessageMenu(actions)
         }
         if (showDetails) {
             SelectionContainer {
@@ -177,6 +186,34 @@ private fun ExpandedHeader(
                     )
                 }
             }
+        }
+    }
+}
+
+/** What can be done with this one message: answer it or pass it on. */
+@Composable
+private fun MessageMenu(actions: CardActions) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_reply)) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_reply), contentDescription = null) },
+                onClick = { open = false; actions.onReply() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_reply_all)) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_reply_all), contentDescription = null) },
+                onClick = { open = false; actions.onReplyAll() },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_forward)) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_forward), contentDescription = null) },
+                onClick = { open = false; actions.onForward() },
+            )
         }
     }
 }
