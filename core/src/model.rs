@@ -459,7 +459,44 @@ pub enum AiProvider {
     Anthropic,
 }
 
-/// How the AI assistant is set up. The key is not in here: it lives in the secret store and
+/// How hard the model is asked to think. Only the Anthropic service takes it (as
+/// `output_config.effort`); for an OpenAI-compatible service it is stored and not sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AiEffort {
+    /// Nothing is sent: the model's own default.
+    #[default]
+    Default,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+/// A model the service offers.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiModel {
+    /// What is sent as the model's name.
+    pub id: String,
+    /// What the user reads; the id when the service gives no other name.
+    pub name: String,
+    /// The effort levels the model takes, lowest first, without `Default`. Empty when the model
+    /// takes none or the service does not say (OpenAI-compatible services never say).
+    pub efforts: Vec<AiEffort>,
+}
+
+/// The models of a service.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiModelList {
+    pub models: Vec<AiModel>,
+    /// The service was asked and answered. False: this is the built-in list (Anthropic only),
+    /// because there is no key yet or the service could not be asked.
+    pub from_service: bool,
+}
+
+/// How the AI assistant is set up: the service in use, and what is allowed. Each kind of
+/// service (`provider`) keeps its own address, model, effort, key and consent, so switching to
+/// the other and back loses nothing. The key is not in here: it lives in the secret store and
 /// never leaves the core.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AiSettings {
@@ -470,10 +507,13 @@ pub struct AiSettings {
     /// `https://api.openai.com/v1`, `https://api.anthropic.com/v1`, `http://192.168.1.20:11434/v1`.
     pub base_url: String,
     pub model: String,
-    /// A key is stored.
+    /// See [`AiEffort`]. `Default` when nothing was chosen.
+    #[serde(default)]
+    pub effort: AiEffort,
+    /// A key is stored for this service.
     pub has_key: bool,
     /// The user has agreed to send mail to exactly this service and model. Cleared by the core
-    /// whenever the provider, the address or the model changes.
+    /// whenever this service's address or model changes. Each service has its own.
     pub consented: bool,
     pub allow_summaries: bool,
     pub allow_drafts: bool,

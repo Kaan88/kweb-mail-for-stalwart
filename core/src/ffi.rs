@@ -24,10 +24,10 @@ use crate::{
     compose, contacts,
     jmap::{self, is_unauthorized, Connection},
     model::{
-        Account, Action, Address, AddressBook, Agenda, AiPreview, AiSettings, AiTask, Attachment, AwayMessage,
-        Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, Draft, DraftKind, EventDetail, EventInput,
-        Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult,
-        ThreadRow,
+        Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
+        Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, Draft, DraftKind,
+        EventDetail, EventInput, Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota,
+        Reminder, SearchResult, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -208,7 +208,7 @@ impl Core {
         // With the session gone a new `ai_run` fails, and one that already holds the slot is
         // stopped here. The provider key stays on the device only as long as the account does,
         // so it goes before the (slow) revoke; both steps are tried and the first error is returned.
-        self.ai.cancel();
+        self.ai.cancel_all();
         let key = assistant::forget_key(&*self.secrets);
         let deleted = match session {
             Some(session) => {
@@ -1024,18 +1024,50 @@ pub trait AiListener: Send + Sync {
 
 #[uniffi::export]
 impl Core {
-    /// How the assistant is set up. From the cache; never the key.
+    /// How the assistant is set up: the service in use. From the cache; never the key.
     pub fn ai_settings(&self) -> Result<AiSettings> {
         assistant::load(&self.store, &*self.secrets, &self.account_id()?)
     }
 
-    /// Stores the settings. `key`: `None` keeps the stored key, an empty string removes it, any
-    /// other text replaces it (it goes to the secret store, never to the cache or a log).
-    /// `consented` is stored as true only when provider, address and model are the ones already
-    /// stored: a call that changes any of them clears it, and the host grants it by saving
-    /// again with the same values after it showed what goes where. A key that is kept (`None`)
-    /// is removed when the provider, or the scheme, host or port of the address, changes. An address that is not https (or plain http to this
-    /// device or a private network address) is `Error::Invalid`. Returns the settings as stored.
+    /// What [`Core::ai_settings`] would be if `provider` were the service in use: that
+    /// service's own stored address, model, effort, `has_key` and `consented` (empty and false
+    /// when it was never set up; the Anthropic service then starts with
+    /// `https://api.anthropic.com/v1`), with `enabled` and the three `allow_` switches as they
+    /// are now. Changes nothing. The settings screen calls this when the user picks the other
+    /// service, so each one shows what was entered for it.
+    pub fn ai_service(&self, provider: AiProvider) -> Result<AiSettings> {
+        assistant::service(&self.store, &*self.secrets, &self.account_id()?, provider)
+    }
+
+    /// The models the service in `settings` (provider and address; nothing else is read)
+    /// offers, for the picker. Sends no mail and needs no consent. `key`: a key the user just
+    /// typed and has not saved; `None` uses the key stored for that provider, and only when the
+    /// address has the scheme, host and port the stored one has (a stored key is never sent to
+    /// an address it was not entered for). Nothing is stored.
+    ///
+    /// OpenAI-compatible: `GET {base}/models`; a service that cannot be asked is
+    /// `Error::Temporary`. Anthropic: `GET {base}/models`, all pages, with each model's effort
+    /// levels; without a key, or when the service cannot be asked, the built-in list with
+    /// `from_service` false (a refused key is still an error, so the user learns of it).
+    pub fn ai_models(&self, settings: AiSettings, key: Option<String>) -> Result<AiModelList> {
+        let base_url = settings.base_url.trim().trim_end_matches('/').to_string();
+        // The address first: a bad one is refused before the secret store is looked at.
+        assistant::settings::check_base_url(&base_url)?;
+        let key = assistant::models_key(&self.store, &*self.secrets, &self.account_id()?, &settings, key)?;
+        self.rt.block_on(assistant::models::list(settings.provider, &base_url, key.as_deref()))
+    }
+
+    /// Stores the settings of the service `settings.provider` and makes it the one in use; what
+    /// is stored for the other service (address, model, effort, key, consent) stays as it is.
+    /// `key`: `None` keeps this service's stored key, an empty string removes it, any other
+    /// text replaces it (it goes to the secret store, never to the cache or a log).
+    /// `consented` is stored as true only when this service's address and model are the ones
+    /// already stored for it: a call that changes either clears it, and the host grants it by
+    /// saving again with the same values after it showed what goes where. Switching to a
+    /// service that was agreed to before, with its values unchanged, keeps its consent. A key
+    /// that is kept (`None`) is removed when the scheme, host or port of this service's address
+    /// changes. An address that is not https (or plain http to this device or a private network
+    /// address) is `Error::Invalid`. Returns the settings as stored.
     pub fn set_ai_settings(&self, settings: AiSettings, key: Option<String>) -> Result<AiSettings> {
         assistant::save(&self.store, &*self.secrets, &self.account_id()?, settings, key)
     }
@@ -1062,14 +1094,17 @@ impl Core {
     /// Runs `task`: sends it to the service and returns the whole answer; `listener` hears it
     /// piece by piece meanwhile. Blocks until the answer is complete, the service fails
     /// (`Error::Temporary` with a message the user can read; a refused key says so) or
-    /// [`Core::ai_cancel`] is called (`Error::Invalid`). An answer the service cut off at its
+    /// [`Core::ai_cancel`] is called with the same `run_id` (`Error::Invalid`). `run_id` is a
+    /// name the host makes up for this run, new each time (a UUID): a cancel names the run it
+    /// means, so a Stop that arrives late never hits the next run, and one that arrives before
+    /// the run took its place still stops it. An answer the service cut off at its
     /// length limit is `Error::Temporary` too, never returned as if complete. Refused with
     /// `Error::Invalid` when the assistant is off, not consented to, or this kind of task is
     /// switched off.
-    pub fn ai_run(&self, task: AiTask, listener: Arc<dyn AiListener>) -> Result<String> {
+    pub fn ai_run(&self, task: AiTask, run_id: String, listener: Arc<dyn AiListener>) -> Result<String> {
         // The slot first: from here on `ai_cancel` and `sign_out` see this run, and the account
         // is looked at only afterwards, so a run that starts once the session is gone fails.
-        let running = self.ai.begin()?;
+        let running = self.ai.begin(&run_id)?;
         let account_id = self.account_id()?;
         let settings = assistant::load(&self.store, &*self.secrets, &account_id)?;
         assistant::check_allowed(&settings, &task)?;
@@ -1091,9 +1126,10 @@ impl Core {
         })
     }
 
-    /// Stops the task that is running, if any. Does not block.
-    pub fn ai_cancel(&self) {
-        self.ai.cancel();
+    /// Stops the run `run_id`: now if it is running, or as soon as it starts if it has not yet
+    /// (remembered for a short list of recent ids). Another run is never touched. Does not block.
+    pub fn ai_cancel(&self, run_id: String) {
+        self.ai.cancel(&run_id);
     }
 }
 

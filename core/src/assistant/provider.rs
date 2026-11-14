@@ -12,12 +12,19 @@ use super::{
     settings,
     sse::{SseParser, ThinkFilter, MAX_HIDDEN},
 };
-use crate::{model::AiProvider, Error, Result};
+use crate::{
+    model::{AiEffort, AiProvider},
+    Error, Result,
+};
 
-/// The Messages API version header. Older versions stay valid, so this one is the safe choice.
-const ANTHROPIC_VERSION: &str = "2023-06-01";
-/// A cap on one Anthropic answer; the field is required there.
-const ANTHROPIC_MAX_TOKENS: u32 = 16_000;
+/// The Messages API version header. We send no sampling parameters, so nothing else depends on it.
+pub const ANTHROPIC_VERSION: &str = "2026-10-21";
+/// A cap on one Anthropic answer; the field is required there, and thinking counts against it.
+const ANTHROPIC_MAX_TOKENS: u32 = 32_000;
+
+/// The most that is read of one answer that is not a stream (a list of models, or a whole chat
+/// answer from a service that ignored `stream`).
+pub const MAX_BODY: usize = 2 * 1024 * 1024;
 
 /// More than this many characters of visible answer is a model that does not stop.
 const MAX_ANSWER_CHARS: usize = 100_000;
@@ -53,6 +60,8 @@ pub struct Endpoint {
     pub provider: AiProvider,
     pub base_url: String,
     pub model: String,
+    /// Sent to Anthropic only, and only when it is not `Default`.
+    pub effort: AiEffort,
     pub key: Option<String>,
 }
 
@@ -62,6 +71,7 @@ impl fmt::Debug for Endpoint {
             .field("provider", &self.provider)
             .field("base_url", &self.base_url)
             .field("model", &self.model)
+            .field("effort", &self.effort)
             .field("key", &if self.key.is_some() { "set" } else { "none" })
             .finish()
     }
@@ -98,14 +108,76 @@ pub fn request_parts(ep: &Endpoint, system: &str, user: &str) -> Parts {
                 .map(|k| ("x-api-key", k.clone()))
                 .chain([("anthropic-version", ANTHROPIC_VERSION.to_string())])
                 .collect(),
-            body: json!({
-                "model": ep.model,
-                "max_tokens": ANTHROPIC_MAX_TOKENS,
-                "stream": true,
-                "system": system,
-                "messages": [{"role": "user", "content": user}],
-            }),
+            body: {
+                let mut body = json!({
+                    "model": ep.model,
+                    "max_tokens": ANTHROPIC_MAX_TOKENS,
+                    "stream": true,
+                    "system": system,
+                    "messages": [{"role": "user", "content": user}],
+                });
+                if let Some(level) = effort_name(ep.effort) {
+                    body["output_config"] = json!({"effort": level});
+                }
+                body
+            },
         },
+    }
+}
+
+/// The word the Messages API uses for an effort; `None` for `Default`, which is not sent.
+pub fn effort_name(effort: AiEffort) -> Option<&'static str> {
+    match effort {
+        AiEffort::Default => None,
+        AiEffort::Low => Some("low"),
+        AiEffort::Medium => Some("medium"),
+        AiEffort::High => Some("high"),
+        AiEffort::XHigh => Some("xhigh"),
+        AiEffort::Max => Some("max"),
+    }
+}
+
+/// A header value that never shows up in a log (the key goes through here).
+pub fn sensitive(value: &str) -> Result<HeaderValue> {
+    let mut value = HeaderValue::from_str(value).map_err(|_| Error::invalid("the key cannot be sent"))?;
+    value.set_sensitive(true);
+    Ok(value)
+}
+
+/// An HTTP client that follows no redirects (the key would be sent along to wherever the
+/// service points). `total` limits the whole request, the body included.
+pub fn client(connect: Duration, total: Option<Duration>) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().connect_timeout(connect).redirect(reqwest::redirect::Policy::none());
+    if let Some(total) = total {
+        builder = builder.timeout(total);
+    }
+    builder.build().map_err(|_| Error::temporary("could not set up the connection"))
+}
+
+/// Why a body could not be read.
+pub enum BodyError {
+    TooLarge,
+    Broken,
+}
+
+/// The body of `response`, at most `cap` bytes, with `idle` allowed between two chunks.
+pub async fn read_capped(
+    mut response: reqwest::Response,
+    cap: usize,
+    idle: Duration,
+) -> std::result::Result<Vec<u8>, BodyError> {
+    let mut body = Vec::new();
+    loop {
+        match timeout(idle, response.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                if body.len() + chunk.len() > cap {
+                    return Err(BodyError::TooLarge);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            Ok(Ok(None)) => return Ok(body),
+            Ok(Err(_)) | Err(_) => return Err(BodyError::Broken),
+        }
     }
 }
 
@@ -137,7 +209,12 @@ pub fn parse_openai(data: &str) -> Result<Parsed> {
         _ => {}
     }
     Ok(Parsed {
-        text: choice["delta"]["content"].as_str().unwrap_or_default().to_string(),
+        // `delta` in a stream; a service that ignored `stream` answers with `message`.
+        text: choice["delta"]["content"]
+            .as_str()
+            .or(choice["message"]["content"].as_str())
+            .unwrap_or_default()
+            .to_string(),
         finished: choice["finish_reason"].as_str().is_some(),
         stop: false,
     })
@@ -154,6 +231,21 @@ pub fn parse_anthropic(data: &str) -> Result<Parsed> {
         Some("message_delta") if event["delta"]["stop_reason"] == "max_tokens" => Err(cut_off()),
         Some("message_stop") => Ok(Parsed { stop: true, ..Parsed::default() }),
         Some("error") => Err(stream_error()),
+        // A service that ignored `stream` answers with the whole message.
+        Some("message") if event["content"].is_array() => match event["stop_reason"].as_str() {
+            Some("refusal") => Err(declined()),
+            Some("max_tokens") => Err(cut_off()),
+            _ => {
+                let text: String = event["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|b| b["type"] == "text")
+                    .filter_map(|b| b["text"].as_str())
+                    .collect();
+                Ok(Parsed { text, stop: true, ..Parsed::default() })
+            }
+        },
         _ => Ok(Parsed::default()),
     }
 }
@@ -237,21 +329,14 @@ pub async fn complete(
         return Err(Error::invalid("this service needs a key"));
     }
     let parts = request_parts(ep, system, user);
-    // No redirects: `x-api-key` would be sent along to wherever the service points.
-    let client = reqwest::Client::builder()
-        .connect_timeout(timeouts.connect)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| Error::temporary("could not set up the connection"))?;
+    let client = client(timeouts.connect, None)?;
     let mut request = client
         .post(&parts.url)
         .header("content-type", "application/json")
         .header("accept", "text/event-stream")
         .body(parts.body.to_string());
     for (name, value) in parts.headers {
-        let mut value = HeaderValue::from_str(&value).map_err(|_| Error::invalid("the key cannot be sent"))?;
-        value.set_sensitive(true);
-        request = request.header(name, value);
+        request = request.header(name, sensitive(&value)?);
     }
     let mut response = match timeout(timeouts.first, request.send()).await {
         Err(_) => return Err(Error::temporary("the service did not answer in time")),
@@ -273,23 +358,41 @@ pub async fn complete(
         finished: false,
         stopped: false,
     };
-    let mut sse = SseParser::default();
-    'stream: loop {
-        let limit = if reader.sink.answer.is_empty() { timeouts.first } else { timeouts.idle };
-        let chunk = match timeout(limit, response.chunk()).await {
-            Err(_) => return Err(Error::temporary("the service stopped answering")),
-            Ok(Err(_)) | Ok(Ok(None)) => break,
-            Ok(Ok(Some(chunk))) => chunk,
+    let one_piece = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| t.to_ascii_lowercase().contains("application/json"));
+    if one_piece {
+        // A service that ignored `stream` and sent the whole answer as one JSON document.
+        let body = match read_capped(response, MAX_BODY, timeouts.first).await {
+            Ok(body) => body,
+            Err(BodyError::TooLarge) => {
+                return Err(Error::temporary("the answer grew longer than expected and was stopped"))
+            }
+            Err(BodyError::Broken) => return Err(Error::temporary("the service stopped answering")),
         };
-        for data in sse.feed(&chunk)? {
-            reader.event(&data)?;
-            if reader.stopped {
-                break 'stream;
+        reader.event(&String::from_utf8_lossy(&body))?;
+        reader.stopped = true;
+    } else {
+        let mut sse = SseParser::default();
+        'stream: loop {
+            let limit = if reader.sink.answer.is_empty() { timeouts.first } else { timeouts.idle };
+            let chunk = match timeout(limit, response.chunk()).await {
+                Err(_) => return Err(Error::temporary("the service stopped answering")),
+                Ok(Err(_)) | Ok(Ok(None)) => break,
+                Ok(Ok(Some(chunk))) => chunk,
+            };
+            for data in sse.feed(&chunk)? {
+                reader.event(&data)?;
+                if reader.stopped {
+                    break 'stream;
+                }
             }
         }
-    }
-    if let Some(data) = sse.finish()?.filter(|_| !reader.stopped) {
-        reader.event(&data)?;
+        if let Some(data) = sse.finish()?.filter(|_| !reader.stopped) {
+            reader.event(&data)?;
+        }
     }
     if !(reader.finished || reader.stopped) {
         return Err(Error::temporary("the connection to the service broke while it was answering"));
@@ -318,6 +421,7 @@ mod tests {
             provider,
             base_url: "https://api.example.com/v1".into(),
             model: "m-1".into(),
+            effort: AiEffort::Default,
             key: key.map(String::from),
         }
     }
@@ -350,9 +454,35 @@ mod tests {
         assert_eq!(header(&parts, "authorization"), None);
         assert_eq!(
             parts.body,
-            json!({"model": "m-1", "max_tokens": 16000, "stream": true, "system": "sys",
+            json!({"model": "m-1", "max_tokens": 32000, "stream": true, "system": "sys",
                    "messages": [{"role": "user", "content": "usr"}]})
         );
+    }
+
+    #[test]
+    fn effort_goes_into_the_anthropic_body_only() {
+        for (effort, word) in [
+            (AiEffort::Low, "low"),
+            (AiEffort::Medium, "medium"),
+            (AiEffort::High, "high"),
+            (AiEffort::XHigh, "xhigh"),
+            (AiEffort::Max, "max"),
+        ] {
+            let anthropic = Endpoint { effort, ..ep(AiProvider::Anthropic, Some("k")) };
+            assert_eq!(request_parts(&anthropic, "s", "u").body["output_config"], json!({"effort": word}));
+            let openai = Endpoint { effort, ..ep(AiProvider::OpenAiCompatible, None) };
+            assert!(request_parts(&openai, "s", "u").body.get("output_config").is_none());
+        }
+        let default = request_parts(&ep(AiProvider::Anthropic, Some("k")), "s", "u");
+        assert!(default.body.get("output_config").is_none());
+    }
+
+    #[test]
+    fn a_whole_answer_is_read_from_message_content() {
+        let whole = r#"{"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}"#;
+        assert_eq!(parse_openai(whole).unwrap(), Parsed { text: "Hi".into(), finished: true, stop: false });
+        let long = r#"{"choices":[{"message":{"content":"Hi"},"finish_reason":"length"}]}"#;
+        assert!(matches!(parse_openai(long), Err(Error::Temporary { .. })));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! An in-process mock of an AI service speaking both protocols over plain http on 127.0.0.1:
-//! OpenAI-style `POST /v1/chat/completions` and Anthropic-style `POST /v1/messages`, both
-//! streaming. It records what it received, so a test can assert exactly what left the device,
+//! OpenAI-style `POST /v1/chat/completions` and Anthropic-style `POST /v1/messages` (streaming,
+//! or one JSON document for `Script::Whole`) and `GET /v1/models` in either style. It records what it received, so a test can assert exactly what left the device,
 //! and it echoes whatever credentials it got into its error answers, so a test can check that
 //! the key never comes back out through an error message.
 
@@ -14,9 +14,9 @@ use std::{
 use axum::{
     body::{Body, Bytes},
     extract::{Request, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use futures_util::stream;
@@ -38,15 +38,52 @@ pub enum Script {
     Cut(Vec<String>),
     /// The pieces, then an error event that echoes the credentials.
     StreamError(Vec<String>),
+    /// An OpenAI-style service that ignores `stream` and answers with this text as one JSON
+    /// document.
+    Whole(String),
     /// The pieces, then the service's own output limit: `finish_reason: length` /
     /// `stop_reason: max_tokens`.
     Length(Vec<String>),
+}
+
+/// What `GET /v1/models` answers.
+#[derive(Clone, Debug)]
+pub enum Models {
+    /// OpenAI style: `{"data":[{"id":..}]}`, in this order.
+    Ids(Vec<String>),
+    /// Anthropic style, one inner list per page, paged by `after_id`.
+    Pages(Vec<Vec<ModelSpec>>),
+    /// An error status; the body echoes the credentials it was sent.
+    Status(u16),
+    /// A redirect to this address.
+    Redirect(String),
+    /// A 200 that is not JSON.
+    Garbage,
+    /// A JSON document longer than any list should be.
+    Huge,
+}
+
+/// One model of the Anthropic-style list.
+#[derive(Clone, Debug)]
+pub struct ModelSpec {
+    pub id: String,
+    pub name: String,
+    /// The effort levels it supports ("low".."max"); empty: `capabilities.effort.supported` is false.
+    pub efforts: Vec<String>,
+}
+
+impl ModelSpec {
+    pub fn new(id: &str, name: &str, efforts: &[&str]) -> ModelSpec {
+        ModelSpec { id: id.into(), name: name.into(), efforts: efforts.iter().map(|e| e.to_string()).collect() }
+    }
 }
 
 /// One request as it arrived.
 #[derive(Clone, Debug)]
 pub struct Seen {
     pub path: String,
+    /// The query string, empty when there is none.
+    pub query: String,
     pub authorization: Option<String>,
     pub api_key: Option<String>,
     pub version: Option<String>,
@@ -71,6 +108,7 @@ impl Seen {
 
 struct Shared {
     script: Mutex<Script>,
+    models: Mutex<Models>,
     split_events: Mutex<bool>,
     seen: Mutex<Vec<Seen>>,
     hits: Mutex<HashMap<String, usize>>,
@@ -94,6 +132,7 @@ impl MockAi {
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let shared = Arc::new(Shared {
             script: Mutex::new(Script::Answer(vec!["ok".into()])),
+            models: Mutex::new(Models::Ids(Vec::new())),
             split_events: Mutex::new(false),
             seen: Mutex::default(),
             hits: Mutex::default(),
@@ -101,6 +140,7 @@ impl MockAi {
         let app = Router::new()
             .route("/v1/chat/completions", post(openai))
             .route("/v1/messages", post(anthropic))
+            .route("/v1/models", get(models))
             .fallback(other)
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
@@ -121,6 +161,11 @@ impl MockAi {
 
     pub fn set(&self, script: Script) {
         *self.shared.script.lock().unwrap() = script;
+    }
+
+    /// What the model list answers with.
+    pub fn set_models(&self, models: Models) {
+        *self.shared.models.lock().unwrap() = models;
     }
 
     /// Answers with these pieces.
@@ -162,11 +207,12 @@ fn credentials(headers: &HeaderMap) -> String {
     format!("{} {}", get("authorization"), get("x-api-key")).trim().to_string()
 }
 
-async fn record(s: &Shared, path: &str, headers: &HeaderMap, body: Bytes) {
+async fn record(s: &Shared, path: &str, query: &str, headers: &HeaderMap, body: Bytes) {
     *s.hits.lock().unwrap().entry(path.to_string()).or_default() += 1;
     let get = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
     s.seen.lock().unwrap().push(Seen {
         path: path.to_string(),
+        query: query.to_string(),
         authorization: get("authorization"),
         api_key: get("x-api-key"),
         version: get("anthropic-version"),
@@ -175,13 +221,68 @@ async fn record(s: &Shared, path: &str, headers: &HeaderMap, body: Bytes) {
 }
 
 async fn openai(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
-    record(&s, "/v1/chat/completions", &headers, body).await;
+    record(&s, "/v1/chat/completions", "", &headers, body).await;
     respond(&s, &headers, false)
 }
 
 async fn anthropic(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
-    record(&s, "/v1/messages", &headers, body).await;
+    record(&s, "/v1/messages", "", &headers, body).await;
     respond(&s, &headers, true)
+}
+
+async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> Response {
+    record(&s, "/v1/models", uri.query().unwrap_or_default(), &headers, Bytes::new()).await;
+    let after = uri.query().and_then(|q| {
+        url::form_urlencoded::parse(q.as_bytes()).find(|(k, _)| k == "after_id").map(|(_, v)| v.to_string())
+    });
+    let script = s.models.lock().unwrap().clone();
+    let json = |value: Value| {
+        Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(value.to_string()))
+            .unwrap()
+    };
+    match script {
+        Models::Ids(ids) => json(
+            json!({"object": "list", "data": ids.iter().map(|id| json!({"id": id, "object": "model"})).collect::<Vec<_>>()}),
+        ),
+        Models::Pages(pages) => {
+            let at = match &after {
+                None => 0,
+                Some(last) => {
+                    pages.iter().position(|p| p.last().is_some_and(|m| &m.id == last)).map_or(pages.len(), |i| i + 1)
+                }
+            };
+            let Some(page) = pages.get(at) else { return StatusCode::BAD_REQUEST.into_response() };
+            let level = |on: bool| json!({"supported": on});
+            let data: Vec<Value> = page
+                .iter()
+                .map(|m| {
+                    let has = |l: &str| m.efforts.iter().any(|e| e == l);
+                    json!({"type": "model", "id": m.id, "display_name": m.name, "capabilities": {"effort": {
+                        "supported": !m.efforts.is_empty(), "low": level(has("low")), "medium": level(has("medium")),
+                        "high": level(has("high")), "xhigh": level(has("xhigh")), "max": level(has("max"))}}})
+                })
+                .collect();
+            let last = page.last().map(|m| m.id.clone());
+            json(
+                json!({"data": data, "has_more": at + 1 < pages.len(), "first_id": page.first().map(|m| m.id.clone()), "last_id": last}),
+            )
+        }
+        Models::Status(code) => {
+            let body = json!({"error": {"message": format!("Incorrect API key provided: {}", credentials(&headers))}});
+            (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response()
+        }
+        Models::Redirect(to) => Response::builder()
+            .status(StatusCode::TEMPORARY_REDIRECT)
+            .header(header::LOCATION, to)
+            .body(Body::empty())
+            .unwrap(),
+        Models::Garbage => (StatusCode::OK, "this is not json").into_response(),
+        Models::Huge => {
+            (StatusCode::OK, format!("{{\"data\":[],\"pad\":\"{}\"}}", "x".repeat(2_200_000))).into_response()
+        }
+    }
 }
 
 /// One step of a stream: bytes to send, or a pause (`None` ends the stream).
@@ -203,6 +304,17 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool) -> Response {
                 .status(StatusCode::TEMPORARY_REDIRECT)
                 .header(header::LOCATION, to)
                 .body(Body::empty())
+                .unwrap();
+        }
+        Script::Whole(text) => {
+            let body = if anthropic {
+                json!({"type": "message", "role": "assistant", "content": [{"type": "thinking", "thinking": "private"}, {"type": "text", "text": text}], "stop_reason": "end_turn"})
+            } else {
+                json!({"choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
+            };
+            return Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
                 .unwrap();
         }
         Script::Answer(pieces) => (pieces, Tail::Done),

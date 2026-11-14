@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kweb_core::model::AiProvider;
+use kweb_core::model::{AiEffort, AiProvider};
 
 pub const USAGE: &str = "\
 kweb: a developer tool that drives kweb-core against a Stalwart server.
@@ -31,9 +31,14 @@ Usage:
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
   kweb ai status              show how the AI assistant is set up (never the key)
-  kweb ai set <provider> <base-url> <model> [--yes]
-                              set it up; provider is openai or anthropic. The key is read
-                              from $KWEB_AI_KEY. Without --yes it only says what you agree to
+  kweb ai set <provider> <base-url> <model> [--effort <level>] [--yes]
+                              set up that service and use it; provider is openai or anthropic,
+                              each keeps its own address, model, key and consent. The key is
+                              read from $KWEB_AI_KEY. Without --yes it only says what you agree
+                              to. Effort (default, low, medium, high, xhigh, max) is sent to
+                              Anthropic only; left out, the stored one is kept
+  kweb ai models [provider]   list the models of the service (the one in use, or that provider);
+                              uses $KWEB_AI_KEY if set, else the stored key
   kweb ai summary <message-id>
                               summarise a message, printed as it streams
   kweb sign-out               revoke the grant and wipe the cache
@@ -80,8 +85,20 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ai {
     Status,
-    Set { provider: AiProvider, base_url: String, model: String, yes: bool },
-    Summary { id: String },
+    Set {
+        provider: AiProvider,
+        base_url: String,
+        model: String,
+        effort: Option<AiEffort>,
+        yes: bool,
+    },
+    /// The service in use when no provider is named.
+    Models {
+        provider: Option<AiProvider>,
+    },
+    Summary {
+        id: String,
+    },
 }
 
 /// What `kweb away` does.
@@ -174,32 +191,65 @@ fn send(rest: &[String]) -> Result<Command, String> {
 
 fn ai(rest: &[String]) -> Result<Ai, String> {
     match rest.split_first() {
-        None => Err("ai needs status, set or summary".into()),
+        None => Err("ai needs status, set, models or summary".into()),
         Some((sub, rest)) => match sub.as_str() {
             "status" => no_args(rest, Command::Status).map(|_| Ai::Status),
             "summary" => one_arg("ai summary", "message-id", rest).map(|id| Ai::Summary { id }),
             "set" => ai_set(rest),
-            other => Err(format!("ai takes status, set or summary, not '{other}'")),
+            "models" => match rest {
+                [] => Ok(Ai::Models { provider: None }),
+                [one] => provider_named(one).map(|p| Ai::Models { provider: Some(p) }),
+                [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+            },
+            other => Err(format!("ai takes status, set, models or summary, not '{other}'")),
         },
+    }
+}
+
+fn provider_named(name: &str) -> Result<AiProvider, String> {
+    match name.to_ascii_lowercase().as_str() {
+        "openai" | "openai-compatible" => Ok(AiProvider::OpenAiCompatible),
+        "anthropic" => Ok(AiProvider::Anthropic),
+        other => Err(format!("the provider is openai or anthropic, not '{other}'")),
+    }
+}
+
+fn effort_named(name: &str) -> Result<AiEffort, String> {
+    match name.to_ascii_lowercase().as_str() {
+        "default" => Ok(AiEffort::Default),
+        "low" => Ok(AiEffort::Low),
+        "medium" => Ok(AiEffort::Medium),
+        "high" => Ok(AiEffort::High),
+        "xhigh" => Ok(AiEffort::XHigh),
+        "max" => Ok(AiEffort::Max),
+        other => Err(format!("the effort is default, low, medium, high, xhigh or max, not '{other}'")),
     }
 }
 
 /// The key is never an argument: it is read from the environment (see `kweb help`).
 fn ai_set(rest: &[String]) -> Result<Ai, String> {
-    let yes = rest.iter().any(|a| a == "--yes");
-    let words: Vec<&String> = rest.iter().filter(|a| *a != "--yes").collect();
-    if let Some(flag) = words.iter().find(|a| a.starts_with("--")) {
-        return Err(format!("unknown option '{flag}'"));
+    let mut yes = false;
+    let mut effort = None;
+    let mut words: Vec<&String> = Vec::new();
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--yes" {
+            yes = true;
+        } else if arg == "--effort" {
+            let value = args.next().ok_or("--effort needs a level")?;
+            effort = Some(effort_named(value)?);
+        } else if let Some(value) = arg.strip_prefix("--effort=") {
+            effort = Some(effort_named(value)?);
+        } else if arg.starts_with("--") {
+            return Err(format!("unknown option '{arg}'"));
+        } else {
+            words.push(arg);
+        }
     }
     let [provider, base_url, model] = words[..] else {
         return Err("ai set needs <provider> <base-url> <model>".into());
     };
-    let provider = match provider.to_ascii_lowercase().as_str() {
-        "openai" | "openai-compatible" => AiProvider::OpenAiCompatible,
-        "anthropic" => AiProvider::Anthropic,
-        other => return Err(format!("the provider is openai or anthropic, not '{other}'")),
-    };
-    Ok(Ai::Set { provider, base_url: base_url.clone(), model: model.clone(), yes })
+    Ok(Ai::Set { provider: provider_named(provider)?, base_url: base_url.clone(), model: model.clone(), effort, yes })
 }
 
 fn agenda(rest: &[String]) -> Result<Command, String> {
@@ -293,7 +343,13 @@ mod tests {
         assert_eq!(p(&["ai", "status"]), Ok(Command::Ai(Ai::Status)));
         assert_eq!(p(&["ai", "summary", "e1"]), Ok(Command::Ai(Ai::Summary { id: "e1".into() })));
         let set = |provider, yes| {
-            Ok(Command::Ai(Ai::Set { provider, base_url: "https://a.example/v1".into(), model: "m".into(), yes }))
+            Ok(Command::Ai(Ai::Set {
+                provider,
+                base_url: "https://a.example/v1".into(),
+                model: "m".into(),
+                effort: None,
+                yes,
+            }))
         };
         assert_eq!(p(&["ai", "set", "openai", "https://a.example/v1", "m"]), set(AiProvider::OpenAiCompatible, false));
         assert_eq!(
@@ -303,6 +359,22 @@ mod tests {
         assert_eq!(
             p(&["ai", "set", "--yes", "openai", "https://a.example/v1", "m"]),
             set(AiProvider::OpenAiCompatible, true)
+        );
+        let with_effort = |args: &[&str]| match p(args) {
+            Ok(Command::Ai(Ai::Set { effort, yes, .. })) => (effort, yes),
+            other => panic!("{other:?}"),
+        };
+        let base = ["ai", "set", "anthropic", "https://a.example/v1", "m"];
+        fn plus<'a>(base: &[&'a str], more: &[&'a str]) -> Vec<&'a str> {
+            [base, more].concat()
+        }
+        assert_eq!(with_effort(&plus(&base, &["--effort", "XHigh"])), (Some(AiEffort::XHigh), false));
+        assert_eq!(with_effort(&plus(&base, &["--effort=low", "--yes"])), (Some(AiEffort::Low), true));
+        assert_eq!(with_effort(&plus(&base, &["--yes", "--effort", "default"])), (Some(AiEffort::Default), true));
+        assert_eq!(p(&["ai", "models"]), Ok(Command::Ai(Ai::Models { provider: None })));
+        assert_eq!(
+            p(&["ai", "models", "Anthropic"]),
+            Ok(Command::Ai(Ai::Models { provider: Some(AiProvider::Anthropic) }))
         );
     }
 
@@ -320,6 +392,10 @@ mod tests {
             &["ai", "set", "openai", "https://a.example/v1", "m", "extra"],
             &["ai", "set", "openai", "https://a.example/v1", "m", "--key", "sk-1"],
             &["ai", "set", "openai", "https://a.example/v1", "m", "--key=sk-1"],
+            &["ai", "set", "openai", "https://a.example/v1", "m", "--effort"],
+            &["ai", "set", "openai", "https://a.example/v1", "m", "--effort", "huge"],
+            &["ai", "models", "gemini"],
+            &["ai", "models", "openai", "x"],
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }

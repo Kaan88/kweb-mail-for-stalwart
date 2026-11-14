@@ -5,14 +5,17 @@ mod support;
 
 use std::{
     fs,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
 use kweb_core::{
     assistant::provider::{self, Endpoint, Timeouts},
     ffi::{AiListener, Core, Shade},
-    model::{AiProvider, AiSettings, AiTask, DraftKind, RewriteStyle},
+    model::{AiEffort, AiProvider, AiSettings, AiTask, DraftKind, RewriteStyle},
     secrets::{MemorySecrets, SecretStore, REFRESH_TOKEN},
     store::Store,
     Error,
@@ -21,8 +24,11 @@ use support::*;
 use tokio::runtime::Runtime;
 
 const KEY: &str = "sk-test-KEY-0123456789";
-/// Where the core keeps the key: the name is part of what the host's store sees.
-const KEY_NAME: &str = "ai_key";
+/// Where the core keeps the key of each service: the names are part of what the host's store sees.
+const KEY_NAME: &str = "ai_key_openai";
+const ANTHROPIC_KEY_NAME: &str = "ai_key_anthropic";
+/// Where stage 1 kept its one key.
+const OLD_KEY_NAME: &str = "ai_key";
 
 #[derive(Default)]
 struct Heard(Mutex<Vec<String>>);
@@ -85,6 +91,7 @@ impl Rig {
             provider,
             base_url: self.ai.base_url(),
             model: "test-model".into(),
+            effort: AiEffort::Default,
             has_key: false,
             consented: true,
             allow_summaries: true,
@@ -115,8 +122,12 @@ impl Rig {
     }
 
     fn run(&self, task: AiTask) -> (Result<String, Error>, Arc<Heard>) {
+        self.run_as(&fresh_id(), task)
+    }
+
+    fn run_as(&self, run_id: &str, task: AiTask) -> (Result<String, Error>, Arc<Heard>) {
         let heard = Arc::new(Heard::default());
-        (self.core.ai_run(task, heard.clone()), heard)
+        (self.core.ai_run(task, run_id.into(), heard.clone()), heard)
     }
 
     /// Everything the cache file and its journals hold, as bytes.
@@ -131,6 +142,12 @@ impl Rig {
     fn reopen(&self) -> Arc<Core> {
         Core::new(self.db_path.clone(), self.secrets.clone() as Arc<dyn SecretStore>).unwrap()
     }
+}
+
+/// A name for a run, new each time, as the host makes one.
+fn fresh_id() -> String {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    format!("run-{}", NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
 fn summary(id: &str) -> AiTask {
@@ -152,6 +169,21 @@ fn temporary(result: Result<String, Error>) -> String {
     match result {
         Err(Error::Temporary { msg }) => msg,
         other => panic!("expected Error::Temporary, got {other:?}"),
+    }
+}
+
+fn core_settings() -> AiSettings {
+    AiSettings {
+        enabled: false,
+        provider: AiProvider::Anthropic,
+        base_url: String::new(),
+        model: String::new(),
+        effort: AiEffort::Default,
+        has_key: false,
+        consented: false,
+        allow_summaries: true,
+        allow_drafts: true,
+        allow_rewrites: true,
     }
 }
 
@@ -295,9 +327,14 @@ fn a_kept_key_is_not_sent_to_another_service() {
 fn signing_out_removes_the_key_and_the_settings() {
     let rig = Rig::new();
     rig.configure(AiProvider::Anthropic);
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.secrets.set(OLD_KEY_NAME.into(), "sk-left-over".into()).unwrap();
     assert!(rig.secrets.get(REFRESH_TOKEN.into()).unwrap().is_some());
+    assert!(rig.secrets.get(ANTHROPIC_KEY_NAME.into()).unwrap().is_some());
     rig.core.sign_out().unwrap();
-    assert_eq!(rig.secrets.get(KEY_NAME.into()).unwrap(), None);
+    for name in [KEY_NAME, ANTHROPIC_KEY_NAME, OLD_KEY_NAME] {
+        assert_eq!(rig.secrets.get(name.into()).unwrap(), None, "{name}");
+    }
     assert_eq!(rig.secrets.get(REFRESH_TOKEN.into()).unwrap(), None);
     assert!(matches!(rig.core.ai_settings(), Err(Error::SignInNeeded { .. })));
     let bytes = rig.cache_bytes();
@@ -313,7 +350,10 @@ fn nothing_works_signed_out() {
     let path = dir.path().join("cache.db").to_string_lossy().into_owned();
     let core = Core::new(path, Arc::new(MemorySecrets::default())).unwrap();
     assert!(matches!(core.ai_settings(), Err(Error::SignInNeeded { .. })));
-    let result = core.ai_run(rewrite("x", RewriteStyle::Improve), Arc::new(Heard::default()));
+    let result = core.ai_run(rewrite("x", RewriteStyle::Improve), fresh_id(), Arc::new(Heard::default()));
+    assert!(matches!(core.ai_service(AiProvider::Anthropic), Err(Error::SignInNeeded { .. })));
+    let asked = AiSettings { base_url: "https://a.example/v1".into(), ..core_settings() };
+    assert!(matches!(core.ai_models(asked, None), Err(Error::SignInNeeded { .. })));
     assert!(matches!(result, Err(Error::SignInNeeded { .. })));
 }
 
@@ -744,6 +784,7 @@ fn a_service_that_goes_quiet_is_given_up_on() {
         provider: AiProvider::OpenAiCompatible,
         base_url: rig.ai.base_url(),
         model: "m".into(),
+        effort: AiEffort::Default,
         key: Some(KEY.into()),
     };
     let timeouts =
@@ -762,17 +803,21 @@ fn a_service_that_goes_quiet_is_given_up_on() {
 fn a_running_task_can_be_cancelled_from_another_thread_and_only_one_runs_at_a_time() {
     let rig = Rig::new();
     rig.configure(AiProvider::OpenAiCompatible);
-    rig.core.ai_cancel(); // nothing runs: no effect on what comes next
+    rig.core.ai_cancel("old-run".into()); // nothing runs: no effect on what comes next
     rig.ai.set(Script::Hang(vec!["start ".into()]));
 
     let heard = Arc::new(Heard::default());
     let worker = {
         let (core, heard) = (rig.core.clone(), heard.clone());
-        std::thread::spawn(move || core.ai_run(rewrite("x", RewriteStyle::Improve), heard))
+        std::thread::spawn(move || core.ai_run(rewrite("x", RewriteStyle::Improve), "worker".into(), heard))
     };
     eventually("the first piece", || !heard.pieces().is_empty());
     assert!(invalid(rig.run(rewrite("y", RewriteStyle::Shorter)).0).contains("already working"));
-    rig.core.ai_cancel();
+    // A stop for another run does not touch it; its own does.
+    rig.core.ai_cancel("someone-else".into());
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!worker.is_finished());
+    rig.core.ai_cancel("worker".into());
     assert_eq!(invalid(worker.join().unwrap()), "cancelled");
 
     // The slot is free again.
@@ -788,7 +833,7 @@ fn signing_out_stops_a_running_task_and_removes_the_key() {
     let heard = Arc::new(Heard::default());
     let worker = {
         let (core, heard) = (rig.core.clone(), heard.clone());
-        std::thread::spawn(move || core.ai_run(rewrite("x", RewriteStyle::Improve), heard))
+        std::thread::spawn(move || core.ai_run(rewrite("x", RewriteStyle::Improve), "worker".into(), heard))
     };
     eventually("the first piece", || !heard.pieces().is_empty());
     rig.core.sign_out().unwrap();
@@ -857,8 +902,13 @@ fn an_answer_that_never_stops_is_cut_at_a_size_limit() {
 fn the_wait_for_the_first_word_is_longer_than_the_pause_between_words() {
     let rig = Rig::new();
     rig.ai.set(Script::Hang(Vec::new()));
-    let ep =
-        Endpoint { provider: AiProvider::OpenAiCompatible, base_url: rig.ai.base_url(), model: "m".into(), key: None };
+    let ep = Endpoint {
+        provider: AiProvider::OpenAiCompatible,
+        base_url: rig.ai.base_url(),
+        model: "m".into(),
+        effort: AiEffort::Default,
+        key: None,
+    };
     let timeouts = Timeouts {
         connect: Duration::from_secs(5),
         first: Duration::from_millis(900),
@@ -906,4 +956,479 @@ fn a_thread_whose_bodies_are_gone_says_so_and_sends_nothing_when_none_are_left()
     let sent = rig.ai.requests();
     assert!(invalid(rig.run(task).0).contains("no mail to summarise"));
     assert_eq!(rig.ai.requests(), sent);
+}
+
+// ---- round 2: one profile per service -------------------------------------------------------
+
+const OTHER_KEY: &str = "sk-other-KEY-9876543210";
+
+#[test]
+fn each_service_keeps_its_own_address_model_effort_key_and_consent() {
+    let rig = Rig::new();
+    let elsewhere = rig.rt.block_on(MockAi::start());
+    let openai = AiSettings { effort: AiEffort::Low, ..rig.settings(AiProvider::OpenAiCompatible) };
+    let anthropic = AiSettings {
+        base_url: elsewhere.base_url(),
+        model: "claude-x".into(),
+        effort: AiEffort::High,
+        ..rig.settings(AiProvider::Anthropic)
+    };
+    let a = rig.save_agreed(openai.clone(), Some(KEY.into()));
+    let b = rig.save_agreed(anthropic.clone(), Some(OTHER_KEY.into()));
+    assert_eq!((a.provider, b.provider), (AiProvider::OpenAiCompatible, AiProvider::Anthropic));
+    assert_eq!(rig.core.ai_settings().unwrap(), b, "the last one saved is in use");
+    // Each key is under its own name, and each service shows its own values.
+    assert_eq!(rig.secrets.get(KEY_NAME.into()).unwrap().as_deref(), Some(KEY));
+    assert_eq!(rig.secrets.get(ANTHROPIC_KEY_NAME.into()).unwrap().as_deref(), Some(OTHER_KEY));
+    let first = rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap();
+    assert_eq!(first, a);
+    assert!(first.consented && first.has_key && first.effort == AiEffort::Low);
+    assert_eq!(rig.core.ai_service(AiProvider::Anthropic).unwrap(), b);
+    // Asking changed nothing.
+    assert_eq!(rig.core.ai_settings().unwrap(), b);
+
+    // Another model for one service clears its consent and nobody else's; the keys stay.
+    let moved = AiSettings { model: "claude-y".into(), ..anthropic.clone() };
+    assert!(!rig.core.set_ai_settings(moved, None).unwrap().consented);
+    assert_eq!(rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap(), a);
+    // Switching to the first one and back keeps what was entered, and its consent.
+    let back = rig.core.set_ai_settings(first.clone(), None).unwrap();
+    assert!(back.consented && back.has_key && back.base_url == rig.ai.base_url());
+    assert_eq!(rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap(), "ok");
+    assert_eq!(rig.ai.last().authorization.as_deref(), Some(format!("Bearer {KEY}").as_str()));
+    assert_eq!(rig.core.ai_service(AiProvider::Anthropic).unwrap().model, "claude-y");
+    // A change of one service's address drops only its own key.
+    let far = AiSettings { base_url: "https://far.example/v1".into(), ..first };
+    assert!(!rig.core.set_ai_settings(far, None).unwrap().has_key);
+    assert_eq!(rig.secrets.get(KEY_NAME.into()).unwrap(), None);
+    assert_eq!(rig.secrets.get(ANTHROPIC_KEY_NAME.into()).unwrap().as_deref(), Some(OTHER_KEY));
+    assert!(rig.core.ai_service(AiProvider::Anthropic).unwrap().has_key);
+    // A refused save stores nothing, for either service.
+    let before = rig.core.ai_service(AiProvider::Anthropic).unwrap();
+    let bad = AiSettings { base_url: "http://api.example.com/v1".into(), ..before.clone() };
+    assert!(matches!(rig.core.set_ai_settings(bad, Some("sk-new".into())), Err(Error::Invalid { .. })));
+    assert_eq!(rig.core.ai_service(AiProvider::Anthropic).unwrap(), before);
+    assert_eq!(rig.secrets.get(ANTHROPIC_KEY_NAME.into()).unwrap().as_deref(), Some(OTHER_KEY));
+}
+
+#[test]
+fn a_service_never_set_up_shows_empty_values_and_anthropic_its_own_address() {
+    let rig = Rig::new();
+    let openai = rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap();
+    assert_eq!(
+        (openai.base_url.as_str(), openai.model.as_str(), openai.consented, openai.has_key),
+        ("", "", false, false)
+    );
+    let anthropic = rig.core.ai_service(AiProvider::Anthropic).unwrap();
+    assert_eq!(anthropic.provider, AiProvider::Anthropic);
+    assert_eq!(anthropic.base_url, "https://api.anthropic.com/v1");
+    assert_eq!((anthropic.model.as_str(), anthropic.effort, anthropic.consented), ("", AiEffort::Default, false));
+    assert_eq!(rig.core.ai_settings().unwrap().provider, AiProvider::OpenAiCompatible, "nothing was changed");
+    // The shared switches show in either.
+    rig.core
+        .set_ai_settings(AiSettings { allow_rewrites: false, ..rig.settings(AiProvider::OpenAiCompatible) }, None)
+        .unwrap();
+    assert!(!rig.core.ai_service(AiProvider::Anthropic).unwrap().allow_rewrites);
+    assert!(rig.core.ai_service(AiProvider::Anthropic).unwrap().enabled);
+}
+
+#[test]
+fn the_key_is_in_no_cache_file_no_debug_text_and_no_error() {
+    let rig = Rig::new();
+    let settings = rig.configure(AiProvider::OpenAiCompatible);
+    rig.core.set_ai_settings(rig.settings(AiProvider::Anthropic), Some(OTHER_KEY.into())).unwrap();
+    let bytes = rig.cache_bytes();
+    for key in [KEY, OTHER_KEY] {
+        assert!(!bytes.windows(key.len()).any(|w| w == key.as_bytes()), "{key} is in the cache files");
+    }
+    assert!(!format!("{settings:?}").contains(KEY));
+    for status in [401, 500] {
+        rig.ai.set_models(Models::Status(status));
+        let asked = AiSettings { base_url: rig.ai.base_url(), ..rig.settings(AiProvider::OpenAiCompatible) };
+        let text = format!("{:?}", rig.core.ai_models(asked.clone(), None));
+        assert!(!text.contains(KEY) && !text.contains("Incorrect API key"), "{text}");
+        let text = format!("{:?}", rig.core.ai_models(asked, Some("sk-typed-1".into())));
+        assert!(!text.contains("sk-typed-1") && !text.contains("Incorrect API key"), "{text}");
+    }
+    assert!(rig.ai.hits("/v1/models") >= 4, "the mock did echo the key");
+    let spaced = rig.core.ai_models(rig.settings(AiProvider::OpenAiCompatible), Some("sk bad".into()));
+    assert!(matches!(&spaced, Err(Error::Invalid { msg }) if !msg.contains("sk bad")));
+}
+
+#[test]
+fn stage_one_data_is_migrated_on_first_use() {
+    for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+        let rig = Rig::new();
+        let word = if provider == AiProvider::Anthropic { "Anthropic" } else { "OpenAiCompatible" };
+        let flat = format!(
+            r#"{{"enabled":true,"provider":"{word}","base_url":"{}","model":"old-model","has_key":false,
+                "consented":true,"allow_summaries":true,"allow_drafts":false,"allow_rewrites":true}}"#,
+            rig.ai.base_url()
+        );
+        let store = Store::open(std::path::Path::new(&rig.db_path)).unwrap();
+        store.kv_set(ACCOUNT_ID, "ai_settings", &flat).unwrap();
+        rig.secrets.set(OLD_KEY_NAME.into(), KEY.into()).unwrap();
+
+        let loaded = rig.core.ai_settings().unwrap();
+        assert_eq!(loaded.provider, provider);
+        assert!(loaded.enabled && loaded.consented && loaded.has_key && !loaded.allow_drafts);
+        assert_eq!((loaded.model.as_str(), loaded.base_url.as_str()), ("old-model", rig.ai.base_url().as_str()));
+        assert_eq!(loaded.effort, AiEffort::Default);
+        let (own, other) = if provider == AiProvider::Anthropic {
+            (ANTHROPIC_KEY_NAME, KEY_NAME)
+        } else {
+            (KEY_NAME, ANTHROPIC_KEY_NAME)
+        };
+        assert_eq!(rig.secrets.get(own.into()).unwrap().as_deref(), Some(KEY));
+        assert_eq!(rig.secrets.get(other.into()).unwrap(), None);
+        assert_eq!(rig.secrets.get(OLD_KEY_NAME.into()).unwrap(), None);
+        // The other service starts empty, and the migrated one runs with its old consent and key.
+        let rest = rig
+            .core
+            .ai_service(if provider == AiProvider::Anthropic {
+                AiProvider::OpenAiCompatible
+            } else {
+                AiProvider::Anthropic
+            })
+            .unwrap();
+        assert!(!rest.consented && !rest.has_key && rest.model.is_empty());
+        assert_eq!(rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap(), "ok");
+        let seen = rig.ai.last();
+        let sent = seen.authorization.as_deref().map(|a| a.trim_start_matches("Bearer ")).or(seen.api_key.as_deref());
+        assert_eq!(sent, Some(KEY));
+        // It survives a save that changes nothing, and a new core.
+        assert!(rig.core.set_ai_settings(loaded.clone(), None).unwrap().consented);
+        assert_eq!(rig.reopen().ai_settings().unwrap(), loaded);
+    }
+}
+
+// ---- effort and the whole-document answer -----------------------------------------------------
+
+#[test]
+fn effort_reaches_the_anthropic_body_and_never_the_openai_one() {
+    let rig = Rig::new();
+    for (effort, word) in [
+        (AiEffort::Low, Some("low")),
+        (AiEffort::Medium, Some("medium")),
+        (AiEffort::High, Some("high")),
+        (AiEffort::XHigh, Some("xhigh")),
+        (AiEffort::Max, Some("max")),
+        (AiEffort::Default, None),
+    ] {
+        rig.save_agreed(AiSettings { effort, ..rig.settings(AiProvider::Anthropic) }, Some(KEY.into()));
+        rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+        let seen = rig.ai.last();
+        assert_eq!(seen.body["output_config"]["effort"].as_str(), word, "{effort:?}");
+        assert_eq!(seen.body.get("output_config").is_some(), word.is_some());
+        assert_eq!(seen.body["max_tokens"], 32000);
+        assert_eq!(seen.version.as_deref(), Some("2026-10-21"));
+        // The other service, with the same effort, is never sent it.
+        rig.save_agreed(AiSettings { effort, ..rig.settings(AiProvider::OpenAiCompatible) }, None);
+        rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+        assert!(rig.ai.last().body.get("output_config").is_none(), "{effort:?}");
+    }
+    // The effort is stored per service.
+    assert_eq!(rig.core.ai_service(AiProvider::Anthropic).unwrap().effort, AiEffort::Default);
+    rig.save_agreed(AiSettings { effort: AiEffort::Max, ..rig.settings(AiProvider::Anthropic) }, None);
+    assert_eq!(rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap().effort, AiEffort::Default);
+    assert_eq!(rig.reopen().ai_settings().unwrap().effort, AiEffort::Max);
+}
+
+#[test]
+fn a_service_that_ignores_stream_is_read_from_its_one_document() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set(Script::Whole("<think>hmm</think>\n\nThe whole answer.\n".into()));
+    let (answer, heard) = rig.run(rewrite("x", RewriteStyle::Improve));
+    assert_eq!(answer.unwrap(), "The whole answer.");
+    assert_eq!(heard.pieces().len(), 1, "heard once");
+    assert_eq!(heard.all().trim(), "The whole answer.");
+    assert_eq!(rig.ai.last().body["stream"], true, "it was asked to stream all the same");
+    // An empty one is an error like an empty stream.
+    rig.ai.set(Script::Whole("  ".into()));
+    assert_eq!(temporary(rig.run(rewrite("x", RewriteStyle::Improve)).0), "the service sent an empty answer");
+}
+
+#[test]
+fn an_anthropic_service_that_ignores_stream_is_read_from_its_one_document() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set(Script::Whole("The whole answer.".into()));
+    let (answer, heard) = rig.run(rewrite("x", RewriteStyle::Improve));
+    assert_eq!(answer.unwrap(), "The whole answer.");
+    assert_eq!(heard.all().trim(), "The whole answer.", "the thinking block is not part of it");
+    rig.ai.set(Script::Whole("  ".into()));
+    assert_eq!(temporary(rig.run(rewrite("x", RewriteStyle::Improve)).0), "the service sent an empty answer");
+}
+
+// ---- the model list ----------------------------------------------------------------------------
+
+fn asked(rig: &Rig, provider: AiProvider) -> AiSettings {
+    AiSettings { base_url: rig.ai.base_url(), ..rig.settings(provider) }
+}
+
+fn ids(list: &kweb_core::model::AiModelList) -> Vec<&str> {
+    list.models.iter().map(|m| m.id.as_str()).collect()
+}
+
+#[test]
+fn an_openai_service_lists_its_models_sorted_by_id_with_the_stored_key() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set_models(Models::Ids(vec!["zeta".into(), "alpha".into(), "mid".into()]));
+    let list = rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    assert!(list.from_service);
+    assert_eq!(ids(&list), ["alpha", "mid", "zeta"]);
+    assert!(list.models.iter().all(|m| m.name == m.id && m.efforts.is_empty()));
+    let seen = rig.ai.last();
+    assert_eq!(
+        (seen.path.as_str(), seen.authorization.as_deref()),
+        ("/v1/models", Some(format!("Bearer {KEY}").as_str()))
+    );
+    assert_eq!(seen.api_key, None);
+    // Without a key none is sent, and an address with a trailing slash is the same address.
+    let plain =
+        AiSettings { base_url: format!(" {}/ ", rig.ai.base_url()), ..rig.settings(AiProvider::OpenAiCompatible) };
+    rig.core.set_ai_settings(AiSettings { enabled: false, ..plain.clone() }, Some(String::new())).unwrap();
+    let settings_before = rig.core.ai_settings().unwrap();
+    rig.core.ai_models(plain, None).unwrap();
+    assert_eq!(rig.ai.last().authorization, None);
+    // Nothing was stored (the settings and the key are as they were), and no mail was sent.
+    assert_eq!(rig.core.ai_settings().unwrap(), settings_before);
+    assert_eq!(rig.secrets.get(KEY_NAME.into()).unwrap(), None);
+    assert!(rig.ai.seen().iter().all(|s| s.path == "/v1/models"));
+}
+
+#[test]
+fn a_stored_key_is_not_sent_to_another_host_by_the_model_list() {
+    let rig = Rig::new();
+    let elsewhere = rig.rt.block_on(MockAi::start());
+    rig.configure(AiProvider::OpenAiCompatible);
+    elsewhere.set_models(Models::Ids(vec!["m".into()]));
+    let there = AiSettings { base_url: elsewhere.base_url(), ..rig.settings(AiProvider::OpenAiCompatible) };
+    assert!(rig.core.ai_models(there.clone(), None).unwrap().from_service);
+    assert_eq!(elsewhere.last().authorization, None, "the stored key stayed home");
+    // A key typed for that address goes there, as given, and is stored nowhere.
+    rig.core.ai_models(there, Some(" sk-typed-1 ".into())).unwrap();
+    assert_eq!(elsewhere.last().authorization.as_deref(), Some("Bearer sk-typed-1"));
+    assert_eq!(rig.secrets.get(KEY_NAME.into()).unwrap().as_deref(), Some(KEY));
+    // The other provider's stored key is not used for this one either.
+    rig.core.set_ai_settings(rig.settings(AiProvider::Anthropic), Some(OTHER_KEY.into())).unwrap();
+    rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    assert_eq!(rig.ai.last().authorization.as_deref(), Some(format!("Bearer {KEY}").as_str()));
+}
+
+#[test]
+fn an_openai_service_that_cannot_be_asked_is_an_error_never_a_made_up_list() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    let s = asked(&rig, AiProvider::OpenAiCompatible);
+    for (script, expected) in [
+        (Models::Status(401), "the service refused the key"),
+        (Models::Status(403), "the service refused the key"),
+        (Models::Status(404), "the service does not know this model or address"),
+        (Models::Status(429), "the service is busy or the quota is used up"),
+        (Models::Status(503), "the service has a problem (status 503); try again later"),
+        (Models::Garbage, "the service gave an answer that could not be read"),
+        (Models::Huge, "the list of models is too long"),
+    ] {
+        rig.ai.set_models(script.clone());
+        assert_eq!(temporary_models(rig.core.ai_models(s.clone(), None)), expected, "{script:?}");
+    }
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let dead = AiSettings { base_url: format!("http://127.0.0.1:{port}/v1"), ..s.clone() };
+    assert_eq!(
+        temporary_models(rig.core.ai_models(dead, Some(KEY.into()))),
+        format!("could not reach the service at 127.0.0.1:{port}")
+    );
+    // An address that is not allowed is refused before anything is sent.
+    let before = rig.ai.requests();
+    let bad = AiSettings { base_url: "http://api.example.com/v1".into(), ..s };
+    assert!(matches!(rig.core.ai_models(bad, Some(KEY.into())), Err(Error::Invalid { .. })));
+    assert_eq!(rig.ai.requests(), before);
+}
+
+fn temporary_models(result: Result<kweb_core::model::AiModelList, Error>) -> String {
+    match result {
+        Err(Error::Temporary { msg }) => msg,
+        other => panic!("expected Error::Temporary, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_redirect_is_not_followed_by_the_model_list() {
+    let rig = Rig::new();
+    let elsewhere = rig.rt.block_on(MockAi::start());
+    elsewhere.set_models(Models::Ids(vec!["m".into()]));
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set_models(Models::Redirect(format!("{}/models", elsewhere.base_url())));
+    let result = rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None);
+    assert!(temporary_models(result).contains("status 307"));
+    assert_eq!(elsewhere.requests(), 0);
+}
+
+fn spec(id: &str, name: &str, efforts: &[&str]) -> ModelSpec {
+    ModelSpec::new(id, name, efforts)
+}
+
+#[test]
+fn anthropic_models_come_from_all_pages_with_their_effort_levels() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set_models(Models::Pages(vec![
+        vec![
+            spec("claude-b", "Claude B", &["low", "medium", "high", "xhigh", "max"]),
+            spec("claude-a", "Claude A", &["low", "high"]),
+        ],
+        vec![spec("claude-old", "Claude Old", &[])],
+        vec![spec("claude-older", "Claude Older", &["max"])],
+    ]));
+    let list = rig.core.ai_models(asked(&rig, AiProvider::Anthropic), None).unwrap();
+    assert!(list.from_service);
+    assert_eq!(ids(&list), ["claude-b", "claude-a", "claude-old", "claude-older"], "as the service orders them");
+    assert_eq!(list.models[0].name, "Claude B");
+    assert_eq!(
+        list.models[0].efforts,
+        [AiEffort::Low, AiEffort::Medium, AiEffort::High, AiEffort::XHigh, AiEffort::Max]
+    );
+    assert_eq!(list.models[1].efforts, [AiEffort::Low, AiEffort::High]);
+    assert!(list.models[2].efforts.is_empty());
+    assert_eq!(list.models[3].efforts, [AiEffort::Max]);
+
+    let seen = rig.ai.seen();
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[0].query, "limit=1000");
+    assert_eq!(seen[1].query, "limit=1000&after_id=claude-a");
+    assert_eq!(seen[2].query, "limit=1000&after_id=claude-old");
+    assert!(seen
+        .iter()
+        .all(|s| s.path == "/v1/models" && s.api_key.as_deref() == Some(KEY) && s.authorization.is_none()));
+    assert!(seen.iter().all(|s| s.version.as_deref() == Some("2026-10-21")));
+}
+
+#[test]
+fn anthropic_pages_are_followed_at_most_ten_times() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set_models(Models::Pages((0..14).map(|n| vec![spec(&format!("m{n}"), "M", &[])]).collect()));
+    let list = rig.core.ai_models(asked(&rig, AiProvider::Anthropic), None).unwrap();
+    assert!(list.from_service);
+    assert_eq!(list.models.len(), 10);
+    assert_eq!(rig.ai.hits("/v1/models"), 10);
+}
+
+#[test]
+fn anthropic_without_a_key_or_with_a_service_in_trouble_gets_the_built_in_list() {
+    let rig = Rig::new();
+    let s = asked(&rig, AiProvider::Anthropic);
+    // No key: the built-in list, and nobody is asked.
+    let list = rig.core.ai_models(s.clone(), None).unwrap();
+    assert!(!list.from_service);
+    assert_eq!(ids(&list), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]);
+    assert_eq!(list.models[0].name, "Claude Opus 5.5");
+    assert!(list.models.iter().all(|m| m.efforts.len() == 5));
+    assert_eq!(rig.ai.requests(), 0);
+    let blank = rig.core.ai_models(s.clone(), Some("  ".into())).unwrap();
+    assert!(!blank.from_service && rig.ai.requests() == 0);
+
+    // A key the user typed and has not saved is used.
+    rig.ai.set_models(Models::Pages(vec![vec![spec("only", "Only", &[])]]));
+    let typed = rig.core.ai_models(s.clone(), Some("sk-typed-1".into())).unwrap();
+    assert!(typed.from_service && ids(&typed) == ["only"]);
+    assert_eq!(rig.ai.last().api_key.as_deref(), Some("sk-typed-1"));
+
+    // Trouble at the service, a gateway without a list, an answer that is not a list: built in.
+    // A refused key: an error.
+    for code in [404, 400, 405, 429, 500, 503] {
+        rig.ai.set_models(Models::Status(code));
+        let list = rig.core.ai_models(s.clone(), Some(KEY.into())).unwrap();
+        assert!(!list.from_service, "{code}");
+    }
+    for script in [Models::Garbage, Models::Huge, Models::Redirect(format!("{}/elsewhere", rig.ai.base_url()))] {
+        rig.ai.set_models(script.clone());
+        let list = rig.core.ai_models(s.clone(), Some(KEY.into())).unwrap();
+        assert!(!list.from_service, "{script:?}");
+    }
+    for code in [401, 403] {
+        rig.ai.set_models(Models::Status(code));
+        let error = rig.core.ai_models(s.clone(), Some(KEY.into()));
+        assert!(!format!("{error:?}").contains(KEY));
+        assert_eq!(temporary_models(error), "the service refused the key", "{code}");
+    }
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let dead = AiSettings { base_url: format!("http://127.0.0.1:{port}/v1"), ..s };
+    assert!(!rig.core.ai_models(dead, Some(KEY.into())).unwrap().from_service);
+}
+
+#[test]
+fn the_model_list_of_anthropic_uses_the_stored_key_only_for_its_own_address() {
+    let rig = Rig::new();
+    let elsewhere = rig.rt.block_on(MockAi::start());
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set_models(Models::Pages(vec![vec![spec("a", "A", &[])]]));
+    assert!(rig.core.ai_models(asked(&rig, AiProvider::Anthropic), None).unwrap().from_service);
+    // Another address, no typed key: no key, so no request at all and the built-in list.
+    let there = AiSettings { base_url: elsewhere.base_url(), ..rig.settings(AiProvider::Anthropic) };
+    let list = rig.core.ai_models(there, None).unwrap();
+    assert!(!list.from_service);
+    assert_eq!(elsewhere.requests(), 0);
+}
+
+#[test]
+fn a_leftover_anthropic_key_is_not_taken_for_one_entered_for_the_default_address() {
+    let rig = Rig::new();
+    // The key stays in the secret store, the settings are gone (never stored for this account).
+    rig.secrets.set(ANTHROPIC_KEY_NAME.into(), OTHER_KEY.into()).unwrap();
+    let default = rig.core.ai_service(AiProvider::Anthropic).unwrap();
+    assert_eq!(default.base_url, "https://api.anthropic.com/v1", "shown as the default");
+    // Nothing is asked of that host with it, and saving the default address does not keep it.
+    let asked = AiSettings { enabled: false, ..default };
+    let list = rig.core.ai_models(asked.clone(), None).unwrap();
+    assert!(!list.from_service);
+    assert_eq!(rig.ai.requests(), 0);
+    let saved = rig.core.set_ai_settings(asked, None).unwrap();
+    assert!(!saved.has_key);
+    assert_eq!(rig.secrets.get(ANTHROPIC_KEY_NAME.into()).unwrap(), None);
+}
+
+// ---- run ids -------------------------------------------------------------------------------------
+
+#[test]
+fn a_stop_that_comes_before_its_run_stops_it_and_never_the_next_one() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    // The old race: the stop for "a" arrives, then "b" starts. "b" runs.
+    rig.core.ai_cancel("a".into());
+    assert_eq!(rig.run_as("b", rewrite("x", RewriteStyle::Improve)).0.unwrap(), "ok");
+    let sent = rig.ai.requests();
+    // "a" starts late: refused at once as cancelled, nothing sent, and forgotten.
+    assert_eq!(invalid(rig.run_as("a", rewrite("x", RewriteStyle::Improve)).0), "cancelled");
+    assert_eq!(rig.ai.requests(), sent);
+    assert_eq!(rig.run_as("a", rewrite("x", RewriteStyle::Improve)).0.unwrap(), "ok");
+    // A stop for a run that finished long ago does nothing to a run with another name.
+    rig.core.ai_cancel("b".into());
+    assert_eq!(rig.run_as("c", rewrite("x", RewriteStyle::Improve)).0.unwrap(), "ok");
+}
+
+#[test]
+fn a_stop_names_the_run_it_means_while_another_runs() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set(Script::Hang(vec!["start ".into()]));
+    let heard = Arc::new(Heard::default());
+    let worker = {
+        let (core, heard) = (rig.core.clone(), heard.clone());
+        std::thread::spawn(move || core.ai_run(rewrite("x", RewriteStyle::Improve), "first".into(), heard))
+    };
+    eventually("the first piece", || !heard.pieces().is_empty());
+    // A late Stop of an earlier run, and a Stop of one that has not begun, leave "first" alone.
+    rig.core.ai_cancel("earlier".into());
+    rig.core.ai_cancel("later".into());
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(!worker.is_finished());
+    // "later" is refused when it begins (the slot is not even looked at), "other" finds it busy.
+    assert_eq!(invalid(rig.run_as("later", rewrite("x", RewriteStyle::Improve)).0), "cancelled");
+    assert!(invalid(rig.run_as("other", rewrite("x", RewriteStyle::Improve)).0).contains("already working"));
+    rig.core.ai_cancel("first".into());
+    assert_eq!(invalid(worker.join().unwrap()), "cancelled");
 }
