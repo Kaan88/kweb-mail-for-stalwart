@@ -116,3 +116,13 @@ Two things to know: after switching between `-PskipNative` and a full build, Kot
 - No battery optimisation, no maker's task killer: the foreground service is never killed by the system, so it proves the logic, not the delivery.
 - The emulator's clock and time zone are UTC unless set: `adb shell service call alarm 3 s16 Europe/Istanbul` changes the zone.
 - The server is plain HTTP here; the real one is HTTPS, so the TLS path (rustls with the platform verifier) is only exercised on the phone.
+
+## What the scouting left on the test server (2026-11-14)
+
+- Extra users: `second@kweb.test` (password in `~/tools/stalwart-test/etc/second.txt`), `filesq@kweb.test` (small quotas) and `files2@kweb.test`. The tester shares mail folders, calendars, address books and a file folder with them at different levels; `dev/notes/stalwart-sharing.md` and `stalwart-files.md` list them.
+- `Sharing.allowDirectoryQueries` is on (the default is off), so users can be looked up. To put it back: `stalwart-cli update Sharing --field allowDirectoryQueries=false`, then the `ReloadSettings` action (commands in the sharing note).
+- The tester has a tree of test files (Docs, Photos, Shared).
+
+## The CLI against the test server
+
+`KWEB_HOME=~/.cache/kweb-mail/cli-home $CARGO_TARGET_DIR/debug/kweb sign-in http://127.0.0.1:18080` prints an address; open it in a browser on this machine and sign in as the tester. After that `kweb files`, `kweb inbox` and the rest run against the real local server, which is the quickest real check of a core change.
