@@ -372,6 +372,83 @@ pub struct Agenda {
     pub from_cache: bool,
 }
 
+/// One of the user's address books.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AddressBook {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+    /// The user may add and change contacts in it.
+    pub may_write: bool,
+}
+
+/// A value of a contact with what it is for: a mail address, a phone number, a postal address.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Labeled {
+    /// "work", "private" or a word of the user's own; empty when it says nothing.
+    pub label: String,
+    pub value: String,
+}
+
+/// What the user can see and set on a contact. A card on the server can hold more (pictures,
+/// several names, online services, anniversaries): that stays as it is when the contact is saved.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Contact {
+    pub address_book_id: String,
+    /// The name as it is shown and sorted; never empty for a stored contact (the first mail
+    /// address stands in when the card has no name).
+    pub name: String,
+    pub given_name: String,
+    pub family_name: String,
+    pub organization: String,
+    pub emails: Vec<Labeled>,
+    pub phones: Vec<Labeled>,
+    /// Postal addresses, each as free text with line breaks.
+    pub addresses: Vec<Labeled>,
+    pub notes: String,
+}
+
+/// A row of the contact list.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContactRow {
+    pub id: String,
+    pub name: String,
+    /// The first mail address; empty when there is none.
+    pub email: String,
+    pub organization: String,
+}
+
+/// The contact list.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ContactList {
+    /// Sorted by name, without regard to case and accents as far as the core can tell.
+    pub rows: Vec<ContactRow>,
+    /// The server could not be reached: this is what the cache holds.
+    pub from_cache: bool,
+}
+
+/// A contact in full.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ContactDetail {
+    pub id: String,
+    pub contact: Contact,
+    /// The user may change or delete it.
+    pub may_write: bool,
+}
+
+/// The automatic answer to incoming mail while the user is away (JMAP VacationResponse).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AwayMessage {
+    pub is_enabled: bool,
+    /// From when it answers, Unix seconds; `None` is from now on.
+    pub from: Option<i64>,
+    /// Until when; `None` is until switched off.
+    pub until: Option<i64>,
+    pub subject: String,
+    /// The answer, as plain text.
+    pub text: String,
+}
+
 /// A calendar or task reminder the server fired. Times stay as the server gives them: the
 /// host has the time zone database and the user's locale, so it does the formatting.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

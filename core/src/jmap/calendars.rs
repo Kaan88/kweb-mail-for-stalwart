@@ -30,7 +30,7 @@ use super::{
     clock::parse_duration,
     errors::{is_state_mismatch, unauthorized},
     is_unauthorized, jscal,
-    send::{created_id, response, set_error, CREATE_ID},
+    send::{created_id, destroyed, response, updated, CREATE_ID},
     Connection,
 };
 use crate::{
@@ -204,7 +204,7 @@ impl Connection {
             match self.calendar_call(&[("CalendarEvent/set", args)]).await {
                 Err(e) if is_state_mismatch(&e) => continue,
                 Err(e) => return Err(e),
-                Ok(responses) => return updated(response(&responses, "CalendarEvent/set")?, id),
+                Ok(responses) => return updated(response(&responses, "CalendarEvent/set")?, id, NO_SUCH_EVENT),
             }
         }
         Err(Error::temporary("the event was changed elsewhere while it was being saved; try again"))
@@ -287,27 +287,6 @@ fn identity_addresses(get: &Value) -> Vec<String> {
     addresses.map(|a| jscal::strip_mailto(a).to_lowercase()).filter(|a| !a.is_empty()).collect()
 }
 
-/// Whether a `/set` changed the object, or why not. An event that is gone is `Invalid`.
-fn updated(set: &Value, id: &str) -> Result<()> {
-    if let Some(e) = set["notUpdated"].get(id) {
-        return Err(if e["type"] == "notFound" { Error::invalid(NO_SUCH_EVENT) } else { set_error(e) });
-    }
-    match set["updated"].get(id) {
-        Some(_) => Ok(()),
-        None => Err(Error::temporary("the server's answer does not say whether it changed")),
-    }
-}
-
-/// Whether a `/set` destroyed the object. One that is already gone is as good as destroyed.
-fn destroyed(set: &Value, id: &str) -> Result<()> {
-    match set["notDestroyed"].get(id) {
-        Some(e) if e["type"] != "notFound" => Err(set_error(e)),
-        Some(_) => Ok(()),
-        None if set["destroyed"].as_array().is_some_and(|ids| ids.iter().any(|d| d == id)) => Ok(()),
-        None => Err(Error::temporary("the server's answer does not say whether it was deleted")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,25 +323,5 @@ mod tests {
             {"id": "c", "calendarAddress": null}
         ]});
         assert_eq!(identity_addresses(&get), ["tester@kweb.test", "alias@kweb.test"]);
-    }
-
-    #[test]
-    fn an_update_is_told_from_a_refusal_and_a_vanished_event() {
-        assert!(updated(&json!({"updated": {"e1": null}}), "e1").is_ok());
-        assert!(updated(&json!({"updated": {"e1": {"sequence": 2}}}), "e1").is_ok());
-        let gone = updated(&json!({"notUpdated": {"e1": {"type": "notFound"}}}), "e1").unwrap_err();
-        assert_eq!(gone, Error::invalid(NO_SUCH_EVENT));
-        let refused = updated(&json!({"notUpdated": {"e1": {"type": "invalidPatch", "description": "no"}}}), "e1");
-        assert!(matches!(refused, Err(Error::Invalid { .. })));
-        assert!(matches!(updated(&json!({}), "e1"), Err(Error::Temporary { .. })));
-    }
-
-    #[test]
-    fn a_delete_of_an_event_that_is_gone_is_done() {
-        assert!(destroyed(&json!({"destroyed": ["e1"]}), "e1").is_ok());
-        assert!(destroyed(&json!({"notDestroyed": {"e1": {"type": "notFound"}}}), "e1").is_ok());
-        let refused = destroyed(&json!({"notDestroyed": {"e1": {"type": "forbidden"}}}), "e1");
-        assert!(matches!(refused, Err(Error::Invalid { .. })));
-        assert!(matches!(destroyed(&json!({}), "e1"), Err(Error::Temporary { .. })));
     }
 }

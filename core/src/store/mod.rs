@@ -7,6 +7,7 @@
 mod bodies;
 mod bookkeeping;
 mod calendar;
+mod contacts;
 mod drafts;
 mod mailboxes;
 mod messages;
@@ -31,6 +32,8 @@ pub struct Store {
     pass: tokio::sync::Mutex<()>,
     /// When the identities and the address book were last fetched by this process.
     directory: Mutex<Option<Instant>>,
+    /// See [`contacts::Cards`].
+    cards: Mutex<contacts::Cards>,
 }
 
 impl Store {
@@ -59,7 +62,12 @@ impl Store {
         conn.busy_timeout(Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         schema::migrate(&mut conn, schema::MIGRATIONS)?;
-        Ok(Store { conn: Mutex::new(conn), pass: tokio::sync::Mutex::new(()), directory: Mutex::new(None) })
+        Ok(Store {
+            conn: Mutex::new(conn),
+            pass: tokio::sync::Mutex::new(()),
+            directory: Mutex::new(None),
+            cards: Mutex::default(),
+        })
     }
 
     /// The schema version of the open database.
@@ -116,6 +124,8 @@ impl Store {
     pub fn delete_account(&self, account_id: &str) -> Result<()> {
         self.write(|c| {
             c.execute("DELETE FROM accounts WHERE id = ?1", [account_id])?;
+            let mut cards = self.cards_state();
+            (cards.listed, cards.generation) = (None, cards.generation + 1);
             Ok(())
         })
     }

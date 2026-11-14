@@ -6,6 +6,7 @@ pub mod actions;
 mod android;
 pub mod auth;
 pub mod compose;
+pub mod contacts;
 pub mod error;
 pub mod ffi;
 pub mod jmap;

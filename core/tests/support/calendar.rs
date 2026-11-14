@@ -315,7 +315,7 @@ fn pick(object: &Value, props: Option<&[&str]>) -> Value {
 /// A PatchObject applied to a copy of the event: every path is a JSON pointer without the
 /// leading slash, a null removes. A path into an object that is not there fails, and then the
 /// event is unchanged. The error is the path that failed.
-fn apply_patch(event: &Value, patch: &Value) -> Result<Value, String> {
+pub fn apply_patch(event: &Value, patch: &Value) -> Result<Value, String> {
     let mut next = event.clone();
     for (path, value) in patch.as_object().into_iter().flatten() {
         let parts: Vec<String> = path.split('/').map(|p| p.replace("~1", "/").replace("~0", "~")).collect();

@@ -10,11 +10,14 @@
 mod calendar;
 mod calendars;
 mod clock;
+mod contacts;
 mod convert;
 mod errors;
 mod jscal;
+mod jscontact;
 mod recur;
 mod send;
+mod vacation;
 
 use std::{io::Write, pin::Pin, time::Duration};
 
@@ -35,6 +38,7 @@ use crate::{
     model::{Action, Mailbox, MessageBody, MessageHeader},
     Error, Result,
 };
+pub use contacts::is_no_such_contact;
 use convert::{
     batch_size, body_part_properties, body_properties, header_properties, mailbox_properties, merge_pages,
     order_by_ids, to_body, to_header, to_mailbox, Page,

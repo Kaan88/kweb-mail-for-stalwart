@@ -187,6 +187,33 @@ pub(super) const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX agenda_entries_by_start ON agenda_entries (account_id, starts_at);
     ",
+    // 5: M6 (contacts). The address books and the contact cards, so the list and a contact can be
+    // shown offline. `contacts` (the recipient suggestions) stays and is rebuilt from the cards.
+    "
+    -- The address books in the server's order. An `AddressBook` as JSON.
+    CREATE TABLE address_books (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        position   INTEGER NOT NULL,
+        book       TEXT NOT NULL,
+        PRIMARY KEY (account_id, position)
+    );
+
+    -- One row per card: the `ContactRow` and the `Contact` as JSON, and what the list needs
+    -- without reading them: the order (`sort_key`, folded name) and what a search looks at.
+    -- `position` is the server's order, which the suggestions keep.
+    CREATE TABLE contact_cards (
+        account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        id           TEXT NOT NULL,
+        position     INTEGER NOT NULL,
+        sort_key     TEXT NOT NULL,
+        search       TEXT NOT NULL,
+        digits       TEXT NOT NULL,
+        row_json     TEXT NOT NULL,
+        contact_json TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+    CREATE INDEX contact_cards_by_name ON contact_cards (account_id, sort_key, id);
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

@@ -409,27 +409,13 @@ impl Store {
 
     // ---- address book ----
 
-    /// `(name, address)` in the server's order.
+    /// `(name, address)` in the server's order: the mail addresses of the contact cards (see
+    /// `contact_cards_replace`), each address once whatever its case, with the name of its first card.
     pub fn contacts_list(&self, account_id: &str) -> Result<Vec<Address>> {
         self.read(|c| {
             let mut stmt = c.prepare("SELECT name, email FROM contacts WHERE account_id = ?1 ORDER BY position")?;
             let rows = stmt.query_map([account_id], |r| Ok(Address { name: r.get(0)?, email: r.get(1)? }))?;
             Ok(rows.collect::<rusqlite::Result<_>>()?)
-        })
-    }
-
-    /// Replaces the address book. An address that comes twice (in any case) is kept once, with
-    /// the name of its first card.
-    pub fn contacts_replace(&self, account_id: &str, contacts: &[Address]) -> Result<()> {
-        self.write(|c| {
-            c.execute("DELETE FROM contacts WHERE account_id = ?1", [account_id])?;
-            let mut insert = c.prepare(
-                "INSERT OR IGNORE INTO contacts (account_id, email, name, position) VALUES (?1, ?2, ?3, ?4)",
-            )?;
-            for (position, contact) in contacts.iter().enumerate() {
-                insert.execute(params![account_id, contact.email, contact.name, position as i64])?;
-            }
-            Ok(())
         })
     }
 

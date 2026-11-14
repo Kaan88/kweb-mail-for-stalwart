@@ -5,6 +5,7 @@
 //! a blocking function of [`Core`] from inside the callback.
 
 use std::{
+    collections::HashMap,
     fs,
     future::Future,
     path::Path,
@@ -20,12 +21,12 @@ use tokio::{net::TcpListener, runtime::Runtime};
 use crate::{
     actions,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
-    compose,
+    compose, contacts,
     jmap::{self, is_unauthorized, Connection},
     model::{
-        Account, Action, Address, Agenda, Attachment, Calendar, ConnectionStatus, Draft, DraftKind, EventDetail,
-        EventInput, Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder,
-        SearchResult, ThreadRow,
+        Account, Action, Address, AddressBook, Agenda, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact,
+        ContactDetail, ContactList, Draft, DraftKind, EventDetail, EventInput, Identity, ListFilter, Mailbox,
+        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -71,6 +72,9 @@ struct Inner {
     watcher: Option<push::Handle>,
     /// The connection the reading calls share, with the access token it was made with.
     reader: Option<(String, Arc<Connection>)>,
+    /// The contact each form was last opened with, by contact id: what `save_contact` compares
+    /// the saved form with, so that only what the user changed is written.
+    contact_bases: HashMap<String, Contact>,
 }
 
 /// One per process. Owns the cache, the sign-in and the live connection.
@@ -189,6 +193,7 @@ impl Core {
             let mut inner = self.lock();
             inner.pending = None;
             inner.reader = None;
+            inner.contact_bases.clear();
             inner.session.take()
         };
         if let Some(session) = session {
@@ -679,6 +684,31 @@ impl Core {
         Ok(conn)
     }
 
+    /// Fetches every contact card and keeps them in the cache. `Some` is why the server could
+    /// not be reached, which leaves the cache as it is; a listing that a save or a delete
+    /// overtook is not kept and made once more.
+    fn refresh_contacts(&self, account_id: &str) -> Result<Option<Error>> {
+        for _ in 0..2 {
+            let generation = self.store.contact_generation();
+            match self.with_connection(|conn| async move { conn.contact_cards().await }) {
+                Ok(cards) if self.store.contact_cards_replace(account_id, &cards, generation)? => return Ok(None),
+                Ok(_) => {}
+                Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => return Err(e),
+                Err(e) => return Ok(Some(e)),
+            }
+        }
+        Ok(None)
+    }
+
+    /// The server says the contact is gone: it leaves the cache and the suggestions. Returns `e`.
+    fn forget_contact(&self, account_id: &str, contact_id: &str, e: Error) -> Error {
+        self.lock().contact_bases.remove(contact_id);
+        match self.store.contact_card_forget(account_id, contact_id) {
+            Ok(()) => e,
+            Err(store_error) => store_error,
+        }
+    }
+
     fn account_id(&self) -> Result<String> {
         self.lock().session.as_ref().map(|s| s.account.id.clone()).ok_or_else(not_signed_in)
     }
@@ -846,6 +876,122 @@ impl Core {
         let id = &event_id;
         self.with_connection(|conn| async move { conn.set_task_done(id, done).await })?;
         self.store.agenda_forget_event(&account_id, &event_id)
+    }
+}
+
+// ---- M6: contacts and the away message ----
+#[uniffi::export]
+impl Core {
+    /// The user's address books (network; the cached list when the server cannot be reached).
+    pub fn address_books(&self) -> Result<Vec<AddressBook>> {
+        let account_id = self.account_id()?;
+        match self.with_connection(|conn| async move { conn.address_books().await }) {
+            Ok(list) => {
+                self.store.address_books_replace(&account_id, &list)?;
+                Ok(list)
+            }
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => Err(e),
+            Err(e) => match self.store.address_books_list(&account_id)? {
+                // An empty cache says nothing: the list was never fetched, or the user has none.
+                list if list.is_empty() => Err(e),
+                list => Ok(list),
+            },
+        }
+    }
+
+    /// The contacts whose name, organization, mail address or phone number contains `query`
+    /// (all of them when it is blank), kept in the cache; from the cache with `from_cache` set
+    /// when the server cannot be reached. A blank query lists the server's cards (the call to
+    /// refresh the cache with); a search is answered from the cache once a listing is in it,
+    /// as a listing downloads every card. Sorted by name without regard to case and accents as
+    /// far as the core can tell (see `contacts::fold`: it does not cover other scripts or any
+    /// language's own order of letters). Every word of the query must be found; a query of only
+    /// digits and phone punctuation also finds a phone number by its digits. A cache that holds
+    /// nothing is not an answer: that is the server's error.
+    pub fn contacts(&self, query: String) -> Result<ContactList> {
+        let account_id = self.account_id()?;
+        let cached = !query.trim().is_empty() && self.store.contacts_listed(&account_id);
+        let failure = if cached { None } else { self.refresh_contacts(&account_id)? };
+        let index = self.store.contact_index(&account_id)?;
+        match failure {
+            Some(e) if index.is_empty() => Err(e),
+            failure => Ok(ContactList { rows: contacts::select(index, &query), from_cache: failure.is_some() }),
+        }
+    }
+
+    /// One contact in full (network; the cached card when the server cannot be reached). The
+    /// contact is remembered as what the form was opened with (see `save_contact`).
+    pub fn contact(&self, contact_id: String) -> Result<ContactDetail> {
+        let account_id = self.account_id()?;
+        let id = &contact_id;
+        let fetched =
+            self.with_connection(|conn| async move { Ok((conn.contact_card(id).await?, conn.address_books().await?)) });
+        let (contact, books) = match fetched {
+            Ok((entry, books)) => {
+                self.store.contact_card_put(&account_id, &entry)?;
+                self.store.address_books_replace(&account_id, &books)?;
+                (entry.contact, books)
+            }
+            Err(e) if jmap::is_no_such_contact(&e) => return Err(self.forget_contact(&account_id, &contact_id, e)),
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => return Err(e),
+            Err(e) => match self.store.contact_card_get(&account_id, &contact_id)? {
+                Some(contact) => (contact, self.store.address_books_list(&account_id)?),
+                None => return Err(e),
+            },
+        };
+        self.lock().contact_bases.insert(contact_id.clone(), contact.clone());
+        let may_write = books.iter().any(|b| b.id == contact.address_book_id && b.may_write);
+        Ok(ContactDetail { id: contact_id, contact, may_write })
+    }
+
+    /// Creates a contact (`contact_id` is `None`) or changes one (network). Returns its id. A
+    /// contact with neither a name nor a mail address, a malformed mail address or an unknown
+    /// address book is `Error::Invalid`. What the app does not show stays on the card, and so
+    /// does what was changed elsewhere since `contact` opened the form: of the saved contact
+    /// only what differs from the one `contact` handed out last is written (a contact never
+    /// opened is compared with the card as it is now).
+    pub fn save_contact(&self, contact_id: Option<String>, contact: Contact) -> Result<String> {
+        let account_id = self.account_id()?;
+        let base = contact_id.as_deref().and_then(|id| self.lock().contact_bases.get(id).cloned());
+        let (id, contact, base) = (contact_id.as_deref(), &contact, base.as_ref());
+        let saved = self.with_connection(|conn| async move {
+            let saved = conn.save_contact(id, contact, base).await?;
+            // The write is done: a card that cannot be read back must not make it a failure.
+            let fresh = conn.contact_card(&saved).await.ok();
+            Ok((saved, fresh))
+        });
+        let (saved, fresh) = match (saved, &contact_id) {
+            (Err(e), Some(id)) if jmap::is_no_such_contact(&e) => return Err(self.forget_contact(&account_id, id, e)),
+            (saved, _) => saved?,
+        };
+        self.lock().contact_bases.remove(&saved);
+        match fresh {
+            Some(entry) => self.store.contact_card_put(&account_id, &entry)?,
+            None => self.store.contact_card_forget(&account_id, &saved)?,
+        }
+        Ok(saved)
+    }
+
+    /// Deletes a contact (network).
+    pub fn delete_contact(&self, contact_id: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        let id = &contact_id;
+        self.with_connection(|conn| async move { conn.delete_contact(id).await })?;
+        self.store.contact_card_forget(&account_id, &contact_id)
+    }
+
+    /// The away message as the server has it (network).
+    pub fn away_message(&self) -> Result<AwayMessage> {
+        self.with_connection(|conn| async move { conn.away_message().await })
+    }
+
+    /// Switches the away message on or off and sets its dates and text (network). An end
+    /// before the start, or an enabled message without text, is `Error::Invalid`. A subject and
+    /// text that are as the server has them are not written, so formatting another client gave
+    /// the message stays; a text that is written replaces the HTML version.
+    pub fn set_away_message(&self, message: AwayMessage) -> Result<()> {
+        let message = &message;
+        self.with_connection(|conn| async move { conn.set_away_message(message).await })
     }
 }
 

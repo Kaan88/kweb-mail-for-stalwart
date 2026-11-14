@@ -1,6 +1,8 @@
 use super::*;
+use crate::contacts::Entry;
 use crate::model::{
-    Action, Address, Attachment, Calendar, ListFilter, Mailbox, MessageBody, MessageHeader, Occurrence, ThreadRow,
+    Action, Address, AddressBook, Attachment, Calendar, Contact, Labeled, ListFilter, Mailbox, MessageBody,
+    MessageHeader, Occurrence, ThreadRow,
 };
 
 const A: &str = "acc1";
@@ -1148,14 +1150,115 @@ fn identities_keep_the_servers_order_and_are_replaced_whole() {
     assert_eq!(st.identities_list(A).unwrap(), vec![id("c")]);
 }
 
+fn card(id: &str, name: &str, emails: &[&str]) -> Entry {
+    let contact = Contact {
+        address_book_id: "b".into(),
+        name: name.into(),
+        given_name: String::new(),
+        family_name: String::new(),
+        organization: String::new(),
+        emails: emails.iter().map(|e| Labeled { label: String::new(), value: e.to_string() }).collect(),
+        phones: vec![Labeled { label: String::new(), value: "+49 30 1234".into() }],
+        addresses: Vec::new(),
+        notes: String::new(),
+    };
+    Entry::new(id.into(), contact)
+}
+
+fn suggested(st: &Store) -> Vec<(String, String)> {
+    st.contacts_list(A).unwrap().into_iter().map(|a| (a.name, a.email)).collect()
+}
+
+/// A listing that started just now and is kept.
+fn replace(st: &Store, cards: &[Entry]) {
+    assert!(st.contact_cards_replace(A, cards, st.contact_generation()).unwrap());
+}
+
+fn listed(st: &Store) -> Vec<String> {
+    st.contact_index(A).unwrap().into_iter().map(|i| i.row.id).collect()
+}
+
 #[test]
-fn contacts_keep_order_and_an_address_once_whatever_its_case() {
+fn the_cards_are_listed_by_name_and_replaced_whole() {
     let st = s();
-    let c = |name: &str, email: &str| Address { name: name.into(), email: email.into() };
-    st.contacts_replace(A, &[c("Zed", "zed@x.org"), c("Ann", "ann@x.org"), c("Ann Again", "ANN@x.org")]).unwrap();
-    assert_eq!(st.contacts_list(A).unwrap(), vec![c("Zed", "zed@x.org"), c("Ann", "ann@x.org")]);
-    st.contacts_replace(A, &[]).unwrap();
+    replace(&st, &[card("c1", "Özge", &["o@x.org"]), card("c2", "Ann", &[]), card("c3", "ann", &[])]);
+    // By folded name, then id: "ann" and "Ann" tie, "Özge" sorts as an o.
+    assert_eq!(listed(&st), ["c2", "c3", "c1"]);
+    let first = st.contact_index(A).unwrap().remove(0);
+    assert_eq!((first.row.name.as_str(), first.digits.as_str()), ("Ann", "49301234"));
+    assert_eq!(st.contact_card_get(A, "c1").unwrap().unwrap().emails[0].value, "o@x.org");
+    assert!(st.contact_card_get(A, "zz").unwrap().is_none());
+    replace(&st, &[card("c9", "Zed", &[])]);
+    assert_eq!(listed(&st), ["c9"]);
+}
+
+#[test]
+fn a_listing_that_a_write_overtook_is_not_kept() {
+    let st = s();
+    replace(&st, &[card("c1", "Zed", &[])]);
+    assert!(st.contacts_listed(A) && !st.contacts_listed("other"));
+    // A listing starts, the user saves a card, the listing ends: it is older than the cache.
+    let started = st.contact_generation();
+    st.contact_card_put(A, &card("c2", "New", &[])).unwrap();
+    assert!(!st.contact_cards_replace(A, &[card("c1", "Zed", &[])], started).unwrap());
+    assert_eq!(listed(&st), ["c2", "c1"]);
+    // The same for a card that was deleted.
+    let started = st.contact_generation();
+    st.contact_card_forget(A, "c1").unwrap();
+    assert!(!st.contact_cards_replace(A, &[card("c1", "Zed", &[])], started).unwrap());
+    assert_eq!(listed(&st), ["c2"]);
+    // Sign-out: nothing is listed any more, and a listing that was on its way is dropped.
+    let started = st.contact_generation();
+    st.delete_account(A).unwrap();
+    assert!(!st.contacts_listed(A));
+    assert!(!st.contact_cards_replace(A, &[], started).unwrap());
+}
+
+#[test]
+fn one_card_is_put_in_place_or_last_and_forgotten() {
+    let st = s();
+    replace(&st, &[card("c1", "Zed", &["zed@x.org"]), card("c2", "Ann", &["ann@x.org"])]);
+    st.contact_card_put(A, &card("c3", "Bo", &["bo@x.org"])).unwrap();
+    st.contact_card_put(A, &card("c1", "Zed Z", &["zed@x.org", "z2@x.org"])).unwrap();
+    assert_eq!(listed(&st), ["c2", "c3", "c1"]);
+    // The suggestions follow the server's order, which c1 kept.
+    assert_eq!(
+        suggested(&st),
+        [("Zed Z", "zed@x.org"), ("Zed Z", "z2@x.org"), ("Ann", "ann@x.org"), ("Bo", "bo@x.org")]
+            .map(|(n, e)| (n.to_string(), e.to_string()))
+    );
+    st.contact_card_forget(A, "c1").unwrap();
+    st.contact_card_forget(A, "nope").unwrap();
+    assert_eq!(listed(&st), ["c2", "c3"]);
+    assert_eq!(suggested(&st).len(), 2);
+}
+
+#[test]
+fn suggestions_keep_an_address_once_whatever_its_case_and_a_nameless_card_suggests_the_address() {
+    let st = s();
+    // A card with no name is named by its first address: it suggests the address alone.
+    replace(
+        &st,
+        &[
+            card("c1", "Zed", &["zed@x.org"]),
+            card("c2", "Ann Again", &["ZED@x.org"]),
+            card("c3", "n@x.org", &["n@x.org"]),
+        ],
+    );
+    assert_eq!(suggested(&st), [("Zed", "zed@x.org"), ("", "n@x.org")].map(|(n, e)| (n.to_string(), e.to_string())));
+    replace(&st, &[]);
     assert!(st.contacts_list(A).unwrap().is_empty());
+}
+
+#[test]
+fn address_books_keep_the_servers_order_and_are_replaced_whole() {
+    let st = s();
+    let book =
+        |id: &str| AddressBook { id: id.into(), name: id.to_uppercase(), is_default: id == "b", may_write: true };
+    st.address_books_replace(A, &[book("z"), book("b")]).unwrap();
+    assert_eq!(st.address_books_list(A).unwrap(), [book("z"), book("b")]);
+    st.address_books_replace(A, &[book("q")]).unwrap();
+    assert_eq!(st.address_books_list(A).unwrap(), [book("q")]);
 }
 
 #[test]
@@ -1182,9 +1285,11 @@ fn sign_out_takes_the_drafts_and_the_directory_with_it() {
         &[Identity { id: "i".into(), name: String::new(), email: "a@x".into(), signature: String::new() }],
     )
     .unwrap();
-    st.contacts_replace(A, &[Address { name: String::new(), email: "c@x".into() }]).unwrap();
+    replace(&st, &[card("c1", "C", &["c@x"])]);
+    st.address_books_replace(A, &[AddressBook { id: "b".into(), name: "B".into(), is_default: true, may_write: true }])
+        .unwrap();
     st.delete_account(A).unwrap();
-    for table in ["drafts", "identities", "contacts"] {
+    for table in ["drafts", "identities", "contacts", "contact_cards", "address_books"] {
         assert_eq!(count(&st, table), 0, "{table}");
     }
 }
@@ -1251,9 +1356,9 @@ fn migration_four_keeps_what_the_earlier_ones_stored() {
     )
     .unwrap();
 
-    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..4]).unwrap(), 1);
     let st = Store::init(conn).unwrap();
-    assert_eq!(st.schema_version().unwrap(), 4);
+    assert_eq!(st.schema_version().unwrap(), 5);
     assert_eq!(st.get_message(A, "m1").unwrap().unwrap().subject, "Hi");
     assert_eq!(st.identities_list(A).unwrap()[0].email, "k@x");
     assert_eq!(st.contacts_list(A).unwrap().len(), 1);
@@ -1263,6 +1368,31 @@ fn migration_four_keeps_what_the_earlier_ones_stored() {
     st.calendars_replace(A, &[calendar("c1", "Personal")]).unwrap();
     st.agenda_replace(A, 0, 100, &[entry("e1", None, 10, 20)]).unwrap();
     assert_eq!((st.calendars_list(A).unwrap().len(), st.agenda_list(A, 0, 100).unwrap().len()), (1, 1));
+}
+
+#[test]
+fn migration_five_keeps_what_a_version_four_database_stored() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..4]).unwrap(), 4);
+    conn.execute_batch(
+        "INSERT INTO accounts VALUES ('acc1', 'https://x', 'kaan', 5);
+         INSERT INTO contacts VALUES ('acc1', 'ann@x', 'Ann', 0);
+         INSERT INTO calendars VALUES ('acc1', 0, '{\"id\":\"c1\",\"name\":\"Personal\",\"color\":null,\"is_default\":true,\"is_visible\":true,\"may_write\":true}');
+         INSERT INTO sync_state VALUES ('acc1', 'Email', 's1');",
+    )
+    .unwrap();
+
+    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    let st = Store::init(conn).unwrap();
+    assert_eq!(st.schema_version().unwrap(), 5);
+    assert_eq!(st.contacts_list(A).unwrap(), [Address { name: "Ann".into(), email: "ann@x".into() }]);
+    assert_eq!(st.calendars_list(A).unwrap()[0].name, "Personal");
+    assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
+    // The new tables are there, empty and usable; the suggestions are rebuilt from the cards.
+    assert!(st.address_books_list(A).unwrap().is_empty() && st.contact_index(A).unwrap().is_empty());
+    replace(&st, &[card("c1", "Bo", &["bo@x"])]);
+    assert_eq!(suggested(&st), [("Bo".to_string(), "bo@x".to_string())]);
 }
 
 #[test]

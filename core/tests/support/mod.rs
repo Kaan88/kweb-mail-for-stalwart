@@ -417,6 +417,61 @@ impl MockServer {
         self.shared.account.lock().unwrap().contacts_enabled = enabled;
     }
 
+    /// Adds an address book (the default one is `b`, writable).
+    pub fn add_address_book(&self, id: &str, name: &str, may_write: bool) {
+        self.shared.account.lock().unwrap().add_address_book(id, name, may_write);
+    }
+
+    /// The cards the server holds, in the order they were made.
+    pub fn contact_cards(&self) -> Vec<Value> {
+        self.shared.account.lock().unwrap().cards()
+    }
+
+    pub fn contact_card(&self, id: &str) -> Option<Value> {
+        self.shared.account.lock().unwrap().card(id)
+    }
+
+    /// Another client changes a property of a card right after the next `ContactCard/get`: a
+    /// write that was built from that read meets a changed card.
+    pub fn interfere_with_contact(&self, id: &str, property: &str, value: Value) {
+        self.shared.account.lock().unwrap().interfere.push_back((id.into(), property.into(), value));
+    }
+
+    /// Sets a property of a card at once, as another client would.
+    pub fn set_contact_property(&self, id: &str, property: &str, value: Value) {
+        self.shared.account.lock().unwrap().set_card_property(id, property, value);
+    }
+
+    /// Deletes a card at once, as another client would.
+    pub fn remove_contact(&self, id: &str) {
+        self.shared.account.lock().unwrap().remove_card(id);
+    }
+
+    /// The most ids a `ContactCard/query` gives, whatever its `limit` says.
+    pub fn set_contact_query_limit(&self, limit: usize) {
+        self.shared.account.lock().unwrap().query_limit = limit;
+    }
+
+    /// The `properties` every `ContactCard/get` asked for so far (`null` for all of them).
+    pub fn contact_get_properties(&self) -> Vec<Value> {
+        self.shared.account.lock().unwrap().card_get_properties.clone()
+    }
+
+    /// The away message as the server holds it.
+    pub fn vacation(&self) -> Value {
+        self.shared.account.lock().unwrap().vacation()
+    }
+
+    /// Another client changes properties of the away message.
+    pub fn set_vacation(&self, properties: Value) {
+        self.shared.account.lock().unwrap().set_vacation(properties);
+    }
+
+    /// With false the server has no away message (the session names no capability).
+    pub fn set_vacation_enabled(&self, enabled: bool) {
+        self.shared.account.lock().unwrap().vacation_enabled = enabled;
+    }
+
     /// With false the server has no quotas (the session names no capability).
     pub fn set_quota_enabled(&self, enabled: bool) {
         self.shared.account.lock().unwrap().quota_enabled = enabled;
@@ -711,9 +766,9 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     let mail = "urn:ietf:params:jmap:mail";
     let submission = "urn:ietf:params:jmap:submission";
     let calendars = "urn:ietf:params:jmap:calendars";
-    let (contacts, quota) = {
+    let (contacts, quota, vacation) = {
         let account = s.account.lock().unwrap();
-        (account.contacts_enabled, account.quota_enabled)
+        (account.contacts_enabled, account.quota_enabled, account.vacation_enabled)
     };
     let upload_limit = s.upload_limit.load(Ordering::SeqCst);
     let mut capabilities = json!({ core: core_caps, mail: {}, submission: {}, calendars: {} });
@@ -724,7 +779,11 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     };
     let mut account_capabilities = json!({ mail: mail_caps, submission: submission_caps, calendars: calendar_caps });
     let mut primary = json!({ mail: ACCOUNT_ID, submission: ACCOUNT_ID, calendars: ACCOUNT_ID });
-    for (urn, on) in [("urn:ietf:params:jmap:contacts", contacts), ("urn:ietf:params:jmap:quota", quota)] {
+    for (urn, on) in [
+        ("urn:ietf:params:jmap:contacts", contacts),
+        ("urn:ietf:params:jmap:quota", quota),
+        ("urn:ietf:params:jmap:vacationresponse", vacation),
+    ] {
         if on {
             capabilities[urn] = json!({});
             account_capabilities[urn] = json!({});
@@ -853,9 +912,14 @@ fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Valu
         | "CalendarEvent/get"
         | "CalendarEvent/query"
         | "CalendarEvent/set" => s.calendar.lock().unwrap().call(name, args).map(one),
-        "Identity/get" | "ContactCard/query" | "ContactCard/get" | "Quota/get" => {
-            s.account.lock().unwrap().call(name, args).map(one)
-        }
+        "Identity/get"
+        | "AddressBook/get"
+        | "ContactCard/query"
+        | "ContactCard/get"
+        | "ContactCard/set"
+        | "VacationResponse/get"
+        | "VacationResponse/set"
+        | "Quota/get" => s.account.lock().unwrap().call(name, args).map(one),
         "EmailSubmission/query" => {
             let wanted: Vec<&str> =
                 args["filter"]["emailIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();

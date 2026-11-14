@@ -1,7 +1,7 @@
-//! Writing and sending: identities, the server copy of a draft, the submission, uploads, the
-//! address book and the quotas.
+//! Writing and sending: identities, the server copy of a draft, the submission, uploads and the
+//! quotas.
 //!
-//! jmap-client has no methods for most of this (and none for `Quota` or `ContactCard`), so these
+//! jmap-client has no methods for most of this (and none for `Quota`), so these
 //! are plain JMAP requests, built and read by small pure functions that are tested here. Each
 //! request goes through [`Connection::call`], which keeps the kinds of failure apart as the
 //! rest of the core needs them: a 401 is recognisable with `is_unauthorized`, a refusal the
@@ -21,11 +21,7 @@ use crate::{
 
 const CORE_CAPABILITY: &str = "urn:ietf:params:jmap:core";
 const SUBMISSION_CAPABILITY: &str = "urn:ietf:params:jmap:submission";
-const CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";
 const QUOTA_CAPABILITY: &str = "urn:ietf:params:jmap:quota";
-
-/// The most cards fetched into the address book.
-const CONTACT_LIMIT: usize = 2000;
 
 /// The id a request gives the one object it creates.
 pub(super) const CREATE_ID: &str = "new";
@@ -101,26 +97,6 @@ impl Connection {
         });
         let responses = self.call(&[SUBMISSION_CAPABILITY], &[("Identity/get", args)]).await?;
         Ok(identities_from(response(&responses, "Identity/get")?))
-    }
-
-    /// Every address of the address book, `None` when the server has no contacts.
-    pub async fn contacts(&self) -> Result<Option<Vec<Address>>> {
-        if !self.has_capability(CONTACTS_CAPABILITY) {
-            return Ok(None);
-        }
-        let account = self.account_for(CONTACTS_CAPABILITY);
-        let query = json!({ "accountId": account, "limit": CONTACT_LIMIT });
-        let responses = self.call(&[CONTACTS_CAPABILITY], &[("ContactCard/query", query)]).await?;
-        let ids: Vec<Value> = response(&responses, "ContactCard/query")?["ids"].as_array().cloned().unwrap_or_default();
-        let mut out = Vec::new();
-        for chunk in ids.chunks(self.get_batch()) {
-            let args = json!({ "accountId": account, "ids": chunk, "properties": ["name", "emails"] });
-            let responses = self.call(&[CONTACTS_CAPABILITY], &[("ContactCard/get", args)]).await?;
-            for card in response(&responses, "ContactCard/get")?["list"].as_array().into_iter().flatten() {
-                out.extend(card_addresses(card));
-            }
-        }
-        Ok(Some(out))
     }
 
     /// The account's limits and what is used. No quota capability, no limits: an empty list.
@@ -376,6 +352,28 @@ pub(super) fn created_id(set: &Value) -> Result<String> {
     }
 }
 
+/// Whether a `/set` changed the object, or why not. An object that is gone is `Invalid` with
+/// the message `gone`.
+pub(super) fn updated(set: &Value, id: &str, gone: &str) -> Result<()> {
+    if let Some(e) = set["notUpdated"].get(id) {
+        return Err(if e["type"] == "notFound" { Error::invalid(gone) } else { set_error(e) });
+    }
+    match set["updated"].get(id) {
+        Some(_) => Ok(()),
+        None => Err(Error::temporary("the server's answer does not say whether it changed")),
+    }
+}
+
+/// Whether a `/set` destroyed the object. One that is already gone is as good as destroyed.
+pub(super) fn destroyed(set: &Value, id: &str) -> Result<()> {
+    match set["notDestroyed"].get(id) {
+        Some(e) if e["type"] != "notFound" => Err(set_error(e)),
+        Some(_) => Ok(()),
+        None if set["destroyed"].as_array().is_some_and(|ids| ids.iter().any(|d| d == id)) => Ok(()),
+        None => Err(Error::temporary("the server's answer does not say whether it was deleted")),
+    }
+}
+
 fn strings(v: &Value) -> Vec<String> {
     v.as_array().into_iter().flatten().filter_map(|s| s.as_str().map(str::to_string)).collect()
 }
@@ -392,24 +390,6 @@ fn identities_from(get: &Value) -> Vec<Identity> {
         })
     };
     get["list"].as_array().into_iter().flatten().filter_map(one).collect()
-}
-
-/// A JSContact card's addresses, each with the card's name: `name.full`, else the name's
-/// components in order.
-fn card_addresses(card: &Value) -> Vec<Address> {
-    let name = &card["name"];
-    let full = name["full"].as_str().map(str::trim).filter(|n| !n.is_empty());
-    let name = full.map(str::to_string).unwrap_or_else(|| {
-        let parts = name["components"].as_array().into_iter().flatten();
-        let words: Vec<&str> =
-            parts.filter_map(|p| p["value"].as_str().map(str::trim)).filter(|w| !w.is_empty()).collect();
-        words.join(" ")
-    });
-    let emails = card["emails"].as_object().into_iter().flat_map(Map::values);
-    emails
-        .filter_map(|e| e["address"].as_str().map(str::trim).filter(|a| !a.is_empty()))
-        .map(|email| Address { name: name.clone(), email: email.to_string() })
-        .collect()
 }
 
 fn quotas_from(get: &Value) -> Vec<Quota> {
@@ -480,7 +460,7 @@ fn draft_json(
 }
 
 /// A JSON Pointer segment.
-fn pointer_segment(s: &str) -> String {
+pub(super) fn pointer_segment(s: &str) -> String {
     s.replace('~', "~0").replace('/', "~1")
 }
 
@@ -647,19 +627,23 @@ mod tests {
     }
 
     #[test]
-    fn a_card_gives_every_address_with_its_name() {
-        let full = json!({ "name": { "full": " Ann Keller " },
-            "emails": { "a": { "address": "ann@x.org" }, "b": { "address": " ann@work.org " }, "c": {} } });
-        let got = card_addresses(&full);
-        let emails: Vec<_> = got.iter().map(|a| (a.name.as_str(), a.email.as_str())).collect();
-        assert_eq!(emails, [("Ann Keller", "ann@x.org"), ("Ann Keller", "ann@work.org")]);
-        let parts = json!({ "name": { "components": [
-            { "kind": "given", "value": "Bo" }, { "kind": "surname", "value": "Roth" }, { "kind": "x", "value": "" } ] },
-            "emails": { "a": { "address": "bo@x.org" } } });
-        assert_eq!(card_addresses(&parts)[0].name, "Bo Roth");
-        // No name is fine; no address means no entry.
-        assert_eq!(card_addresses(&json!({ "emails": { "a": { "address": "z@x.org" } } }))[0].name, "");
-        assert!(card_addresses(&json!({ "name": { "full": "No Mail" } })).is_empty());
+    fn an_update_is_told_from_a_refusal_and_a_vanished_object() {
+        assert!(updated(&json!({"updated": {"e1": null}}), "e1", "gone").is_ok());
+        assert!(updated(&json!({"updated": {"e1": {"sequence": 2}}}), "e1", "gone").is_ok());
+        let gone = updated(&json!({"notUpdated": {"e1": {"type": "notFound"}}}), "e1", "it is gone").unwrap_err();
+        assert_eq!(gone, Error::invalid("it is gone"));
+        let refused = updated(&json!({"notUpdated": {"e1": {"type": "invalidPatch", "description": "no"}}}), "e1", "g");
+        assert!(matches!(refused, Err(Error::Invalid { .. })));
+        assert!(matches!(updated(&json!({}), "e1", "g"), Err(Error::Temporary { .. })));
+    }
+
+    #[test]
+    fn a_delete_of_an_object_that_is_gone_is_done() {
+        assert!(destroyed(&json!({"destroyed": ["e1"]}), "e1").is_ok());
+        assert!(destroyed(&json!({"notDestroyed": {"e1": {"type": "notFound"}}}), "e1").is_ok());
+        let refused = destroyed(&json!({"notDestroyed": {"e1": {"type": "forbidden"}}}), "e1");
+        assert!(matches!(refused, Err(Error::Invalid { .. })));
+        assert!(matches!(destroyed(&json!({}), "e1"), Err(Error::Temporary { .. })));
     }
 
     #[test]

@@ -237,8 +237,10 @@ pub async fn refresh_directory(conn: &Connection, store: &Store, account_id: &st
     if store.identities_replace(account_id, &identities).is_err() {
         return;
     }
-    if let Ok(contacts) = conn.contacts().await {
-        let _ = store.contacts_replace(account_id, &contacts.unwrap_or_default());
+    // A card the user saved while the listing was on its way is newer than it: not replaced then.
+    let generation = store.contact_generation();
+    if let Ok(cards) = conn.contact_cards().await {
+        let _ = store.contact_cards_replace(account_id, &cards, generation);
     }
     store.directory_done(now);
 }

@@ -6,14 +6,17 @@ use std::{process, sync::Arc, thread};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{
-        Account, Action, Address, Calendar, ConnectionStatus, DraftKind, Identity, MessageBody, MessageHeader,
-        Occurrence, Quota, Reminder,
+        Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, Identity,
+        MessageBody, MessageHeader, Occurrence, Quota, Reminder,
     },
     notify::Plan,
     push::Listener,
 };
 
-use crate::{args::Command, timefmt};
+use crate::{
+    args::{Away, Command},
+    timefmt,
+};
 
 pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
     match command {
@@ -34,6 +37,8 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Calendars => calendars(core),
         Command::Identities => identities(core),
         Command::Quota => quota(core),
+        Command::Contacts { query } => contacts(core, query),
+        Command::Away(what) => away(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::SignOut => sign_out(core),
     }
@@ -368,6 +373,69 @@ fn quota_line(q: &Quota) -> String {
     }
 }
 
+fn contacts(core: &Core, query: String) -> Result<(), String> {
+    let list = core.contacts(query).map_err(|e| e.to_string())?;
+    if list.from_cache {
+        println!("(offline: this is what the cache holds, and may be out of date)");
+    }
+    if list.rows.is_empty() {
+        println!("No contacts.");
+    }
+    for row in &list.rows {
+        println!("{}", contact_line(row));
+    }
+    Ok(())
+}
+
+/// `Name  <address>  Organization  [id]`; what a contact does not have is left out.
+fn contact_line(r: &ContactRow) -> String {
+    let address = if r.email.is_empty() { String::new() } else { format!("  <{}>", one_line(&r.email)) };
+    let organization = if r.organization.is_empty() || r.organization == r.name {
+        String::new()
+    } else {
+        format!("  {}", one_line(&r.organization))
+    };
+    format!("{}{address}{organization}  [{}]", one_line(&r.name), one_line(&r.id))
+}
+
+/// Shows the away message, or switches it on (from now on, with the given text; the subject
+/// stays as it is) or off (everything else stays as it is).
+fn away(core: &Core, what: Away) -> Result<(), String> {
+    let current = core.away_message().map_err(|e| e.to_string())?;
+    let message = match what {
+        Away::Show => {
+            println!("{}", away_text(&current));
+            return Ok(());
+        }
+        Away::On { text } => AwayMessage { is_enabled: true, from: None, until: None, text, ..current },
+        Away::Off => AwayMessage { is_enabled: false, ..current },
+    };
+    core.set_away_message(message).map_err(|e| e.to_string())?;
+    let now = core.away_message().map_err(|e| e.to_string())?;
+    println!("{}", away_text(&now));
+    Ok(())
+}
+
+/// What the away message says, a line for the state and then the subject and text.
+fn away_text(m: &AwayMessage) -> String {
+    let state = if m.is_enabled { "Away message: on" } else { "Away message: off" };
+    let when = match (m.from, m.until) {
+        (None, None) => String::new(),
+        (from, until) => {
+            let at = |t: Option<i64>| t.map_or("-".to_string(), |t| format!("{} UTC", timefmt::utc(t)));
+            format!(" (from {} until {})", at(from), at(until))
+        }
+    };
+    let mut out = format!("{state}{when}");
+    if !m.subject.is_empty() {
+        out.push_str(&format!("\n  subject: {}", one_line(&m.subject)));
+    }
+    if !m.text.is_empty() {
+        out.push_str(&format!("\n\n{}", printable(&m.text)));
+    }
+    out
+}
+
 /// Writes a plain message, sends it without the undo delay and runs one pass. Says whether
 /// the server took it, still has it, or sent it back.
 fn send(core: &Core, to: String, subject: String, text: String) -> Result<(), String> {
@@ -642,6 +710,39 @@ mod tests {
         assert_eq!(quota_line(&q("octets", 5, None)), "Q: 5 B (no limit)");
         assert_eq!(quota_line(&q("count", 7, None)), "Q: 7 (no limit)");
         assert_eq!(quota_line(&q("count", 7, Some(100))), "Q: 7 of 100");
+    }
+
+    #[test]
+    fn contact_lines_leave_out_what_a_contact_does_not_have() {
+        let row = |name: &str, email: &str, organization: &str| ContactRow {
+            id: "c1".into(),
+            name: name.into(),
+            email: email.into(),
+            organization: organization.into(),
+        };
+        assert_eq!(contact_line(&row("Ann Lee", "ann@x.test", "Acme")), "Ann Lee  <ann@x.test>  Acme  [c1]");
+        assert_eq!(contact_line(&row("Ann Lee", "", "")), "Ann Lee  [c1]");
+        // A company is named by its organization: it is not said twice.
+        assert_eq!(contact_line(&row("Kweb", "info@kweb.test", "Kweb")), "Kweb  <info@kweb.test>  [c1]");
+        assert_eq!(contact_line(&row("A\u{1b}[31mB", "", "")), "A[31mB  [c1]");
+    }
+
+    #[test]
+    fn the_away_message_is_shown_with_its_dates_subject_and_text() {
+        let m = AwayMessage {
+            is_enabled: true,
+            from: Some(1_796_083_200),
+            until: None,
+            subject: "Away".into(),
+            text: "Back soon.\nAnn".into(),
+        };
+        assert_eq!(
+            away_text(&m),
+            "Away message: on (from 2026-12-01 00:00 UTC until -)\n  subject: Away\n\nBack soon.\nAnn"
+        );
+        let off =
+            AwayMessage { is_enabled: false, from: None, until: None, subject: String::new(), text: String::new() };
+        assert_eq!(away_text(&off), "Away message: off");
     }
 
     #[test]

@@ -22,6 +22,10 @@ Usage:
   kweb calendars              list calendars
   kweb identities             list the addresses you can send as
   kweb quota                  show storage use and limits
+  kweb contacts [query]       list contacts, or those matching the words of the query
+  kweb away                   show the away message
+  kweb away on <text>         switch it on from now until switched off, with this text
+  kweb away off               switch it off
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
   kweb sign-out               revoke the grant and wipe the cache
@@ -57,8 +61,18 @@ pub enum Command {
     Calendars,
     Identities,
     Quota,
+    Contacts { query: String },
+    Away(Away),
     Send { to: String, subject: String, text: String },
     SignOut,
+}
+
+/// What `kweb away` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Away {
+    Show,
+    On { text: String },
+    Off,
 }
 
 /// `args` is everything after the program name. The error says what is wrong.
@@ -76,6 +90,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "agenda" => agenda(rest),
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
+        "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
+        "away" => away(rest),
         "send" => send(rest),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
         "show" => one_arg(name, "message-id", rest).map(|id| Command::Show { id }),
@@ -112,6 +128,19 @@ fn search(rest: &[String]) -> Result<Command, String> {
         return Err("search needs a <query>".into());
     }
     Ok(Command::Search { query })
+}
+
+fn away(rest: &[String]) -> Result<Command, String> {
+    match rest {
+        [] => Ok(Command::Away(Away::Show)),
+        [flag] if flag == "off" => Ok(Command::Away(Away::Off)),
+        [flag, _extra, ..] if flag == "off" => Err(format!("unexpected argument '{}'", rest[1])),
+        [flag, words @ ..] if flag == "on" => match words.join(" ") {
+            text if text.trim().is_empty() => Err("away on needs the <text> to send".into()),
+            text => Ok(Command::Away(Away::On { text })),
+        },
+        [other, ..] => Err(format!("away takes on <text>, off, or nothing, not '{other}'")),
+    }
 }
 
 fn send(rest: &[String]) -> Result<Command, String> {
@@ -241,6 +270,27 @@ mod tests {
         assert!(p(&["send", "bo@example.test", "Hi"]).is_err());
         assert!(p(&["send", "a", "b", "c", "d"]).is_err());
         assert!(p(&["send", " ", "b", "c"]).is_err());
+    }
+
+    #[test]
+    fn contacts_take_the_rest_of_the_line_as_one_query() {
+        assert_eq!(p(&["contacts"]), Ok(Command::Contacts { query: String::new() }));
+        assert_eq!(p(&["contacts", "ann"]), Ok(Command::Contacts { query: "ann".into() }));
+        assert_eq!(p(&["contacts", "ann", "lee"]), Ok(Command::Contacts { query: "ann lee".into() }));
+    }
+
+    #[test]
+    fn away_shows_switches_on_with_text_and_switches_off() {
+        assert_eq!(p(&["away"]), Ok(Command::Away(Away::Show)));
+        assert_eq!(p(&["away", "off"]), Ok(Command::Away(Away::Off)));
+        assert_eq!(
+            p(&["away", "on", "Back", "on", "Monday"]),
+            Ok(Command::Away(Away::On { text: "Back on Monday".into() }))
+        );
+        assert!(p(&["away", "on"]).is_err());
+        assert!(p(&["away", "on", " "]).is_err());
+        assert!(p(&["away", "off", "now"]).unwrap_err().contains("now"));
+        assert!(p(&["away", "maybe"]).unwrap_err().contains("maybe"));
     }
 
     #[test]
