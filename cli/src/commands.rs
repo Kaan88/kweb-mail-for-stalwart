@@ -15,7 +15,7 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files, Shared},
+    args::{Away, Command, Files, Filters, Shared},
     timefmt,
 };
 
@@ -42,6 +42,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Files { space, what } => files(core, space, what),
         Command::Shared(what) => shared(core, what),
         Command::Away(what) => away(core, what),
+        Command::Filters(what) => filters(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
         Command::SignOut => sign_out(core),
@@ -580,6 +581,105 @@ fn away(core: &Core, what: Away) -> Result<(), String> {
     let now = core.away_message().map_err(|e| e.to_string())?;
     println!("{}", away_text(&now));
     Ok(())
+}
+
+/// Shows the filters, prints their script, switches them on or off, or adds a rule from a
+/// message. A rule added here is saved without switching the filters on.
+fn filters(core: &Core, what: Filters) -> Result<(), String> {
+    let failed = |e: kweb_core::Error| e.to_string();
+    match what {
+        Filters::Show => println!("{}", filters_text(&core.filters().map_err(failed)?)),
+        Filters::Text => {
+            let f = core.filters().map_err(failed)?;
+            match f.text.is_empty() {
+                true => println!("(no filter script on the server yet)"),
+                false => print!("{}", printable(&f.text)),
+            }
+        }
+        Filters::On => {
+            let before = core.filters().map_err(failed)?;
+            if before.away_is_on {
+                println!("Switching on turns the away message off.");
+            }
+            if let Some(name) = &before.other_active {
+                println!("Switching on turns the other active script off: {}", one_line(name));
+            }
+            println!("{}", filters_text(&core.set_filters_active(true).map_err(failed)?));
+        }
+        Filters::Off => println!("{}", filters_text(&core.set_filters_active(false).map_err(failed)?)),
+        Filters::AddFrom { message_id, folder_id } => {
+            let current = core.filters().map_err(failed)?;
+            if current.is_edited {
+                return Err("the filter script was changed by hand; this tool does not overwrite it".into());
+            }
+            let mut rule = core.filter_from_message(message_id).map_err(failed)?;
+            rule.move_to = Some(folder_id);
+            let mut rules = current.rules;
+            rules.push(rule);
+            let saved = core.save_filters(rules, false, false).map_err(failed)?;
+            println!("{}", filters_text(&saved));
+        }
+    }
+    Ok(())
+}
+
+/// The state of the filters, then the rules one to a line.
+fn filters_text(f: &kweb_core::model::Filters) -> String {
+    let state = match (f.is_active, f.is_edited) {
+        (true, true) => "Filters: on (the script was edited by hand)",
+        (true, false) => "Filters: on",
+        (false, true) => "Filters: off (the script was edited by hand)",
+        (false, false) => "Filters: off",
+    };
+    let mut out = state.to_string();
+    if f.is_stale {
+        out.push_str(
+            "
+  stale: a folder was renamed; saving the rules again brings the script up to date",
+        );
+    }
+    if f.away_is_on {
+        out.push_str(
+            "
+  the away message is on: the server runs it in place of the filters",
+        );
+    }
+    if let Some(name) = &f.other_active {
+        out.push_str(&format!(
+            "
+  another script is the one the server runs: {}",
+            one_line(name)
+        ));
+    }
+    for (i, r) in f.rules.iter().enumerate() {
+        let mut actions = Vec::new();
+        if let Some(folder) = &r.move_to {
+            actions.push(format!("move to {folder}{}", if r.folder_missing { " (gone)" } else { "" }));
+        }
+        if r.delete {
+            actions.push("delete".to_string());
+        }
+        if r.mark_read {
+            actions.push("mark read".to_string());
+        }
+        if r.star {
+            actions.push("star".to_string());
+        }
+        if r.stop {
+            actions.push("stop".to_string());
+        }
+        let how = if r.match_all { "all of" } else { "any of" };
+        out.push_str(&format!(
+            "\n  {}. {}{}: {how} {} condition{}: {}",
+            i + 1,
+            one_line(&r.name),
+            if r.enabled { "" } else { " (off)" },
+            r.conditions.len(),
+            if r.conditions.len() == 1 { "" } else { "s" },
+            actions.join(", ")
+        ));
+    }
+    out
 }
 
 /// What the away message says, a line for the state and then the subject and text.

@@ -52,6 +52,14 @@ Usage:
   kweb away                   show the away message
   kweb away on <text>         switch it on from now until switched off, with this text
   kweb away off               switch it off
+  kweb filters                show the mail filters: whether they run, and the rules one per line
+  kweb filters text           print the script the server has for them
+  kweb filters on             make the filters the script the server runs (this switches off
+                              the away message or another script; the app says which)
+  kweb filters off            stop the filters running (nothing else is touched)
+  kweb filters add-from <message-id> <folder-id>
+                              add a rule: mail from that message's sender (or mailing list)
+                              moves to that folder. Saved, but not switched on
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
   kweb ai status              show how the AI assistant is set up (never the key)
@@ -102,6 +110,7 @@ pub enum Command {
     Files { space: Option<String>, what: Files },
     Shared(Shared),
     Away(Away),
+    Filters(Filters),
     Send { to: String, subject: String, text: String },
     Ai(Ai),
     SignOut,
@@ -148,6 +157,16 @@ pub enum Shared {
     Contacts { account: String, query: String },
 }
 
+/// What `kweb filters` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Filters {
+    Show,
+    Text,
+    On,
+    Off,
+    AddFrom { message_id: String, folder_id: String },
+}
+
 /// What `kweb away` does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Away {
@@ -175,6 +194,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "files" => files(rest),
         "shared" => shared(rest).map(Command::Shared),
         "away" => away(rest),
+        "filters" => filters(rest).map(Command::Filters),
         "send" => send(rest),
         "ai" => ai(rest).map(Command::Ai),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
@@ -312,6 +332,24 @@ fn away(rest: &[String]) -> Result<Command, String> {
             text => Ok(Command::Away(Away::On { text })),
         },
         [other, ..] => Err(format!("away takes on <text>, off, or nothing, not '{other}'")),
+    }
+}
+
+fn filters(rest: &[String]) -> Result<Filters, String> {
+    let no_more = |rest: &[String]| match rest.first() {
+        None => Ok(()),
+        Some(extra) => Err(format!("unexpected argument '{extra}'")),
+    };
+    match rest {
+        [] => Ok(Filters::Show),
+        [word, more @ ..] if word == "text" => no_more(more).map(|()| Filters::Text),
+        [word, more @ ..] if word == "on" => no_more(more).map(|()| Filters::On),
+        [word, more @ ..] if word == "off" => no_more(more).map(|()| Filters::Off),
+        [word, message_id, folder_id, more @ ..] if word == "add-from" => {
+            no_more(more).map(|()| Filters::AddFrom { message_id: message_id.clone(), folder_id: folder_id.clone() })
+        }
+        [word, ..] if word == "add-from" => Err("filters add-from needs <message-id> and <folder-id>".into()),
+        [other, ..] => Err(format!("filters takes text, on, off, add-from, or nothing, not '{other}'")),
     }
 }
 
@@ -637,6 +675,22 @@ mod tests {
         assert!(p(&["away", "on", " "]).is_err());
         assert!(p(&["away", "off", "now"]).unwrap_err().contains("now"));
         assert!(p(&["away", "maybe"]).unwrap_err().contains("maybe"));
+    }
+
+    #[test]
+    fn filters_shows_prints_switches_and_adds() {
+        let f = |w: Filters| Ok(Command::Filters(w));
+        assert_eq!(p(&["filters"]), f(Filters::Show));
+        assert_eq!(p(&["filters", "text"]), f(Filters::Text));
+        assert_eq!(p(&["filters", "on"]), f(Filters::On));
+        assert_eq!(p(&["filters", "off"]), f(Filters::Off));
+        assert_eq!(
+            p(&["filters", "add-from", "m1", "mb2"]),
+            f(Filters::AddFrom { message_id: "m1".into(), folder_id: "mb2".into() })
+        );
+        assert!(p(&["filters", "add-from", "m1"]).is_err());
+        assert!(p(&["filters", "on", "now"]).unwrap_err().contains("now"));
+        assert!(p(&["filters", "maybe"]).unwrap_err().contains("maybe"));
     }
 
     #[test]

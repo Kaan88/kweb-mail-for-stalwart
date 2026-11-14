@@ -12,6 +12,7 @@ mod calendar;
 mod files;
 mod oauth;
 mod sharing;
+mod sieve;
 mod state;
 
 use std::collections::HashMap;
@@ -36,6 +37,7 @@ use calendar::Calendar;
 use files::Files;
 use oauth::Oauth;
 use sharing::Sharing;
+use sieve::Sieve;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 // Only the assistant tests use the mock AI service.
@@ -73,6 +75,8 @@ struct Shared {
     sharing: Mutex<Sharing>,
     /// Identities, address book and quotas.
     account: Mutex<Account>,
+    /// The filter scripts. Taken before `account` when both are needed.
+    sieve: Mutex<Sieve>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
     upload_limit: AtomicU64,
     /// See [`MockServer::lose_next_submission_answer`].
@@ -124,6 +128,7 @@ impl MockServer {
             files: Mutex::new(Files::default()),
             sharing: Mutex::new(Sharing::default()),
             account: Mutex::new(Account::default()),
+            sieve: Mutex::new(Sieve::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
             redirect_session: AtomicBool::new(false),
@@ -581,9 +586,101 @@ impl MockServer {
         self.shared.account.lock().unwrap().vacation()
     }
 
-    /// Another client changes properties of the away message.
+    /// Another client changes properties of the away message. Switching it on switches the
+    /// active filter script off, as on the real server.
     pub fn set_vacation(&self, properties: Value) {
-        self.shared.account.lock().unwrap().set_vacation(properties);
+        let mut sieve = self.shared.sieve.lock().unwrap();
+        let mut account = self.shared.account.lock().unwrap();
+        account.set_vacation(properties);
+        sieve.vacation_changed(&account);
+    }
+
+    // ---- filter scripts ----------------------------------------------------------------
+
+    /// With false the server has no filter scripts (the session names no capability).
+    pub fn set_sieve_enabled(&self, enabled: bool) {
+        self.shared.sieve.lock().unwrap().enabled = enabled;
+    }
+
+    /// The extensions the account says a script may require.
+    pub fn set_sieve_extensions(&self, extensions: &[&str]) {
+        self.shared.sieve.lock().unwrap().extensions = extensions.iter().map(|e| e.to_string()).collect();
+    }
+
+    /// With true, the first successful write of a script is followed by failing reads of scripts
+    /// (a network failure between the write and the read-back); false mends them.
+    pub fn break_sieve_reads_after_write(&self, on: bool) {
+        let mut sieve = self.shared.sieve.lock().unwrap();
+        sieve.break_reads_after_write = on;
+        if !on {
+            sieve.reads_broken = false;
+        }
+    }
+
+    /// The `maxSizeScript` the account says, and the set and validate calls enforce.
+    pub fn set_sieve_max_size(&self, bytes: u64) {
+        self.shared.sieve.lock().unwrap().max_size = bytes;
+    }
+
+    /// With a text, the server refuses every script it is asked to validate or write, with it.
+    pub fn refuse_sieve_validation(&self, why: Option<&str>) {
+        self.shared.sieve.lock().unwrap().refusal = why.map(str::to_string);
+    }
+
+    /// With true the server names its errors as the RFC does (`invalidSieve`).
+    pub fn set_sieve_rfc_error_names(&self, rfc: bool) {
+        self.shared.sieve.lock().unwrap().rfc_names = rfc;
+    }
+
+    /// `(name, active)` of every script, the away message's `vacation` first.
+    pub fn sieve_scripts(&self) -> Vec<(String, bool)> {
+        let sieve = self.shared.sieve.lock().unwrap();
+        sieve.list(&self.shared.account.lock().unwrap())
+    }
+
+    /// The name of the active script, if one is.
+    pub fn sieve_active(&self) -> Option<String> {
+        self.sieve_scripts().into_iter().find(|(_, active)| *active).map(|(name, _)| name)
+    }
+
+    /// The text of a script by name.
+    pub fn sieve_text(&self, name: &str) -> Option<String> {
+        self.shared.sieve.lock().unwrap().text(name)
+    }
+
+    /// Another client writes a script (makes it, or replaces the text of the one of that name)
+    /// and activates it when it says so. Nothing is validated.
+    pub fn put_sieve_script(&self, name: &str, text: &str, active: bool) {
+        let mut sieve = self.shared.sieve.lock().unwrap();
+        let mut account = self.shared.account.lock().unwrap();
+        sieve.put(&mut account, name, text, active);
+    }
+
+    /// Another client activates or deactivates a script by name.
+    pub fn set_sieve_active(&self, name: &str, active: bool) {
+        let mut sieve = self.shared.sieve.lock().unwrap();
+        let mut account = self.shared.account.lock().unwrap();
+        sieve.set_active(&mut account, name, active);
+    }
+
+    // ---- folders -----------------------------------------------------------------------
+
+    /// Another client makes a folder (`parent` is the id of the folder it is in).
+    pub fn add_mailbox(&self, id: &str, name: &str, parent: Option<&str>) {
+        self.shared.mail().add_mailbox(id, name, parent);
+    }
+
+    pub fn rename_mailbox(&self, id: &str, name: &str) {
+        self.shared.mail().rename_mailbox(id, name);
+    }
+
+    pub fn remove_mailbox(&self, id: &str) {
+        self.shared.mail().remove_mailbox(id);
+    }
+
+    /// The message has a List-Id header.
+    pub fn set_list_id(&self, id: &str, value: &str) {
+        self.shared.mail().list_ids.insert(id.to_string(), value.to_string());
     }
 
     /// With false the server has no away message (the session names no capability).
@@ -921,6 +1018,15 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
             primary[urn] = json!(ACCOUNT_ID);
         }
     }
+    {
+        let sieve = s.sieve.lock().unwrap();
+        if sieve.enabled {
+            let urn = "urn:ietf:params:jmap:sieve";
+            capabilities[urn] = json!({ "implementation": "Stalwart v1.0.0" });
+            account_capabilities[urn] = sieve.capability();
+            primary[urn] = json!(ACCOUNT_ID);
+        }
+    }
     capabilities[core]["maxSizeUpload"] = json!(upload_limit);
     let mut accounts = json!({
         ACCOUNT_ID: {
@@ -992,7 +1098,7 @@ async fn download(
         if known {
             // A message of a shared account has its files in that account only.
             let shared = s.sharing.lock().unwrap().blob(&account, &blob);
-            from_files.or(shared).or_else(|| s.mail().blob(&blob))
+            from_files.or(shared).or_else(|| s.sieve.lock().unwrap().blob(&blob)).or_else(|| s.mail().blob(&blob))
         } else {
             None
         }
@@ -1105,13 +1211,26 @@ fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Valu
         | "CalendarEvent/get"
         | "CalendarEvent/query"
         | "CalendarEvent/set" => s.calendar.lock().unwrap().call(name, args).map(one),
+        "SieveScript/get" | "SieveScript/set" | "SieveScript/validate" => {
+            let mut sieve = s.sieve.lock().unwrap();
+            let mut account = s.account.lock().unwrap();
+            let uploaded = |id: &str| s.mail().blob(id).map(|(_, bytes)| bytes);
+            sieve.call(name, args, &mut account, &uploaded).map(one)
+        }
+        "VacationResponse/set" => {
+            // The away message is a script too: switching it on switches the active script off.
+            let mut sieve = s.sieve.lock().unwrap();
+            let mut account = s.account.lock().unwrap();
+            let answer = account.call(name, args)?;
+            sieve.vacation_changed(&account);
+            Ok(one(answer))
+        }
         "Identity/get"
         | "AddressBook/get"
         | "ContactCard/query"
         | "ContactCard/get"
         | "ContactCard/set"
         | "VacationResponse/get"
-        | "VacationResponse/set"
         | "Quota/get" => s.account.lock().unwrap().call(name, args).map(one),
         "FileNode/get" | "FileNode/query" | "FileNode/set" => {
             let mail_blob = |id: &str| s.mail().blob(id);

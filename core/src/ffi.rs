@@ -21,14 +21,14 @@ use tokio::{net::TcpListener, runtime::Runtime};
 use crate::{
     actions, assistant,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
-    compose, contacts,
+    compose, contacts, filters,
     jmap::{self, is_unauthorized, Connection},
     model::{
         Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
         Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, ContactRow, Draft,
-        DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, Identity, ListFilter, Mailbox,
-        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, SharedAccount, SharedAction,
-        SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
+        DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, FilterRule, Filters, Identity,
+        ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, SharedAccount,
+        SharedAction, SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -77,6 +77,9 @@ struct Inner {
     /// The contact each form was last opened with, by contact id: what `save_contact` compares
     /// the saved form with, so that only what the user changed is written.
     contact_bases: HashMap<String, Contact>,
+    /// The state of the filter scripts when `filters` last read them: what a save compares with,
+    /// so that a change made elsewhere since is noticed.
+    filters_state: Option<String>,
 }
 
 /// One per process. Owns the cache, the sign-in and the live connection.
@@ -204,6 +207,7 @@ impl Core {
             inner.pending = None;
             inner.reader = None;
             inner.contact_bases.clear();
+            inner.filters_state = None;
             inner.session.take()
         };
         // With the session gone a new `ai_run` fails, and one that already holds the slot is
@@ -1407,5 +1411,96 @@ impl Core {
     pub fn shared_contact(&self, account: String, contact_id: String) -> Result<ContactDetail> {
         let (account, id) = (account.as_str(), contact_id.as_str());
         self.with_connection(|conn| async move { conn.shared_contact(account, id).await })
+    }
+}
+
+// ---- M8: mail filters ----
+
+impl Core {
+    /// The state of the last [`Core::filters`] read, or a refusal when there was none.
+    fn filters_base(&self) -> Result<String> {
+        self.account_id()?;
+        self.lock().filters_state.clone().ok_or_else(|| Error::invalid("Read the filters first."))
+    }
+
+    /// Keeps the new state of a write. When the write went through but could not be read back,
+    /// the old state is wrong, so it is dropped and the host has to read again.
+    fn filters_result(&self, result: Result<filters::Loaded>) -> Result<Filters> {
+        match result {
+            Ok(loaded) => {
+                self.lock().filters_state = Some(loaded.state);
+                Ok(loaded.filters)
+            }
+            Err(Error::Temporary { msg }) if msg == filters::SAVED_NOT_READ => {
+                self.lock().filters_state = None;
+                Err(Error::Temporary { msg })
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[uniffi::export]
+impl Core {
+    /// The mail filters as the server has them now. A server without filter scripts is
+    /// `Error::Invalid` ("this server has no mail filters"). Asks the server and the folder list.
+    pub fn filters(&self) -> Result<Filters> {
+        let loaded = self.with_connection(|conn| async move { filters::load(&conn).await })?;
+        self.lock().filters_state = Some(loaded.state);
+        Ok(loaded.filters)
+    }
+
+    /// Only the filter editor may call this while it is open: the one state kept for the
+    /// change check moves with every read. A save or a switch-on with no earlier read in this
+    /// process is `Error::Invalid` ("read the filters first"), so nothing is written blind.
+    /// If the write went through but could not be read back, the error is `Temporary` and
+    /// says so; the host then reads again.
+    ///
+    /// Stores `rules` as the app's filter script (named `kweb-filters`) and, with `activate`,
+    /// makes it the one the server runs; without it the script keeps the state it has (a new
+    /// one starts inactive). The rules are checked first (`Error::Invalid` naming the rule and
+    /// what is wrong: no condition, a blank value, a header name that is not one, delete
+    /// together with move, no action at all, a folder that is gone, more than 200 rules), then
+    /// the generated script is checked by the server, and only then written. Nothing is
+    /// changed when anything fails. If the script on the server changed since [`Core::filters`]
+    /// read it, this is `Error::Invalid` ("the filters changed elsewhere") and the host reads
+    /// again. When the app's script was edited by hand ([`Filters::is_edited`]) the save is
+    /// refused unless `overwrite` is true. Activating switches off the away message or another
+    /// active script; the host warns before, from what [`Core::filters`] said. An empty list
+    /// with `activate` false removes nothing and writes an empty script.
+    pub fn save_filters(&self, rules: Vec<FilterRule>, activate: bool, overwrite: bool) -> Result<Filters> {
+        let base = self.filters_base()?;
+        let (rules, base) = (&rules, base.as_str());
+        let result = self
+            .with_connection(|conn| async move { filters::save(&conn, Some(base), rules, activate, overwrite).await });
+        self.filters_result(result)
+    }
+
+    /// Switches the app's filter script on or off without changing it. On: as `activate` in
+    /// [`Core::save_filters`]. Off: the server then runs no script. No script of the app's yet
+    /// is `Error::Invalid`.
+    pub fn set_filters_active(&self, active: bool) -> Result<Filters> {
+        let base = if active { Some(self.filters_base()?) } else { self.lock().filters_state.clone() };
+        let base = base.as_deref();
+        let result = self.with_connection(|conn| async move { filters::set_active(&conn, base, active).await });
+        self.filters_result(result)
+    }
+
+    /// A rule to start from for the message `message_id` of the user's own mail: its sender's
+    /// address as the one condition (the mailing list's List-Id when it has one), no action
+    /// yet, on. Nothing is stored. Reads the cache, and the server for the List-Id.
+    pub fn filter_from_message(&self, message_id: String) -> Result<FilterRule> {
+        let message = self
+            .store
+            .get_message(&self.account_id()?, &message_id)?
+            .ok_or_else(|| Error::invalid("That message is not in the cache."))?;
+        let id = message_id.as_str();
+        // Without the server the rule starts from the sender, which is always there.
+        let list_id = match self.with_connection(|conn| async move { conn.list_id(id).await }) {
+            Ok(list_id) => list_id,
+            Err(Error::Temporary { .. }) => None,
+            Err(e) => return Err(e),
+        };
+        filters::rule_from(&message, list_id.as_deref())
     }
 }

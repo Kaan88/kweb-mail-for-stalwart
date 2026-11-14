@@ -571,6 +571,87 @@ pub struct AiPreview {
     pub is_cut: bool,
 }
 
+/// Which part of a message a filter condition looks at.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FilterField {
+    /// The whole From line, name and address.
+    From,
+    /// The To and Cc lines.
+    Recipient,
+    Subject,
+    /// Another header, by its name (letters, digits and hyphens).
+    Header {
+        name: String,
+    },
+}
+
+/// How a filter condition compares. Case is ignored.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FilterMatch {
+    Contains,
+    Is,
+    BeginsWith,
+    EndsWith,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FilterCondition {
+    pub field: FilterField,
+    pub how: FilterMatch,
+    /// What to look for; one line, not blank.
+    pub value: String,
+}
+
+/// One rule for arriving mail: when the conditions hold, the actions are done. Rules run in
+/// the order of the list.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FilterRule {
+    /// Made by the core for a new rule (pass an empty text); kept after that.
+    pub id: String,
+    pub name: String,
+    /// A rule that is off stays in the list and does nothing.
+    pub enabled: bool,
+    /// All conditions must hold; false: any one is enough. At least one condition.
+    pub match_all: bool,
+    pub conditions: Vec<FilterCondition>,
+    /// Move the mail to this folder (a mailbox id of the user's own account).
+    pub move_to: Option<String>,
+    pub mark_read: bool,
+    pub star: bool,
+    /// Move the mail to the Trash. Not together with `move_to`.
+    pub delete: bool,
+    /// Later rules are not tried for this mail.
+    pub stop: bool,
+    /// Set by the core when read: `move_to` names a folder that no longer exists. Such a rule
+    /// cannot be saved until the folder is changed. Ignored when saving.
+    pub folder_missing: bool,
+}
+
+/// The user's mail filters as the server has them.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Filters {
+    /// The rules of the app's own script; empty when there is none yet.
+    pub rules: Vec<FilterRule>,
+    /// The app's script is the one the server runs.
+    pub is_active: bool,
+    /// The script on the server is not what the rules give now (a folder was renamed, or an
+    /// older version of the app wrote it): saving the rules again brings it up to date.
+    pub is_stale: bool,
+    /// The app's script was changed by hand or cannot be read as rules: `rules` is empty, the
+    /// text is in `text`, and a save must say `overwrite`.
+    pub is_edited: bool,
+    /// The text of the app's script as it is on the server; empty when there is none.
+    pub text: String,
+    /// The away message is on. The server runs it in place of any filter script, so filters
+    /// do nothing while it is on, and switching filters on switches it off.
+    pub away_is_on: bool,
+    /// A script that the app did not write is the active one: its name. Switching the app's
+    /// filters on switches it off (the server runs one script).
+    pub other_active: Option<String>,
+    /// That script's text, for the user to read.
+    pub other_text: Option<String>,
+}
+
 /// Another user's account from which something is shared with the signed-in user. Everything
 /// in it is read live from the server, never cached, and never notifies. Ids of mail, folders,
 /// events and contacts are only unique within one account, so every `shared_` function takes

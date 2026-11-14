@@ -19,6 +19,7 @@ mod jscontact;
 mod recur;
 mod send;
 mod shared;
+mod sieve;
 mod vacation;
 
 use std::{io::Write, pin::Pin, time::Duration};
@@ -50,6 +51,7 @@ pub use errors::{is_cannot_calculate_changes, is_unauthorized};
 pub use files::UploadResume;
 pub use jscal::{check_span, sort as sort_agenda};
 pub use send::{CopyState, HeaderIds, Uploaded};
+pub use sieve::{SieveLimits, SieveList, SieveScript, CHANGED as SIEVE_CHANGED};
 
 const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

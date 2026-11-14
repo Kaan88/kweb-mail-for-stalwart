@@ -83,6 +83,7 @@ pub struct MailboxRec {
     pub name: String,
     pub role: Option<&'static str>,
     pub sort_order: u32,
+    pub parent_id: Option<String>,
 }
 
 /// A file in a message. `inline` ones sit in the body lists (a picture the HTML shows), the
@@ -368,6 +369,8 @@ pub struct Mail {
     pub push_enabled: bool,
     /// `Email/get` that asks for body values fails (see `MockServer::set_bodies_fail`).
     pub bodies_fail: bool,
+    /// The List-Id header of some messages, by message id.
+    pub list_ids: BTreeMap<String, String>,
     /// Files put on the server through the upload endpoint: blob id to type and bytes.
     uploads: BTreeMap<String, (String, Vec<u8>)>,
     /// Every submission the server accepted, oldest first.
@@ -438,6 +441,7 @@ impl Mail {
             name: name.to_string(),
             role: Some(*role),
             sort_order: (i as u32 + 1) * 10,
+            parent_id: None,
         })
         .collect();
         let mut mail = Mail {
@@ -451,6 +455,7 @@ impl Mail {
             dirty_mailbox: false,
             push_enabled: true,
             bodies_fail: false,
+            list_ids: BTreeMap::new(),
             uploads: BTreeMap::new(),
             submissions: Vec::new(),
             refusal: None,
@@ -588,6 +593,26 @@ impl Mail {
             roles,
             files: e.attachments.iter().map(|a| (a.name.clone(), a.mime_type.clone(), a.bytes.clone())).collect(),
         })
+    }
+
+    /// A folder made, renamed or removed by another client; one Mailbox state change.
+    pub fn add_mailbox(&mut self, id: &str, name: &str, parent: Option<&str>) {
+        let sort_order = (self.mailboxes.len() as u32 + 1) * 10;
+        let parent_id = parent.map(str::to_string);
+        self.mailboxes.push(MailboxRec { id: id.into(), name: name.into(), role: None, sort_order, parent_id });
+        self.touch_mailboxes(set_of(&[id]));
+    }
+
+    pub fn rename_mailbox(&mut self, id: &str, name: &str) {
+        if let Some(m) = self.mailboxes.iter_mut().find(|m| m.id == id) {
+            m.name = name.to_string();
+        }
+        self.touch_mailboxes(set_of(&[id]));
+    }
+
+    pub fn remove_mailbox(&mut self, id: &str) {
+        self.mailboxes.retain(|m| m.id != id);
+        self.touch_mailboxes(set_of(&[id]));
     }
 
     pub fn mailbox_id_by_role(&self, role: &str) -> Option<String> {
@@ -750,7 +775,7 @@ impl Mail {
         let (total, unread) = self.counts(&m.id);
         let all: [(&str, Value); 10] = [
             ("name", json!(m.name)),
-            ("parentId", Value::Null),
+            ("parentId", json!(m.parent_id)),
             ("role", json!(m.role)),
             ("sortOrder", json!(m.sort_order)),
             ("totalEmails", json!(total)),
@@ -836,6 +861,16 @@ impl Mail {
         Ok(out)
     }
 
+    /// One message as `Email/get` gives it, with the header the message type does not know.
+    fn email_value(&self, e: &Email, props: Option<&BTreeSet<String>>, body: &BodyOpts) -> Value {
+        let mut value = e.json(props, body);
+        let header = "header:list-id:asText";
+        if props.is_some_and(|p| p.contains(header)) {
+            value[header] = json!(self.list_ids.get(&e.id));
+        }
+        value
+    }
+
     fn email_get(&self, args: &Value) -> MResult {
         let ids = opt_strings(args.get("ids"))?;
         let props = prop_set(args)?;
@@ -849,12 +884,12 @@ impl Mail {
             None => {
                 let mut all: Vec<&Email> = self.emails.values().collect();
                 all.sort_by_key(|e| e.seq);
-                list.extend(all.iter().map(|e| e.json(props.as_ref(), &body)));
+                list.extend(all.iter().map(|e| self.email_value(e, props.as_ref(), &body)));
             }
             Some(ids) => {
                 for id in ids {
                     match self.emails.get(&id) {
-                        Some(e) => list.push(e.json(props.as_ref(), &body)),
+                        Some(e) => list.push(self.email_value(e, props.as_ref(), &body)),
                         None => not_found.push(id),
                     }
                 }

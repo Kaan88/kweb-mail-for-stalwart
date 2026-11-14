@@ -45,6 +45,14 @@ impl Connection {
         updated(response(&responses, "VacationResponse/set")?, SINGLETON, "the server has no away message")
     }
 
+    /// Whether the away message is on; false on a server that has none.
+    pub async fn away_is_on(&self) -> Result<bool> {
+        match self.has_capability(VACATION_CAPABILITY) {
+            true => Ok(self.away_message().await?.is_enabled),
+            false => Ok(false),
+        }
+    }
+
     fn needs_vacation(&self) -> Result<()> {
         match self.has_capability(VACATION_CAPABILITY) {
             true => Ok(()),
