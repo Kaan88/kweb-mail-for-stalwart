@@ -13,12 +13,15 @@ pub mod ffi;
 pub mod filters;
 pub mod folders;
 pub mod jmap;
+pub mod labels;
 pub mod model;
 pub mod notify;
 pub mod push;
 pub mod secrets;
+pub mod snippets;
 pub mod store;
 pub mod sync;
+pub mod unsubscribe;
 
 pub use error::{Error, Result};
 

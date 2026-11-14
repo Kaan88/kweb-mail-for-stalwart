@@ -29,6 +29,16 @@ Usage:
   kweb notspam <message-id>   report it as not spam: back to the Inbox, marked $notjunk
   kweb block <message-id>     block the sender: a filter rule that deletes their mail, and
                               the message goes to the Trash
+  kweb unsubscribe <message-id> [--yes]
+                              leave the mailing list a message came from: says what it
+                              would do, and does it with --yes (one request to the list's
+                              server, or else a message to the list's address)
+  kweb labels                 list the labels
+  kweb label add <name>       make a label
+  kweb label rm <id>          remove a label from the list (mail keeps the keyword)
+  kweb label set <message-id> <label-id> on|off
+                              put a label on a message or take it off
+  kweb label show <label-id>  list the mail that has the label
   kweb watch                  follow live changes until Ctrl+C
   kweb read <message-id>      mark a message read
   kweb unread <message-id>    mark a message unread
@@ -84,6 +94,16 @@ Usage:
                               moves to that folder. Saved, but not switched on
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
+  kweb send-at <minutes-from-now> <to> <subject> <text>
+                              hand a plain message to the server to send in that many minutes
+                              (1 to 10080: the server holds it for seven days at most)
+  kweb scheduled              list the messages the server is holding back, soonest first
+  kweb unschedule <id>        take a held message back: it is a draft again (id from scheduled)
+  kweb identity list          list the senders with their name, reply-to and signature
+  kweb identity set <id> <name> [--signature <text>] [--reply-to <address>]
+                              change a sender; what is left out stays as it is, and an empty
+                              text (\"\") takes the signature or the reply-to away
+  kweb identity default <id>  make that sender the one new messages start with (this device)
   kweb ai status              show how the AI assistant is set up (never the key)
   kweb ai set <provider> <base-url> <model> [--effort <level>] [--yes]
                               set up that service and use it; provider is openai or anthropic,
@@ -137,7 +157,14 @@ pub enum Command {
     Folder(Folder),
     Spam { id: String, is_spam: bool },
     Block { id: String },
+    Unsubscribe { id: String, yes: bool },
+    Labels,
+    Label(Label),
     Send { to: String, subject: String, text: String },
+    SendAt { minutes: u32, to: String, subject: String, text: String },
+    Scheduled,
+    Unschedule { id: String },
+    Identity(Identity),
     Ai(Ai),
     SignOut,
 }
@@ -201,6 +228,22 @@ pub enum Filters {
     AddFrom { message_id: String, folder_id: String },
 }
 
+/// What `kweb identity` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Identity {
+    List,
+    /// `None`: leave it as it is.
+    Set {
+        id: String,
+        name: String,
+        signature: Option<String>,
+        reply_to: Option<String>,
+    },
+    Default {
+        id: String,
+    },
+}
+
 /// What `kweb folder` does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Folder {
@@ -209,6 +252,15 @@ pub enum Folder {
     Move { id: String, parent: Option<String> },
     Rm { id: String, with_mail: bool },
     Notify { id: String, on: bool },
+}
+
+/// What `kweb label` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Label {
+    Add { name: String },
+    Rm { id: String },
+    Set { message_id: String, label_id: String, on: bool },
+    Show { label_id: String },
 }
 
 /// What `kweb away` does.
@@ -244,7 +296,14 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "spam" => one_arg(name, "message-id", rest).map(|id| Command::Spam { id, is_spam: true }),
         "notspam" => one_arg(name, "message-id", rest).map(|id| Command::Spam { id, is_spam: false }),
         "block" => one_arg(name, "message-id", rest).map(|id| Command::Block { id }),
+        "unsubscribe" => unsubscribe(rest),
+        "labels" => no_args(rest, Command::Labels),
+        "label" => label(rest).map(Command::Label),
         "send" => send(rest),
+        "send-at" => send_at(rest),
+        "scheduled" => no_args(rest, Command::Scheduled),
+        "unschedule" => one_arg(name, "id", rest).map(|id| Command::Unschedule { id }),
+        "identity" => identity(rest).map(Command::Identity),
         "ai" => ai(rest).map(Command::Ai),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
         "show" => one_arg(name, "message-id", rest).map(|id| Command::Show { id }),
@@ -441,6 +500,38 @@ fn filters(rest: &[String]) -> Result<Filters, String> {
     }
 }
 
+/// `--yes` may stand before or after the message id.
+fn unsubscribe(rest: &[String]) -> Result<Command, String> {
+    let yes = rest.iter().any(|w| w == "--yes");
+    let words: Vec<String> = rest.iter().filter(|w| *w != "--yes").cloned().collect();
+    one_arg("unsubscribe", "message-id", &words).map(|id| Command::Unsubscribe { id, yes })
+}
+
+fn label(rest: &[String]) -> Result<Label, String> {
+    let too_many = |extra: &String| Err(format!("unexpected argument '{extra}'"));
+    let Some((sub, rest)) = rest.split_first() else {
+        return Err("label takes add, rm, set or show".into());
+    };
+    match (sub.as_str(), rest) {
+        // The words are one name, so quotes are optional.
+        ("add", []) => Err("label add needs a <name>".into()),
+        ("add", words) => Ok(Label::Add { name: words.join(" ") }),
+        ("rm", [id]) => Ok(Label::Rm { id: id.clone() }),
+        ("rm", []) => Err("label rm needs an <id>".into()),
+        ("rm", [_, extra, ..]) => too_many(extra),
+        ("set", [message_id, label_id, state]) if state == "on" || state == "off" => {
+            Ok(Label::Set { message_id: message_id.clone(), label_id: label_id.clone(), on: state == "on" })
+        }
+        ("set", [_, _, state]) => Err(format!("label set takes on or off, not '{state}'")),
+        ("set", [_, _, _, extra, ..]) => too_many(extra),
+        ("set", _) => Err("label set needs a <message-id>, a <label-id> and on or off".into()),
+        ("show", [label_id]) => Ok(Label::Show { label_id: label_id.clone() }),
+        ("show", []) => Err("label show needs a <label-id>".into()),
+        ("show", [_, extra, ..]) => too_many(extra),
+        (other, _) => Err(format!("label takes add, rm, set or show, not '{other}'")),
+    }
+}
+
 fn folder(rest: &[String]) -> Result<Folder, String> {
     let too_many = |extra: &String| Err(format!("unexpected argument '{extra}'"));
     let Some((sub, rest)) = rest.split_first() else {
@@ -485,6 +576,55 @@ fn send(rest: &[String]) -> Result<Command, String> {
         [_, _, _] => Err("send needs a <to> address".into()),
         [_, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
         _ => Err("send needs <to> <subject> <text>".into()),
+    }
+}
+
+/// The most minutes ahead: seven days, the longest the server holds a message.
+const MAX_MINUTES: u32 = 7 * 24 * 60;
+
+fn send_at(rest: &[String]) -> Result<Command, String> {
+    match rest {
+        [minutes, to, subject, text] => {
+            let minutes: u32 = minutes.trim().parse().map_err(|_| "send-at needs the minutes as a whole number")?;
+            if !(1..=MAX_MINUTES).contains(&minutes) {
+                return Err(format!("send-at takes 1 to {MAX_MINUTES} minutes"));
+            }
+            if to.trim().is_empty() {
+                return Err("send-at needs a <to> address".into());
+            }
+            Ok(Command::SendAt { minutes, to: to.clone(), subject: subject.clone(), text: text.clone() })
+        }
+        [_, _, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+        _ => Err("send-at needs <minutes-from-now> <to> <subject> <text>".into()),
+    }
+}
+
+fn identity(rest: &[String]) -> Result<Identity, String> {
+    let Some((sub, rest)) = rest.split_first() else { return Err("identity needs list, set or default".into()) };
+    match sub.as_str() {
+        "list" => match rest.first() {
+            None => Ok(Identity::List),
+            Some(extra) => Err(format!("unexpected argument '{extra}'")),
+        },
+        "default" => one_arg("identity default", "id", rest).map(|id| Identity::Default { id }),
+        "set" => {
+            let [id, name, options @ ..] = rest else { return Err("identity set needs an <id> and a <name>".into()) };
+            let (mut signature, mut reply_to) = (None, None);
+            let mut options = options.iter();
+            while let Some(option) = options.next() {
+                let slot = match option.as_str() {
+                    "--signature" => &mut signature,
+                    "--reply-to" => &mut reply_to,
+                    other => return Err(format!("unexpected argument '{other}'")),
+                };
+                let value = options.next().ok_or_else(|| format!("{option} needs a value"))?;
+                if slot.replace(value.clone()).is_some() {
+                    return Err(format!("{option} was given twice"));
+                }
+            }
+            Ok(Identity::Set { id: id.clone(), name: name.clone(), signature, reply_to })
+        }
+        other => Err(format!("identity takes list, set or default, not '{other}'")),
     }
 }
 
@@ -603,6 +743,36 @@ mod tests {
         assert_eq!(p(&[]), Ok(Command::Help));
         assert_eq!(p(&["help"]), Ok(Command::Help));
         assert_eq!(p(&["--help"]), Ok(Command::Help));
+    }
+
+    #[test]
+    fn unsubscribe_and_label_commands() {
+        assert_eq!(p(&["unsubscribe", "e1"]), Ok(Command::Unsubscribe { id: "e1".into(), yes: false }));
+        assert_eq!(p(&["unsubscribe", "e1", "--yes"]), Ok(Command::Unsubscribe { id: "e1".into(), yes: true }));
+        assert_eq!(p(&["unsubscribe", "--yes", "e1"]), p(&["unsubscribe", "e1", "--yes"]));
+        assert!(p(&["unsubscribe"]).is_err() && p(&["unsubscribe", "a", "b"]).is_err());
+        assert_eq!(p(&["labels"]), Ok(Command::Labels));
+        assert!(p(&["labels", "x"]).is_err());
+        let l = |w: &[&str]| {
+            let mut args = vec!["label"];
+            args.extend_from_slice(w);
+            p(&args)
+        };
+        assert_eq!(l(&["add", "Work"]), Ok(Command::Label(Label::Add { name: "Work".into() })));
+        assert_eq!(l(&["add", "Mom", "and", "Dad"]), Ok(Command::Label(Label::Add { name: "Mom and Dad".into() })));
+        assert_eq!(l(&["rm", "work"]), Ok(Command::Label(Label::Rm { id: "work".into() })));
+        assert_eq!(
+            l(&["set", "e1", "work", "on"]),
+            Ok(Command::Label(Label::Set { message_id: "e1".into(), label_id: "work".into(), on: true }))
+        );
+        assert_eq!(
+            l(&["set", "e1", "work", "off"]),
+            Ok(Command::Label(Label::Set { message_id: "e1".into(), label_id: "work".into(), on: false }))
+        );
+        assert_eq!(l(&["show", "work"]), Ok(Command::Label(Label::Show { label_id: "work".into() })));
+        assert!(l(&["set", "e1", "work", "maybe"]).is_err() && l(&["set", "e1", "work"]).is_err());
+        assert!(l(&[]).is_err() && l(&["add"]).is_err() && l(&["rm"]).is_err() && l(&["show", "a", "b"]).is_err());
+        assert!(l(&["bogus"]).is_err() && l(&["rm", "a", "b"]).is_err());
     }
 
     #[test]
@@ -755,6 +925,63 @@ mod tests {
         assert!(p(&["inbox", "-n", "0"]).is_err());
         assert!(p(&["inbox", "-n", "x"]).is_err());
         assert!(p(&["inbox", "5"]).is_err());
+    }
+
+    #[test]
+    fn sending_later_and_the_identity_commands() {
+        assert_eq!(
+            p(&["send-at", "3", "bo@example.test", "Hi", "Hello"]),
+            Ok(Command::SendAt {
+                minutes: 3,
+                to: "bo@example.test".into(),
+                subject: "Hi".into(),
+                text: "Hello".into()
+            })
+        );
+        for bad in [
+            &["send-at", "0", "a@b", "s", "t"][..],
+            &["send-at", "10081", "a@b", "s", "t"],
+            &["send-at", "x", "a@b", "s", "t"],
+            &["send-at", "3", " ", "s", "t"],
+            &["send-at", "3", "a@b", "s"],
+            &["send-at", "3", "a@b", "s", "t", "u"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(p(&["scheduled"]), Ok(Command::Scheduled));
+        assert!(p(&["scheduled", "x"]).is_err());
+        assert_eq!(p(&["unschedule", "s1"]), Ok(Command::Unschedule { id: "s1".into() }));
+        assert!(p(&["unschedule"]).is_err());
+        assert_eq!(p(&["identity", "list"]), Ok(Command::Identity(Identity::List)));
+        assert_eq!(p(&["identity", "default", "i2"]), Ok(Command::Identity(Identity::Default { id: "i2".into() })));
+        assert_eq!(
+            p(&["identity", "set", "i1", "Me", "--signature", "", "--reply-to", "r@x.org"]),
+            Ok(Command::Identity(Identity::Set {
+                id: "i1".into(),
+                name: "Me".into(),
+                signature: Some(String::new()),
+                reply_to: Some("r@x.org".into())
+            }))
+        );
+        assert_eq!(
+            p(&["identity", "set", "i1", "Me"]),
+            Ok(Command::Identity(Identity::Set {
+                id: "i1".into(),
+                name: "Me".into(),
+                signature: None,
+                reply_to: None
+            }))
+        );
+        for bad in [
+            &["identity"][..],
+            &["identity", "set", "i1"],
+            &["identity", "set", "i1", "Me", "--signature"],
+            &["identity", "set", "i1", "Me", "--signature", "a", "--signature", "b"],
+            &["identity", "set", "i1", "Me", "--other", "a"],
+            &["identity", "nope"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -33,10 +33,33 @@ pub struct IdentityRec {
     pub name: String,
     pub email: String,
     pub signature: String,
+    /// `replyTo` as the server holds it: addresses with their names.
+    pub reply_to: Vec<(String, String)>,
+    /// Stored as given and never shown to the user: a client that does not own it must not touch it.
+    pub html_signature: String,
+    pub may_delete: bool,
+}
+
+impl IdentityRec {
+    pub fn simple(id: &str, name: &str, email: &str, signature: &str) -> IdentityRec {
+        IdentityRec {
+            id: id.into(),
+            name: name.into(),
+            email: email.into(),
+            signature: signature.into(),
+            reply_to: Vec::new(),
+            html_signature: String::new(),
+            may_delete: true,
+        }
+    }
 }
 
 pub struct Account {
     pub identities: Vec<IdentityRec>,
+    /// Counts the changes to the identities, for the state string, and numbers the new ones.
+    identity_version: u64,
+    /// Every `Identity/set` received, as the client sent it.
+    pub identity_requests: Vec<Value>,
     /// Cards as the test wrote them, plus `id` and `addressBookIds`.
     contacts: BTreeMap<String, Value>,
     /// Card ids in the order they were made, which is the order of a query.
@@ -82,17 +105,14 @@ fn unknown(name: &str) -> MethodError {
 
 impl Default for Account {
     fn default() -> Self {
-        let identity = |id: &str, name: &str, email: &str, signature: &str| IdentityRec {
-            id: id.into(),
-            name: name.into(),
-            email: email.into(),
-            signature: signature.into(),
-        };
+        let identity = IdentityRec::simple;
         Account {
             identities: vec![
                 identity("i1", "Alice Test", USERNAME, "Alice Test\nTest Corp"),
                 identity("i2", "Alice (alias)", "alias@example.test", ""),
             ],
+            identity_version: 0,
+            identity_requests: Vec::new(),
             contacts: BTreeMap::new(),
             order: Vec::new(),
             next_card: 0,
@@ -186,6 +206,7 @@ impl Account {
     pub fn call(&mut self, name: &str, args: &Value) -> Result<Value, MethodError> {
         match name {
             "Identity/get" => self.identity_get(args),
+            "Identity/set" => self.identity_set(args),
             "AddressBook/get" if self.contacts_enabled => Ok(self.address_book_get()),
             "ContactCard/query" if self.contacts_enabled => Ok(self.contact_query(args)),
             "ContactCard/get" if self.contacts_enabled => {
@@ -217,12 +238,16 @@ impl Account {
             .identities
             .iter()
             .map(|i| {
+                let reply_to: Vec<Value> =
+                    i.reply_to.iter().map(|(name, email)| json!({ "name": name, "email": email })).collect();
                 let all = [
                     ("name", json!(i.name)),
                     ("email", json!(i.email)),
+                    ("replyTo", if reply_to.is_empty() { Value::Null } else { Value::Array(reply_to) }),
+                    ("bcc", Value::Null),
                     ("textSignature", json!(i.signature)),
-                    ("htmlSignature", json!("")),
-                    ("mayDelete", json!(false)),
+                    ("htmlSignature", json!(i.html_signature)),
+                    ("mayDelete", json!(i.may_delete)),
                 ];
                 let mut out = Map::new();
                 out.insert("id".into(), json!(i.id));
@@ -234,7 +259,155 @@ impl Account {
                 Value::Object(out)
             })
             .collect();
-        Ok(json!({ "accountId": ACCOUNT_ID, "state": "is1", "list": list, "notFound": [] }))
+        Ok(json!({ "accountId": ACCOUNT_ID, "state": self.identity_state(), "list": list, "notFound": [] }))
+    }
+
+    fn identity_state(&self) -> String {
+        format!("is{}", self.identity_version + 1)
+    }
+
+    /// `Identity/set` as the notes describe the server: the address is chosen at creation among
+    /// the account's own and fixed after; name, replyTo and the signatures change; the limits
+    /// are 254 characters for the name and 2047 for each signature.
+    fn identity_set(&mut self, args: &Value) -> Result<Value, MethodError> {
+        self.identity_requests.push(args.clone());
+        let old_state = self.identity_state();
+        let refuse =
+            |kind: &str, props: &[&str], why: &str| json!({"type": kind, "properties": props, "description": why});
+        let (mut created, mut not_created) = (Map::new(), Map::new());
+        let (mut updated, mut not_updated) = (Map::new(), Map::new());
+        let (mut destroyed, mut not_destroyed) = (Vec::new(), Map::new());
+        let own = [USERNAME.to_string(), "alias@example.test".to_string()];
+        for (key, object) in args["create"].as_object().into_iter().flatten() {
+            let object = object.as_object().cloned().unwrap_or_default();
+            let email = object.get("email").and_then(Value::as_str).unwrap_or_default();
+            let known = |e: &str| {
+                own.iter().any(|o| o.eq_ignore_ascii_case(e))
+                    || self.identities.iter().any(|i| i.email.eq_ignore_ascii_case(e))
+            };
+            let mut rec = IdentityRec::simple("", "", email, "");
+            let bad = if email.is_empty() {
+                Some(refuse("invalidProperties", &["email"], "Missing e-mail address."))
+            } else if !email.contains('@') {
+                Some(refuse("invalidProperties", &["email"], "Invalid e-mail address."))
+            } else if !known(email) {
+                Some(refuse("invalidProperties", &["email"], "E-mail address not configured for this account."))
+            } else {
+                self.identity_fields(&mut rec, &object, true, &refuse).err()
+            };
+            match bad {
+                Some(e) => {
+                    not_created.insert(key.clone(), e);
+                }
+                None => {
+                    self.identity_version += 1;
+                    rec.id = format!("i{}", 100 + self.identity_version);
+                    created.insert(
+                        key.clone(),
+                        json!({ "id": rec.id, "replyTo": null, "bcc": null, "htmlSignature": rec.html_signature, "mayDelete": true }),
+                    );
+                    self.identities.push(rec);
+                }
+            }
+        }
+        for (id, patch) in args["update"].as_object().into_iter().flatten() {
+            let Some(at) = self.identities.iter().position(|i| i.id == *id) else {
+                not_updated.insert(id.clone(), json!({"type": "notFound"}));
+                continue;
+            };
+            let mut rec = IdentityRec { id: id.clone(), ..IdentityRec::simple(id, "", "", "") };
+            rec.name = self.identities[at].name.clone();
+            rec.signature = self.identities[at].signature.clone();
+            rec.reply_to = self.identities[at].reply_to.clone();
+            rec.html_signature = self.identities[at].html_signature.clone();
+            let patch = patch.as_object().cloned().unwrap_or_default();
+            match self.identity_fields(&mut rec, &patch, false, &refuse) {
+                Ok(()) => {
+                    let target = &mut self.identities[at];
+                    (target.name, target.signature, target.reply_to, target.html_signature) =
+                        (rec.name, rec.signature, rec.reply_to, rec.html_signature);
+                    self.identity_version += 1;
+                    updated.insert(id.clone(), Value::Null);
+                }
+                Err(e) => {
+                    not_updated.insert(id.clone(), e);
+                }
+            }
+        }
+        for id in args["destroy"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            match self.identities.iter().position(|i| i.id == id) {
+                Some(at) => {
+                    self.identities.remove(at);
+                    self.identity_version += 1;
+                    destroyed.push(json!(id));
+                }
+                None => {
+                    not_destroyed.insert(id.to_string(), json!({"type": "notFound"}));
+                }
+            }
+        }
+        let mut out = json!({
+            "accountId": ACCOUNT_ID, "oldState": old_state, "newState": self.identity_state(),
+            "created": created, "updated": updated, "destroyed": destroyed,
+        });
+        for (key, map) in [("notCreated", not_created), ("notUpdated", not_updated), ("notDestroyed", not_destroyed)] {
+            if !map.is_empty() {
+                out[key] = Value::Object(map);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Applies the fields of a create or an update to `rec`, with the server's refusals.
+    fn identity_fields(
+        &self,
+        rec: &mut IdentityRec,
+        fields: &Map<String, Value>,
+        creating: bool,
+        refuse: &dyn Fn(&str, &[&str], &str) -> Value,
+    ) -> Result<(), Value> {
+        let too_long = |key: &str, text: &str, max: usize| {
+            (text.chars().count() > max).then(|| refuse("invalidProperties", &[key], "Field could not be set."))
+        };
+        for (key, value) in fields {
+            match key.as_str() {
+                "email" if creating => {}
+                "name" => {
+                    rec.name = value.as_str().unwrap_or_default().to_string();
+                    if let Some(e) = too_long("name", &rec.name, 254) {
+                        return Err(e);
+                    }
+                }
+                "textSignature" => {
+                    rec.signature = value.as_str().unwrap_or_default().to_string();
+                    if let Some(e) = too_long("textSignature", &rec.signature, 2047) {
+                        return Err(e);
+                    }
+                }
+                "htmlSignature" => {
+                    rec.html_signature = value.as_str().unwrap_or_default().to_string();
+                    if let Some(e) = too_long("htmlSignature", &rec.html_signature, 2047) {
+                        return Err(e);
+                    }
+                }
+                "replyTo" => {
+                    rec.reply_to = value
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|a| {
+                            let email = a["email"].as_str()?.to_string();
+                            Some((a["name"].as_str().unwrap_or_default().to_string(), email))
+                        })
+                        .collect();
+                }
+                "bcc" => {}
+                "id" => return Err(refuse("invalidProperties", &["id"], "The id property is immutable.")),
+                "email" | "mayDelete" => return Err(refuse("invalidProperties", &[key], "Field could not be set.")),
+                _ => return Err(refuse("invalidProperties", &[key], "Invalid property.")),
+            }
+        }
+        Ok(())
     }
 
     fn address_book_get(&self) -> Value {

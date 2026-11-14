@@ -27,8 +27,9 @@ use crate::{
         Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
         Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, ContactRow, Draft,
         DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, FilterRule, Filters, Identity,
-        ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Person, Quota, Reminder, SearchResult, Share,
-        ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
+        IdentityDetail, Label, ListFilter, Mailbox, MessageBody, MessageHeader, MessageLabels, PendingSend, Person,
+        Quota, Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction,
+        SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -81,6 +82,13 @@ struct Inner {
     /// so that a change made elsewhere since is noticed.
     filters_state: Option<String>,
 }
+
+/// The key (in the account's key/value table) of the sender new messages start with.
+const DEFAULT_IDENTITY_KEY: &str = "default_identity";
+
+/// The longest a send waits for the server to take over the hold: a connection that is not
+/// there should not keep the user waiting, and the message is held here meanwhile.
+const HAND_OVER_BUDGET: Duration = Duration::from_secs(8);
 
 /// One per process. Owns the cache, the sign-in and the live connection.
 #[derive(uniffi::Object)]
@@ -433,9 +441,9 @@ impl Core {
 #[uniffi::export]
 impl Core {
     /// The addresses the user can send as, from the cache (a pass keeps them current). The
-    /// first is the default.
+    /// first is the default (see [`Core::set_default_identity`]).
     pub fn identities(&self) -> Result<Vec<Identity>> {
-        self.store.identities_list(&self.account_id()?)
+        self.ordered_identities(&self.account_id()?)
     }
 
     /// Starts a draft and stores it in the cache. A reply or forward is filled in from its
@@ -444,7 +452,7 @@ impl Core {
     /// the cache does not have it (network, only then). `Existing` opens a server draft.
     pub fn new_draft(&self, kind: DraftKind) -> Result<Draft> {
         let account_id = self.account_id()?;
-        let identities = self.store.identities_list(&account_id)?;
+        let identities = self.ordered_identities(&account_id)?;
         let (id, at) = (compose::new_id()?, now());
         let draft = match kind {
             DraftKind::New => compose::blank(&identities, id, at),
@@ -473,7 +481,9 @@ impl Core {
     /// away, or that is being sent, is `Error::Invalid`.
     pub fn save_draft(&self, draft: Draft) -> Result<Draft> {
         check_draft_id(&draft.id)?;
-        let saved = self.store.draft_save(&self.account_id()?, &draft, now())?;
+        let account_id = self.account_id()?;
+        let draft = self.with_swapped_signature(&account_id, draft)?;
+        let saved = self.store.draft_save(&account_id, &draft, now())?;
         self.poke();
         Ok(saved)
     }
@@ -489,8 +499,19 @@ impl Core {
     }
 
     /// Throws a draft away, here at once and on the server with the next pass.
+    ///
+    /// A message the server holds back and that has not left yet is taken back from the server
+    /// first, as by [`Core::undo_send`]: without a connection this is `Error::Temporary` and
+    /// nothing is thrown away (the message would still leave at its time); one that has left in
+    /// the meantime is `Error::Invalid`.
     pub fn discard_draft(&self, draft_id: String) -> Result<()> {
-        self.store.draft_discard(&self.account_id()?, &draft_id)?;
+        let account_id = self.account_id()?;
+        if let Some(row) = self.store.draft_get(&account_id, &draft_id)? {
+            if row.state == DraftState::Held && row.send_at.is_some_and(|at| at > now()) {
+                self.undo_send(draft_id.clone())?;
+            }
+        }
+        self.store.draft_discard(&account_id, &draft_id)?;
         self.poke();
         Ok(())
     }
@@ -538,10 +559,13 @@ impl Core {
     }
 
     /// Hands the draft over for sending in `delay_secs` seconds, during which
-    /// [`Core::undo_send`] takes it back. Works offline: it goes out with the first pass after
-    /// that. A draft with no recipient or a malformed address is `Error::Invalid`. If the
-    /// server refuses it later, it is a draft again with `send_error` set, and the listener's
-    /// `cache_changed` is called.
+    /// [`Core::undo_send`] takes it back. When the server can be reached it is handed to the
+    /// server at once, to be held back for those seconds (at most seven days): it leaves even if
+    /// this device dies meanwhile, and the undo is a real one. Without a connection it is held
+    /// here and goes out with the first pass after that. A draft with no recipient or a
+    /// malformed address is `Error::Invalid`. If the server refuses it, it is a draft again with
+    /// `send_error` set (at once when the server was reached, else with a later pass, and the
+    /// listener's `cache_changed` is called).
     pub fn send(&self, draft: Draft, delay_secs: u32) -> Result<PendingSend> {
         let account_id = self.account_id()?;
         check_draft_id(&draft.id)?;
@@ -549,19 +573,56 @@ impl Core {
         if !self.store.identities_list(&account_id)?.iter().any(|i| i.id == draft.identity_id) {
             return Err(Error::invalid("choose an address to send from"));
         }
+        let draft = self.with_swapped_signature(&account_id, draft)?;
         let at = now();
-        let pending = self.store.draft_send(&account_id, &draft, at + i64::from(delay_secs), at)?;
+        let mut pending = self.store.draft_send(&account_id, &draft, at + i64::from(delay_secs), at)?;
+        if (1..=jmap::MAX_HOLD_SECS).contains(&delay_secs) {
+            self.hand_over(&account_id, &draft.id, delay_secs);
+            match self.store.draft_get(&account_id, &draft.id)? {
+                // The server refused it: the user is told now, and has the draft back.
+                Some(row) if row.state == DraftState::Draft => {
+                    if let Some(why) = row.draft.send_error {
+                        return Err(Error::invalid(why));
+                    }
+                }
+                Some(row) if row.state != DraftState::Scheduling => {
+                    pending = PendingSend { send_at: row.send_at.unwrap_or(pending.send_at), ..pending };
+                }
+                _ => {}
+            }
+        }
         self.poke_in(delay_secs);
+        // The server's release is not to the second: once more a little later, for the row.
+        self.poke_in(delay_secs.saturating_add(3));
         Ok(pending)
     }
 
-    /// Takes a message back before it has gone to the server and returns it as a draft.
-    /// Too late is `Error::Invalid`.
+    /// Takes a message back before it has gone and returns it as a draft. One the server holds
+    /// back is cancelled there and put back in Drafts (this needs the connection: without it
+    /// the call fails and the message still leaves at its time). Too late is `Error::Invalid`.
     pub fn undo_send(&self, draft_id: String) -> Result<Draft> {
-        self.store.draft_undo_send(&self.account_id()?, &draft_id)
+        let account_id = self.account_id()?;
+        match self.store.draft_get(&account_id, &draft_id)? {
+            Some(row) if matches!(row.state, DraftState::Held | DraftState::Submitting) => {
+                let (store, account, id) = (&self.store, &account_id, &draft_id);
+                let back = self.with_connection(|conn| async move {
+                    let _sending = store.send_lock().lock().await;
+                    compose::later::take_back(&conn, store, account, id).await
+                });
+                let back = back.map_err(|e| match e {
+                    Error::Temporary { msg } => Error::temporary(format!(
+                        "the server could not be reached to take the message back ({msg}): try again before it leaves"
+                    )),
+                    other => other,
+                })?;
+                self.poke();
+                Ok(back)
+            }
+            _ => self.store.draft_undo_send(&account_id, &draft_id),
+        }
     }
 
-    /// The messages that are still held back or waiting for a connection.
+    /// The messages that are still held back (here or by the server) or waiting for a connection.
     pub fn pending_sends(&self) -> Result<Vec<PendingSend>> {
         self.store.pending_sends(&self.account_id()?)
     }
@@ -679,10 +740,65 @@ impl Core {
         });
     }
 
+    /// The cached identities, the default first.
+    fn ordered_identities(&self, account_id: &str) -> Result<Vec<Identity>> {
+        let mut list = self.store.identities_list(account_id)?;
+        if let Some(default) = self.store.kv_get(account_id, DEFAULT_IDENTITY_KEY)? {
+            if let Some(at) = list.iter().position(|i| i.id == default) {
+                let first = list.remove(at);
+                list.insert(0, first);
+            }
+        }
+        Ok(list)
+    }
+
+    /// The draft as the user has it, with the signature of the sender swapped when the sender
+    /// was changed since the draft was stored and the old signature stands there untouched.
+    fn with_swapped_signature(&self, account_id: &str, mut draft: Draft) -> Result<Draft> {
+        let Some(stored) = self.store.draft_get(account_id, &draft.id)? else { return Ok(draft) };
+        if stored.draft.identity_id == draft.identity_id {
+            return Ok(draft);
+        }
+        let identities = self.store.identities_list(account_id)?;
+        let signature_of =
+            |id: &str| identities.iter().find(|i| i.id == id).map_or(String::new(), |i| i.signature.clone());
+        let (old, new) = (signature_of(&stored.draft.identity_id), signature_of(&draft.identity_id));
+        if let Some(body) = compose::rules::swap_signature(&draft.body, &old, &new) {
+            draft.body = body;
+        }
+        Ok(draft)
+    }
+
+    /// Asks the server to hold a message that was just sent for the time it has left. Best
+    /// effort and bounded: without a connection, or when anything fails, the row stays as it is
+    /// and the message is held here and settled by the passes.
+    ///
+    /// One budget covers all of it (waiting for a pass that is running, renewing the token,
+    /// making the connection, the work, and a second try after a 401), and it is never more than
+    /// half of the undo window: the caller gets its answer with most of the window left.
+    fn hand_over(&self, account_id: &str, draft_id: &str, delay_secs: u32) {
+        let (store, account, id) = (&self.store, account_id, draft_id);
+        let budget = HAND_OVER_BUDGET.min(Duration::from_secs(u64::from(delay_secs / 2).max(1)));
+        let _ = self.with_connection_within(Some(budget), |conn| async move {
+            let _sending = store.send_lock().lock().await;
+            compose::later::hand_over(&conn, store, account, id, now()).await
+        });
+    }
+
     /// Runs `f` with a live connection. One connection is kept for as long as its access token
     /// is the current one. A 401 renews the token and runs `f` once more on a new connection;
     /// any other error is `f`'s own.
     fn with_connection<T, F, Fut>(&self, f: F) -> Result<T>
+    where
+        F: Fn(Arc<Connection>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        self.with_connection_within(None, f)
+    }
+
+    /// [`Core::with_connection`], given up as `Error::Temporary` when it takes longer than
+    /// `budget` in all (token, connection and work together).
+    fn with_connection_within<T, F, Fut>(&self, budget: Option<Duration>, f: F) -> Result<T>
     where
         F: Fn(Arc<Connection>) -> Fut,
         Fut: Future<Output = Result<T>>,
@@ -692,7 +808,7 @@ impl Core {
             let session = inner.session.as_ref().ok_or_else(not_signed_in)?;
             (session.tokens.clone(), session.account.server_url.clone())
         };
-        self.rt.block_on(async {
+        let run = async {
             let first = async { f(self.reader(&tokens, &server_url).await?).await }.await;
             match first {
                 Err(e) if is_unauthorized(&e) => {
@@ -701,6 +817,14 @@ impl Core {
                     f(self.reader(&tokens, &server_url).await?).await
                 }
                 other => other,
+            }
+        };
+        self.rt.block_on(async {
+            match budget {
+                Some(budget) => tokio::time::timeout(budget, run)
+                    .await
+                    .unwrap_or_else(|_| Err(Error::temporary("the server did not answer in time"))),
+                None => run.await,
             }
         })
     }
@@ -1758,4 +1882,434 @@ impl Core {
         }
         Ok(filters)
     }
+}
+
+// ---- M10: unsubscribe, labels, search highlights ----
+
+#[uniffi::export]
+impl Core {
+    /// How the list that sent `message_id` (one of the user's own mail) can be left; `None`
+    /// when the message says nothing usable. Asks the server for the two headers.
+    pub fn unsubscribe_info(&self, message_id: String) -> Result<Option<Unsubscribe>> {
+        self.account_id()?;
+        Ok(self.unsubscribe_options(&message_id)?.info())
+    }
+
+    /// Leaves the list: the one-click request when the list takes one (an https POST from the
+    /// core, no redirects followed, nothing of the user's sent along), else the request by
+    /// mail, sent from the user's default address like any message. Neither possible is
+    /// `Error::Invalid`; a list that refuses or cannot be reached is `Error::Temporary`.
+    pub fn unsubscribe(&self, message_id: String) -> Result<()> {
+        let options = self.unsubscribe_options(&message_id)?;
+        // The request goes out of the core and no lock is held while it does.
+        let mut refused = false;
+        if let Some(address) = &options.one_click {
+            match self.rt.block_on(crate::unsubscribe::post_one_click(address))? {
+                crate::unsubscribe::Posted::Done => return Ok(()),
+                crate::unsubscribe::Posted::NotAllowed => refused = true,
+            }
+        }
+        let Some(mail) = options.mail else {
+            return Err(Error::invalid(match (refused, options.web.is_some()) {
+                (true, _) => "The list's address is on a private network, so the app does not ask it.",
+                (false, true) => "This list can only be left on its web page.",
+                (false, false) => "This message has no way to leave the list.",
+            }));
+        };
+        self.send_unsubscribe_mail(mail)
+    }
+
+    /// The user's labels, by name. Kept in the account's own settings on this device and
+    /// completed from the labels found on mail the app has seen.
+    pub fn labels(&self) -> Result<Vec<Label>> {
+        self.label_list(&self.account_id()?)
+    }
+
+    /// Makes a label. The name is one line, not blank, at most 60 characters; a name that is
+    /// already there (case ignored) is `Error::Invalid`.
+    pub fn create_label(&self, name: String) -> Result<Label> {
+        let account_id = self.account_id()?;
+        let name = crate::labels::check_name(&name)?;
+        let id = crate::labels::keyword_for(&name);
+        let existing = self.label_list(&account_id)?;
+        let lower = name.to_lowercase();
+        if existing.iter().any(|l| l.id == id || l.name.to_lowercase() == lower) {
+            return Err(Error::invalid("There is a label with that name already."));
+        }
+        let label = Label { id, name };
+        let mut kept = self.kept_labels(&account_id)?;
+        kept.push(label.clone());
+        self.write_json(&account_id, crate::labels::LABELS_KEY, &kept)?;
+        let mut hidden = self.hidden_labels(&account_id)?;
+        if hidden.remove(&label.id) {
+            self.write_json(&account_id, crate::labels::HIDDEN_KEY, &hidden)?;
+        }
+        Ok(label)
+    }
+
+    /// Removes the label from the list. Messages that carry it keep the keyword on the server.
+    pub fn delete_label(&self, label_id: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        let mut kept = self.kept_labels(&account_id)?;
+        kept.retain(|l| l.id != label_id);
+        self.write_json(&account_id, crate::labels::LABELS_KEY, &kept)?;
+        // Mail that carries the keyword must not bring the label back.
+        let mut hidden = self.hidden_labels(&account_id)?;
+        if hidden.insert(label_id) {
+            self.write_json(&account_id, crate::labels::HIDDEN_KEY, &hidden)?;
+        }
+        Ok(())
+    }
+
+    /// The labels of the given messages of the user's own mail, from the cache.
+    pub fn message_labels(&self, message_ids: Vec<String>) -> Result<Vec<MessageLabels>> {
+        let account_id = self.account_id()?;
+        let labels = self.label_list(&account_id)?;
+        let keywords = self.store.message_keywords(&account_id, &message_ids)?;
+        Ok(message_ids
+            .into_iter()
+            .map(|message_id| {
+                let carried = keywords.get(&message_id).map(Vec::as_slice).unwrap_or_default();
+                let label_ids = labels.iter().filter(|l| carried.contains(&l.id)).map(|l| l.id.clone()).collect();
+                MessageLabels { message_id, label_ids }
+            })
+            .collect())
+    }
+
+    /// Puts the label on the messages or takes it off. Applied to the cache at once and queued
+    /// like the other actions, so it works without a connection.
+    pub fn set_label(&self, message_ids: Vec<String>, label_id: String, on: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        self.known_label(&account_id, &label_id)?;
+        let mut seen = HashSet::new();
+        let ids: Vec<String> = message_ids.into_iter().filter(|id| seen.insert(id.clone())).collect();
+        let result = actions::submit_labels(&self.store, &account_id, &ids, &label_id, on);
+        self.poke();
+        result
+    }
+
+    /// The messages that carry the label, newest first, as [`Core::search`] gives its hits
+    /// (from the cache when the server cannot be reached).
+    pub fn label_messages(&self, label_id: String, limit: u32) -> Result<SearchResult> {
+        let account_id = self.account_id()?;
+        self.known_label(&account_id, &label_id)?;
+        let (store, id, keyword) = (&self.store, &account_id, label_id.as_str());
+        let found = self
+            .with_connection(|conn| async move { sync::with_keyword(&conn, store, id, keyword, limit as usize).await });
+        match found {
+            Ok(messages) => Ok(SearchResult { messages, from_cache: false }),
+            Err(e @ (Error::SignInNeeded { .. } | Error::Invalid { .. })) => Err(e),
+            Err(_) => {
+                let messages = self.store.messages_with_keyword(&account_id, &label_id, limit)?;
+                Ok(SearchResult { messages, from_cache: true })
+            }
+        }
+    }
+
+    /// Where `query` is found in each of the messages (ids from a [`Core::search`] with the
+    /// same query). Needs the server; without it, or for a message without a hit in subject or
+    /// text, there is simply no entry. Never an error for the search screen to show.
+    pub fn search_snippets(&self, query: String, message_ids: Vec<String>) -> Result<Vec<Snippet>> {
+        let query = query.trim();
+        if query.is_empty() || message_ids.is_empty() || self.account_id().is_err() {
+            return Ok(Vec::new());
+        }
+        let ids = &message_ids;
+        let Ok(found) = self.with_connection(|conn| async move { conn.search_snippets(query, ids).await }) else {
+            return Ok(Vec::new());
+        };
+        let place: HashMap<&str, usize> = message_ids.iter().enumerate().map(|(i, id)| (id.as_str(), i)).collect();
+        let mut snippets: Vec<(usize, Snippet)> = found
+            .into_iter()
+            .filter_map(|(message_id, subject, preview)| {
+                let at = *place.get(message_id.as_str())?;
+                let subject = subject.map(|s| crate::snippets::marked(&s, false));
+                let preview = preview.map(|p| crate::snippets::marked(&p, true));
+                (subject.is_some() || preview.is_some()).then_some((at, Snippet { message_id, subject, preview }))
+            })
+            .collect();
+        snippets.sort_by_key(|(at, _)| *at);
+        Ok(snippets.into_iter().map(|(_, s)| s).collect())
+    }
+}
+
+impl Core {
+    /// What the unsubscribe headers of a message offer (network).
+    fn unsubscribe_options(&self, message_id: &str) -> Result<crate::unsubscribe::Options> {
+        let (urls, post) = self.with_connection(|conn| async move { conn.unsubscribe_headers(message_id).await })?;
+        Ok(crate::unsubscribe::read(&urls, post.as_deref()))
+    }
+
+    /// The request by mail: a plain message from the default address, with no delay.
+    fn send_unsubscribe_mail(&self, mail: crate::unsubscribe::MailRequest) -> Result<()> {
+        if self.store.identities_list(&self.account_id()?)?.is_empty() {
+            return Err(Error::invalid("The account has no address to send from."));
+        }
+        let mut draft = self.new_draft(DraftKind::New)?;
+        draft.to = vec![Address { name: String::new(), email: mail.to }];
+        draft.subject = mail.subject;
+        draft.body = mail.body;
+        let id = draft.id.clone();
+        self.send(draft, 0).map(drop).inspect_err(|_| {
+            // Nothing was sent: the blank draft must not stay behind in Drafts.
+            let _ = self.discard_draft(id);
+        })
+    }
+
+    /// The labels the user made, as kept.
+    fn kept_labels(&self, account_id: &str) -> Result<Vec<Label>> {
+        let text = self.store.kv_get(account_id, crate::labels::LABELS_KEY)?;
+        // A value that cannot be read is no labels: the user makes them again, mail keeps its keywords.
+        Ok(text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default())
+    }
+
+    fn hidden_labels(&self, account_id: &str) -> Result<HashSet<String>> {
+        let text = self.store.kv_get(account_id, crate::labels::HIDDEN_KEY)?;
+        Ok(text.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default())
+    }
+
+    fn write_json<T: serde::Serialize>(&self, account_id: &str, key: &str, value: &T) -> Result<()> {
+        let text = serde_json::to_string(value).map_err(|e| Error::store(e.to_string()))?;
+        self.store.kv_set(account_id, key, &text)
+    }
+
+    /// The user's labels: the kept ones, completed from the keywords of cached mail.
+    fn label_list(&self, account_id: &str) -> Result<Vec<Label>> {
+        let found = self.store.known_keywords(account_id)?;
+        Ok(crate::labels::merge(self.kept_labels(account_id)?, &self.hidden_labels(account_id)?, &found))
+    }
+
+    fn known_label(&self, account_id: &str, label_id: &str) -> Result<()> {
+        match self.label_list(account_id)?.iter().any(|l| l.id == label_id) {
+            true => Ok(()),
+            false => Err(Error::invalid("That label is not there any more.")),
+        }
+    }
+}
+
+// ---- M10: send later, sender names and signatures ----
+
+/// The longest a name of a sender can be, in characters (what the server takes).
+const IDENTITY_NAME_MAX: usize = 254;
+/// The longest a signature can be, in characters.
+const IDENTITY_SIGNATURE_MAX: usize = 2047;
+
+#[uniffi::export]
+impl Core {
+    /// Hands the draft to the server now, to be sent at `send_at` (Unix seconds; at least a
+    /// minute and at most seven days from now, else `Error::Invalid`). Needs the server:
+    /// without a connection this is `Error::Temporary` and the draft stays a draft. The same
+    /// checks as [`Core::send`]. The message can be taken back with [`Core::cancel_scheduled`]
+    /// until it leaves.
+    pub fn schedule_send(&self, draft: Draft, send_at: i64) -> Result<ScheduledSend> {
+        let account_id = self.account_id()?;
+        check_draft_id(&draft.id)?;
+        compose::rules::check_recipients(&draft)?;
+        if !self.store.identities_list(&account_id)?.iter().any(|i| i.id == draft.identity_id) {
+            return Err(Error::invalid("choose an address to send from"));
+        }
+        let at = now();
+        compose::later::check_schedule(send_at, at)?;
+        let draft = self.with_swapped_signature(&account_id, draft)?;
+        // The lock first: a pass that is running would take the row for a call that died and
+        // make it a draft again. The row is written only once nothing else works on the mail.
+        let _sending = self.rt.block_on(self.store.send_lock().lock());
+        self.store.draft_schedule(&account_id, &draft, send_at, at)?;
+        let (store, account, id) = (&self.store, &account_id, &draft.id);
+        let result = self
+            .with_connection(|conn| async move { compose::later::schedule(&conn, store, account, id, send_at).await });
+        // Not even tried (no connection) or given up before anything was asked of the server:
+        // it is a draft again. A scheduling whose answer was lost stays for the pass to settle.
+        if self.store.draft_get(&account_id, &draft.id)?.is_some_and(|row| row.state == DraftState::Scheduling) {
+            self.store.draft_revert(&account_id, &draft.id)?;
+        }
+        self.poke();
+        result
+    }
+
+    /// The messages the server is holding back, soonest first. Asks the server.
+    pub fn scheduled_sends(&self) -> Result<Vec<ScheduledSend>> {
+        let account_id = self.account_id()?;
+        let (store, account) = (&self.store, &account_id);
+        self.with_connection(|conn| async move { compose::later::scheduled_list(&conn, store, account).await })
+    }
+
+    /// Takes a held message back: it is not sent and is a draft again, which is returned.
+    /// Too late (it has left) is `Error::Invalid`.
+    pub fn cancel_scheduled(&self, id: String) -> Result<Draft> {
+        let account_id = self.account_id()?;
+        let (store, account, submission) = (&self.store, &account_id, &id);
+        let email_id = self.with_connection(|conn| async move {
+            let _sending = store.send_lock().lock().await;
+            compose::later::cancel_scheduled(&conn, store, account, submission).await
+        })?;
+        self.poke();
+        let identities = self.ordered_identities(&account_id)?;
+        self.open_draft(&account_id, &email_id, &identities, compose::new_id()?, now()).map_err(|e| {
+            Error::temporary(format!(
+                "the send is cancelled and the message is a draft again in Drafts on the server, but opening it \
+                 failed ({e}): open it from Drafts"
+            ))
+        })
+    }
+
+    /// The addresses the user sends as, with what can be changed. Asks the server. The one new
+    /// messages start with comes first.
+    pub fn identity_details(&self) -> Result<Vec<IdentityDetail>> {
+        let account_id = self.account_id()?;
+        let full = self.with_connection(|conn| async move { conn.identities_full().await })?;
+        self.remember_identities(&account_id, full)
+    }
+
+    /// Creates (`id` `None`) or changes a sender: name, reply-to and signature; `email` only
+    /// counts when creating and must be one of the account's addresses. Returns it as stored.
+    /// A signature or name longer than the server takes is `Error::Invalid`.
+    pub fn save_identity(
+        &self,
+        id: Option<String>,
+        name: String,
+        email: String,
+        reply_to: String,
+        signature: String,
+    ) -> Result<IdentityDetail> {
+        let account_id = self.account_id()?;
+        // What the server would refuse is said here first, in plain words.
+        let (name_len, signature_len) = (name.chars().count(), signature.chars().count());
+        if name_len > IDENTITY_NAME_MAX {
+            return Err(Error::invalid(format!(
+                "the name can be at most {IDENTITY_NAME_MAX} characters; this one has {name_len}"
+            )));
+        }
+        if signature_len > IDENTITY_SIGNATURE_MAX {
+            return Err(Error::invalid(format!(
+                "the signature can be at most {IDENTITY_SIGNATURE_MAX} characters; this one has {signature_len}"
+            )));
+        }
+        let reply_to = parse_reply_to(&reply_to)?;
+        let email = email.trim().to_string();
+        if id.is_none() && !compose::rules::valid_address(&email) {
+            return Err(Error::invalid("give one of this account's addresses for the new sender"));
+        }
+        let (id, name, email, reply_to, signature) = (&id, &name, &email, &reply_to, &signature);
+        let saved = self.with_connection(|conn| async move {
+            let Some(id) = id else { return conn.identity_create(name, email, reply_to, signature).await };
+            let list = conn.identities_full().await?;
+            let current =
+                list.iter().find(|i| i.id == *id).ok_or_else(|| Error::invalid("this sender no longer exists"))?;
+            // Only what changed, and only what the server lets be changed: not the address, not
+            // the HTML signature. The Reply-To is left as it is (names and all) when its
+            // addresses are the same.
+            let mut patch = serde_json::Map::new();
+            if *name != current.name {
+                patch.insert("name".into(), serde_json::json!(name));
+            }
+            if *signature != current.signature {
+                patch.insert("textSignature".into(), serde_json::json!(signature));
+            }
+            if reply_to.join(", ") != current.reply_to {
+                let value =
+                    if reply_to.is_empty() { serde_json::Value::Null } else { crate::jmap::reply_to_json(reply_to) };
+                patch.insert("replyTo".into(), value);
+            }
+            if !patch.is_empty() {
+                conn.identity_update(id, patch).await?;
+            }
+            Ok(id.clone())
+        })?;
+        // The cache is made current after every change; the answer is what the server holds.
+        let full = self.with_connection(|conn| async move { conn.identities_full().await })?;
+        let details = self.remember_identities(&account_id, full)?;
+        details.into_iter().find(|d| d.id == saved).ok_or_else(|| Error::temporary("the new sender is not listed yet"))
+    }
+
+    /// Deletes a sender. The last one, or one a waiting message uses, is `Error::Invalid`.
+    pub fn delete_identity(&self, id: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        if self.store.identity_in_use(&account_id, &id)? {
+            return Err(Error::invalid(
+                "a message that is waiting to be sent uses this sender: wait until it has gone, or take it back",
+            ));
+        }
+        let id = &id;
+        let full = self.with_connection(|conn| async move {
+            let list = conn.identities_full().await?;
+            let Some(this) = list.iter().find(|i| i.id == *id) else { return Ok(list) };
+            if list.len() <= 1 {
+                return Err(Error::invalid("this is the only sender: a message cannot be sent without one"));
+            }
+            if !this.may_delete {
+                return Err(Error::invalid("the server does not let this sender be deleted"));
+            }
+            if !conn.pending_submissions_of_identity(id).await?.is_empty() {
+                return Err(Error::invalid(
+                    "a message the server is holding back uses this sender: wait until it has gone, or cancel it",
+                ));
+            }
+            conn.identity_destroy(id).await?;
+            conn.identities_full().await
+        })?;
+        if self.store.kv_get(&account_id, DEFAULT_IDENTITY_KEY)?.as_deref() == Some(id.as_str()) {
+            self.store.kv_delete(&account_id, DEFAULT_IDENTITY_KEY)?;
+        }
+        self.remember_identities(&account_id, full).map(drop)
+    }
+
+    /// Makes this sender the one new messages start with (kept on this device).
+    pub fn set_default_identity(&self, id: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        if !self.store.identities_list(&account_id)?.iter().any(|i| i.id == id) {
+            return Err(Error::invalid("there is no such sender"));
+        }
+        self.store.kv_set(&account_id, DEFAULT_IDENTITY_KEY, &id)
+    }
+}
+
+impl Core {
+    /// Puts the identities the server gave in the cache and returns them with the default
+    /// first: the one chosen here if there still is one, else the server's first.
+    fn remember_identities(
+        &self,
+        account_id: &str,
+        full: Vec<crate::jmap::IdentityFull>,
+    ) -> Result<Vec<IdentityDetail>> {
+        let plain: Vec<Identity> = full
+            .iter()
+            .map(|i| Identity {
+                id: i.id.clone(),
+                name: i.name.clone(),
+                email: i.email.clone(),
+                signature: i.signature.clone(),
+            })
+            .collect();
+        self.store.identities_replace(account_id, &plain)?;
+        let chosen = self.store.kv_get(account_id, DEFAULT_IDENTITY_KEY)?;
+        let default = chosen.filter(|c| full.iter().any(|i| i.id == *c)).or_else(|| full.first().map(|i| i.id.clone()));
+        let mut details: Vec<IdentityDetail> = full
+            .into_iter()
+            .map(|i| IdentityDetail {
+                is_default: default.as_deref() == Some(i.id.as_str()),
+                id: i.id,
+                name: i.name,
+                email: i.email,
+                reply_to: i.reply_to,
+                signature: i.signature,
+                may_delete: i.may_delete,
+            })
+            .collect();
+        // Stable: the others stay in the server's order.
+        details.sort_by_key(|d| !d.is_default);
+        Ok(details)
+    }
+}
+
+/// The Reply-To addresses typed in one line, separated by commas or semicolons. Empty for none.
+fn parse_reply_to(text: &str) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for part in text.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()) {
+        if !compose::rules::valid_address(part) {
+            return Err(Error::invalid(format!("'{part}' is not a valid address")));
+        }
+        out.push(part.to_string());
+    }
+    Ok(out)
 }

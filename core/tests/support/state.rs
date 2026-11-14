@@ -376,6 +376,10 @@ pub struct Mail {
     pub bodies_fail: bool,
     /// The List-Id header of some messages, by message id.
     pub list_ids: BTreeMap<String, String>,
+    /// The raw List-Unsubscribe and List-Unsubscribe-Post headers of some messages, by message id.
+    pub unsubscribe: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// The most ids a get or a snippet request takes, when the test sets one.
+    pub get_max: Option<usize>,
     /// Files put on the server through the upload endpoint: blob id to type and bytes.
     uploads: BTreeMap<String, (String, Vec<u8>)>,
     /// Every submission the server accepted, oldest first.
@@ -385,14 +389,44 @@ pub struct Mail {
     tx: broadcast::Sender<StreamMsg>,
 }
 
-/// A message the server was asked to send and did.
+/// A message the server was asked to send: sent, or held back until its time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Submission {
     pub id: String,
     pub identity_id: String,
     pub email_id: String,
-    /// The addresses it was sent to (To, Cc and Bcc).
+    /// The addresses it was sent to (To, Cc and Bcc, or the envelope's own list).
     pub recipients: Vec<String>,
+    /// The envelope parameter that held it back, as asked: `("HOLDFOR", "10")`.
+    pub hold: Option<(String, String)>,
+    /// When it leaves, in milliseconds since the epoch (the creation time when not held).
+    pub release_at_ms: u64,
+    /// Cancelled: it will never leave.
+    pub cancelled: bool,
+    /// Destroyed: gone from the server's lists, but destroying does not stop a message.
+    pub destroyed: bool,
+}
+
+impl Submission {
+    /// `pending` until its time, then `final`; `canceled` when taken back.
+    pub fn undo_status(&self, now_ms: u64) -> &'static str {
+        if self.cancelled {
+            "canceled"
+        } else if now_ms < self.release_at_ms {
+            "pending"
+        } else {
+            "final"
+        }
+    }
+
+    /// It has left, whatever happened to its record.
+    pub fn has_left(&self, now_ms: u64) -> bool {
+        self.undo_status(now_ms) == "final"
+    }
+}
+
+pub fn now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// How the mock refuses a submission.
@@ -463,6 +497,8 @@ impl Mail {
             email_set_budget: None,
             bodies_fail: false,
             list_ids: BTreeMap::new(),
+            unsubscribe: BTreeMap::new(),
+            get_max: None,
             uploads: BTreeMap::new(),
             submissions: Vec::new(),
             refusal: None,
@@ -786,6 +822,7 @@ impl Mail {
             "Email/changes" => self.email_changes(args),
             "Email/set" => self.email_set(args),
             "Thread/get" => self.thread_get(args),
+            "SearchSnippet/get" => self.snippet_get(args),
             other => Err(merr("unknownMethod", format!("the mock does not implement '{other}'"))),
         };
         self.flush();
@@ -885,9 +922,15 @@ impl Mail {
     /// One message as `Email/get` gives it, with the header the message type does not know.
     fn email_value(&self, e: &Email, props: Option<&BTreeSet<String>>, body: &BodyOpts) -> Value {
         let mut value = e.json(props, body);
-        let header = "header:list-id:asText";
-        if props.is_some_and(|p| p.contains(header)) {
-            value[header] = json!(self.list_ids.get(&e.id));
+        for property in props.into_iter().flatten().filter(|p| p.to_ascii_lowercase().starts_with("header:")) {
+            let lower = property.to_ascii_lowercase();
+            let (unsubscribe, post) = self.unsubscribe.get(&e.id).cloned().unwrap_or_default();
+            value[property.as_str()] = match lower.as_str() {
+                "header:list-id:astext" => json!(self.list_ids.get(&e.id)),
+                "header:list-unsubscribe:asurls" => json!(unsubscribe.as_deref().map(header_urls)),
+                "header:list-unsubscribe-post:astext" => json!(post.as_deref().map(str::trim)),
+                _ => Value::Null,
+            };
         }
         value
     }
@@ -898,6 +941,10 @@ impl Mail {
         let body = BodyOpts::from_args(args)?;
         if self.bodies_fail && (body.fetch_text || body.fetch_html) {
             return Err(merr("serverFail", "the mock was told to fail body requests"));
+        }
+        // As Stalwart 1.1.0: this form is not known, and one unknown property fails the whole request.
+        if let Some(p) = props.iter().flatten().find(|p| p.eq_ignore_ascii_case("header:list-unsubscribe:asText")) {
+            return Err(merr("invalidArguments", format!("Invalid property {p}")));
         }
         let mut list = Vec::new();
         let mut not_found = Vec::new();
@@ -962,8 +1009,8 @@ impl Mail {
                     let others = opt_strings(Some(value))?.unwrap_or_default();
                     e.mailbox_ids.iter().any(|m| !others.contains(m))
                 }
-                "hasKeyword" => e.keywords.contains(s),
-                "notKeyword" => !e.keywords.contains(s),
+                "hasKeyword" => e.keywords.contains(&s.to_lowercase()),
+                "notKeyword" => !e.keywords.contains(&s.to_lowercase()),
                 "before" => parse_rfc3339(s).is_some_and(|t| e.received_at < t),
                 "after" => parse_rfc3339(s).is_some_and(|t| e.received_at >= t),
                 "subject" => e.subject.to_lowercase().contains(&s.to_lowercase()),
@@ -1049,6 +1096,38 @@ impl Mail {
             out["total"] = json!(ids.len());
         }
         Ok(out)
+    }
+
+    /// `SearchSnippet/get` as Stalwart 1.1.0 answers it (section 4 of the notes): only a text,
+    /// subject or body condition marks anything; the words are marked wherever they are found,
+    /// without regard to case; subject and preview are HTML-escaped with `<mark>` tags; the
+    /// preview keeps a trailing space; a message with no hit has two nulls; unknown ids are
+    /// in `notFound`.
+    fn snippet_get(&self, args: &Value) -> MResult {
+        let ids = opt_strings(args.get("emailIds"))?.unwrap_or_default();
+        if self.get_max.is_some_and(|max| ids.len() > max) {
+            return Err(merr("requestTooLarge", "too many emailIds"));
+        }
+        let mut words = Vec::new();
+        if let Some(filter) = args.get("filter") {
+            filter_words(filter, &mut words);
+        }
+        let mut list = Vec::new();
+        let mut not_found = Vec::new();
+        for id in ids {
+            let Some(e) = self.emails.get(&id) else {
+                not_found.push(id);
+                continue;
+            };
+            let text = e.text.clone().unwrap_or_else(|| e.preview.clone());
+            let preview: String = text.chars().take(255).collect();
+            let subject = marked_html(&e.subject, &words);
+            let preview = marked_html(&preview, &words).map(|p| format!("{p} "));
+            list.push(json!({ "emailId": id, "subject": subject, "preview": preview }));
+        }
+        Ok(
+            json!({ "accountId": ACCOUNT_ID, "list": list, "notFound": if not_found.is_empty() { Value::Null } else { json!(not_found) } }),
+        )
     }
 
     fn email_changes(&self, args: &Value) -> MResult {
@@ -1479,12 +1558,24 @@ impl Mail {
         let mut created = Map::new();
         let mut not_created = Map::new();
         let mut updated = Map::new();
+        let mut not_updated = Map::new();
+        let mut destroyed = Vec::new();
+        let mut not_destroyed = Map::new();
         for (key, object) in args.get("create").and_then(Value::as_object).into_iter().flatten() {
             match self.accept_submission(object, identities) {
                 Ok(submission) => {
-                    created.insert(key.clone(), json!({ "id": submission.id, "undoStatus": "final" }));
+                    let now = now_ms();
+                    created.insert(
+                        key.clone(),
+                        json!({
+                            "id": submission.id,
+                            "undoStatus": submission.undo_status(now),
+                            "sendAt": rfc3339((submission.release_at_ms / 1000) as i64),
+                        }),
+                    );
                     let patch = &args["onSuccessUpdateEmail"][format!("#{key}")];
                     if !patch.is_null() {
+                        // Done when the submission is made, held or not, as the real server does.
                         match self.apply_patch(&submission.email_id, patch) {
                             Ok(()) => {
                                 updated.insert(submission.email_id.clone(), Value::Null);
@@ -1499,14 +1590,64 @@ impl Mail {
                 }
             }
         }
+        let now = now_ms();
+        for (id, patch) in args.get("update").and_then(Value::as_object).into_iter().flatten() {
+            let found = self.submissions.iter_mut().find(|s| s.id == *id && !s.destroyed);
+            let Some(sub) = found else {
+                not_updated.insert(id.clone(), json!({"type": "notFound"}));
+                continue;
+            };
+            if patch.as_object().is_none_or(|p| p.len() != 1 || p.get("undoStatus") != Some(&json!("canceled"))) {
+                let why = "Email submissions can only be cancelled.";
+                not_updated.insert(
+                    id.clone(),
+                    json!({"type": "invalidProperties", "properties": ["undoStatus"], "description": why}),
+                );
+            } else if sub.undo_status(now) != "pending" {
+                let why = "The requested message is no longer in the queue.";
+                not_updated.insert(id.clone(), json!({"type": "cannotUnsend", "description": why}));
+            } else {
+                sub.cancelled = true;
+                updated.insert(id.clone(), Value::Null);
+            }
+        }
+        for id in args.get("destroy").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            match self.submissions.iter_mut().find(|s| s.id == id && !s.destroyed) {
+                Some(sub) => {
+                    // Gone from the lists; a held message is still sent at its time.
+                    sub.destroyed = true;
+                    destroyed.push(json!(id));
+                }
+                None => {
+                    not_destroyed.insert(id.to_string(), json!({"type": "notFound"}));
+                }
+            }
+        }
+        // Only the email answer follows from the emails that onSuccessUpdateEmail changed; the
+        // submission answer's own `updated` holds the cancelled ones.
+        let email_updated: Map<String, Value> = updated
+            .iter()
+            .filter(|(id, _)| self.emails.contains_key(*id))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         let mut out = json!({
             "accountId": ACCOUNT_ID, "oldState": "ss0", "newState": "ss1", "created": created,
         });
-        if !not_created.is_empty() {
-            out["notCreated"] = Value::Object(not_created);
+        for (key, map) in [
+            ("notCreated", not_created),
+            ("updated", updated.clone()),
+            ("notUpdated", not_updated),
+            ("notDestroyed", not_destroyed),
+        ] {
+            if !map.is_empty() {
+                out[key] = Value::Object(map);
+            }
         }
-        let follow = (!updated.is_empty()).then(|| {
-            json!({ "accountId": ACCOUNT_ID, "oldState": old_state, "newState": self.email_state(), "updated": updated })
+        if !destroyed.is_empty() {
+            out["destroyed"] = Value::Array(destroyed);
+        }
+        let follow = (!email_updated.is_empty()).then(|| {
+            json!({ "accountId": ACCOUNT_ID, "oldState": old_state, "newState": self.email_state(), "updated": email_updated })
         });
         Ok((out, follow))
     }
@@ -1524,7 +1665,58 @@ impl Mail {
         let email_id = object["emailId"].as_str().unwrap_or_default();
         let email = self.emails.get(email_id).ok_or_else(|| invalid("emailId", "no such message"))?;
         let all = [&email.to, &email.cc, &email.bcc];
-        let recipients: Vec<String> = all.into_iter().flatten().map(|(_, e)| e.clone()).collect();
+        let mut recipients: Vec<String> = all.into_iter().flatten().map(|(_, e)| e.clone()).collect();
+        let now = now_ms();
+        let mut hold = None;
+        let mut release_at_ms = now;
+        let envelope = &object["envelope"];
+        if !envelope.is_null() {
+            let rcpt: Vec<String> = envelope["rcptTo"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r["email"].as_str().map(str::to_string))
+                .collect();
+            if !rcpt.is_empty() {
+                recipients = rcpt;
+            }
+            let forbidden = |why: &str| json!({"type": "forbiddenMailFrom", "description": format!("Server rejected MAIL-FROM: 501 5.5.4 {why}")});
+            let params = envelope["mailFrom"]["parameters"].as_object().cloned().unwrap_or_default();
+            if params.contains_key("HOLDFOR") && params.contains_key("HOLDUNTIL") {
+                return Err(forbidden("Only one of HOLDFOR or HOLDUNTIL may be specified."));
+            }
+            for (name, value) in &params {
+                let Some(text) = value.as_str() else {
+                    let why = format!("Failed to parse mailFrom parameters: Unsupported parameter: {name}.");
+                    return Err(invalid("envelope", &why));
+                };
+                let bad = || invalid("envelope", &format!("Invalid parameter: {name}."));
+                match name.as_str() {
+                    "HOLDFOR" => {
+                        let secs: u64 = text.parse().ok().filter(|s| *s > 0).ok_or_else(bad)?;
+                        if secs > 604_800 {
+                            return Err(forbidden("Requested hold time exceeds maximum of 604800 seconds."));
+                        }
+                        release_at_ms = now + secs * 1000;
+                    }
+                    "HOLDUNTIL" => {
+                        let at = chrono::DateTime::parse_from_rfc3339(text).map_err(|_| bad())?.timestamp();
+                        let at_ms = u64::try_from(at).map_err(|_| bad())? * 1000;
+                        if at_ms <= now {
+                            return Err(forbidden("HOLDUNTIL must be a date and time in the future."));
+                        }
+                        if at_ms > now + 604_800_000 {
+                            return Err(forbidden("Requested release time exceeds maximum."));
+                        }
+                        release_at_ms = at_ms;
+                    }
+                    other => {
+                        return Err(invalid("envelope", &format!("Unsupported parameter: {other}={text}.")));
+                    }
+                }
+                hold = Some((name.clone(), text.to_string()));
+            }
+        }
         if recipients.is_empty() {
             return Err(json!({"type": "noRecipients"}));
         }
@@ -1533,6 +1725,84 @@ impl Mail {
             identity_id: identity_id.to_string(),
             email_id: email_id.to_string(),
             recipients,
+            hold,
+            release_at_ms,
+            cancelled: false,
+            destroyed: false,
+        })
+    }
+
+    /// `EmailSubmission/query`: the filters of the notes (`emailIds`, `undoStatus`, `identityIds`);
+    /// a sort by `sendAt` is not supported, as on the real server.
+    pub fn submission_query(&self, args: &Value) -> MResult {
+        for sort in args["sort"].as_array().into_iter().flatten() {
+            let property = sort["property"].as_str().unwrap_or_default();
+            if !["emailId", "threadId", "sentAt"].contains(&property) {
+                return Err(merr("unsupportedSort", property.to_string()));
+            }
+        }
+        let filter = args["filter"].as_object().cloned().unwrap_or_default();
+        let strings = |key: &str| -> Option<Vec<String>> {
+            filter
+                .get(key)
+                .map(|v| v.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect())
+        };
+        if let Some(bad) =
+            filter.keys().find(|k| !["emailIds", "undoStatus", "identityIds", "threadIds"].contains(&k.as_str()))
+        {
+            return Err(merr("unsupportedFilter", bad.clone()));
+        }
+        let (emails, identities) = (strings("emailIds"), strings("identityIds"));
+        let status = filter.get("undoStatus").and_then(Value::as_str);
+        let now = now_ms();
+        let ids: Vec<&str> = self
+            .submissions
+            .iter()
+            .filter(|s| !s.destroyed)
+            .filter(|s| emails.as_ref().is_none_or(|e| e.contains(&s.email_id)))
+            .filter(|s| identities.as_ref().is_none_or(|i| i.contains(&s.identity_id)))
+            .filter(|s| status.is_none_or(|st| s.undo_status(now) == st))
+            .map(|s| s.id.as_str())
+            .collect();
+        Ok(
+            json!({ "accountId": ACCOUNT_ID, "queryState": "q", "canCalculateChanges": true, "position": 0, "ids": ids }),
+        )
+    }
+
+    /// `EmailSubmission/get`.
+    pub fn submission_get(&self, args: &Value) -> MResult {
+        let wanted: Option<Vec<&str>> =
+            args["ids"].as_array().map(|ids| ids.iter().filter_map(Value::as_str).collect());
+        let now = now_ms();
+        let mut list = Vec::new();
+        let mut not_found = Vec::new();
+        let visible = |s: &&Submission| !s.destroyed;
+        match &wanted {
+            None => {
+                for s in self.submissions.iter().filter(visible) {
+                    list.push(self.submission_json(s, now));
+                }
+            }
+            Some(ids) => {
+                for id in ids {
+                    match self.submissions.iter().filter(visible).find(|s| s.id == *id) {
+                        Some(s) => list.push(self.submission_json(s, now)),
+                        None => not_found.push(json!(id)),
+                    }
+                }
+            }
+        }
+        Ok(json!({ "accountId": ACCOUNT_ID, "state": "ss1", "list": list, "notFound": not_found }))
+    }
+
+    fn submission_json(&self, s: &Submission, now: u64) -> Value {
+        let recipients: Vec<Value> = s.recipients.iter().map(|e| json!({ "email": e })).collect();
+        json!({
+            "id": s.id, "identityId": s.identity_id, "emailId": s.email_id,
+            "threadId": self.emails.get(&s.email_id).map(|e| e.thread_id()),
+            "envelope": { "mailFrom": { "email": USERNAME, "parameters": null }, "rcptTo": recipients },
+            "sendAt": rfc3339((s.release_at_ms / 1000) as i64),
+            "undoStatus": s.undo_status(now),
         })
     }
 
@@ -1546,8 +1816,12 @@ impl Mail {
         for (key, value) in patch {
             match key.as_str() {
                 "keywords" => {
-                    e.keywords =
-                        flag_set(value).ok_or_else(|| invalid("keywords", "expected an object of true values"))?
+                    let all =
+                        flag_set(value).ok_or_else(|| invalid("keywords", "expected an object of true values"))?;
+                    e.keywords = BTreeSet::new();
+                    for keyword in all {
+                        add_keyword(&mut e.keywords, &keyword, &invalid)?;
+                    }
                 }
                 "mailboxIds" => {
                     e.mailbox_ids =
@@ -1563,11 +1837,15 @@ impl Mail {
                     };
                     let name = name.replace("~1", "/").replace("~0", "~");
                     match value {
+                        Value::Bool(true) if k.starts_with("keywords/") => {
+                            add_keyword(target, &name, &invalid)?;
+                        }
                         Value::Bool(true) => {
                             target.insert(name);
                         }
                         // The spec says null removes; jmap-client sends false.
                         Value::Bool(false) | Value::Null => {
+                            target.remove(&name.to_lowercase());
                             target.remove(&name);
                         }
                         _ => return Err(invalid(k, "expected true or null")),
@@ -1584,6 +1862,100 @@ impl Mail {
         self.commit(e);
         Ok(())
     }
+}
+
+/// The keywords of a message as Stalwart 1.1.0 takes them (`dev/notes/stalwart-mail-features.md`,
+/// section 3): ASCII only and no space, tab, `( ) { % * " \\ ]`, at most 128 bytes, lower-cased,
+/// at most 100 on a message.
+fn add_keyword(
+    keywords: &mut BTreeSet<String>,
+    keyword: &str,
+    invalid: &dyn Fn(&str, &str) -> Value,
+) -> Result<(), Value> {
+    let bad_char = |c: char| !c.is_ascii() || c.is_ascii_control() || " (){%*\"\\]".contains(c);
+    if keyword.is_empty() || keyword.chars().any(bad_char) {
+        return Err(invalid("keywords", "Invalid keyword."));
+    }
+    if keyword.len() > 128 {
+        return Err(invalid("keywords", "Keywords cannot be longer than 128 bytes."));
+    }
+    keywords.insert(keyword.to_lowercase());
+    if keywords.len() > 100 {
+        return Err(json!({"type": "tooManyKeywords", "description": "An email cannot have more than 100 keywords.",
+            "properties": ["keywords"]}));
+    }
+    Ok(())
+}
+
+/// The addresses in the brackets of a List-Unsubscribe header, comments left out.
+fn header_urls(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = raw;
+    while let Some(open) = rest.find('<') {
+        let Some(close) = rest[open..].find('>') else { break };
+        out.push(rest[open + 1..open + close].trim().to_string());
+        rest = &rest[open + close + 1..];
+    }
+    out
+}
+
+/// The words a snippet filter looks for: those of its `text`, `subject` and `body` conditions
+/// (quotes dropped), inside AND and OR, not inside NOT.
+fn filter_words(filter: &Value, words: &mut Vec<String>) {
+    match filter["operator"].as_str() {
+        Some("NOT") => {}
+        Some(_) => filter["conditions"].as_array().into_iter().flatten().for_each(|c| filter_words(c, words)),
+        None => {
+            for key in ["text", "subject", "body"] {
+                if let Some(text) = filter[key].as_str() {
+                    words.extend(text.replace('"', " ").split_whitespace().map(str::to_lowercase));
+                }
+            }
+        }
+    }
+}
+
+/// `text` HTML-escaped with `<mark>` around each word (matched without regard to case); `None`
+/// when no word is in it.
+fn marked_html(text: &str, words: &[String]) -> Option<String> {
+    let lower: Vec<char> = text.chars().flat_map(char::to_lowercase).collect();
+    let chars: Vec<char> = text.chars().collect();
+    // Only text whose letters keep their count when lower-cased can be marked by position.
+    if lower.len() != chars.len() {
+        return None;
+    }
+    let mut hit = vec![false; chars.len()];
+    for word in words.iter().filter(|w| !w.is_empty()) {
+        let word: Vec<char> = word.chars().collect();
+        for start in 0..chars.len().saturating_sub(word.len() - 1) {
+            if lower[start..start + word.len()] == word[..] {
+                hit[start..start + word.len()].iter_mut().for_each(|h| *h = true);
+            }
+        }
+    }
+    if !hit.iter().any(|h| *h) {
+        return None;
+    }
+    let mut out = String::new();
+    let mut inside = false;
+    for (c, h) in chars.iter().zip(&hit) {
+        if *h != inside {
+            out.push_str(if *h { "<mark>" } else { "</mark>" });
+            inside = *h;
+        }
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(*c),
+        }
+    }
+    if inside {
+        out.push_str("</mark>");
+    }
+    Some(out)
 }
 
 fn flag_set(v: &Value) -> Option<BTreeSet<String>> {

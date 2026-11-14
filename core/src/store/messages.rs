@@ -58,7 +58,7 @@ fn set_mailboxes(c: &Connection, account_id: &str, message_id: &str, mailbox_ids
     Ok(())
 }
 
-fn upsert(c: &Connection, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
+pub(super) fn upsert(c: &Connection, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
     let mut stmt = c.prepare_cached(
         "INSERT INTO messages (account_id, id, thread_id, from_name, from_email, subject, preview,
              received_at, is_unread, is_flagged, has_attachment, size, to_json)
@@ -180,17 +180,20 @@ impl Store {
     /// A message that is in `msgs` keeps its cached body. Shown and dismissed notification rows
     /// are kept: they describe what the user saw.
     pub fn replace_messages(&self, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
-        self.write(|c| {
-            let keep: HashSet<&str> = msgs.iter().map(|m| m.id.as_str()).collect();
-            let cached: Vec<String> = c
-                .prepare("SELECT id FROM messages WHERE account_id = ?1")?
-                .query_map([account_id], |r| r.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            let mut delete = c.prepare_cached("DELETE FROM messages WHERE account_id = ?1 AND id = ?2")?;
-            for id in cached.iter().filter(|id| !keep.contains(id.as_str())) {
-                delete.execute([account_id, id])?;
-            }
-            upsert(c, account_id, msgs)
-        })
+        self.write(|c| replace(c, account_id, msgs))
     }
+}
+
+/// The body of [`Store::replace_messages`], for a caller that writes more in the same transaction.
+pub(super) fn replace(c: &Connection, account_id: &str, msgs: &[MessageHeader]) -> Result<()> {
+    let keep: HashSet<&str> = msgs.iter().map(|m| m.id.as_str()).collect();
+    let cached: Vec<String> = c
+        .prepare("SELECT id FROM messages WHERE account_id = ?1")?
+        .query_map([account_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut delete = c.prepare_cached("DELETE FROM messages WHERE account_id = ?1 AND id = ?2")?;
+    for id in cached.iter().filter(|id| !keep.contains(id.as_str())) {
+        delete.execute([account_id, id])?;
+    }
+    upsert(c, account_id, msgs)
 }

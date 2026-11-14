@@ -26,6 +26,14 @@ pub enum DraftState {
     /// The request that sends it was started. If its answer was lost, the pass finds out from
     /// the server copy whether it went.
     Submitting,
+    /// The server holds the message back until `send_at` (its submission is pending): the user
+    /// may still take it back there. Once it has left, the pass removes the row.
+    Held,
+    /// Being scheduled for a time of the user's choosing: the copy is being made.
+    Scheduling,
+    /// Being scheduled: the request that makes the server hold it was started. Settled like
+    /// `Submitting`, except that a message the server does not hold is a draft again, never sent.
+    ScheduleSubmitting,
 }
 
 impl DraftState {
@@ -34,6 +42,9 @@ impl DraftState {
             DraftState::Draft => "draft",
             DraftState::Sending => "sending",
             DraftState::Submitting => "submitting",
+            DraftState::Held => "held",
+            DraftState::Scheduling => "scheduling",
+            DraftState::ScheduleSubmitting => "schedule_submitting",
         }
     }
 
@@ -41,6 +52,9 @@ impl DraftState {
         match text {
             "sending" => DraftState::Sending,
             "submitting" => DraftState::Submitting,
+            "held" => DraftState::Held,
+            "scheduling" => DraftState::Scheduling,
+            "schedule_submitting" => DraftState::ScheduleSubmitting,
             _ => DraftState::Draft,
         }
     }
@@ -217,11 +231,41 @@ impl Store {
         })
     }
 
+    /// The server copies of the messages the server holds back for the undo window, or whose
+    /// hand-over is not settled: what a list of scheduled messages leaves out.
+    pub fn held_copy_ids(&self, account_id: &str) -> Result<Vec<String>> {
+        self.read(|c| {
+            let rows = load_all(c, account_id, "state IN ('held', 'submitting') AND discarded = 0", "id")?;
+            Ok(rows.into_iter().filter_map(|row| row.draft.server_id).collect())
+        })
+    }
+
+    /// Whether a message that is waiting to go (held back here or by the server, or being
+    /// scheduled) is sent as this identity.
+    pub fn identity_in_use(&self, account_id: &str, identity_id: &str) -> Result<bool> {
+        let now = unix_now();
+        self.read(|c| {
+            let rows = load_all(c, account_id, "state != 'draft' AND discarded = 0", "id")?;
+            Ok(rows.iter().any(|row| {
+                let waiting = row.state != DraftState::Held || row.send_at.is_some_and(|at| at > now);
+                waiting && row.draft.identity_id == identity_id
+            }))
+        })
+    }
+
     /// The messages that are held back or on their way, in the order they leave.
     pub fn pending_sends(&self, account_id: &str) -> Result<Vec<PendingSend>> {
+        let now = unix_now();
         self.read(|c| {
             let rows = load_all(c, account_id, "state != 'draft' AND discarded = 0", "send_at, id")?;
-            Ok(rows.iter().map(pending).collect())
+            // A message being scheduled is not waiting yet, and one the server held back whose
+            // time has come is on its way, not waiting.
+            let waiting = |row: &&DraftRow| match row.state {
+                DraftState::Scheduling | DraftState::ScheduleSubmitting => false,
+                DraftState::Held => row.send_at.is_some_and(|at| at > now),
+                _ => true,
+            };
+            Ok(rows.iter().filter(waiting).map(pending).collect())
         })
     }
 
@@ -231,7 +275,12 @@ impl Store {
     pub fn draft_discard(&self, account_id: &str, id: &str) -> Result<()> {
         self.write(|c| {
             match load(c, account_id, id)? {
-                Some(row) if row.state == DraftState::Submitting => {
+                Some(row)
+                    if matches!(
+                        row.state,
+                        DraftState::Submitting | DraftState::Scheduling | DraftState::ScheduleSubmitting
+                    ) =>
+                {
                     return Err(Error::invalid("this message is already being sent"));
                 }
                 Some(_) => {
@@ -274,6 +323,11 @@ impl Store {
 
     // ---- what the pass uses ----
 
+    /// Thrown-away drafts with everything a pass needs to know about them.
+    pub fn drafts_discarded_rows(&self, account_id: &str) -> Result<Vec<DraftRow>> {
+        self.read(|c| load_all(c, account_id, "discarded = 1", "updated_at, id"))
+    }
+
     /// Thrown-away drafts: `(id, server id)`.
     pub fn drafts_discarded(&self, account_id: &str) -> Result<Vec<(String, Option<String>)>> {
         self.read(|c| {
@@ -290,7 +344,10 @@ impl Store {
     /// Messages to send now: held back and due, or with a send under way that has to be settled.
     pub fn drafts_to_send(&self, account_id: &str, now: i64) -> Result<Vec<DraftRow>> {
         self.read(|c| {
-            let due = format!("discarded = 0 AND (state = 'submitting' OR (state = 'sending' AND send_at <= {now}))");
+            let due = format!(
+                "discarded = 0 AND (state IN ('submitting', 'scheduling', 'schedule_submitting')
+                 OR (state IN ('sending', 'held') AND send_at <= {now}))"
+            );
             load_all(c, account_id, &due, "send_at, id")
         })
     }
@@ -333,7 +390,8 @@ impl Store {
         self.write(|c| {
             c.execute(
                 "UPDATE drafts SET server_id = NULL, dirty = 1,
-                     state = CASE WHEN state = 'submitting' THEN 'sending' ELSE state END
+                     state = CASE state WHEN 'submitting' THEN 'sending' WHEN 'schedule_submitting' THEN 'draft'
+                                        ELSE state END
                  WHERE account_id = ?1 AND id = ?2",
                 [account_id, id],
             )?;
@@ -364,6 +422,70 @@ impl Store {
                 params![account_id, id, rev, copy],
             )?;
             Ok(changed > 0)
+        })
+    }
+
+    /// Stores the draft as handed over to be scheduled for `send_at`. Only a draft that is being
+    /// written can be: anything else is on its way already.
+    pub fn draft_schedule(&self, account_id: &str, draft: &Draft, send_at: i64, now: i64) -> Result<()> {
+        self.write(|c| {
+            let w = Write { state: DraftState::Scheduling, send_at: Some(send_at), send_error: Some(None) };
+            write_user_draft(c, account_id, draft, now, w)
+        })
+    }
+
+    /// Marks the scheduling request as started. False when the row is not the version that was
+    /// copied (or was thrown away meanwhile).
+    pub fn draft_begin_schedule(&self, account_id: &str, id: &str, rev: i64, copy: &str) -> Result<bool> {
+        self.write(|c| {
+            let changed = c.execute(
+                "UPDATE drafts SET state = 'schedule_submitting'
+                 WHERE account_id = ?1 AND id = ?2 AND state = 'scheduling' AND discarded = 0
+                   AND rev = ?3 AND dirty = 0 AND server_id = ?4",
+                params![account_id, id, rev, copy],
+            )?;
+            Ok(changed > 0)
+        })
+    }
+
+    /// The server holds the message back now: the row waits for its time (it can still be
+    /// taken back until then).
+    pub fn draft_held(&self, account_id: &str, id: &str) -> Result<()> {
+        self.write(|c| {
+            c.execute(
+                "UPDATE drafts SET state = 'held' WHERE account_id = ?1 AND id = ?2 AND state = 'submitting'",
+                [account_id, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// A message that was being scheduled is a draft again (nothing was sent).
+    pub fn draft_revert(&self, account_id: &str, id: &str) -> Result<()> {
+        self.write(|c| {
+            c.execute(
+                "UPDATE drafts SET state = 'draft', send_at = NULL
+                 WHERE account_id = ?1 AND id = ?2 AND state IN ('scheduling', 'schedule_submitting')",
+                [account_id, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// A message the server held back (or whose send was under way) is a draft again after the
+    /// server let go of it. `dirty` says whether the server's copy has to be made again.
+    /// Returns the draft; `None` when the row is not in such a state.
+    pub fn draft_back(&self, account_id: &str, id: &str, dirty: bool) -> Result<Option<Draft>> {
+        self.write(|c| {
+            let changed = c.execute(
+                "UPDATE drafts SET state = 'draft', send_at = NULL, dirty = ?3
+                 WHERE account_id = ?1 AND id = ?2 AND state IN ('held', 'submitting') AND discarded = 0",
+                params![account_id, id, dirty],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            Ok(load(c, account_id, id)?.map(|row| row.draft))
         })
     }
 
@@ -463,6 +585,10 @@ fn directory_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|at| now.saturating_duration_since(at) >= DIRECTORY_EVERY)
 }
 
+fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 fn pending(row: &DraftRow) -> PendingSend {
     PendingSend {
         draft_id: row.draft.id.clone(),
@@ -475,6 +601,74 @@ fn pending(row: &DraftRow) -> PendingSend {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    fn draft(id: &str, identity: &str) -> Draft {
+        Draft {
+            id: id.into(),
+            identity_id: identity.into(),
+            to: Vec::new(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            subject: "S".into(),
+            body: String::new(),
+            attachments: Vec::new(),
+            source_message_id: None,
+            is_forward: false,
+            server_id: None,
+            send_error: None,
+            updated_at: 1,
+        }
+    }
+
+    fn stored(store: &Store, d: &Draft) {
+        store
+            .save_account(&crate::model::Account {
+                id: "a".into(),
+                server_url: "u".into(),
+                username: "n".into(),
+                signed_in_at: 0,
+            })
+            .unwrap();
+        store.draft_insert("a", d, None, false).unwrap();
+    }
+
+    #[test]
+    fn a_held_message_waits_until_its_time_and_a_scheduling_never_does() {
+        let store = Store::open_in_memory().unwrap();
+        let (held, sched) = (draft("held", "i1"), draft("sched", "i2"));
+        stored(&store, &held);
+        store.draft_insert("a", &sched, None, false).unwrap();
+        let soon = unix_now() + 100;
+        store.draft_send("a", &held, soon, 1).unwrap();
+        // The pass starts the send, the server holds it.
+        store.draft_saved("a", "held", "copy", 1).unwrap();
+        let row = store.draft_get("a", "held").unwrap().unwrap();
+        assert!(store.draft_begin_submit("a", "held", row.rev, "copy").unwrap());
+        store.draft_held("a", "held").unwrap();
+        assert_eq!(store.draft_get("a", "held").unwrap().unwrap().state, DraftState::Held);
+        assert_eq!(store.pending_sends("a").unwrap().len(), 1);
+        assert_eq!(store.held_copy_ids("a").unwrap(), ["copy"]);
+        assert!(store.identity_in_use("a", "i1").unwrap());
+        // Not due: the pass leaves it. Due: it is looked at, and no longer waiting.
+        assert!(store.drafts_to_send("a", soon - 1).unwrap().is_empty());
+        assert_eq!(store.drafts_to_send("a", soon).unwrap().len(), 1);
+
+        // Being scheduled is not waiting, is always looked at, and is a draft again when reverted.
+        store.draft_schedule("a", &sched, soon, 1).unwrap();
+        assert_eq!(store.pending_sends("a").unwrap().len(), 1, "only the held one");
+        assert!(store.identity_in_use("a", "i2").unwrap());
+        assert_eq!(store.drafts_to_send("a", 0).unwrap().len(), 1);
+        store.draft_revert("a", "sched").unwrap();
+        let back = store.draft_get("a", "sched").unwrap().unwrap();
+        assert_eq!((back.state, back.send_at), (DraftState::Draft, None));
+        assert!(!store.identity_in_use("a", "i2").unwrap());
+
+        // A held message the user takes back is a draft that may need a new copy.
+        let again = store.draft_back("a", "held", true).unwrap().unwrap();
+        assert_eq!(again.id, "held");
+        assert!(store.draft_get("a", "held").unwrap().unwrap().dirty);
+        assert!(store.draft_back("a", "held", false).unwrap().is_none(), "not held any more");
+    }
 
     #[test]
     fn the_directory_is_due_first_and_then_hourly() {

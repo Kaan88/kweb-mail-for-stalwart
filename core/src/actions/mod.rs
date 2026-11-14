@@ -25,6 +25,7 @@ enum Edit {
     Flagged { id: String, flagged: bool },
     Mailboxes { id: String, mailboxes: Vec<String> },
     Remove { id: String },
+    Keyword { id: String, keyword: String, on: bool },
 }
 
 /// The cache change for an action.
@@ -82,6 +83,7 @@ fn write_edit(store: &Store, account_id: &str, edit: &Edit) -> Result<()> {
         Edit::Flagged { id, flagged } => store.set_flagged(account_id, id, *flagged).map(drop),
         Edit::Mailboxes { id, mailboxes } => store.set_message_mailboxes(account_id, id, mailboxes).map(drop),
         Edit::Remove { id } => store.delete_messages(account_id, std::slice::from_ref(id)),
+        Edit::Keyword { id, keyword, on } => store.set_keyword(account_id, id, keyword, *on).map(drop),
     }
 }
 
@@ -123,6 +125,18 @@ pub fn submit_spam(store: &Store, account_id: &str, message_ids: &[String], is_s
     Ok(())
 }
 
+/// Puts a keyword (a label) on the messages or takes it off: applied to the cache at once and
+/// queued, like [`submit`]. The queue keeps the order, so a label put on and taken off again
+/// reaches the server in that order too.
+pub fn submit_labels(store: &Store, account_id: &str, message_ids: &[String], keyword: &str, on: bool) -> Result<()> {
+    for id in message_ids {
+        let job = Job::Label { message_id: id.clone(), keyword: keyword.to_string(), on };
+        store.outbox_enqueue_job(account_id, &job)?;
+        write_edit(store, account_id, &Edit::Keyword { id: id.clone(), keyword: keyword.to_string(), on })?;
+    }
+    Ok(())
+}
+
 /// The folder a spam report puts the message in.
 fn spam_target<'a>(is_spam: bool, junk: Option<&'a str>, inbox: Option<&'a str>) -> Result<&'a str> {
     if is_spam {
@@ -148,6 +162,9 @@ pub(crate) fn reapply_pending(store: &Store, account_id: &str) -> Result<()> {
         let edit = match &job {
             Job::Action(action) => edit_for(action, archive.as_deref(), trash.as_deref()),
             Job::Spam { message_id, is_spam } => spam_edit(message_id, *is_spam, junk.as_deref(), inbox.as_deref()),
+            Job::Label { message_id, keyword, on } => {
+                Ok(Edit::Keyword { id: message_id.clone(), keyword: keyword.clone(), on: *on })
+            }
         };
         if let Ok(edit) = edit {
             write_edit(store, account_id, &edit)?;
@@ -185,6 +202,7 @@ pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result
                     Err(e) => Err(e),
                 }
             }
+            Job::Label { message_id, keyword, on } => conn.apply_label(message_id, keyword, *on).await,
         };
         match outcome {
             Ok(()) => {
@@ -209,11 +227,11 @@ pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result
 /// asked now, the next change to the message corrects the cache.
 async fn undo_in_cache(conn: &Connection, store: &Store, account_id: &str, message_id: &str) {
     let ids = [message_id.to_string()];
-    let Ok((headers, _)) = conn.messages(&ids).await else { return };
+    let Ok((headers, keywords, _)) = conn.messages_with_keywords(&ids).await else { return };
     let written = if headers.is_empty() {
         store.delete_messages(account_id, &ids)
     } else {
-        store.upsert_messages(account_id, &headers)
+        store.upsert_messages_with_keywords(account_id, &headers, &keywords)
     };
     if written.is_ok() {
         let _ = reapply_pending(store, account_id);

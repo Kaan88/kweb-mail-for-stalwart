@@ -5,7 +5,7 @@ use super::Store;
 use crate::model::Action;
 use crate::Result;
 
-/// What the queue holds: an action, or a spam report. The report is not an `Action` because it
+/// What the queue holds: an action, a spam report, or a label change. The report is not an `Action` because it
 /// sets keywords as well as moving the message, and `Action` is part of the app's interface.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Job {
@@ -15,13 +15,19 @@ pub enum Job {
         message_id: String,
         is_spam: bool,
     },
+    /// Puts the keyword on the message (`on`) or takes it off.
+    Label {
+        message_id: String,
+        keyword: String,
+        on: bool,
+    },
 }
 
 impl Job {
     pub fn message_id(&self) -> &str {
         match self {
             Job::Action(action) => action_message_id(action),
-            Job::Spam { message_id, .. } => message_id,
+            Job::Spam { message_id, .. } | Job::Label { message_id, .. } => message_id,
         }
     }
 }
@@ -45,6 +51,8 @@ fn job_columns(job: &Job) -> (&'static str, &str, Option<&str>) {
         Job::Action(action) => to_columns(action),
         Job::Spam { message_id, is_spam: true } => ("spam", message_id, None),
         Job::Spam { message_id, is_spam: false } => ("not_spam", message_id, None),
+        Job::Label { message_id, keyword, on: true } => ("label_on", message_id, Some(keyword)),
+        Job::Label { message_id, keyword, on: false } => ("label_off", message_id, Some(keyword)),
     }
 }
 
@@ -67,6 +75,9 @@ fn job_from_columns(kind: &str, message_id: String, target: Option<String>) -> O
     match kind {
         "spam" => Some(Job::Spam { message_id, is_spam: true }),
         "not_spam" => Some(Job::Spam { message_id, is_spam: false }),
+        // A label change that lost its keyword cannot be done.
+        "label_on" => Some(Job::Label { message_id, keyword: target?, on: true }),
+        "label_off" => Some(Job::Label { message_id, keyword: target?, on: false }),
         _ => from_columns(kind, message_id, target).map(Job::Action),
     }
 }
@@ -113,7 +124,7 @@ impl Store {
             .into_iter()
             .filter_map(|(id, job, attempts)| match job {
                 Job::Action(action) => Some((id, action, attempts)),
-                Job::Spam { .. } => None,
+                Job::Spam { .. } | Job::Label { .. } => None,
             })
             .collect())
     }

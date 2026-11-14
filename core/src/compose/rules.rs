@@ -162,13 +162,45 @@ pub fn forwarded_text(from: &Address, sent_at: i64, subject: &str, to: &[Address
     out
 }
 
+/// The signature as it stands in a message: a blank line, the "-- " line, the signature.
+/// `None` for no signature.
+fn signature_block(signature: &str) -> Option<String> {
+    let signature = signature.trim_end();
+    (!signature.trim().is_empty()).then(|| format!("\n\n{SIGNATURE_SEPARATOR}\n{signature}"))
+}
+
 /// Adds the signature below the text, after the "-- " line. No signature, no change.
 pub fn with_signature(body: &str, signature: &str) -> String {
-    let signature = signature.trim_end();
-    if signature.trim().is_empty() {
-        return body.to_string();
-    }
-    format!("{body}\n\n{SIGNATURE_SEPARATOR}\n{signature}")
+    format!("{body}{}", signature_block(signature).unwrap_or_default())
+}
+
+/// The text of a reply with the signature above the quoted original, so what the user writes
+/// goes above the signature and the quote follows it.
+pub fn reply_with_signature(quoted: &str, signature: &str) -> String {
+    format!("{}{quoted}", signature_block(signature).unwrap_or_default())
+}
+
+/// The body of a draft whose sender changed from the one with signature `old` to the one with
+/// `new`: the old signature, if it stands there untouched, is replaced by the new one. `None`
+/// when there is nothing to swap: the user wrote in the signature, or took it out. A body that
+/// is still empty gets the new signature when the old sender had none.
+pub fn swap_signature(body: &str, old: &str, new: &str) -> Option<String> {
+    let new_block = signature_block(new).unwrap_or_default();
+    let Some(old_block) = signature_block(old) else {
+        return body.trim().is_empty().then_some(new_block).filter(|block| !block.is_empty());
+    };
+    // The whole block, and the signature ends there: not the start of a longer one. The last
+    // one: in a forward the draft's own signature ends the body, after the forwarded text (which
+    // can carry the same block); in a reply it stands before the quote, whose lines start "> ".
+    let at = body
+        .match_indices(&old_block)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            let rest = &body[at + old_block.len()..];
+            rest.is_empty() || rest.starts_with('\n')
+        })
+        .last()?;
+    Some(format!("{}{new_block}{}", &body[..at], &body[at + old_block.len()..]))
 }
 
 /// `2026-11-14T09:30:00Z`.
@@ -502,6 +534,41 @@ mod tests {
         assert_eq!(with_signature("text", "Ann\n"), "text\n\n-- \nAnn");
         assert_eq!(with_signature("text", ""), "text");
         assert_eq!(with_signature("text", " \n"), "text");
+    }
+
+    #[test]
+    fn a_reply_has_the_signature_above_the_quote() {
+        let quote = "\n\nAnn wrote:\n> Hi";
+        assert_eq!(reply_with_signature(quote, "Me\nAcme"), "\n\n-- \nMe\nAcme\n\nAnn wrote:\n> Hi");
+        assert_eq!(reply_with_signature(quote, " "), quote);
+    }
+
+    #[test]
+    fn a_changed_sender_swaps_a_signature_nobody_touched() {
+        let body = with_signature("Hello", "Old\nCo");
+        assert_eq!(swap_signature(&body, "Old\nCo", "New"), Some("Hello\n\n-- \nNew".to_string()));
+        // A reply: the quote after the signature stays.
+        let reply = reply_with_signature("\n\nAnn wrote:\n> Hi", "Old");
+        assert_eq!(swap_signature(&reply, "Old", "New"), Some("\n\n-- \nNew\n\nAnn wrote:\n> Hi".to_string()));
+        // The new sender has none: it goes away.
+        assert_eq!(swap_signature(&body, "Old\nCo", ""), Some("Hello".to_string()));
+        // Edited, or only the start of a longer one: left alone.
+        assert_eq!(swap_signature("Hello\n\n-- \nOld\nCo and more", "Old\nCo", "New"), None);
+        assert_eq!(swap_signature("Hello\n\n-- \nOlder", "Old", "New"), None);
+        assert_eq!(swap_signature("Hello", "Old", "New"), None);
+        // No old signature: an empty body gets the new one, a written one does not.
+        assert_eq!(swap_signature("", "", "New"), Some("\n\n-- \nNew".to_string()));
+        assert_eq!(swap_signature("Hello", "", "New"), None);
+        assert_eq!(swap_signature("", "", ""), None);
+    }
+
+    #[test]
+    fn the_signature_of_a_forward_is_swapped_at_the_end_not_inside_the_forwarded_text() {
+        let body = "Hi\n\n-- \nOld\n\n-- \nOld";
+        assert_eq!(swap_signature(body, "Old", "New").as_deref(), Some("Hi\n\n-- \nOld\n\n-- \nNew"));
+        // A reply: the signature stands before the quote.
+        let reply = "\n\n-- \nOld\n\nOn Monday Bo wrote:\n> hi";
+        assert_eq!(swap_signature(reply, "Old", "New").as_deref(), Some("\n\n-- \nNew\n\nOn Monday Bo wrote:\n> hi"));
     }
 
     #[test]

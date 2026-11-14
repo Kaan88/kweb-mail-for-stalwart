@@ -194,7 +194,7 @@ pub fn check_base_url(raw: &str) -> Result<Url> {
 
 /// This device or a private network: 127/8, 10/8, 172.16/12, 192.168/16, `::1`, `fc00::/7`,
 /// `fe80::/10`, `localhost` and names ending in `.local`.
-fn is_private(host: &Host<&str>) -> bool {
+pub(crate) fn is_private(host: &Host<&str>) -> bool {
     match host {
         Host::Domain(name) => {
             let name = name.trim_end_matches('.').to_ascii_lowercase();

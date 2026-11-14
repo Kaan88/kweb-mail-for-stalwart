@@ -12,6 +12,7 @@ use serde_json::{json, Map, Value};
 
 use super::{
     errors::{from_jmap, unauthorized},
+    send_later::Held,
     Connection, MAIL_CAPABILITY,
 };
 use crate::{
@@ -215,37 +216,45 @@ impl Connection {
         drafts_id: &str,
         sent_id: Option<&str>,
     ) -> Result<()> {
-        let args = submission_args(&self.account_for(SUBMISSION_CAPABILITY), identity_id, email_id, drafts_id, sent_id);
+        self.submit_with(identity_id, email_id, drafts_id, sent_id, None).await.map(drop)
+    }
+
+    /// Like [`Connection::submit`]; with `held` the server keeps the message back until the
+    /// time it names. Returns the id of the submission.
+    pub async fn submit_with(
+        &self,
+        identity_id: &str,
+        email_id: &str,
+        drafts_id: &str,
+        sent_id: Option<&str>,
+        held: Option<&Held>,
+    ) -> Result<String> {
+        let mut args =
+            submission_args(&self.account_for(SUBMISSION_CAPABILITY), identity_id, email_id, drafts_id, sent_id);
+        if let Some(held) = held {
+            args["create"][CREATE_ID]["envelope"] = held.envelope();
+        }
         let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &[("EmailSubmission/set", args)]).await?;
         let set = response(&responses, "EmailSubmission/set")?;
-        if let Err(e) = created_id(set) {
+        let submission = match created_id(set) {
+            Ok(id) => id,
             // The server answered, and the answer is no: the message was not sent. Whatever
             // the reason is called, the user has to see it and get the draft back; only a
             // rate limit is worth waiting out.
-            return Err(match (not_created_kind(set), e) {
-                (Some(kind), Error::Temporary { msg }) if kind != "rateLimit" => Error::invalid(msg),
-                (_, e) => e,
-            });
-        }
+            Err(e) => {
+                return Err(match (not_created_kind(set), e) {
+                    (Some(kind), Error::Temporary { msg }) if kind != "rateLimit" => Error::invalid(msg),
+                    (_, e) => e,
+                })
+            }
+        };
         // The move to Sent rides on the submission and can fail on its own. The message is
         // sent either way; a copy left marked as a draft is put right, as far as that goes.
         let moved = responses.iter().any(|(name, args)| name == "Email/set" && args["updated"].get(email_id).is_some());
         if !moved {
             let _ = self.unmark_draft(email_id).await;
         }
-        Ok(())
-    }
-
-    /// Whether the server holds a submission of this message: the proof that it was sent.
-    pub async fn was_submitted(&self, email_id: &str) -> Result<bool> {
-        let args = json!({
-            "accountId": self.account_for(SUBMISSION_CAPABILITY),
-            "filter": { "emailIds": [email_id] },
-            "limit": 1,
-        });
-        let responses =
-            self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &[("EmailSubmission/query", args)]).await?;
-        Ok(response(&responses, "EmailSubmission/query")?["ids"].as_array().is_some_and(|ids| !ids.is_empty()))
+        Ok(submission)
     }
 
     /// Takes the draft mark off a message that was sent.
@@ -496,7 +505,7 @@ pub(super) fn pointer_segment(s: &str) -> String {
 
 /// The `EmailSubmission/set` that sends a message and, when it is accepted, takes it out of
 /// Drafts (into Sent when there is one) and clears `$draft`.
-fn submission_args(
+pub(super) fn submission_args(
     account_id: &str,
     identity_id: &str,
     email_id: &str,

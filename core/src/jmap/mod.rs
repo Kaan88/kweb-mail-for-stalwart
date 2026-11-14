@@ -13,18 +13,20 @@ mod clock;
 mod contacts;
 mod convert;
 mod errors;
+mod features;
 mod files;
 mod folders;
 mod jscal;
 mod jscontact;
 mod recur;
 mod send;
+mod send_later;
 mod shared;
 mod sharing;
 mod sieve;
 mod vacation;
 
-use std::{io::Write, pin::Pin, time::Duration};
+use std::{collections::HashMap, io::Write, pin::Pin, time::Duration};
 
 use futures_util::{Stream, StreamExt};
 use jmap_client::{
@@ -46,13 +48,16 @@ use crate::{
 pub use contacts::is_no_such_contact;
 use convert::{
     batch_size, body_part_properties, body_properties, header_properties, mailbox_properties, merge_pages,
-    order_by_ids, to_body, to_header, to_mailbox, Page,
+    order_by_ids, to_body, to_header, to_keywords, to_mailbox, Page,
 };
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_unauthorized};
+pub use features::RawSnippet;
 pub use files::UploadResume;
 pub use jscal::{check_span, sort as sort_agenda};
 pub use send::{CopyState, HeaderIds, Uploaded};
+pub use send_later::reply_to_json;
+pub use send_later::{EmailSummary, Held, Hold, IdentityFull, SubmissionInfo, Undo, MAX_HOLD_SECS};
 pub use sieve::{SieveLimits, SieveList, SieveScript, CHANGED as SIEVE_CHANGED};
 
 const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
@@ -237,19 +242,43 @@ impl Connection {
     /// Like [`Connection::messages`], in the account `account` (another user's, when a folder of
     /// it is shared). Ids are only unique within one account.
     pub(super) async fn messages_in(&self, account: &str, ids: &[String]) -> Result<(Vec<MessageHeader>, String)> {
+        let (headers, _, state) = self.messages_with_keywords_in(account, ids).await?;
+        Ok((headers, state))
+    }
+
+    /// Like [`Connection::messages`], and the keywords of each message (message id to keywords,
+    /// `$seen` and `$flagged` among them) for the cache.
+    pub async fn messages_with_keywords(
+        &self,
+        ids: &[String],
+    ) -> Result<(Vec<MessageHeader>, HashMap<String, Vec<String>>, String)> {
+        self.messages_with_keywords_in(&self.account_id, ids).await
+    }
+
+    async fn messages_with_keywords_in(
+        &self,
+        account: &str,
+        ids: &[String],
+    ) -> Result<(Vec<MessageHeader>, HashMap<String, Vec<String>>, String)> {
         let mut state = None;
         let mut out = Vec::with_capacity(ids.len());
+        let mut keywords = HashMap::new();
         // An empty list still asks once: the caller wants the current state.
         let chunks: Vec<&[String]> = if ids.is_empty() { vec![ids] } else { ids.chunks(self.get_batch()).collect() };
         for chunk in chunks {
             let mut req = self.client.build();
             req.get_email().account_id(account).ids(chunk.iter().cloned()).properties(header_properties());
             let mut resp = req.send_single::<EmailGetResponse>().await.map_err(from_jmap)?;
-            out.extend(resp.take_list().iter().filter_map(to_header));
+            for email in resp.take_list().iter() {
+                if let Some(header) = to_header(email) {
+                    keywords.insert(header.id.clone(), to_keywords(email));
+                    out.push(header);
+                }
+            }
             state.get_or_insert_with(|| resp.take_state());
         }
         let out = order_by_ids(ids, out, |h| h.id.as_str());
-        Ok((out, state.unwrap_or_default()))
+        Ok((out, keywords, state.unwrap_or_default()))
     }
 
     /// Ids of up to `limit` messages of a mailbox that were received before `before_secs`

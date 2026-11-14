@@ -70,6 +70,13 @@ pub(super) fn to_header(e: &Email<Get>) -> Option<MessageHeader> {
     })
 }
 
+/// Every keyword of a message, sorted.
+pub(super) fn to_keywords(e: &Email<Get>) -> Vec<String> {
+    let mut all: Vec<String> = e.keywords().into_iter().map(String::from).collect();
+    all.sort();
+    all
+}
+
 /// The text of the parts whose type is `mime`, in order, joined with `separator`. `None` when
 /// there is no such part (or none with a value). `truncated` is set when a value used was cut.
 fn part_text(

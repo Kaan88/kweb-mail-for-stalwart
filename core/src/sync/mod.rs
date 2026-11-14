@@ -5,7 +5,7 @@
 //! the queued actions are put back on the cache. A state string is stored only after the data
 //! it stands for is in the cache, so a failed pass is simply repeated by the next one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     actions,
@@ -28,6 +28,8 @@ const PREFETCH_NEWEST: u32 = 100;
 /// short has still stored the batches before.
 const PREFETCH_BATCH: usize = 10;
 
+/// Set in the account's key/value table once the cache holds the keywords of every message.
+const KEYWORDS_KEY: &str = "keywords_cached";
 const MAILBOX: &str = "Mailbox";
 const EMAIL: &str = "Email";
 
@@ -102,8 +104,14 @@ async fn apply_mailbox_changes(conn: &Connection, store: &Store, account_id: &st
 }
 
 async fn sync_messages(conn: &Connection, store: &Store, account_id: &str) -> Result<Outcome> {
-    let Some(since) = store.get_state(account_id, EMAIL)? else {
-        return full_messages(conn, store, account_id).await;
+    // Mail cached by an older version has no keywords stored: one full fetch fills them, and
+    // the flag says it was done.
+    let known = store.kv_get(account_id, KEYWORDS_KEY)?.is_some();
+    let since = if known { store.get_state(account_id, EMAIL)? } else { None };
+    let Some(since) = since else {
+        let outcome = full_messages(conn, store, account_id).await?;
+        store.kv_set(account_id, KEYWORDS_KEY, "1")?;
+        return Ok(outcome);
     };
     match conn.email_changes(&since).await {
         Ok(changes) => {
@@ -130,8 +138,8 @@ async fn full_messages(conn: &Connection, store: &Store, account_id: &str) -> Re
         let full = page.len() == window;
         found.push((mailbox.id, page, full));
     }
-    let (headers, _) = conn.messages(&dedup(ids)).await?;
-    store.replace_messages(account_id, &headers)?;
+    let (headers, keywords, _) = conn.messages_with_keywords(&dedup(ids)).await?;
+    store.replace_messages_with_keywords(account_id, &headers, &keywords)?;
     for (mailbox_id, page, full) in found {
         set_window(store, account_id, &mailbox_id, &page, full, &headers)?;
     }
@@ -160,10 +168,15 @@ fn set_window(
 
 async fn apply_message_changes(conn: &Connection, store: &Store, account_id: &str, changes: &Changes) -> Result<bool> {
     let ids = to_fetch(changes);
-    let headers = if ids.is_empty() { Vec::new() } else { conn.messages(&ids).await?.0 };
+    let (headers, keywords) = if ids.is_empty() {
+        (Vec::new(), HashMap::new())
+    } else {
+        let (headers, keywords, _) = conn.messages_with_keywords(&ids).await?;
+        (headers, keywords)
+    };
     let mut gone = changes.destroyed.clone();
     gone.extend(missing(&ids, headers.iter().map(|h| h.id.as_str())));
-    store.upsert_messages(account_id, &headers)?;
+    store.upsert_messages_with_keywords(account_id, &headers, &keywords)?;
     store.delete_messages(account_id, &gone)?;
     store.set_state(account_id, EMAIL, &changes.new_state)?;
     Ok(!headers.is_empty() || !gone.is_empty())
@@ -184,10 +197,15 @@ fn snapshot(store: &Store, account_id: &str, ids: &[String]) -> Result<Vec<Optio
 /// as new as the cache and are all written. If not, they may be older than what the pass
 /// wrote, so only messages the cache does not have are added: the ones it has are kept
 /// current by /changes anyway.
-async fn store_fetched(store: &Store, account_id: &str, headers: &[MessageHeader], seen: Option<String>) -> Result<()> {
+async fn store_fetched(
+    store: &Store,
+    account_id: &str,
+    (headers, keywords): (&[MessageHeader], &HashMap<String, Vec<String>>),
+    seen: Option<String>,
+) -> Result<()> {
     let _one_at_a_time = store.pass_lock().lock().await;
     if store.get_state(account_id, EMAIL)? == seen {
-        store.upsert_messages(account_id, headers)?;
+        store.upsert_messages_with_keywords(account_id, headers, keywords)?;
     } else {
         let mut missing = Vec::new();
         for h in headers {
@@ -195,7 +213,7 @@ async fn store_fetched(store: &Store, account_id: &str, headers: &[MessageHeader
                 missing.push(h.clone());
             }
         }
-        store.upsert_messages(account_id, &missing)?;
+        store.upsert_messages_with_keywords(account_id, &missing, keywords)?;
     }
     actions::reapply_pending(store, account_id)
 }
@@ -216,11 +234,18 @@ pub async fn load_older(conn: &Connection, store: &Store, account_id: &str, mail
     let before = oldest + 1;
     let seen = email_state(store, account_id)?;
     let mut headers: Vec<MessageHeader> = Vec::new();
+    let mut keywords: HashMap<String, Vec<String>> = HashMap::new();
     let mut position = 0;
     // Where the window ends afterwards; `None` when the server has nothing older.
     let reached = loop {
         let ids = conn.message_ids_before(mailbox_id, before, position, PAGE).await?;
-        let page = if ids.is_empty() { Vec::new() } else { conn.messages(&ids).await?.0 };
+        let page = if ids.is_empty() {
+            Vec::new()
+        } else {
+            let (page, kept, _) = conn.messages_with_keywords(&ids).await?;
+            keywords.extend(kept);
+            page
+        };
         let low = page.iter().map(|h| h.received_at).min();
         headers.extend(page);
         if ids.len() < PAGE {
@@ -233,7 +258,7 @@ pub async fn load_older(conn: &Connection, store: &Store, account_id: &str, mail
             _ => position += PAGE,
         }
     };
-    store_fetched(store, account_id, &headers, seen).await?;
+    store_fetched(store, account_id, (&headers, &keywords), seen).await?;
     // A full resync meanwhile set the window anew: it is the truth now.
     if store.get_window(account_id, mailbox_id)? != Some(oldest) {
         return Ok(store.get_window(account_id, mailbox_id)?.is_some());
@@ -256,9 +281,9 @@ pub async fn refresh_thread(conn: &Connection, store: &Store, account_id: &str, 
     if ids.is_empty() {
         return Ok(false);
     }
-    let (headers, _) = conn.messages(&ids).await?;
+    let (headers, keywords, _) = conn.messages_with_keywords(&ids).await?;
     let before = snapshot(store, account_id, &ids)?;
-    store_fetched(store, account_id, &headers, seen).await?;
+    store_fetched(store, account_id, (&headers, &keywords), seen).await?;
     Ok(before != snapshot(store, account_id, &ids)?)
 }
 
@@ -278,9 +303,29 @@ pub async fn search(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (headers, _) = conn.messages(&ids).await?;
-    store_fetched(store, account_id, &headers, seen).await?;
+    let (headers, keywords, _) = conn.messages_with_keywords(&ids).await?;
+    store_fetched(store, account_id, (&headers, &keywords), seen).await?;
     Ok(snapshot(store, account_id, &ids)?.into_iter().flatten().collect())
+}
+
+/// The messages that carry `keyword` (a label), newest first, found and cached like a search.
+pub async fn with_keyword(
+    conn: &Connection,
+    store: &Store,
+    account_id: &str,
+    keyword: &str,
+    limit: usize,
+) -> Result<Vec<MessageHeader>> {
+    let seen = email_state(store, account_id)?;
+    let ids = conn.keyword_ids(keyword, limit).await?;
+    if !ids.is_empty() {
+        let (headers, keywords, _) = conn.messages_with_keywords(&ids).await?;
+        store_fetched(store, account_id, (&headers, &keywords), seen).await?;
+    }
+    // The cache has the queued changes on top, so what it says carries the keyword is the
+    // answer: the server's messages less what was taken off and not yet sent, plus what was
+    // put on and not yet sent.
+    store.messages_with_keyword(account_id, keyword, u32::try_from(limit).unwrap_or(u32::MAX))
 }
 
 /// Keeps the bodies of the newest Inbox mail in the cache, so it can be read offline and opens

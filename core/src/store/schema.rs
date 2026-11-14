@@ -225,6 +225,20 @@ pub(super) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, mailbox_id)
     );
     ",
+    // 7: M10 (labels). The keywords of each message, so the labels of a message can be shown
+    // offline. `$seen` and `$flagged` are not here: `is_unread` and `is_flagged` hold them.
+    // Mail cached before this has no rows; the sync does one full fetch to fill them (it keeps a
+    // flag for that in `kv`, so the Email state is left as it was).
+    "
+    CREATE TABLE message_keywords (
+        account_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        keyword    TEXT NOT NULL,
+        PRIMARY KEY (account_id, message_id, keyword),
+        FOREIGN KEY (account_id, message_id) REFERENCES messages(account_id, id) ON DELETE CASCADE
+    );
+    CREATE INDEX message_keywords_by_keyword ON message_keywords (account_id, keyword, message_id);
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

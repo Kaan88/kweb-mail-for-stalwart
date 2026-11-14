@@ -49,6 +49,18 @@ pub use ai::{MockAi, ModelSpec, Models, Script};
 pub use files::{EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 #[allow(unused_imports)]
 pub use sharing::ALL_MAIL_RIGHTS;
+/// An identity as the server holds it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IdentityView {
+    pub id: String,
+    pub name: String,
+    pub email: String,
+    pub signature: String,
+    /// `(name, address)`.
+    pub reply_to: Vec<(String, String)>,
+    pub html_signature: String,
+}
+
 pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
 
 /// The file storage capability.
@@ -84,6 +96,8 @@ struct Shared {
     upload_limit: AtomicU64,
     /// See [`MockServer::lose_next_submission_answer`].
     lose_submission_answer: AtomicBool,
+    /// How many more requests that ask `EmailSubmission/query` are answered with a 500, unexecuted.
+    fail_submission_queries: AtomicUsize,
     /// The well-known URL answers with a redirect to the session, as Stalwart does.
     redirect_session: AtomicBool,
     down: AtomicBool,
@@ -135,6 +149,7 @@ impl MockServer {
             sieve: Mutex::new(Sieve::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
+            fail_submission_queries: AtomicUsize::new(0),
             redirect_session: AtomicBool::new(false),
             down: AtomicBool::new(false),
             counts: Mutex::new(HashMap::new()),
@@ -498,6 +513,20 @@ impl MockServer {
         self.shared.lose_submission_answer.store(true, Ordering::SeqCst);
     }
 
+    /// The next `n` requests that ask `EmailSubmission/query` fail with a 500 before they run: the
+    /// client cannot ask what became of a submission.
+    pub fn fail_next_submission_queries(&self, n: usize) {
+        self.shared.fail_submission_queries.store(n, Ordering::SeqCst);
+    }
+
+    /// Another client cancels everything held back (it does not put the messages back).
+    pub fn cancel_held(&self) {
+        let now = state::now_ms();
+        for s in self.shared.mail().submissions.iter_mut().filter(|s| s.undo_status(now) == "pending") {
+            s.cancelled = true;
+        }
+    }
+
     /// The largest upload the server takes, in bytes (the session says so and the upload
     /// endpoint answers 413 above it). Set it before a client connects.
     pub fn set_upload_limit(&self, bytes: u64) {
@@ -756,6 +785,27 @@ impl MockServer {
         self.shared.mail().list_ids.insert(id.to_string(), value.to_string());
     }
 
+    /// The most ids a `SearchSnippet/get` takes (the session says it, and a bigger request is
+    /// refused). Set it before a client connects.
+    pub fn set_mail_get_max(&self, max: usize) {
+        self.shared.mail().get_max = Some(max);
+    }
+
+    /// Takes a keyword off a message, as another client would.
+    pub fn remove_keyword(&self, id: &str, keyword: &str) {
+        self.edit(id, |e| {
+            e.keywords.remove(keyword);
+        });
+    }
+
+    /// The message has List-Unsubscribe and List-Unsubscribe-Post headers, as raw text (`None`:
+    /// no such header). `Email/get` gives them as the server does: the first as a list of
+    /// addresses only, the second as text.
+    pub fn set_unsubscribe_headers(&self, id: &str, list_unsubscribe: Option<&str>, post: Option<&str>) {
+        let value = (list_unsubscribe.map(str::to_string), post.map(str::to_string));
+        self.shared.mail().unsubscribe.insert(id.to_string(), value);
+    }
+
     /// With false the server has no away message (the session names no capability).
     pub fn set_vacation_enabled(&self, enabled: bool) {
         self.shared.account.lock().unwrap().vacation_enabled = enabled;
@@ -775,13 +825,45 @@ impl MockServer {
     pub fn set_identities(&self, identities: &[(&str, &str, &str, &str)]) {
         self.shared.account.lock().unwrap().identities = identities
             .iter()
-            .map(|(id, name, email, signature)| account::IdentityRec {
-                id: id.to_string(),
-                name: name.to_string(),
-                email: email.to_string(),
-                signature: signature.to_string(),
-            })
+            .map(|(id, name, email, signature)| account::IdentityRec::simple(id, name, email, signature))
             .collect();
+    }
+
+    /// The identities as the server holds them, with everything the user never sees.
+    pub fn identity_records(&self) -> Vec<IdentityView> {
+        let account = self.shared.account.lock().unwrap();
+        account
+            .identities
+            .iter()
+            .map(|i| IdentityView {
+                id: i.id.clone(),
+                name: i.name.clone(),
+                email: i.email.clone(),
+                signature: i.signature.clone(),
+                reply_to: i.reply_to.clone(),
+                html_signature: i.html_signature.clone(),
+            })
+            .collect()
+    }
+
+    /// Sets what the server holds for one identity: the Reply-To (with names) and the HTML
+    /// signature, which the core never sets.
+    pub fn set_identity_extras(&self, id: &str, reply_to: &[(&str, &str)], html_signature: &str) {
+        let mut account = self.shared.account.lock().unwrap();
+        let rec = account.identities.iter_mut().find(|i| i.id == id).expect("a known identity");
+        rec.reply_to = reply_to.iter().map(|(n, e)| (n.to_string(), e.to_string())).collect();
+        rec.html_signature = html_signature.to_string();
+    }
+
+    /// What the server lets be deleted: `false` makes `mayDelete` false for the identity.
+    pub fn set_identity_may_delete(&self, id: &str, may_delete: bool) {
+        let mut account = self.shared.account.lock().unwrap();
+        account.identities.iter_mut().find(|i| i.id == id).expect("a known identity").may_delete = may_delete;
+    }
+
+    /// The `Identity/set` requests the server received, as sent.
+    pub fn identity_requests(&self) -> Vec<serde_json::Value> {
+        self.shared.account.lock().unwrap().identity_requests.clone()
     }
 
     // ---- inspection ------------------------------------------------------------------
@@ -885,9 +967,31 @@ impl MockServer {
         inside.into_iter().map(|e| e.id.clone()).collect()
     }
 
-    /// The messages the server has sent, oldest first.
+    /// The messages the server has sent (that have left), oldest first. Held ones are in
+    /// [`MockServer::held`], cancelled ones in [`MockServer::cancelled`].
     pub fn submissions(&self) -> Vec<Submission> {
-        self.shared.mail().submissions.clone()
+        let now = state::now_ms();
+        self.shared.mail().submissions.iter().filter(|s| s.has_left(now)).cloned().collect()
+    }
+
+    /// The messages the server holds back and will send at their time (also one whose
+    /// submission was destroyed: that does not stop it).
+    pub fn held(&self) -> Vec<Submission> {
+        let now = state::now_ms();
+        self.shared.mail().submissions.iter().filter(|s| s.undo_status(now) == "pending").cloned().collect()
+    }
+
+    /// The submissions that were cancelled: they never leave.
+    pub fn cancelled(&self) -> Vec<Submission> {
+        self.shared.mail().submissions.iter().filter(|s| s.cancelled).cloned().collect()
+    }
+
+    /// The time passes for everything held back: it is all released now.
+    pub fn release_held(&self) {
+        let now = state::now_ms();
+        for s in self.shared.mail().submissions.iter_mut().filter(|s| s.undo_status(now) == "pending") {
+            s.release_at_ms = now;
+        }
     }
 
     pub fn email_state(&self) -> String {
@@ -1111,6 +1215,9 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
             "accountCapabilities": account_capabilities,
         }
     });
+    if let Some(max) = s.mail.lock().unwrap().get_max {
+        capabilities[core]["maxObjectsInGet"] = json!(max);
+    }
     {
         let files = s.files.lock().unwrap();
         if files.enabled {
@@ -1234,6 +1341,11 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
         return problem(StatusCode::BAD_REQUEST, "notRequest", "using and methodCalls are required");
     };
 
+    if calls.iter().any(|c| c[0] == "EmailSubmission/query")
+        && s.fail_submission_queries.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1)).is_ok()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if calls.iter().any(|c| c[0] == "CalendarEvent/get") {
         let delay = s.calendar_delay_ms.load(Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -1390,6 +1502,7 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
             Ok(one(answer))
         }
         "Identity/get"
+        | "Identity/set"
         | "AddressBook/get"
         | "ContactCard/query"
         | "ContactCard/get"
@@ -1400,18 +1513,8 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
             let mail_blob = |id: &str| s.mail().blob(id);
             s.files.lock().unwrap().call(name, args, &mail_blob).map(one)
         }
-        "EmailSubmission/query" => {
-            let wanted: Vec<&str> =
-                args["filter"]["emailIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-            let mail = s.mail();
-            let ids: Vec<&str> = mail
-                .submissions
-                .iter()
-                .filter(|sub| wanted.is_empty() || wanted.contains(&sub.email_id.as_str()))
-                .map(|sub| sub.id.as_str())
-                .collect();
-            Ok(one(json!({ "accountId": state::ACCOUNT_ID, "queryState": "q", "position": 0, "ids": ids })))
-        }
+        "EmailSubmission/query" => s.mail().submission_query(args).map(one),
+        "EmailSubmission/get" => s.mail().submission_get(args).map(one),
         "EmailSubmission/set" => {
             let identities: Vec<String> = s.account.lock().unwrap().identities.iter().map(|i| i.id.clone()).collect();
             let mut mail = s.mail();

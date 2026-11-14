@@ -7,7 +7,7 @@ use kweb_core::{
     ffi::{Core, Shade},
     model::{
         Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, FileEntry, FileKind,
-        Identity, MessageBody, MessageHeader, Occurrence, Quota, Reminder, ShareLevel,
+        Identity, Marked, MessageBody, MessageHeader, Occurrence, Quota, Reminder, ShareLevel, Unsubscribe,
     },
     notify::Plan,
     push::Listener,
@@ -15,7 +15,7 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files, Filters, Folder, Share, Shared},
+    args::{Away, Command, Files, Filters, Folder, Identity as IdentityCommand, Label, Share, Shared},
     timefmt,
 };
 
@@ -47,7 +47,14 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Folder(what) => folder(core, what),
         Command::Spam { id, is_spam } => spam(core, id, is_spam),
         Command::Block { id } => block(core, id),
+        Command::Unsubscribe { id, yes } => unsubscribe(core, id, yes),
+        Command::Labels => labels(core),
+        Command::Label(what) => label(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
+        Command::SendAt { minutes, to, subject, text } => send_at(core, minutes, to, subject, text),
+        Command::Scheduled => scheduled(core),
+        Command::Unschedule { id } => unschedule(core, id),
+        Command::Identity(what) => identity(core, what),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
         Command::SignOut => sign_out(core),
     }
@@ -216,15 +223,135 @@ fn show(core: &Core, id: String) -> Result<(), String> {
 }
 
 fn search(core: &Core, query: String) -> Result<(), String> {
-    let result = core.search(query, None, SEARCH_LIMIT).map_err(|e| e.to_string())?;
+    let result = core.search(query.clone(), None, SEARCH_LIMIT).map_err(|e| e.to_string())?;
     if result.from_cache {
         println!("(the server could not be reached: only cached mail was searched, by sender, subject and preview)");
     }
     if result.messages.is_empty() {
         println!("No matches.");
     }
+    // Where the words are found, under each hit. The marks are brackets. Without the server
+    // there are none.
+    let ids: Vec<String> = result.messages.iter().map(|m| m.id.clone()).collect();
+    let snippets = core.search_snippets(query, ids).map_err(|e| e.to_string())?;
     for message in &result.messages {
         println!("{}", message_line(message));
+        let preview = snippets.iter().find(|s| s.message_id == message.id).and_then(|s| s.preview.as_ref());
+        if let Some(preview) = preview {
+            println!("      {}", bracketed(preview));
+        }
+    }
+    Ok(())
+}
+
+/// The text with each marked stretch between `[` and `]`. The marks count UTF-16 units. Control
+/// characters are left out: the text comes from a stranger's mail.
+fn bracketed(marked: &Marked) -> String {
+    let units: Vec<u16> = marked.text.encode_utf16().collect();
+    let mut out = String::new();
+    let mut at = 0;
+    for mark in &marked.marks {
+        let (start, end) = ((mark.start as usize).min(units.len()), (mark.end as usize).min(units.len()));
+        if start < at || end <= start {
+            continue;
+        }
+        out.push_str(&String::from_utf16_lossy(&units[at..start]));
+        out.push('[');
+        out.push_str(&String::from_utf16_lossy(&units[start..end]));
+        out.push(']');
+        at = end;
+    }
+    out.push_str(&String::from_utf16_lossy(&units[at..]));
+    one_line(&out)
+}
+
+/// What `kweb unsubscribe` says a list offers, and what it would do.
+fn unsubscribe_text(info: &Unsubscribe) -> String {
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    let mut out = format!("One-click request: {}\nBy mail: {}\n", yes(info.one_click), yes(info.by_mail));
+    match &info.web_url {
+        Some(url) => out.push_str(&format!("Web page: {}\n", one_line(url))),
+        None => out.push_str("Web page: -\n"),
+    }
+    out.push_str(match (info.one_click, info.by_mail, &info.web_url) {
+        (true, _, _) => {
+            "It would send the list's server one request that asks to be removed (nothing of yours goes along)."
+        }
+        (false, true, _) => "It would send a message to the list's address, from your default address.",
+        (false, false, _) => "It cannot do this itself: open the web page and leave the list there.",
+    });
+    out
+}
+
+fn unsubscribe(core: &Core, id: String, yes: bool) -> Result<(), String> {
+    let failed = |e: kweb_core::Error| e.to_string();
+    let Some(info) = core.unsubscribe_info(id.clone()).map_err(failed)? else {
+        println!("{id}: the message gives no way to leave a list.");
+        return Ok(());
+    };
+    println!("{}", unsubscribe_text(&info));
+    if !yes {
+        if info.one_click || info.by_mail {
+            println!("Add --yes to do it.");
+        }
+        return Ok(());
+    }
+    // A fresh cache does not know yet which addresses the user can send as: one check brings them.
+    if info.by_mail && core.identities().map_err(failed)?.is_empty() {
+        core.check_once(Shade::Unknown).map_err(failed)?;
+    }
+    core.unsubscribe(id.clone()).map_err(failed)?;
+    // A message to the list goes with this pass.
+    core.check_once(Shade::Unknown)
+        .map_err(|e| format!("{id}: queued, not sent yet (the next kweb command or watch will send it): {e}"))?;
+    println!("{id}: done.");
+    Ok(())
+}
+
+fn labels(core: &Core) -> Result<(), String> {
+    core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
+    let all = core.labels().map_err(|e| e.to_string())?;
+    if all.is_empty() {
+        println!("No labels.");
+    }
+    for l in all {
+        println!("{}  [{}]", one_line(&l.name), one_line(&l.id));
+    }
+    Ok(())
+}
+
+/// Like the folder commands, a pass first, so the cache is current.
+fn label(core: &Core, what: Label) -> Result<(), String> {
+    let failed = |e: kweb_core::Error| e.to_string();
+    core.check_once(Shade::Unknown).map_err(failed)?;
+    match what {
+        Label::Add { name } => {
+            let made = core.create_label(name).map_err(failed)?;
+            println!("Made the label {} [{}].", one_line(&made.name), one_line(&made.id));
+        }
+        Label::Rm { id } => {
+            core.delete_label(id.clone()).map_err(failed)?;
+            println!("{id}: removed from the list (mail that has it keeps the keyword).");
+        }
+        Label::Set { message_id, label_id, on } => {
+            core.set_label(vec![message_id.clone()], label_id.clone(), on).map_err(failed)?;
+            core.check_once(Shade::Unknown).map_err(|e| {
+                format!("{message_id} is changed locally but not sent yet (the next kweb command or watch will send it): {e}")
+            })?;
+            println!("{message_id}: label {label_id} {}.", if on { "put on" } else { "taken off" });
+        }
+        Label::Show { label_id } => {
+            let result = core.label_messages(label_id, SEARCH_LIMIT).map_err(failed)?;
+            if result.from_cache {
+                println!("(the server could not be reached: only cached mail is shown)");
+            }
+            if result.messages.is_empty() {
+                println!("No mail has this label.");
+            }
+            for message in &result.messages {
+                println!("{}", message_line(message));
+            }
+        }
     }
     Ok(())
 }
@@ -413,6 +540,101 @@ fn identity_line(i: &Identity) -> String {
     let who = addresses(&[Address { name: i.name.clone(), email: i.email.clone() }]);
     let sig = if i.signature.is_empty() { "" } else { "  (has a signature)" };
     format!("[{}] {}{sig}", one_line(&i.id), one_line(&who))
+}
+
+fn send_at(core: &Core, minutes: u32, to: String, subject: String, text: String) -> Result<(), String> {
+    if core.identities().map_err(|e| e.to_string())?.is_empty() {
+        core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
+    }
+    let mut draft = core.new_draft(DraftKind::New).map_err(|e| e.to_string())?;
+    draft.to = vec![Address { name: String::new(), email: to.trim().to_string() }];
+    draft.subject = subject;
+    draft.body = format!("{text}{}", draft.body);
+    let id = draft.id.clone();
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+        .saturating_add(i64::from(minutes) * 60);
+    match core.schedule_send(draft, at) {
+        Ok(held) => {
+            println!("{}: held by the server until {} UTC.", held.id, timefmt::utc(held.send_at));
+            Ok(())
+        }
+        Err(e) => Err(format!("{e} (the draft {id} is kept)")),
+    }
+}
+
+fn scheduled(core: &Core) -> Result<(), String> {
+    let list = core.scheduled_sends().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        println!("The server holds nothing back.");
+    }
+    for held in &list {
+        println!(
+            "[{}] {} UTC  {}  to {}",
+            one_line(&held.id),
+            timefmt::utc(held.send_at),
+            one_line(&held.subject),
+            one_line(&held.to.join(", "))
+        );
+    }
+    Ok(())
+}
+
+fn unschedule(core: &Core, id: String) -> Result<(), String> {
+    let draft = core.cancel_scheduled(id).map_err(|e| e.to_string())?;
+    println!("Taken back: draft {} ({}).", draft.id, one_line(&draft.subject));
+    Ok(())
+}
+
+fn identity(core: &Core, what: IdentityCommand) -> Result<(), String> {
+    match what {
+        IdentityCommand::List => {
+            for i in core.identity_details().map_err(|e| e.to_string())? {
+                let who = addresses(&[Address { name: i.name.clone(), email: i.email.clone() }]);
+                println!(
+                    "[{}] {}{}{}",
+                    one_line(&i.id),
+                    one_line(&who),
+                    if i.is_default { "  (default)" } else { "" },
+                    if i.may_delete { "" } else { "  (cannot be deleted)" }
+                );
+                println!(
+                    "    reply-to: {}",
+                    if i.reply_to.is_empty() { "-".to_string() } else { one_line(&i.reply_to) }
+                );
+                println!(
+                    "    signature: {}",
+                    if i.signature.is_empty() { "-".to_string() } else { one_line(&i.signature) }
+                );
+            }
+            Ok(())
+        }
+        IdentityCommand::Set { id, name, signature, reply_to } => {
+            let current = core
+                .identity_details()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|i| i.id == id)
+                .ok_or_else(|| format!("there is no sender '{id}'"))?;
+            let saved = core
+                .save_identity(
+                    Some(id),
+                    name,
+                    current.email.clone(),
+                    reply_to.unwrap_or(current.reply_to),
+                    signature.unwrap_or(current.signature),
+                )
+                .map_err(|e| e.to_string())?;
+            println!("Saved [{}] {}.", one_line(&saved.id), one_line(&saved.name));
+            Ok(())
+        }
+        IdentityCommand::Default { id } => {
+            core.set_default_identity(id.clone()).map_err(|e| e.to_string())?;
+            println!("[{id}] is the sender new messages start with.");
+            Ok(())
+        }
+    }
 }
 
 fn quota(core: &Core) -> Result<(), String> {
@@ -1102,6 +1324,35 @@ mod tests {
         let off =
             AwayMessage { is_enabled: false, from: None, until: None, subject: String::new(), text: String::new() };
         assert_eq!(away_text(&off), "Away message: off");
+    }
+
+    #[test]
+    fn marks_are_shown_as_brackets_and_counted_in_utf16_units() {
+        let m = |text: &str, marks: &[(u32, u32)]| Marked {
+            text: text.into(),
+            marks: marks.iter().map(|(start, end)| kweb_core::model::MarkRange { start: *start, end: *end }).collect(),
+        };
+        assert_eq!(bracketed(&m("The quarterly invoice", &[(4, 13), (14, 21)])), "The [quarterly] [invoice]");
+        // The emoji is two units.
+        assert_eq!(bracketed(&m("\u{1f600} fish", &[(3, 7)])), "\u{1f600} [fish]");
+        assert_eq!(bracketed(&m("plain", &[])), "plain");
+        // A range outside the text, or backwards, is left out; control characters too.
+        assert_eq!(bracketed(&m("ab\u{1b}c", &[(9, 12), (1, 1), (0, 1)])), "[a]bc");
+        assert_eq!(bracketed(&m("", &[])), "");
+    }
+
+    #[test]
+    fn what_a_list_offers_is_told_in_plain_words() {
+        let info = |one_click, by_mail, web: Option<&str>| Unsubscribe {
+            one_click,
+            by_mail,
+            web_url: web.map(str::to_string),
+        };
+        let all = unsubscribe_text(&info(true, true, Some("https://lists.example.org/u")));
+        assert!(all.contains("One-click request: yes\nBy mail: yes\nWeb page: https://lists.example.org/u\n"));
+        assert!(all.ends_with("(nothing of yours goes along)."));
+        assert!(unsubscribe_text(&info(false, true, None)).ends_with("from your default address."));
+        assert!(unsubscribe_text(&info(false, false, Some("https://x.org/"))).contains("open the web page"));
     }
 
     #[test]

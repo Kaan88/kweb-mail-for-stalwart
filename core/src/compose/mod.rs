@@ -9,6 +9,7 @@
 //! server holds (see `flush`).
 
 mod flush;
+pub mod later;
 pub mod rules;
 
 use std::collections::HashSet;
@@ -97,7 +98,7 @@ pub fn answer(
         to: to.to,
         cc: to.cc,
         subject: rules::reply_subject(&header.subject),
-        body: rules::with_signature(&quoted, signature(identity)),
+        body: rules::reply_with_signature(&quoted, signature(identity)),
         source_message_id: Some(header.id.clone()),
         ..empty_draft(id, identity, now)
     }
@@ -271,7 +272,7 @@ mod tests {
         assert_eq!(d.to, vec![addr("Ann", "ann@x.org")]);
         assert!(d.cc.is_empty());
         assert_eq!(d.subject, "Re: Plans");
-        assert_eq!(d.body, "\n\nAnn <ann@x.org> wrote:\n> Hello\n> there\n\n-- \nMe\nAcme");
+        assert_eq!(d.body, "\n\n-- \nMe\nAcme\n\nAnn <ann@x.org> wrote:\n> Hello\n> there");
         assert_eq!((d.source_message_id.as_deref(), d.is_forward, d.server_id), (Some("m1"), false, None));
         assert!(d.attachments.is_empty());
     }

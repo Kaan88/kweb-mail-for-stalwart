@@ -9,6 +9,7 @@ mod bookkeeping;
 mod calendar;
 mod contacts;
 mod drafts;
+mod keywords;
 mod mailboxes;
 mod messages;
 mod outbox;
@@ -31,6 +32,8 @@ pub struct Store {
     conn: Mutex<Connection>,
     /// See [`Store::pass_lock`].
     pass: tokio::sync::Mutex<()>,
+    /// See [`Store::send_lock`].
+    sending: tokio::sync::Mutex<()>,
     /// When the identities and the address book were last fetched by this process.
     directory: Mutex<Option<Instant>>,
     /// See [`contacts::Cards`].
@@ -44,6 +47,14 @@ impl Store {
     /// twice, or announced to the one nobody is listening to.
     pub fn pass_lock(&self) -> &tokio::sync::Mutex<()> {
         &self.pass
+    }
+
+    /// Held by whatever talks to the server about a message on its way out: the sending part of
+    /// a pass, and the calls of the user that hand a message over, schedule it or take it back.
+    /// It is a lock of its own so that such a call never holds up the notification part of a
+    /// pass: a pass that finds it taken leaves the outgoing mail for the next one.
+    pub fn send_lock(&self) -> &tokio::sync::Mutex<()> {
+        &self.sending
     }
 
     pub fn open(path: &Path) -> Result<Store> {
@@ -66,6 +77,7 @@ impl Store {
         Ok(Store {
             conn: Mutex::new(conn),
             pass: tokio::sync::Mutex::new(()),
+            sending: tokio::sync::Mutex::new(()),
             directory: Mutex::new(None),
             cards: Mutex::default(),
         })
@@ -148,6 +160,18 @@ impl Store {
                 [account_id, key, value],
             )?;
             Ok(())
+        })
+    }
+
+    /// The keys that start with `prefix` (which has no `%` or `_`), in order.
+    pub fn kv_keys_with_prefix(&self, account_id: &str, prefix: &str) -> Result<Vec<String>> {
+        self.read(|c| {
+            let mut stmt =
+                c.prepare("SELECT key FROM kv WHERE account_id = ?1 AND substr(key, 1, ?2) = ?3 ORDER BY key")?;
+            let keys = stmt
+                .query_map(params![account_id, prefix.len() as i64, prefix], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?;
+            Ok(keys)
         })
     }
 

@@ -197,7 +197,7 @@ fn a_reply_is_built_by_the_rules() {
     assert_eq!(draft.identity_id, "i1");
     assert_eq!(
         draft.body,
-        "\n\nMaria Keller <maria@example.test> wrote:\n> Are you free at noon?\n> Table for two.\n\n-- \nAlice Test\nTest Corp"
+        "\n\n-- \nAlice Test\nTest Corp\n\nMaria Keller <maria@example.test> wrote:\n> Are you free at noon?\n> Table for two."
     );
     assert_eq!(
         (draft.source_message_id.as_deref(), draft.is_forward, draft.server_id.as_deref()),

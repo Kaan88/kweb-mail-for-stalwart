@@ -574,6 +574,88 @@ pub struct AiPreview {
     pub is_cut: bool,
 }
 
+/// How a mailing list lets the reader leave it (the List-Unsubscribe header).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Unsubscribe {
+    /// The list takes a one-click request (RFC 8058): [`crate::ffi::Core::unsubscribe`] does it.
+    pub one_click: bool,
+    /// A request by mail is possible: [`crate::ffi::Core::unsubscribe`] sends it.
+    pub by_mail: bool,
+    /// A web page of the list (https only), for the host to open when neither of the above is
+    /// there, or as the user's other choice.
+    pub web_url: Option<String>,
+}
+
+/// A label the user puts on messages besides their folder. On the server it is a keyword.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Label {
+    /// The keyword; made by the core from the name.
+    pub id: String,
+    /// What the user reads. Any text of one line.
+    pub name: String,
+}
+
+/// The labels of one message.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MessageLabels {
+    pub message_id: String,
+    /// Ids of [`Label`]s the user has; keywords that are no label of the user's are left out.
+    pub label_ids: Vec<String>,
+}
+
+/// A stretch of a text to draw as found, in UTF-16 units as Kotlin counts them.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MarkRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+/// A text with the found words marked.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Marked {
+    /// Plain text: no markup of any kind.
+    pub text: String,
+    pub marks: Vec<MarkRange>,
+}
+
+/// Where a search hit is in a message.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Snippet {
+    pub message_id: String,
+    /// The subject with the hit marked; `None` when the hit is not there.
+    pub subject: Option<Marked>,
+    /// A piece of the text around the hit; `None` when the hit is not in the text.
+    pub preview: Option<Marked>,
+}
+
+/// An address the user sends as, with everything that can be changed about it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct IdentityDetail {
+    pub id: String,
+    pub name: String,
+    /// One of the account's own addresses; fixed once the identity exists.
+    pub email: String,
+    /// Where answers should go, when not to `email`; empty for none.
+    pub reply_to: String,
+    /// Plain text, put under new messages; empty for none.
+    pub signature: String,
+    /// New messages start with this one.
+    pub is_default: bool,
+    pub may_delete: bool,
+}
+
+/// A message the server holds back until its time.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ScheduledSend {
+    /// Passed back to cancel it.
+    pub id: String,
+    pub subject: String,
+    /// The recipients' addresses, To first.
+    pub to: Vec<String>,
+    /// When the server sends it, Unix seconds.
+    pub send_at: i64,
+}
+
 /// How far a share goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ShareLevel {
