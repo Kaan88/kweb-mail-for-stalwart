@@ -13,6 +13,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -30,6 +32,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
@@ -84,6 +89,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.ZoneId
 import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.accounts.AccountAvatarButton
+import ovh.kweb.mail.ui.contacts.SearchPill
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.calendar.rememberLocale
 import ovh.kweb.mail.ui.list.Groups
@@ -199,13 +206,14 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
                 Box {
                     FloatingActionButton(
                         onClick = { menuAdd.value = true },
-                        shape = CircleShape,
+                        shape = RoundedCornerShape(20.dp),
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.files_add)) }
                     DropdownMenu(expanded = menuAdd.value, onDismissRequest = { menuAdd.value = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.files_upload)) },
+                            leadingIcon = { Icon(painterResource(R.drawable.ic_attachment), contentDescription = null) },
                             onClick = {
                                 menuAdd.value = false
                                 picker.launch(arrayOf("*/*"))
@@ -213,6 +221,7 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.files_new_folder)) },
+                            leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
                             onClick = {
                                 menuAdd.value = false
                                 c.askNewFolder()
@@ -261,54 +270,44 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
     FilesDialogHost(state, c)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** The head of Files: the same rounded field as the Inbox and Contacts, with the account at its right end. */
 @Composable
 private fun FilesTopBar(state: FilesState, c: FilesController) {
-    val colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
     val query = state.query
-    if (query != null) {
-        TopAppBar(
-            title = { SearchField(query, c::setQuery) },
-            navigationIcon = {
-                IconButton(onClick = c::closeSearch) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.files_search_close))
-                }
-            },
-            actions = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { c.setQuery("") }) {
-                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.files_search_clear))
+    Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+        if (query != null) {
+            SearchPill(
+                initial = query,
+                onChange = c::setQuery,
+                autoFocus = true,
+                label = stringResource(R.string.files_search),
+                leading = {
+                    IconButton(onClick = c::closeSearch) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.files_search_close))
                     }
-                }
-            },
-            colors = colors,
-        )
-        return
+                },
+                trailing = { AccountAvatarButton() },
+            )
+        } else {
+            SearchPill(
+                initial = "",
+                onChange = {},
+                label = stringResource(R.string.files_search),
+                // A folder below the top has its way up in the field, where the search icon is.
+                leading = if (state.canGoUp) {
+                    {
+                        IconButton(onClick = c::up) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.files_up))
+                        }
+                    }
+                } else {
+                    null
+                },
+                onTap = { if (state.space != null) c.openSearch() },
+                trailing = { AccountAvatarButton() },
+            )
+        }
     }
-    val space = state.space
-    val title = when {
-        state.trail.isNotEmpty() -> state.trail.last().name
-        space != null && (state.spaces?.size ?: 0) > 1 -> spaceLabel(space)
-        else -> stringResource(R.string.files_title)
-    }
-    TopAppBar(
-        title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        navigationIcon = {
-            if (state.canGoUp) {
-                IconButton(onClick = c::up) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.files_up))
-                }
-            }
-        },
-        actions = {
-            if (space != null) {
-                IconButton(onClick = c::openSearch) {
-                    Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.files_search))
-                }
-            }
-        },
-        colors = colors,
-    )
 }
 
 @Composable
@@ -477,15 +476,15 @@ internal fun FileIconBadge(icon: FileIcon, size: Int = 44, shared: Boolean = fal
         icon == FileIcon.Pdf -> R.drawable.ic_file_pdf
         else -> R.drawable.ic_file_other
     }
-    val folder = icon == FileIcon.Folder || shared
+    // A round avatar is always the secondary container, folders included.
     Box(
-        Modifier.size(size.dp).clip(CircleShape).background(if (folder) colors.primaryContainer else colors.secondaryContainer),
+        Modifier.size(size.dp).clip(CircleShape).background(colors.secondaryContainer),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             painterResource(res),
             contentDescription = null,
-            tint = if (folder) colors.onPrimaryContainer else colors.onSecondaryContainer,
+            tint = colors.onSecondaryContainer,
             modifier = Modifier.size((size / 2 + 2).dp),
         )
     }
@@ -549,7 +548,7 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
         RowAction.Move to R.string.files_move,
         RowAction.Delete to R.string.files_delete,
     )
-    Box {
+    run {
         GroupRow(
             index = index,
             count = count,
@@ -561,31 +560,46 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
             endPadding = if (actions.isEmpty() && !shareable) 16.dp else 4.dp,
             trailing = {
                 if (actions.isNotEmpty() || shareable) {
-                    IconButton(onClick = { menu = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.files_more, entry.name))
+                    // The menu hangs from the dots (and from a long press on the row), not from the row's left edge.
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.files_more, entry.name))
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            for (action in actions) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(labels.getValue(action))) },
+                                    leadingIcon = { Icon(actionIcon(action), contentDescription = null) },
+                                    onClick = {
+                                        menu = false
+                                        onAction(entry, action)
+                                    },
+                                )
+                            }
+                            if (shareable) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.share_menu)) },
+                                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                                    onClick = {
+                                        menu = false
+                                        openShare(ShareKind.FILE_FOLDER, entry.id, entry.name)
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            for (action in actions) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(labels.getValue(action))) },
-                    onClick = {
-                        menu = false
-                        onAction(entry, action)
-                    },
-                )
-            }
-            if (shareable) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.share_menu)) },
-                    onClick = {
-                        menu = false
-                        openShare(ShareKind.FILE_FOLDER, entry.id, entry.name)
-                    },
-                )
-            }
-        }
     }
+}
+
+/** The picture of a file row's menu entry. */
+@Composable
+private fun actionIcon(action: RowAction): androidx.compose.ui.graphics.painter.Painter = when (action) {
+    RowAction.Open -> painterResource(R.drawable.ic_files)
+    RowAction.Save -> painterResource(R.drawable.ic_download)
+    RowAction.Rename -> androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Filled.Edit)
+    RowAction.Move -> painterResource(R.drawable.ic_folder)
+    RowAction.Delete -> androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Filled.Delete)
 }

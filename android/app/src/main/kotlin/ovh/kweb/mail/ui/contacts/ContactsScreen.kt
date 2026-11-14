@@ -1,6 +1,7 @@
 package ovh.kweb.mail.ui.contacts
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -61,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.platform.LocalFocusManager
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.accounts.AccountAvatarButton
 import ovh.kweb.mail.ui.sharing.PickKind
 import ovh.kweb.mail.ui.sharing.SharePickerButton
 import ovh.kweb.mail.ui.calendar.NoticeBar
@@ -94,10 +97,10 @@ fun ContactsScreen(
     Scaffold(
         topBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { SearchPill(initial = state.query, onChange = vm::onQueryChange) }
-                    SharePickerButton(PickKind.ADDRESS_BOOK, Modifier.padding(end = 8.dp))
-                }
+                SearchPill(initial = state.query, onChange = vm::onQueryChange, trailing = {
+                    SharePickerButton(PickKind.ADDRESS_BOOK)
+                    AccountAvatarButton()
+                })
             }
         },
         bottomBar = bottomBar,
@@ -105,7 +108,7 @@ fun ContactsScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = onAddContact,
-                shape = CircleShape,
+                shape = RoundedCornerShape(20.dp),
                 containerColor = MaterialTheme.colorScheme.primaryContainer,
                 contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.contacts_add)) }
@@ -177,26 +180,42 @@ private fun LazyItemScope.Centered(content: @Composable () -> Unit) {
  * does not jump while the view model answers; the view model's query only fills it when the screen comes up.
  */
 @Composable
-internal fun SearchPill(initial: String, onChange: (String) -> Unit) {
+internal fun SearchPill(
+    initial: String,
+    onChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    /** At the right end, after the text (a menu, the account). */
+    trailing: (@Composable () -> Unit)? = null,
+    /** Replaces the search icon at the left (a back arrow). */
+    leading: (@Composable () -> Unit)? = null,
+    /** Opens the keyboard when the field comes up. */
+    autoFocus: Boolean = false,
+    /** When given, the field is not typed into: a tap anywhere on it calls this (it opens the real search). */
+    onTap: (() -> Unit)? = null,
+    label: String = stringResource(R.string.contacts_search),
+) {
     val colors = MaterialTheme.colorScheme
     var text by remember { mutableStateOf(initial) }
     val focus: FocusManager = LocalFocusManager.current
-    val label = stringResource(R.string.contacts_search)
+    val focusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(autoFocus) { if (autoFocus) runCatching { focusRequester.requestFocus() } }
+    // The same field as the Inbox's: 52 dp, raised surface, round, with the account at its right end.
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
-            .padding(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 8.dp)
+            .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
             .height(52.dp)
             .clip(CircleShape)
-            .background(colors.surfaceContainer)
-            .padding(start = 16.dp, end = 4.dp),
+            .background(colors.surfaceContainerHigh)
+            .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier)
+            .padding(start = if (leading != null) 4.dp else 16.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (leading != null) 4.dp else 12.dp),
     ) {
-        Icon(Icons.Filled.Search, contentDescription = null, tint = colors.onSurfaceVariant)
+        if (leading != null) leading() else Icon(Icons.Filled.Search, contentDescription = null, tint = colors.onSurfaceVariant)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (text.isEmpty()) Text(label, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-            BasicTextField(
+            if (onTap == null) BasicTextField(
                 value = text,
                 onValueChange = {
                     text = it
@@ -207,15 +226,16 @@ internal fun SearchPill(initial: String, onChange: (String) -> Unit) {
                 cursorBrush = SolidColor(colors.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
-                modifier = Modifier.fillMaxWidth().semantics { contentDescription = label },
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).semantics { contentDescription = label },
             )
         }
-        if (text.isNotEmpty()) {
+        if (text.isNotEmpty() && onTap == null) {
             IconButton(onClick = {
                 text = ""
                 onChange("")
             }) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.contacts_clear_search)) }
         }
+        if (trailing != null) trailing()
     }
 }
 

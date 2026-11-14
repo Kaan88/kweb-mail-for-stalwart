@@ -58,7 +58,7 @@
     </plurals>
     <string name="delivery_notifications_title">Notification permission</string>
     <string name="delivery_notifications_detail">Mail and reminders may alert</string>
-    <string name="delivery_battery_title">Battery optimisation</string>
+    <string name="delivery_battery_title">Battery optimization</string>
     <string name="delivery_battery_detail">Android may not pause the app</string>
     <string name="delivery_safety_title">Safety check</string>
     <string name="delivery_safety_detail">Every 15 minutes · last at %1$s</string>
@@ -74,7 +74,7 @@
     <string name="pill_allowed">Allowed</string>
     <string name="pill_off">Off</string>
     <string name="pill_exempt">Exempt</string>
-    <string name="pill_not_exempt">Not exempt</string>
+    <string name="pill_not_exempt">Restricted</string>
     <string name="pill_on_time">On time</string>
     <string name="pill_late">Late</string>
     <string name="pill_valid">Valid</string>

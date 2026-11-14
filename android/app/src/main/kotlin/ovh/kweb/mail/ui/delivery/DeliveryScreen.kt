@@ -91,6 +91,7 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.toUpperCase
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.ui.UiPrefs
 import uniffi.kweb_core.ConnectionStatus
@@ -482,14 +483,9 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Switch(
+        KwebSwitch(
             checked = checked,
             onCheckedChange = null,
-            thumbContent = if (checked) {
-                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
-            } else {
-                null
-            },
         )
     }
 }

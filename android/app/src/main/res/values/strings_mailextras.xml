@@ -17,7 +17,7 @@
     <string name="labels_title">Labels</string>
     <string name="labels_drawer">Labels</string>
     <string name="labels_reading">Reading the labels…</string>
-    <string name="labels_none">You have no labels yet.</string>
+    <string name="labels_none">No labels yet</string>
     <string name="labels_new">New label</string>
     <string name="labels_name">Name</string>
     <string name="labels_create">Create</string>
@@ -31,5 +31,5 @@
     <string name="labels_delete_title">Delete the label %1$s?</string>
     <string name="labels_delete_text">The label leaves your list. Messages that carry it keep it on the server.</string>
     <string name="labels_read_failed">The mail with this label could not be read.</string>
-    <string name="labels_list_empty">No mail carries this label.</string>
+    <string name="labels_list_empty">No mail has this label</string>
 </resources>

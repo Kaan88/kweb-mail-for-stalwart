@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -125,6 +127,8 @@ fun Avatar(initial: String, size: Dp = 40.dp, strong: Boolean = false) {
 private fun RowText(row: RowContent, modifier: Modifier) {
     val weight = if (row.unread) FontWeight.Bold else FontWeight.Normal
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    // Drawn in onSurface whatever surface the list sits on (a search screen has none, so the default would be black).
+    val ink = MaterialTheme.colorScheme.onSurface
     val time = rowTimeText(row.receivedAt)
     // What was found is drawn in the primary colour and bold, in the subject and in the text.
     val found = SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
@@ -133,10 +137,11 @@ private fun RowText(row: RowContent, modifier: Modifier) {
             Text(
                 row.sender,
                 modifier = Modifier.weight(1f),
+                color = ink,
                 fontWeight = weight,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -153,6 +158,7 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 Text(
                     subjectHighlight.annotated(found),
                     modifier = Modifier.weight(1f),
+                    color = ink,
                     fontWeight = weight,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -162,6 +168,7 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 Text(
                     row.subject.ifEmpty { stringResource(R.string.list_no_subject) },
                     modifier = Modifier.weight(1f),
+                    color = ink,
                     fontWeight = weight,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -236,17 +243,28 @@ fun MoveDialog(folders: List<FolderEntry>, exclude: String?, onPick: (Mailbox) -
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.action_move_title)) },
         text = {
-            LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                items(folders.filter { it.mailbox.id != exclude }, key = { it.mailbox.id }) { entry ->
-                    Text(
-                        folderName(entry.mailbox),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onPick(entry.mailbox) }
-                            .padding(start = (16 * entry.depth).dp, top = 12.dp, bottom = 12.dp),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
+            val listState = rememberLazyListState()
+            Column {
+                // A line where more is hidden, so a row cut in half reads as "scroll".
+                if (listState.canScrollBackward) HorizontalDivider()
+                LazyColumn(Modifier.weight(1f, fill = false).heightIn(max = 360.dp), state = listState) {
+                    items(folders.filter { it.mailbox.id != exclude }, key = { it.mailbox.id }) { entry ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable { onPick(entry.mailbox) }
+                                .padding(start = (16 * entry.depth).dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            // The folder's own picture, as in the drawer.
+                            FolderIcon(entry.mailbox.role, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(folderName(entry.mailbox), style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
                 }
+                if (listState.canScrollForward) HorizontalDivider()
             }
         },
         confirmButton = {},

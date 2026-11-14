@@ -32,19 +32,31 @@ object ContactForms {
     /** A new contact in [addressBookId], with one empty line for a mail address. */
     fun blank(addressBookId: String): ContactForm = ContactForm(addressBookId, emails = listOf(FormRow(0, "", "")))
 
-    fun fromContact(contact: Contact): ContactForm = ContactForm(
+    /**
+     * A card that has only a full name (nothing in the two name fields) shows that name in the two fields, split at
+     * the first space, so the form does not look as if the contact had no name. Nothing is sent for it unless the user
+     * changes a name field, because [name] compares against what was loaded here.
+     */
+    private fun splitName(contact: Contact): Pair<String, String> {
+        if (contact.givenName.isNotBlank() || contact.familyName.isNotBlank()) return contact.givenName to contact.familyName
+        val full = contact.name.trim()
+        val cut = full.indexOf(' ')
+        return if (cut < 0) full to "" else full.substring(0, cut) to full.substring(cut + 1).trim()
+    }
+
+    fun fromContact(contact: Contact): ContactForm = splitName(contact).let { (given, family) -> ContactForm(
         addressBookId = contact.addressBookId,
-        givenName = contact.givenName,
-        familyName = contact.familyName,
+        givenName = given,
+        familyName = family,
         organization = contact.organization,
         emails = rows(contact.emails),
         phones = rows(contact.phones),
         addresses = rows(contact.addresses),
         notes = contact.notes,
         loadedName = contact.name,
-        loadedGivenName = contact.givenName,
-        loadedFamilyName = contact.familyName,
-    )
+        loadedGivenName = given,
+        loadedFamilyName = family,
+    ) }
 
     private fun rows(values: List<Labeled>): List<FormRow> = values.mapIndexed { index, it -> FormRow(index, it.label, it.value) }
 

@@ -134,11 +134,11 @@ internal fun UiMessage.text(): String = resolve(LocalResources.current)
 @Composable
 internal fun GroupHeading(text: String) {
     Text(
-        text,
-        modifier = Modifier.fillMaxWidth().padding(start = 28.dp, end = 20.dp, top = 16.dp, bottom = 6.dp).semantics { heading() },
-        style = MaterialTheme.typography.labelLarge,
+        text.uppercase(androidx.compose.ui.text.intl.Locale.current.platformLocale),
+        modifier = Modifier.fillMaxWidth().padding(start = 32.dp, end = 20.dp, top = 20.dp, bottom = 8.dp).semantics { heading() },
+        style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.Bold,
-        letterSpacing = 0.3.sp,
+        letterSpacing = 0.8.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -164,7 +164,8 @@ internal fun SharedRow(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
+            // 12 dp from the sides and, with 1.5 dp above and below, the 3 dp gap between the rows of a group.
+            .padding(horizontal = 12.dp, vertical = 1.5.dp)
             .clip(shape)
             .background(colors.surfaceContainerLow)
             .clickable(role = Role.Button, onClick = onClick)
@@ -181,8 +182,7 @@ internal fun SharedRow(
             Text(
                 count,
                 modifier = Modifier.semantics { if (countDescription != null) contentDescription = countDescription },
-                color = colors.primary,
-                fontWeight = FontWeight.Bold,
+                color = colors.onSurfaceVariant,
                 style = MaterialTheme.typography.labelLarge,
             )
         }

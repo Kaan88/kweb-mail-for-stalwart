@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -21,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -52,7 +55,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.list.Groups
 import uniffi.kweb_core.FilterCondition
@@ -74,11 +79,13 @@ internal fun RuleEditor(state: FiltersState, editor: EditorState, c: FiltersCont
                     selected = rule.matchAll,
                     onClick = { c.edit { it.copy(matchAll = true) } },
                     label = { Text(stringResource(R.string.filters_match_all)) },
+                    leadingIcon = if (rule.matchAll) { { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) } } else null,
                 )
                 FilterChip(
                     selected = !rule.matchAll,
                     onClick = { c.edit { it.copy(matchAll = false) } },
                     label = { Text(stringResource(R.string.filters_match_any)) },
+                    leadingIcon = if (!rule.matchAll) { { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp)) } } else null,
                 )
             }
         }
@@ -180,11 +187,14 @@ internal fun problemText(problem: RuleProblem): String = when (problem) {
 
 @Composable
 private fun Heading(text: String) {
+    // The heading of every screen: small bold capitals in the quiet colour, as in Settings.
     Text(
-        text,
-        modifier = Modifier.padding(start = 28.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
-        color = MaterialTheme.colorScheme.primary,
-        style = MaterialTheme.typography.titleSmall,
+        text.uppercase(androidx.compose.ui.text.intl.Locale.current.platformLocale),
+        modifier = Modifier.padding(start = 32.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        letterSpacing = 0.8.sp,
     )
 }
 
@@ -195,7 +205,7 @@ private fun SwitchRow(shape: Shape, title: String, detail: String?, checked: Boo
             Text(title, style = MaterialTheme.typography.bodyLarge)
             if (detail != null) Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         }
-        Switch(checked = checked, onCheckedChange = null)
+        KwebSwitch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -248,29 +258,34 @@ private fun ConditionRow(shape: Shape, condition: FilterCondition, canRemove: Bo
                 }
             }
             if (kind == FieldKind.HEADER) {
+                Spacer(Modifier.height(4.dp))
                 PlainField(stringResource(R.string.filters_header_name), FilterRules.headerName(condition.field)) { v ->
                     onChange { it.copy(field = FilterRules.field(FieldKind.HEADER, v.trim())) }
                 }
             }
+            Spacer(Modifier.height(4.dp))
             PlainField(stringResource(R.string.filters_value), condition.value) { v -> onChange { it.copy(value = v) } }
         }
     }
 }
 
+/** The text of a condition: a filled field with the chips' own corners and edge, so the card has one left edge. */
 @Composable
 private fun PlainField(label: String, value: String, onValue: (String) -> Unit) {
+    val container = MaterialTheme.colorScheme.surfaceContainerHighest
     TextField(
         value = value,
         onValueChange = onValue,
         label = { Text(label) },
         singleLine = true,
+        shape = RoundedCornerShape(12.dp),
         colors = TextFieldDefaults.colors(
-            focusedContainerColor = Color.Transparent,
-            unfocusedContainerColor = Color.Transparent,
+            focusedContainerColor = container,
+            unfocusedContainerColor = container,
             focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent,
         ),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(end = 8.dp, bottom = 4.dp),
     )
 }
 

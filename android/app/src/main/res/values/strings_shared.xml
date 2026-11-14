@@ -2,13 +2,14 @@
 <resources>
     <!-- The shared screen and what it opens -->
     <string name="shared_title">Shared with me</string>
-    <string name="shared_empty">Nothing is shared with you.</string>
+    <string name="shared_empty">Nothing is shared with you</string>
     <string name="shared_empty_hint">When someone shares a mail folder, a calendar or an address book with you, it shows up here.</string>
     <string name="shared_load_failed">What is shared with you could not be loaded.</string>
     <string name="shared_failed">That did not work.</string>
     <string name="shared_sign_in_needed">Sign in again to see what is shared with you.</string>
     <string name="shared_gone">That is not shared with you any more.</string>
     <string name="shared_not_allowed">You are not allowed to do that here.</string>
+    <string name="shared_screen_title">%1$s · %2$s</string>
     <string name="shared_kind_mail">Mail</string>
     <string name="shared_kind_calendar">Calendar</string>
     <string name="shared_kind_contacts">Contacts</string>
@@ -30,8 +31,8 @@
 
     <!-- Calendar -->
     <plurals name="shared_agenda_empty">
-        <item quantity="one">Nothing in the next %1$d day.</item>
-        <item quantity="other">Nothing in the next %1$d days.</item>
+        <item quantity="one">Nothing in the next %1$d day</item>
+        <item quantity="other">Nothing in the next %1$d days</item>
     </plurals>
     <string name="shared_agenda_failed">The events could not be loaded. They are not kept on the phone, so a connection is needed.</string>
     <string name="shared_load_more_days">Load 30 more days</string>

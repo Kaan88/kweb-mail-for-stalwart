@@ -325,15 +325,16 @@ private fun TopBar(
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         IconButton(onClick = onClose) {
             Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.compose_close))
         }
+        // One size smaller and the Send pill without its icon, so the whole title fits beside clip, Send and send later.
         Text(
             title,
-            modifier = Modifier.weight(1f).padding(start = 8.dp),
-            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.weight(1f).padding(start = 4.dp),
+            style = MaterialTheme.typography.titleMedium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -349,8 +350,6 @@ private fun TopBar(
             modifier = Modifier.height(40.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 18.dp),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.compose_send), style = MaterialTheme.typography.labelLarge)
         }
         SendLaterMenu(enabled = canSend, onChoose = onSendLater)

@@ -15,13 +15,13 @@
     <string name="search_hint">Search mail</string>
     <string name="filter_unread">Unread</string>
     <string name="filter_flagged">Flagged</string>
-    <string name="filter_files">Files</string>
+    <string name="filter_files">Attachments</string>
     <string name="list_empty">Nothing here</string>
     <string name="list_yesterday">Yesterday</string>
     <string name="list_no_subject">(no subject)</string>
     <string name="list_unknown_sender">(unknown sender)</string>
     <string name="list_no_recipients">(no recipients)</string>
-    <string name="list_to_prefix">To: </string>
+    <string name="list_to_prefix">"To: "</string>
     <string name="list_has_attachment">Has an attachment</string>
     <string name="list_flagged">Starred</string>
     <string name="list_row_actions">Show actions</string>
@@ -55,6 +55,7 @@
     <string name="thread_truncated">This message is long. Only the first part is shown.</string>
     <string name="thread_remote_hidden">Remote images are hidden</string>
     <string name="thread_remote_show">Show</string>
+    <string name="thread_image_not_loaded">Image not loaded</string>
     <string name="thread_cannot_display">This message cannot be displayed.</string>
     <string name="list_load_older">Load older mail</string>
     <string name="thread_attachment">Attachment</string>
@@ -86,7 +87,7 @@
     <!-- Theme picker -->
     <string name="theme_title">Theme</string>
     <string name="theme_wallpaper">From my wallpaper</string>
-    <string name="theme_wallpaper_hint">Colours follow the phone\'s wallpaper</string>
+    <string name="theme_wallpaper_hint">Colors follow the phone\'s wallpaper</string>
     <string name="theme_ward">Ward crimson</string>
     <string name="theme_lavender">Lavender</string>
     <string name="theme_moss">Moss</string>

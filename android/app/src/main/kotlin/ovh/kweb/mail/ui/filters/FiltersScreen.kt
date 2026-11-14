@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -25,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -53,6 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.calendar.NoticeBar
@@ -136,7 +139,7 @@ private fun RuleList(state: FiltersState, c: FiltersController) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                Switch(checked = filters.isActive, onCheckedChange = null, enabled = !state.busy)
+                KwebSwitch(checked = filters.isActive, onCheckedChange = null, enabled = !state.busy)
             }
         }
         Banners(filters, c)
@@ -174,12 +177,15 @@ private fun RuleList(state: FiltersState, c: FiltersController) {
                     )
                 }
             }
-            FilledTonalButton(
+            Button(
                 onClick = c::addRule,
                 enabled = !state.busy,
                 shape = CircleShape,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 16.dp).heightIn(min = 52.dp),
-            ) { Text(stringResource(R.string.filters_add), style = MaterialTheme.typography.labelLarge) }
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Text(stringResource(R.string.filters_add), modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelLarge)
+            }
         }
         Text(
             stringResource(R.string.filters_inbox_note),
@@ -262,7 +268,7 @@ private fun RuleRow(
             Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.filters_move_down, name))
         }
         val switchLabel = stringResource(R.string.filters_rule_switch, name)
-        Switch(
+        KwebSwitch(
             checked = rule.enabled,
             onCheckedChange = onEnabled,
             enabled = !busy,

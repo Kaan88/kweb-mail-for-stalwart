@@ -53,7 +53,7 @@
     <!-- Settings -->
     <string name="settings_title">Settings</string>
     <string name="settings_account">Account</string>
-    <string name="settings_name">Name</string>
+    <string name="settings_name">Login</string>
     <string name="settings_server">Server</string>
     <string name="settings_storage">Storage</string>
     <string name="settings_storage_loading">Reading how much is used…</string>

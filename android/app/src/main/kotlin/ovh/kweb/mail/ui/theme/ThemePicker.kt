@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
@@ -58,7 +59,8 @@ fun ThemePickerDialog(onDismiss: () -> Unit) {
                                 onClick = { ThemeState.choose(context, choice) },
                                 role = Role.RadioButton,
                             )
-                            .padding(vertical = 10.dp),
+                            .heightIn(min = 56.dp)
+                            .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {

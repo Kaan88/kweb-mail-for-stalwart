@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -98,13 +99,15 @@ fun ScheduledScreen(onBack: () -> Unit, onOpenDraft: (String) -> Unit, vm: Sched
                 }
                 ScheduledPhase.READY -> PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = { c.refresh(pull = true) }, modifier = Modifier.fillMaxSize()) {
                     // Scrollable even when empty, so that the pull works on the empty state too.
+                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val room = maxHeight
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
                         if (state.items.isEmpty()) {
-                            Text(
+                            // As tall as the screen, so the note is in the middle, as on the other empty screens.
+                            ovh.kweb.mail.ui.list.EmptyNote(
+                                R.drawable.ic_schedule,
                                 stringResource(R.string.scheduled_empty),
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
+                                Modifier.fillMaxWidth().height(room - 24.dp),
                             )
                         } else {
                             Text(
@@ -119,6 +122,7 @@ fun ScheduledScreen(onBack: () -> Unit, onOpenDraft: (String) -> Unit, vm: Sched
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

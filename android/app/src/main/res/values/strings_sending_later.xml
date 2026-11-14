@@ -32,7 +32,7 @@
         <item quantity="other">%d messages waiting</item>
     </plurals>
     <string name="scheduled_hint">The server sends these at the time shown, even when this phone is off.</string>
-    <string name="scheduled_empty">No messages are waiting to be sent.</string>
+    <string name="scheduled_empty">No messages waiting to be sent</string>
     <string name="scheduled_no_subject">(no subject)</string>
     <string name="scheduled_no_recipients">No recipients</string>
     <string name="scheduled_recipients_more">%1$s and %2$d more</string>

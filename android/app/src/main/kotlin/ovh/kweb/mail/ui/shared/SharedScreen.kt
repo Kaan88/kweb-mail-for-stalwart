@@ -73,7 +73,7 @@ fun SharedScreen(
                     accounts == null -> item(key = "loading") { SharedCentered { Loading() } }
                     accounts.isEmpty() -> item(key = "empty") {
                         SharedCentered {
-                            Note(stringResource(R.string.shared_empty) + "\n" + stringResource(R.string.shared_empty_hint))
+                            ovh.kweb.mail.ui.list.EmptyNote(R.drawable.ic_group, stringResource(R.string.shared_empty), hint = stringResource(R.string.shared_empty_hint))
                         }
                     }
                     else -> accounts.forEach { account ->
@@ -119,7 +119,7 @@ fun SharedFoldersScreen(route: Route.SharedFolders, onBack: () -> Unit, onGone: 
     val folders = remember(state.value) { state.value?.let { SharedRules.tree(it) } }
 
     Scaffold(
-        topBar = { SharedTopBar(route.owner, onBack) },
+        topBar = { SharedTopBar(stringResource(R.string.shared_screen_title, stringResource(R.string.shared_kind_mail), route.owner), onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->

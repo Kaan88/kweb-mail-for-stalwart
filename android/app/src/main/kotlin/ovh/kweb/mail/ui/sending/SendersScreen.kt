@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,6 +36,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -40,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -52,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.list.Groups
@@ -148,7 +155,7 @@ private fun SenderList(state: SendersState, c: SendersController) {
         GroupColumn(Modifier.padding(top = 8.dp)) {
             state.items.forEachIndexed { index, item -> SenderRow(Groups.shape(index, state.items.size), item) { c.open(item.id) } }
         }
-        FilledTonalButton(
+        Button(
             onClick = c::openNew,
             shape = CircleShape,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 16.dp).heightIn(min = 52.dp),
@@ -182,8 +189,8 @@ private fun SenderRow(shape: Shape, item: IdentityDetail, onClick: () -> Unit) {
         if (item.isDefault) {
             Text(
                 stringResource(R.string.senders_default_mark),
-                modifier = Modifier.clip(CircleShape).background(colors.secondaryContainer).padding(horizontal = 12.dp, vertical = 4.dp),
-                color = colors.onSecondaryContainer,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(colors.tertiaryContainer).padding(horizontal = 12.dp, vertical = 4.dp),
+                color = colors.onTertiaryContainer,
                 style = MaterialTheme.typography.labelMedium,
             )
         }
@@ -195,85 +202,76 @@ private fun SenderFormView(state: SendersState, form: SenderForm, c: SendersCont
     val colors = MaterialTheme.colorScheme
     val problem = state.problem
     val enabled = !state.busy
+    // One group of rows, as the other forms have: filled fields, large corners at the ends, small ones inside, a 3 dp gap.
+    val rows = 5
     Column(
-        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        OutlinedTextField(
+        GroupField(
+            Groups.shape(0, rows),
             value = form.name,
-            onValueChange = c::setName,
-            label = { Text(stringResource(R.string.senders_name)) },
-            supportingText = {
-                Text(
-                    stringResource(R.string.senders_count, SendersRules.length(form.name), SendersRules.NAME_LIMIT),
-                    color = if (problem == SendersRules.Problem.NameTooLong) colors.error else colors.onSurfaceVariant,
-                )
-            },
+            onChange = c::setName,
+            label = stringResource(R.string.senders_name),
+            supporting = stringResource(R.string.senders_count, SendersRules.length(form.name), SendersRules.NAME_LIMIT),
             isError = problem == SendersRules.Problem.NameTooLong,
             singleLine = true,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            modifier = Modifier.fillMaxWidth(),
         )
         if (form.isNew) {
-            OutlinedTextField(
+            GroupField(
+                Groups.shape(1, rows),
                 value = form.email,
-                onValueChange = c::setEmail,
-                label = { Text(stringResource(R.string.senders_email)) },
-                supportingText = {
-                    Text(
-                        stringResource(
-                            when (problem) {
-                                SendersRules.Problem.NoEmail -> R.string.senders_email_needed
-                                SendersRules.Problem.BadEmail -> R.string.senders_email_bad
-                                else -> R.string.senders_email_hint
-                            },
-                        ),
-                    )
-                },
+                onChange = c::setEmail,
+                label = stringResource(R.string.senders_email),
+                supporting = stringResource(
+                    when (problem) {
+                        SendersRules.Problem.NoEmail -> R.string.senders_email_needed
+                        SendersRules.Problem.BadEmail -> R.string.senders_email_bad
+                        else -> R.string.senders_email_hint
+                    },
+                ),
                 isError = problem == SendersRules.Problem.NoEmail || problem == SendersRules.Problem.BadEmail,
                 singleLine = true,
                 enabled = enabled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            Column(Modifier.padding(horizontal = 4.dp)) {
+            Column(
+                Modifier.fillMaxWidth().clip(Groups.shape(1, rows)).background(colors.surfaceContainerLow).padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
                 Text(stringResource(R.string.senders_email), color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 Text(form.email, style = MaterialTheme.typography.bodyLarge)
                 Text(stringResource(R.string.senders_email_fixed), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
-        OutlinedTextField(
+        GroupField(
+            Groups.shape(2, rows),
             value = form.replyTo,
-            onValueChange = c::setReplyTo,
-            label = { Text(stringResource(R.string.senders_reply_to)) },
-            supportingText = { Text(stringResource(if (problem == SendersRules.Problem.BadReplyTo) R.string.senders_email_bad else R.string.senders_reply_to_hint)) },
+            onChange = c::setReplyTo,
+            label = stringResource(R.string.senders_reply_to),
+            supporting = stringResource(if (problem == SendersRules.Problem.BadReplyTo) R.string.senders_email_bad else R.string.senders_reply_to_hint),
             isError = problem == SendersRules.Problem.BadReplyTo,
             singleLine = true,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
+        GroupField(
+            Groups.shape(3, rows),
             value = form.signature,
-            onValueChange = c::setSignature,
-            label = { Text(stringResource(R.string.senders_signature)) },
-            supportingText = {
-                Text(
-                    stringResource(R.string.senders_count, SendersRules.length(form.signature), SendersRules.SIGNATURE_LIMIT),
-                    color = if (problem == SendersRules.Problem.SignatureTooLong) colors.error else colors.onSurfaceVariant,
-                )
-            },
+            onChange = c::setSignature,
+            label = stringResource(R.string.senders_signature),
+            supporting = stringResource(R.string.senders_count, SendersRules.length(form.signature), SendersRules.SIGNATURE_LIMIT),
             isError = problem == SendersRules.Problem.SignatureTooLong,
+            singleLine = false,
             minLines = 4,
             maxLines = 12,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            modifier = Modifier.fillMaxWidth(),
         )
         Row(
-            Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().clip(Groups.shape(4, rows)).background(colors.surfaceContainerLow).heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -283,16 +281,63 @@ private fun SenderFormView(state: SendersState, form: SenderForm, c: SendersCont
                     Text(stringResource(R.string.senders_use_for_new_already), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Switch(checked = form.useForNew, onCheckedChange = c::setUseForNew, enabled = enabled && !form.isDefault)
+            KwebSwitch(checked = form.useForNew, onCheckedChange = c::setUseForNew, enabled = enabled && !form.isDefault)
         }
+        Spacer(Modifier.height(13.dp))
         Button(onClick = c::save, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             if (state.busy) CircularProgressIndicator(Modifier.padding(end = 8.dp).heightIn(max = 20.dp), strokeWidth = 2.dp, color = colors.onPrimary)
             Text(stringResource(R.string.senders_save), style = MaterialTheme.typography.labelLarge)
         }
         if (!form.isNew && form.mayDelete) {
-            OutlinedButton(onClick = c::askDelete, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+            TextButton(onClick = c::askDelete, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                 Text(stringResource(R.string.senders_delete), color = colors.error, style = MaterialTheme.typography.labelLarge)
             }
         }
+    }
+}
+
+/** A filled field that is one row of a group; the count or hint is its supporting line. */
+@Composable
+private fun GroupField(
+    shape: Shape,
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    supporting: String,
+    isError: Boolean,
+    singleLine: Boolean,
+    enabled: Boolean,
+    keyboardOptions: KeyboardOptions,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
+) {
+    val colors = MaterialTheme.colorScheme
+    val none = Color.Transparent
+    // The tile is drawn here, around the field and its supporting line, so the line is inside the row, not in the gap.
+    Box(Modifier.fillMaxWidth().clip(shape).background(colors.surfaceContainerLow)) {
+        TextField(
+            value = value,
+            onValueChange = onChange,
+            label = { Text(label) },
+            supportingText = { Text(supporting, color = if (isError) colors.error else colors.onSurfaceVariant) },
+            isError = isError,
+            singleLine = singleLine,
+            minLines = minLines,
+            maxLines = maxLines,
+            enabled = enabled,
+            keyboardOptions = keyboardOptions,
+            shape = shape,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = none,
+                unfocusedContainerColor = none,
+                errorContainerColor = none,
+                disabledContainerColor = none,
+                focusedIndicatorColor = none,
+                unfocusedIndicatorColor = none,
+                errorIndicatorColor = none,
+                disabledIndicatorColor = none,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }

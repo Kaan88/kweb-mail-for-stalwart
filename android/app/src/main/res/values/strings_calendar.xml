@@ -12,7 +12,7 @@
     <string name="cal_offline">Offline: showing what this phone has</string>
     <string name="cal_agenda_failed">The calendar could not be updated.</string>
     <string name="cal_load_failed">The calendar could not be loaded.</string>
-    <string name="cal_empty">Nothing is planned in these weeks.</string>
+    <string name="cal_empty">Nothing planned in these weeks</string>
     <string name="cal_continues">Continues</string>
     <string name="cal_form_zone">Times are in %1$s</string>
     <string name="cal_untitled">No title</string>

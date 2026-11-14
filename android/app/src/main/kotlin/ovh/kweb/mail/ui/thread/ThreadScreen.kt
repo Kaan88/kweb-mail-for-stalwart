@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -293,11 +294,13 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.action_mark_unread)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                                 enabled = hasMessages,
                                 onClick = { menuOpen = false; vm.markUnread() },
                             )
                             DropdownMenuItem(
                                 text = { Text(stringResource(if (flagged) R.string.action_unstar else R.string.action_star)) },
+                                leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
                                 enabled = hasMessages,
                                 onClick = { menuOpen = false; vm.toggleFlag() },
                             )
@@ -317,6 +320,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.action_move)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
                                 enabled = canAct,
                                 onClick = { menuOpen = false; moving = true },
                             )
@@ -326,6 +330,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                         val notSpam = SpamRules.threadIsNotSpam(state.messages, targets, route.mailboxId, state.mailboxes)
                                         Text(stringResource(if (notSpam) R.string.spam_not else R.string.spam_report))
                                     },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) },
                                     enabled = canAct,
                                     onClick = { menuOpen = false; vm.spam() },
                                 )
@@ -356,6 +361,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                         header = header,
                         shape = Groups.shape(index, state.messages.size),
                         expanded = header.id in state.expanded,
+                        flat = state.messages.size == 1,
                         body = state.bodies[header.id],
                         remoteAllowed = header.id in state.remoteAllowed,
                         myAddress = state.myAddress,

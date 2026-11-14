@@ -16,7 +16,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -117,11 +116,10 @@ private fun NameDialog(
         title = { Text(title) },
         text = {
             Column {
-                OutlinedTextField(
+                ovh.kweb.mail.ui.list.DialogField(
                     value = value,
                     onValueChange = { value = it },
-                    label = { Text(label) },
-                    singleLine = true,
+                    label = label,
                     isError = error != null,
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),

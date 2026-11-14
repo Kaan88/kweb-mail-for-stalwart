@@ -26,7 +26,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -57,6 +58,8 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.Route
+import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.list.Avatar
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.shared.CollectSharedEvents
 import ovh.kweb.mail.ui.shared.GroupHeading
@@ -169,9 +172,11 @@ private fun ShareRow(shape: androidx.compose.ui.graphics.Shape, share: Share, en
     val second = ShareRules.secondLine(share.person)
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.5.dp).clip(shape).background(colors.surfaceContainerLow)
-            .heightIn(min = 64.dp).padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .heightIn(min = 64.dp).padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        Avatar(AccountRows.initial(ShareRules.label(share.person)))
         Column(Modifier.weight(1f)) {
             Text(ShareRules.label(share.person), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (second != null) {
@@ -195,7 +200,7 @@ private fun ShareRow(shape: androidx.compose.ui.graphics.Shape, share: Share, en
 
 @Composable
 private fun LevelChoice(selected: ShareLevel, onSelect: (ShareLevel) -> Unit) {
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+    Column(Modifier.padding(horizontal = 28.dp, vertical = 4.dp)) {
         Text(stringResource(R.string.share_new_level), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             ShareRules.LEVELS.forEachIndexed { index, level ->
@@ -214,13 +219,21 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
     // The text is kept here so the cursor does not jump; the controller only empties it after a person was added.
     var text by rememberSaveable { mutableStateOf(query) }
     if (query.isEmpty() && text.isNotEmpty()) text = ""
-    OutlinedTextField(
+    val container = MaterialTheme.colorScheme.surfaceContainerLow
+    TextField(
         value = text,
         onValueChange = {
             text = it
             onChange(it)
         },
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(Groups.OUTER_DP.dp),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = container,
+            unfocusedContainerColor = container,
+            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+        ),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
         label = { Text(stringResource(R.string.share_search_label)) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -252,15 +265,19 @@ private fun SearchStatus(state: ShareState, nothingToOffer: Boolean) {
 private fun PersonRow(shape: androidx.compose.ui.graphics.Shape, person: Person, enabled: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val second = ShareRules.secondLine(person)
-    Column(
+    Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.5.dp).clip(shape).background(colors.surfaceContainerLow)
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = stringResource(R.string.share_add_person, ShareRules.label(person)), onClick = onClick)
-            .heightIn(min = 56.dp).padding(horizontal = 20.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.Center,
+            .heightIn(min = 56.dp).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text(ShareRules.label(person), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        if (second != null) {
-            Text(second, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Avatar(AccountRows.initial(ShareRules.label(person)))
+        Column(Modifier.weight(1f)) {
+            Text(ShareRules.label(person), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (second != null) {
+                Text(second, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

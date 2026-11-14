@@ -31,11 +31,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -544,8 +546,11 @@ private fun DrawerContent(
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
             DrawerAccountHeader(username, onAccountChosen)
             val openShare = LocalOpenShare.current
-            folders.forEach { entry ->
+            // The system folders, then a line, then the user's own.
+            val firstOwn = folders.indexOfFirst { it.depth == 0 && it.mailbox.role !in Folders.ROLE_ORDER }
+            folders.forEachIndexed { index, entry ->
                 val folder = entry.mailbox
+                if (index == firstOwn && index > 0) HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 val unread = folder.unreadEmails.toInt()
                 val bell = FolderRules.showsDrawerBell(folder)
                 var menuOpen by remember { mutableStateOf(false) }
@@ -592,6 +597,7 @@ private fun DrawerContent(
                                 {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.share_menu)) },
+                                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                                         onClick = { menuOpen = false; openShare(ShareKind.MAILBOX, folder.id, shareName) },
                                     )
                                 }
@@ -604,7 +610,7 @@ private fun DrawerContent(
             }
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.folders_manage)) },
-                icon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
+                icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                 selected = false,
                 onClick = onManageFolders,
             )
@@ -652,7 +658,7 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Avatar(active?.initial ?: Sender.initial(username, ""))
+        Avatar(active?.initial ?: Sender.initial(username, ""), strong = true)
         Column(Modifier.weight(1f)) {
             Text(active?.label ?: username, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (AccountRows.showsAccountNames(ui.rows.size) && active != null) {
@@ -667,7 +673,8 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
     }
     if (open) {
         AccountList(
-            rows = ui.rows,
+            all = ui.rows,
+            hideActive = true,
             onPick = {
                 open = false
                 onChosen()
@@ -688,11 +695,14 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
 @Composable
 private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete: (Label) -> Unit) {
     if (labels.isEmpty()) return
+    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+    // A small grey heading in capitals, as the agenda's days and the groups of the lists have.
     Text(
-        stringResource(R.string.labels_drawer),
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+        stringResource(R.string.labels_drawer).uppercase(androidx.compose.ui.text.intl.Locale.current.platformLocale),
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp),
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.titleSmall,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
     )
     labels.forEach { label ->
         var menuOpen by remember(label.id) { mutableStateOf(false) }
@@ -707,6 +717,7 @@ private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.action_delete)) },
+                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                     onClick = { menuOpen = false; onDelete(label) },
                 )
             }
@@ -716,9 +727,9 @@ private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete
 
 /** The picture of a folder in the drawer: its own for the system folders, a plain folder for the rest. */
 @Composable
-private fun FolderIcon(role: String?) {
+internal fun FolderIcon(role: String?, modifier: Modifier = Modifier, tint: androidx.compose.ui.graphics.Color = androidx.compose.material3.LocalContentColor.current) {
     when (role) {
-        "trash" -> Icon(Icons.Filled.Delete, contentDescription = null)
+        "trash" -> Icon(Icons.Filled.Delete, contentDescription = null, modifier = modifier, tint = tint)
         else -> Icon(
             painterResource(
                 when (role) {
@@ -731,28 +742,22 @@ private fun FolderIcon(role: String?) {
                 },
             ),
             contentDescription = null,
+            modifier = modifier,
+            tint = tint,
         )
     }
 }
 
 @Composable
 private fun EmptyState(state: MailListState, modifier: Modifier) {
-    Column(
-        modifier.padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
+    Box(modifier, contentAlignment = Alignment.Center) {
         // Until the first read has finished, "empty" only means "not here yet".
         if (state.loaded) {
-            Text(stringResource(R.string.list_empty), style = MaterialTheme.typography.titleMedium)
-            if (!state.synced) {
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    stringResource(R.string.inbox_first_sync),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            EmptyNote(
+                R.drawable.ic_inbox,
+                stringResource(R.string.list_empty),
+                hint = if (!state.synced) stringResource(R.string.inbox_first_sync) else null,
+            )
         }
     }
 }
@@ -822,43 +827,46 @@ private fun ConversationItem(
     ) {
         Box {
             MailRow(rowContent(row, role, labelNames), onClick = onOpen, shape = shape, onLongClick = { menuOpen = true })
+            // Anchored at the right end of the row, not at the left screen edge.
+            Box(Modifier.align(Alignment.CenterEnd)) {
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                MenuItem(if (row.unreadCount > 0u) R.string.action_mark_read else R.string.action_mark_unread) {
+                MenuItem(if (row.unreadCount > 0u) R.string.action_mark_read else R.string.action_mark_unread, { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) }) {
                     menuOpen = false
                     onToggleRead()
                 }
-                MenuItem(if (row.isFlagged) R.string.action_unstar else R.string.action_star) {
+                MenuItem(if (row.isFlagged) R.string.action_unstar else R.string.action_star, { Icon(Icons.Filled.Star, contentDescription = null) }) {
                     menuOpen = false
                     onToggleFlag()
                 }
                 if (canArchive) {
-                    MenuItem(R.string.action_archive) {
+                    MenuItem(R.string.action_archive, { Icon(painterResource(R.drawable.ic_archive), contentDescription = null) }) {
                         menuOpen = false
                         onArchive()
                     }
                 }
-                MenuItem(if (inTrash) R.string.action_delete_forever else R.string.action_delete) {
+                MenuItem(if (inTrash) R.string.action_delete_forever else R.string.action_delete, { Icon(Icons.Filled.Delete, contentDescription = null) }) {
                     menuOpen = false
                     onDelete()
                 }
-                MenuItem(R.string.action_move) {
+                MenuItem(R.string.action_move, { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) }) {
                     menuOpen = false
                     onMove()
                 }
                 if (spamOffered) {
-                    MenuItem(if (SpamRules.isNotSpamEntry(role)) R.string.spam_not else R.string.spam_report) {
+                    MenuItem(if (SpamRules.isNotSpamEntry(role)) R.string.spam_not else R.string.spam_report, { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) }) {
                         menuOpen = false
                         onSpam()
                     }
                 }
+            }
             }
         }
     }
 }
 
 @Composable
-private fun MenuItem(textRes: Int, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(stringResource(textRes)) }, onClick = onClick)
+private fun MenuItem(textRes: Int, icon: @Composable () -> Unit, onClick: () -> Unit) {
+    DropdownMenuItem(text = { Text(stringResource(textRes)) }, leadingIcon = icon, onClick = onClick)
 }
 
 /** A conversation as a row. Sent and Drafts show who it went to instead of who sent it. */

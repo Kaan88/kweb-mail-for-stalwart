@@ -74,6 +74,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.list.Groups
@@ -269,7 +270,7 @@ private fun SwitchRow(shape: Shape, title: String, checked: Boolean, detail: Str
                 Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        Switch(checked = checked, onCheckedChange = null)
+        KwebSwitch(checked = checked, onCheckedChange = null)
     }
 }
 

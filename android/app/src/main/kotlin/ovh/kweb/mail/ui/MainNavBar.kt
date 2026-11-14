@@ -16,6 +16,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import ovh.kweb.mail.R
 
 /** One entry of the bottom bar: the root screen it leads to. */
@@ -40,8 +41,9 @@ fun MainNavBar(selected: Route, mailUnread: Int, onSelect: (Route) -> Unit) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
         for (tab in MainTabs.all) {
             val label = stringResource(tab.label)
+            val on = tab.route == selected
             NavigationBarItem(
-                selected = tab.route == selected,
+                selected = on,
                 onClick = { onSelect(tab.route) },
                 icon = {
                     val badge = tab.route == Route.MailList && mailUnread > 0
@@ -57,7 +59,7 @@ fun MainNavBar(selected: Route, mailUnread: Int, onSelect: (Route) -> Unit) {
                         Icon(painterResource(tab.icon), contentDescription = null)
                     }
                 },
-                label = { Text(label) },
+                label = { Text(label, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal) },
             )
         }
     }

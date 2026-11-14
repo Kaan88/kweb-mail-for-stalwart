@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -17,6 +18,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -85,14 +87,18 @@ fun SharedContactsScreen(
     Scaffold(
         topBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background)) {
-                SharedTopBar(route.owner, onBack, actions = {
-                    if (canAdd) {
-                        IconButton(onClick = onAddContact) {
-                            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.contacts_add))
-                        }
-                    }
-                })
+                SharedTopBar(stringResource(R.string.shared_screen_title, stringResource(R.string.shared_kind_contacts), route.owner), onBack)
                 SearchPill(initial = state.query, onChange = c::onQueryChange)
+            }
+        },
+        floatingActionButton = {
+            if (canAdd) {
+                FloatingActionButton(
+                    onClick = onAddContact,
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.contacts_add)) }
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },

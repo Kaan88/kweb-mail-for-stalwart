@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -56,6 +58,7 @@ import java.util.Locale
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.list.Avatar
+import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.Preview
 import ovh.kweb.mail.ui.list.RowTime
 import ovh.kweb.mail.ui.list.Sender
@@ -114,11 +117,19 @@ fun MessageCard(
     labelNames: List<String> = emptyList(),
     /** The Unsubscribe chip; null for none. */
     unsubscribe: UnsubEntry? = null,
+    /** A thread of one message is drawn flat on the page (subject, sender, body, files), as in the owner's sheet, not as a card. */
+    flat: Boolean = false,
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
-    val surface = if (expanded) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
-    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 1.5.dp).clip(shape).background(surface)) {
+    val flatNow = flat && expanded
+    val surface = when {
+        flatNow -> Color.Transparent
+        expanded -> MaterialTheme.colorScheme.surfaceContainerHigh
+        else -> MaterialTheme.colorScheme.surfaceContainerLow
+    }
+    // Flat: the page's own 20dp edge (8 here + 12 inside), the same as the subject above.
+    Column(Modifier.fillMaxWidth().padding(horizontal = if (flatNow) 8.dp else 12.dp, vertical = 1.5.dp).clip(shape).background(surface)) {
         if (!expanded) {
             Row(
                 Modifier.fillMaxWidth().clickable(onClick = actions.onToggle).padding(12.dp),
@@ -151,7 +162,7 @@ fun MessageCard(
         } else {
             ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                BodyView(header, body, remoteAllowed, busyBlobId, actions, account)
+                BodyView(header, body, remoteAllowed, busyBlobId, actions, account, flatNow)
             }
         }
     }
@@ -195,6 +206,14 @@ private fun ExpandedHeader(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
+            }
+            if (header.isFlagged) {
+                Icon(
+                    Icons.Filled.Star,
+                    contentDescription = stringResource(R.string.list_flagged),
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
             Text(time, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             if (actions.showMenu) MessageMenu(actions) else Spacer(Modifier.width(12.dp))
@@ -251,14 +270,14 @@ private fun MessageMenu(actions: CardActions) {
             actions.onFilterLike?.let { filter ->
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.filters_menu_item)) },
-                    leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_filter), contentDescription = null) },
                     onClick = { open = false; filter() },
                 )
             }
             actions.onBlockSender?.let { block ->
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.block_sender)) },
-                    leadingIcon = { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_block), contentDescription = null) },
                     onClick = { open = false; block() },
                 )
             }
@@ -305,6 +324,7 @@ private fun BodyView(
     busyBlobId: String?,
     actions: CardActions,
     account: String?,
+    flat: Boolean,
 ) {
     when (state) {
         null, BodyState.Loading -> Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -316,7 +336,7 @@ private fun BodyView(
             Text(stringResource(R.string.thread_body_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = actions.onRetryBody) { Text(stringResource(R.string.retry)) }
         }
-        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, actions, account)
+        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, actions, account, flat)
     }
 }
 
@@ -328,6 +348,7 @@ private fun LoadedBody(
     busyBlobId: String?,
     actions: CardActions,
     account: String?,
+    flat: Boolean,
 ) {
     val html = body.html
     if (html != null) {
@@ -369,18 +390,24 @@ private fun LoadedBody(
             inline = inline,
             onBlocked = { blocked = true },
             openLink = actions.onOpenLink,
-            modifier = Modifier.clip(RoundedCornerShape(18.dp)),
+            // Flat: the text sits straight on the page, on its edge; otherwise on a light inset in the card.
+            modifier = if (flat) Modifier else Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.background),
+            flat = flat,
         )
     } else {
         // On the same light inset as HTML mail, so both kinds of message look alike.
         SelectionContainer {
             Text(
                 body.text.orEmpty().trimEnd(),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(MaterialTheme.colorScheme.background)
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                modifier = if (flat) {
+                    Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                } else {
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.background)
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -393,21 +420,27 @@ private fun LoadedBody(
             style = MaterialTheme.typography.bodySmall,
         )
     }
-    body.attachments.filter { !it.isInline }.forEach { attachment ->
-        AttachmentRow(attachment, busy = busyBlobId == attachment.blobId, actions)
+    // The files are one group: large corners at its ends, small ones between, a small gap.
+    val files = body.attachments.filter { !it.isInline }
+    if (files.isNotEmpty()) {
+        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            files.forEachIndexed { index, attachment ->
+                AttachmentRow(attachment, busy = busyBlobId == attachment.blobId, actions, Groups.shape(index, files.size), flat)
+            }
+        }
     }
 }
 
 @Composable
-private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardActions) {
+private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardActions, shape: Shape, flat: Boolean) {
     val size = remember(attachment.size) { SizeFormat.format(attachment.size.toLong(), Locale.getDefault()) }
     val kind = remember(attachment.name) { FileNames.kind(attachment.name) }
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(MaterialTheme.colorScheme.background),
+            .clip(shape)
+            // Flat, the page behind is the background itself, so the tile is a raised card; in a card it is the light inset.
+            .background(if (flat) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.background),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(

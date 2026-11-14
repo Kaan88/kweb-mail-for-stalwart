@@ -55,7 +55,9 @@ fun SearchScreen(onBack: () -> Unit, onOpen: (threadId: String, messageId: Strin
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // A Surface, so the text inside takes onBackground (a bare Column would leave it black in the dark theme).
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background, contentColor = MaterialTheme.colorScheme.onBackground) {
+    Column(Modifier.fillMaxSize()) {
         Surface(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = CircleShape,
@@ -94,6 +96,7 @@ fun SearchScreen(onBack: () -> Unit, onOpen: (threadId: String, messageId: Strin
             SearchResults.Failed -> Note(stringResource(R.string.search_failed))
             is SearchResults.Found -> Found(results, vm, onOpen)
         }
+    }
     }
 }
 

@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -57,8 +58,12 @@ fun MailWebView(
     onBlocked: () -> Unit,
     openLink: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Drawn straight on the page: no side padding in the document. */
+    flat: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
+    val textColor = MaterialTheme.colorScheme.onBackground.toArgb().let { String.format("#%06x", it and 0xFFFFFF) }
+    val imageNote = stringResource(R.string.thread_image_not_loaded)
     var generation by remember { mutableIntStateOf(0) }
     var dead by remember { mutableStateOf(false) }
     val rules = remember { PageRules(inline, allowRemote, Runnable(onBlocked), openLink, Runnable { }) }
@@ -105,10 +110,10 @@ fun MailWebView(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) view.settings.isAlgorithmicDarkeningAllowed = dark
                 // A second lock behind the request filter: the network is off unless the user said yes.
                 view.settings.blockNetworkLoads = !allowRemote
-                val shown = html to allowRemote
+                val shown = listOf(html, allowRemote, textColor, flat)
                 if (view.tag != shown) {
                     view.tag = shown
-                    view.loadDataWithBaseURL(null, HtmlWrapper.wrap(html), "text/html", "utf-8", null)
+                    view.loadDataWithBaseURL(null, HtmlWrapper.wrap(html, textColor, imageNote, blockRemote = !allowRemote, flat = flat), "text/html", "utf-8", null)
                 }
             },
             onRelease = { view ->

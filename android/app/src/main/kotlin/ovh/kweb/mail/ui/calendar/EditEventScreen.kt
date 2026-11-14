@@ -89,6 +89,7 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.list.Groups
 import uniffi.kweb_core.Frequency
 
@@ -121,7 +122,7 @@ fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, on
     Scaffold(
         topBar = {
             Row(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
+                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(start = 8.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -478,10 +479,22 @@ private fun MenuRow(shape: Shape, label: String, value: String, items: @Composab
     var open by remember { mutableStateOf(false) }
     Box {
         RowFrame(shape, Modifier.clickable(role = Role.DropdownList, onClick = { open = true })) {
-            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-            Text(value, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The label keeps its width; it is the value that gives way (and ends in an ellipsis).
+            Text(label, style = MaterialTheme.typography.bodyLarge, maxLines = 1, softWrap = false)
+            Text(
+                value,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.End,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) { items { open = false } }
+        // Anchored at the value's end, not at the row's left edge.
+        Box(Modifier.align(Alignment.CenterEnd)) {
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) { items { open = false } }
+        }
     }
 }
 
@@ -503,7 +516,7 @@ private fun StaticRow(shape: Shape, label: String, value: String) {
 private fun SwitchRow(shape: Shape, label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
     RowFrame(shape, Modifier.clickable(role = Role.Switch) { onChecked(!checked) }) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = null)
+        KwebSwitch(checked = checked, onCheckedChange = null)
     }
 }
 

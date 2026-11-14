@@ -11,7 +11,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,11 +56,10 @@ private fun NameDialog(dialog: FolderDialog.Name, state: FoldersState, c: Folder
         onDismissRequest = { if (!state.busy) c.dismissDialog() },
         title = { Text(title) },
         text = {
-            OutlinedTextField(
+            ovh.kweb.mail.ui.list.DialogField(
                 value = dialog.text,
                 onValueChange = c::setName,
-                label = { Text(stringResource(R.string.folders_name_label)) },
-                singleLine = true,
+                label = stringResource(R.string.folders_name_label),
                 isError = state.error != null,
                 supportingText = state.error?.let { { Text(it.resolve(LocalResources.current)) } },
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),

@@ -65,6 +65,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.calendar.FormChoices
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.calendar.NoticeBar
@@ -160,7 +161,7 @@ private fun Form(state: AwayState, vm: AwayViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                Switch(checked = form.enabled, onCheckedChange = null)
+                KwebSwitch(checked = form.enabled, onCheckedChange = null)
             }
         }
         if (state.filtersOn) {

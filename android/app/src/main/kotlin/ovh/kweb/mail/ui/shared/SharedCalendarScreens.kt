@@ -12,12 +12,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -86,14 +88,18 @@ fun SharedCalendarScreen(
 
     Scaffold(
         topBar = {
-            SharedTopBar(route.owner, onBack, actions = {
-                // Only where a calendar may be written to.
-                if (state.canAdd) {
-                    IconButton(onClick = { onAddEvent(state.today.toString()) }) {
-                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cal_add))
-                    }
-                }
-            })
+            SharedTopBar(stringResource(R.string.shared_screen_title, stringResource(R.string.shared_kind_calendar), route.owner), onBack)
+        },
+        floatingActionButton = {
+            // Only where a calendar may be written to; a floating button, as on the user's own calendar.
+            if (state.canAdd) {
+                FloatingActionButton(
+                    onClick = { onAddEvent(state.today.toString()) },
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cal_add)) }
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -112,11 +118,11 @@ fun SharedCalendarScreen(
                     else -> {
                         if (state.rows.isEmpty()) {
                             item(key = "empty") {
-                                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Note(pluralStringResource(R.plurals.shared_agenda_empty, state.window.days.toInt(), state.window.days.toInt()))
-                                    }
-                                }
+                                ovh.kweb.mail.ui.list.EmptyNote(
+                                    R.drawable.ic_calendar,
+                                    pluralStringResource(R.plurals.shared_agenda_empty, state.window.days.toInt(), state.window.days.toInt()),
+                                    Modifier.fillParentMaxSize(),
+                                )
                             }
                         }
                         items(state.rows, key = { row -> rowKey(route.account, row) }) { row ->
@@ -127,7 +133,7 @@ fun SharedCalendarScreen(
                                 is AgendaRules.Row.Entry -> EntryCard(
                                     entry = row.occurrence,
                                     continues = row.continues,
-                                    tone = AgendaRules.tone(row.occurrence.calendarId, state.calendarIds),
+                                    tone = if (row.occurrence.isTask) 2 else (AgendaRules.tone(row.occurrence.calendarId, state.calendarIds) + 1) % AgendaRules.TONES,
                                     zone = state.zone,
                                     locale = locale,
                                     words = words,

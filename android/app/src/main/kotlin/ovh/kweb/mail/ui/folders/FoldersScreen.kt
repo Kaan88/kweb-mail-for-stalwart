@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -21,6 +22,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -121,12 +123,16 @@ private fun FolderTree(state: FoldersState, c: FoldersController) {
                 FolderRow(Groups.shape(index, entries.size), entry, state.busy, c)
             }
         }
-        FilledTonalButton(
+        // Creating is a filled full-width button with a plus, here and in the other lists.
+        Button(
             onClick = { c.askNew(null) },
             enabled = !state.busy,
             shape = CircleShape,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 16.dp).heightIn(min = 52.dp),
-        ) { Text(stringResource(R.string.folders_new), style = MaterialTheme.typography.labelLarge) }
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = null)
+            Text(stringResource(R.string.folders_new), modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelLarge)
+        }
         Text(
             stringResource(R.string.folders_notify_note),
             modifier = Modifier.padding(horizontal = 28.dp, vertical = 16.dp),

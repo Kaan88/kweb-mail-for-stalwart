@@ -64,7 +64,7 @@ fun LabelScreen(route: Route.Label, onBack: () -> Unit, onOpen: (threadId: Strin
                 }
                 is LabelResults.Found -> {
                     if (results.messages.isEmpty()) {
-                        Note(stringResource(R.string.labels_list_empty)) {}
+                        ovh.kweb.mail.ui.list.EmptyNote(R.drawable.ic_label, stringResource(R.string.labels_list_empty), Modifier.fillMaxSize())
                     } else {
                         Column(Modifier.fillMaxSize()) {
                             if (results.fromCache) {

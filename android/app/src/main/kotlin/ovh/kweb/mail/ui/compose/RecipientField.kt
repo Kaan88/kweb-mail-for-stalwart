@@ -157,7 +157,8 @@ fun RecipientField(
                         decorationBox = { inner -> Box(Modifier.fillMaxWidth().height(32.dp), contentAlignment = Alignment.CenterStart) { inner() } },
                     )
                 }
-                if (trailing != null) trailing()
+                // Level with the label of the line, not with the top of the row.
+                if (trailing != null) Box(Modifier.height(36.dp), contentAlignment = Alignment.Center) { trailing() }
             }
             if (marked) {
                 Text(

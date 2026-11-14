@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
@@ -136,7 +137,7 @@ fun SettingsScreen(
                     SettingsRow(
                         Groups.shape(2, accountRows),
                         stringResource(R.string.accounts_add),
-                        icon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         onClick = onAddAccount,
                     )
                 }
@@ -151,14 +152,14 @@ fun SettingsScreen(
                     Groups.shape(0, 5),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
-                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    icon = { Icon(painterResource(R.drawable.ic_schedule), contentDescription = null) },
                     onClick = onOpenAway,
                 )
                 SettingsRow(
                     Groups.shape(1, 5),
                     stringResource(R.string.filters_title),
                     filtersLine(state.filters),
-                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    icon = { Icon(painterResource(R.drawable.ic_filter), contentDescription = null) },
                     onClick = onOpenFilters,
                 )
                 SettingsRow(
@@ -206,7 +207,7 @@ fun SettingsScreen(
                     Groups.shape(0, 1),
                     stringResource(if (several) R.string.accounts_remove else R.string.sign_out),
                     if (deliveryState.signingOut) stringResource(R.string.settings_signing_out) else null,
-                    icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                     titleColor = MaterialTheme.colorScheme.error,
                     onClick = if (deliveryState.signingOut) null else ({ delivery.askSignOut() }),
                 )

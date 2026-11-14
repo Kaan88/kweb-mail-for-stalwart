@@ -4,6 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -49,7 +55,15 @@ val LocalAccountsUi = compositionLocalOf { AccountsUi(emptyList(), {}, {}) }
  * "Add account" follows the rows. [onPick] gets the id of the row that was tapped (also the one shown).
  */
 @Composable
-fun AccountList(rows: List<AccountRow>, onPick: (String) -> Unit, onAdd: () -> Unit, modifier: Modifier = Modifier) {
+fun AccountList(
+    all: List<AccountRow>,
+    onPick: (String) -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** True where the shown account is already above (the drawer's head): only the others are listed. */
+    hideActive: Boolean = false,
+) {
+    val rows = if (hideActive) all.filter { !it.active } else all
     val count = rows.size + 1
     Column(modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         rows.forEachIndexed { index, row -> AccountRowItem(row, Groups.shape(index, count)) { onPick(row.id) } }
@@ -127,7 +141,7 @@ fun AccountSheet(title: String, onDismiss: () -> Unit, ui: AccountsUi = LocalAcc
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 24.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, bottom = 12.dp))
             AccountList(
-                rows = ui.rows,
+                all = ui.rows,
                 onPick = {
                     ui.onSwitch(it)
                     onDismiss()
@@ -139,4 +153,18 @@ fun AccountSheet(title: String, onDismiss: () -> Unit, ui: AccountsUi = LocalAcc
             )
         }
     }
+}
+
+/**
+ * The account's round letter as a button that opens the account sheet. It is the right end of the search
+ * field of the four tabs, as on the Inbox, so the account can be switched from each of them.
+ */
+@Composable
+fun AccountAvatarButton(modifier: Modifier = Modifier, ui: AccountsUi = LocalAccountsUi.current) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val active = ui.rows.firstOrNull { it.active }
+    Box(
+        modifier.clip(CircleShape).clickable(onClickLabel = stringResource(R.string.accounts_open_switcher)) { open = true },
+    ) { Avatar(active?.initial ?: "?", size = 36.dp) }
+    if (open) AccountSheet(title = stringResource(R.string.accounts_title), onDismiss = { open = false }, ui = ui)
 }

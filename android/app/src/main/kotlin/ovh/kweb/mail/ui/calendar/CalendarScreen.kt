@@ -69,6 +69,7 @@ import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.abs
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.accounts.AccountAvatarButton
 import ovh.kweb.mail.ui.sharing.PickKind
 import ovh.kweb.mail.ui.sharing.SharePickerButton
 import uniffi.kweb_core.Occurrence
@@ -126,10 +127,6 @@ fun CalendarScreen(
                     onSelect = vm::select,
                     onWeek = vm::moveWeek,
                 )
-                // Its own line, so the month title keeps the whole width of the title row.
-                Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
-                    SharePickerButton(PickKind.CALENDAR)
-                }
             }
         },
         bottomBar = bottomBar,
@@ -142,9 +139,10 @@ fun CalendarScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { onAddEvent(state.selected.toString()) },
-                shape = CircleShape,
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(20.dp),
+                // The solid primary colour: no card of the agenda (primary, secondary or tertiary container) is near it.
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
             ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cal_add)) }
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -177,13 +175,7 @@ fun CalendarScreen(
                             }
                         }
                         state.rows.isEmpty() -> item(key = "empty") {
-                            Centered {
-                                Text(
-                                    stringResource(R.string.cal_empty),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
+                            ovh.kweb.mail.ui.list.EmptyNote(R.drawable.ic_calendar, stringResource(R.string.cal_empty), Modifier.fillParentMaxSize())
                         }
                         else -> items(state.rows, key = { row -> rowKey(row) }) { row ->
                             when (row) {
@@ -193,7 +185,9 @@ fun CalendarScreen(
                                 is AgendaRules.Row.Entry -> EntryCard(
                                     entry = row.occurrence,
                                     continues = row.continues,
-                                    tone = AgendaRules.tone(row.occurrence.calendarId, state.calendarIds),
+                                    // Tasks are tertiary; calendars take turns from the secondary container on, so the
+                                    // add button (primary container) does not lie on a card of its own colour.
+                                    tone = if (row.occurrence.isTask) 2 else (AgendaRules.tone(row.occurrence.calendarId, state.calendarIds) + 1) % AgendaRules.TONES,
                                     zone = state.zone,
                                     locale = locale,
                                     words = words,
@@ -227,7 +221,7 @@ private fun androidx.compose.foundation.lazy.LazyItemScope.Centered(content: @Co
 @Composable
 private fun TitleRow(title: String, todaySelected: Boolean, onPrevious: () -> Unit, onNext: () -> Unit, onToday: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+        Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -249,6 +243,9 @@ private fun TitleRow(title: String, todaySelected: Boolean, onPrevious: () -> Un
             label = { Text(stringResource(R.string.cal_today)) },
             shape = RoundedCornerShape(17.dp),
         )
+        SharePickerButton(PickKind.CALENDAR)
+        // The account, as at the right end of the other tabs' field: it can be switched here too.
+        AccountAvatarButton(Modifier.padding(start = 4.dp, end = 10.dp))
     }
 }
 

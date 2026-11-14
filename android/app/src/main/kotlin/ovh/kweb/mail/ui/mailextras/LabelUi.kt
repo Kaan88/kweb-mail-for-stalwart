@@ -8,16 +8,17 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
@@ -81,6 +82,14 @@ fun MessageChips(
                 enabled = onLabels != null,
                 label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 shape = RoundedCornerShape(10.dp),
+                // As in the list rows: filled secondary container, no outline.
+                colors = AssistChipDefaults.assistChipColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    disabledLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+                border = null,
             )
         }
         when (unsubscribe) {
@@ -150,11 +159,7 @@ fun LabelSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else if (labels.isEmpty()) {
-                Text(
-                    stringResource(R.string.labels_none),
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                ovh.kweb.mail.ui.list.EmptyNote(R.drawable.ic_label, stringResource(R.string.labels_none), Modifier.fillMaxWidth())
             }
             LazyColumn(Modifier.weight(1f, fill = false)) {
                 items(labels, key = { it.id }) { label ->
@@ -163,7 +168,9 @@ fun LabelSheet(
                         Modifier
                             .fillMaxWidth()
                             .clickable(enabled = ready) { onToggle(label.id, LabelRules.turnOn(carry)) }
-                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                            .heightIn(min = 48.dp)
+                            // The box is drawn 15dp into its 48dp frame, so 9dp puts it on the sheet's 24dp edge.
+                            .padding(start = 9.dp, end = 24.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TriStateCheckbox(
@@ -175,7 +182,7 @@ fun LabelSheet(
                             onClick = null,
                             enabled = ready,
                         )
-                        Text(label.name, modifier = Modifier.padding(start = 16.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(label.name, modifier = Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -203,11 +210,10 @@ fun NewLabelDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.labels_new)) },
         text = {
-            OutlinedTextField(
+            ovh.kweb.mail.ui.list.DialogField(
                 value = name,
                 onValueChange = { name = it; onEdit() },
-                singleLine = true,
-                label = { Text(stringResource(R.string.labels_name)) },
+                label = stringResource(R.string.labels_name),
                 isError = shown != null || error != null,
                 supportingText = when {
                     shown != null -> {

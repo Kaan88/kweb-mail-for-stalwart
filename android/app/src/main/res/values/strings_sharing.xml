@@ -2,7 +2,7 @@
 <resources>
     <!-- The "Share" entry of a folder, a calendar, an address book and a file folder -->
     <string name="share_menu">Share</string>
-    <string name="share_title">Share %1$s</string>
+    <string name="share_title">Share “%1$s”</string>
 
     <string name="share_with_heading">Shared with</string>
     <string name="share_nobody">Not shared with anyone yet.</string>
