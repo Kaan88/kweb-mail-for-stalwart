@@ -4,6 +4,19 @@
 //! (Kotlin: `Dispatchers.IO`). The exceptions are noted. A [`Listener`] callback must not call
 //! a blocking function of [`Core`] from inside the callback.
 
+mod admin;
+mod admin_link;
+mod enterprise;
+
+pub use admin::{
+    AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
+    ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
+};
+pub use enterprise::{
+    ChartPoint, DashboardHistory, DeletedItem, DeletedKind, DeletedPage, Delivery, DeliveryDetail, DeliveryPage,
+    DeliveryStatus, DeliveryStep, LiveFigures, LiveListener, RecoveryState, ServerAlert, Tenant,
+};
+
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -24,12 +37,13 @@ use crate::{
     compose, contacts, filters, folders,
     jmap::{self, is_unauthorized, Connection},
     model::{
-        Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
-        Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, ContactRow, Draft,
-        DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, FilterRule, Filters, Identity,
-        IdentityDetail, Label, ListFilter, Mailbox, MessageBody, MessageHeader, MessageLabels, PendingSend, Person,
-        Quota, Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction,
-        SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, Unsubscribe,
+        Account, AccountFeatures, AccountSecurity, Action, Address, AddressBook, Agenda, AiModelList, AiPreview,
+        AiProvider, AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail,
+        ContactList, ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace,
+        FilterRule, Filters, Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses,
+        MessageBody, MessageHeader, MessageLabels, NewSecret, PendingSend, Person, Quota, Reminder, ScheduledSend,
+        SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox, SharedMessage,
+        SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -222,7 +236,7 @@ impl Core {
         // stopped here. The provider key stays on the device only as long as the account does,
         // so it goes before the (slow) revoke; both steps are tried and the first error is returned.
         self.ai.cancel_all();
-        let key = assistant::forget_key(&*self.secrets);
+        let key = assistant::forget_key(&*self.secrets).and(self.admin_disconnect());
         let deleted = match session {
             Some(session) => {
                 self.rt.block_on(session.tokens.sign_out());
@@ -916,6 +930,8 @@ impl Core {
                 account.signed_in_at = old.signed_in_at;
             } else {
                 self.store.delete_account(&old.id)?;
+                // The admin key was the old account's: it is not kept for the new one.
+                let _ = self.drop_admin_key();
             }
         }
         self.store.save_account(&account)?;
@@ -2312,4 +2328,195 @@ fn parse_reply_to(text: &str) -> Result<Vec<String>> {
         out.push(part.to_string());
     }
     Ok(out)
+}
+
+// ---- Admin design, step 1: masked addresses and the account's own security ----
+
+#[uniffi::export]
+impl Core {
+    /// What the server offers this account beyond mail. Asks the server (the account's
+    /// permission list and edition, and one harmless read per feature). A server that offers
+    /// none of it is not an error: everything is false.
+    pub fn account_features(&self) -> Result<AccountFeatures> {
+        let (client, server_url) = self.sign_in_facts()?;
+        // A server that has no such metadata (a definite refusal) offers nothing as far as this
+        // goes; one that could not be asked just now is an error, not an answer.
+        let offered = match self.rt.block_on(auth::account_scopes_offered(&server_url)) {
+            Ok(offered) => offered,
+            Err(Error::Invalid { .. }) => auth::AccountScopes { settings: false, security: false },
+            Err(e) => return Err(e),
+        };
+        let short = (offered.settings && !client.was_granted(auth::SETTINGS_SCOPE))
+            || (offered.security && !client.was_granted(auth::SECURITY_SCOPE));
+        self.with_connection(|conn| async move { conn.features(short).await })
+    }
+
+    /// The account's masked addresses and the server's limit. Not offered is `Error::Invalid`.
+    pub fn masked_addresses(&self) -> Result<MaskedAddresses> {
+        self.with_connection(|conn| async move { conn.masked_addresses().await })
+    }
+
+    /// Has the server make a new masked address. `description` is the user's note (may be
+    /// blank), `for_domain` the site it is for (may be blank), `prefix` what the address
+    /// should begin with (may be blank; letters, digits, dot, hyphen and underscore, at most
+    /// 32). The limit reached is `Error::Invalid` saying how many are allowed.
+    pub fn create_masked_address(
+        &self,
+        description: String,
+        for_domain: String,
+        prefix: String,
+    ) -> Result<MaskedAddress> {
+        // Refused here when it is wrong, without a connection.
+        jmap::check_masked_prefix(&prefix)?;
+        let (description, for_domain, prefix) = (&description, &for_domain, &prefix);
+        self.with_connection(|conn| async move { conn.create_masked_address(description, for_domain, prefix).await })
+    }
+
+    /// Switches a masked address on or off and, when `description` is given, changes its note.
+    pub fn update_masked_address(&self, id: String, enabled: bool, description: Option<String>) -> Result<()> {
+        let (id, description) = (&id, description.as_deref());
+        self.with_connection(|conn| async move { conn.update_masked_address(id, enabled, description).await })
+    }
+
+    /// Deletes a masked address for good: mail to it is turned away from then on. One that is
+    /// already gone is not an error.
+    pub fn delete_masked_address(&self, id: String) -> Result<()> {
+        let id = &id;
+        self.with_connection(|conn| async move { conn.delete_masked_address(id).await })
+    }
+
+    /// The account's security settings. Not reachable with this sign-in is `Error::Invalid`.
+    pub fn account_security(&self) -> Result<AccountSecurity> {
+        let (client, _) = self.sign_in_facts()?;
+        let client_id = &client.client_id;
+        self.with_connection(|conn| async move { conn.account_security(client_id).await })
+    }
+
+    /// Changes the account's password. The server checks `current`; a wrong one, or a new one
+    /// the server finds too weak, is `Error::Invalid` with words for the user. Neither
+    /// password is kept, logged or put into an error. With two-step codes on this fails (the
+    /// server wants a current code): use [`Core::change_password_with_code`].
+    pub fn change_password(&self, current: String, new: String) -> Result<()> {
+        self.change_password_with_code(current, new, None)
+    }
+
+    /// As [`Core::change_password`], with the current two-step code from the authenticator
+    /// app (`None` or blank when two-step codes are off). A wrong code or password is
+    /// `Error::Invalid` saying that one of the two is not right.
+    pub fn change_password_with_code(&self, current: String, new: String, code: Option<String>) -> Result<()> {
+        let (current, new, code) = (&current, &new, code.as_deref());
+        self.with_connection(|conn| async move { conn.change_password(current, new, code).await })
+    }
+
+    /// A fresh secret for two-step codes, made on this device. Nothing is sent or stored: the
+    /// host shows it, the user adds it to an authenticator app, and [`Core::enable_two_step`]
+    /// switches it on.
+    pub fn new_two_step(&self) -> Result<TwoStepSetup> {
+        let (client, _) = self.sign_in_facts()?;
+        let account = self.lock().session.as_ref().map(|s| s.account.clone()).ok_or_else(not_signed_in)?;
+        let host = auth::server_base(&client.server_url).map_err(Error::invalid)?;
+        jmap::new_two_step(host.host_str().unwrap_or_default(), &account.username)
+    }
+
+    /// Switches two-step codes on with the secret of `otpauth_url`, after checking that `code`
+    /// is what that secret gives right now (so a user who has not really set up the
+    /// authenticator cannot lock themself out; a wrong code is `Error::Invalid` and nothing is
+    /// sent). `current_password` is what the server asks for the change.
+    /// When two-step codes are already on (replacing the secret) the server wants a current
+    /// code too: use [`Core::enable_two_step_with_code`].
+    pub fn enable_two_step(&self, current_password: String, otpauth_url: String, code: String) -> Result<()> {
+        self.enable_two_step_with_code(current_password, otpauth_url, code, None)
+    }
+
+    /// As [`Core::enable_two_step`], with `old_code`: the current code of the secret being
+    /// replaced, when two-step codes are on already.
+    pub fn enable_two_step_with_code(
+        &self,
+        current_password: String,
+        otpauth_url: String,
+        code: String,
+        old_code: Option<String>,
+    ) -> Result<()> {
+        let (password, url, code, old) = (&current_password, &otpauth_url, &code, old_code.as_deref());
+        let at = now().max(0) as u64;
+        self.with_connection(|conn| async move { conn.enable_two_step(password, url, code, at, old).await })
+    }
+
+    /// Switches two-step codes off. With them on the server wants a current code, so this
+    /// fails then: use [`Core::disable_two_step_with_code`].
+    pub fn disable_two_step(&self, current_password: String) -> Result<()> {
+        self.disable_two_step_with_code(current_password, None)
+    }
+
+    /// As [`Core::disable_two_step`], with the current code from the authenticator app.
+    pub fn disable_two_step_with_code(&self, current_password: String, code: Option<String>) -> Result<()> {
+        let (password, code) = (&current_password, code.as_deref());
+        self.with_connection(|conn| async move { conn.disable_two_step(password, code).await })
+    }
+
+    /// Makes an app password for another mail program. `expires_at` in Unix seconds, or `None`
+    /// for one that does not expire. The secret is in the answer and nowhere afterwards. The
+    /// server's limit reached is `Error::Invalid`.
+    pub fn create_app_password(&self, description: String, expires_at: Option<i64>) -> Result<NewSecret> {
+        self.create_credential(jmap::CredentialKind::AppPassword, description, expires_at)
+    }
+
+    pub fn delete_app_password(&self, id: String) -> Result<()> {
+        let id = &id;
+        self.with_connection(|conn| async move { conn.delete_credential(jmap::CredentialKind::AppPassword, id).await })
+    }
+
+    /// Makes an API key. It has the account's own rights when the sign-in has them all; a
+    /// sign-in with fewer rights (the usual case for this app: its scopes narrow them) makes a
+    /// key with a fixed list of the rights the sign-in has, which does not follow later changes
+    /// to the account's role. The same holds for [`Core::create_app_password`]. Otherwise as
+    /// [`Core::create_app_password`].
+    pub fn create_api_key(&self, description: String, expires_at: Option<i64>) -> Result<NewSecret> {
+        self.create_credential(jmap::CredentialKind::ApiKey, description, expires_at)
+    }
+
+    pub fn delete_api_key(&self, id: String) -> Result<()> {
+        let id = &id;
+        self.with_connection(|conn| async move { conn.delete_credential(jmap::CredentialKind::ApiKey, id).await })
+    }
+
+    pub fn rename_passkey(&self, id: String, name: String) -> Result<()> {
+        let (id, name) = (&id, &name);
+        self.with_connection(|conn| async move { conn.rename_passkey(id, name).await })
+    }
+
+    /// Deletes a passkey. The host warns first: without another way to sign in the user may
+    /// be locked out.
+    pub fn delete_passkey(&self, id: String) -> Result<()> {
+        let id = &id;
+        self.with_connection(|conn| async move { conn.delete_passkey(id).await })
+    }
+
+    /// Takes an app's access to the account away. For this app's own sign-in
+    /// ([`ConnectedApp::is_this_app`]) this is `Error::Invalid`: the user signs out instead.
+    pub fn revoke_connected_app(&self, id: String) -> Result<()> {
+        let (client, _) = self.sign_in_facts()?;
+        let (id, client_id) = (&id, &client.client_id);
+        self.with_connection(|conn| async move { conn.revoke_connected_app(id, client_id).await })
+    }
+}
+
+impl Core {
+    /// The OAuth client of the sign-in (with what it was granted) and the server's address.
+    fn sign_in_facts(&self) -> Result<(OAuthClient, String)> {
+        let inner = self.lock();
+        let session = inner.session.as_ref().ok_or_else(not_signed_in)?;
+        Ok((session.tokens.client().clone(), session.account.server_url.clone()))
+    }
+
+    fn create_credential(
+        &self,
+        kind: jmap::CredentialKind,
+        description: String,
+        expires_at: Option<i64>,
+    ) -> Result<NewSecret> {
+        let description = &description;
+        let at = now();
+        self.with_connection(|conn| async move { conn.create_credential(kind, description, expires_at, at).await })
+    }
 }

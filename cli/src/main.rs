@@ -1,9 +1,11 @@
 //! `kweb`: a developer tool that drives kweb-core against a real Stalwart server from the
 //! desktop. It is synchronous on purpose: every `Core` call blocks and owns its own runtime.
 
+mod admin;
 mod ai;
 mod args;
 mod commands;
+mod enterprise;
 mod secrets;
 mod timefmt;
 

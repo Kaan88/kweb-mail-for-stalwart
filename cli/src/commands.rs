@@ -6,8 +6,9 @@ use std::{process, sync::Arc, thread};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{
-        Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, FileEntry, FileKind,
-        Identity, Marked, MessageBody, MessageHeader, Occurrence, Quota, Reminder, ShareLevel, Unsubscribe,
+        Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, Credential, DraftKind,
+        FileEntry, FileKind, Identity, Marked, MaskedAddress, MessageBody, MessageHeader, Occurrence, Quota, Reminder,
+        ShareLevel, Unsubscribe,
     },
     notify::Plan,
     push::Listener,
@@ -15,13 +16,14 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files, Filters, Folder, Identity as IdentityCommand, Label, Share, Shared},
+    args::{Away, Command, Files, Filters, Folder, Identity as IdentityCommand, Label, Masked, Share, Shared},
     timefmt,
 };
 
 pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
     match command {
         Command::Help => Ok(()), // handled before the core is opened
+        Command::AdminEnterprise(what) => crate::enterprise::run(core, what),
         Command::SignIn { server_url } => sign_in(core, server_url),
         Command::Status => status(core),
         Command::Inbox { count } => inbox(core, count),
@@ -38,9 +40,13 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Calendars => calendars(core),
         Command::Identities => identities(core),
         Command::Quota => quota(core),
+        Command::Features => features(core),
+        Command::Masked(what) => masked(core, what),
+        Command::Security => security(core),
         Command::Contacts { query } => contacts(core, query),
         Command::Files { space, what } => files(core, space, what),
         Command::Shared(what) => shared(core, what),
+        Command::Admin(what) => crate::admin::run(core, what),
         Command::Share(what) => share(core, what),
         Command::Away(what) => away(core, what),
         Command::Filters(what) => filters(core, what),
@@ -878,6 +884,87 @@ fn find_file(core: &Core, space: &Option<String>, id: &str) -> Result<FileEntry,
         }
     }
     Err(format!("no file with the id {id}"))
+}
+
+fn features(core: &Core) -> Result<(), String> {
+    let f = core.account_features().map_err(|e| e.to_string())?;
+    let yes = |on: bool| if on { "yes" } else { "no" };
+    println!("edition: {}", if f.edition.is_empty() { "not stated" } else { &f.edition });
+    println!("masked addresses: {}", yes(f.masked_email));
+    println!("account security settings: {}", yes(f.security));
+    if f.needs_sign_in {
+        println!("The server offers more than this sign-in was allowed: sign in again to use it.");
+    }
+    Ok(())
+}
+
+fn masked_line(a: &MaskedAddress) -> String {
+    let note = if a.description.is_empty() { String::new() } else { format!("  {}", one_line(&a.description)) };
+    let site = if a.for_domain.is_empty() { String::new() } else { format!("  for {}", one_line(&a.for_domain)) };
+    let made = a.created_at.map(|t| format!("  made {}", timefmt::utc(t))).unwrap_or_default();
+    format!("{}  {}  {}{note}{site}{made}", a.id, if a.enabled { "on " } else { "off" }, a.email)
+}
+
+fn masked(core: &Core, what: Masked) -> Result<(), String> {
+    let failed = |e: kweb_core::Error| e.to_string();
+    match what {
+        Masked::List => {
+            let list = core.masked_addresses().map_err(failed)?;
+            for a in &list.addresses {
+                println!("{}", masked_line(a));
+            }
+            match list.limit {
+                Some(limit) => println!("{} of {limit} masked addresses", list.addresses.len()),
+                None => println!("{} masked addresses", list.addresses.len()),
+            }
+        }
+        Masked::New { note, site, prefix } => {
+            println!("{}", masked_line(&core.create_masked_address(note, site, prefix).map_err(failed)?))
+        }
+        Masked::Switch { id, on } => {
+            core.update_masked_address(id, on, None).map_err(failed)?;
+            println!("{}", if on { "switched on" } else { "switched off" });
+        }
+        Masked::Rm { id } => {
+            core.delete_masked_address(id).map_err(failed)?;
+            println!("deleted");
+        }
+    }
+    Ok(())
+}
+
+/// Never a secret: the server does not list them, and the names of what exists are all there is.
+fn security(core: &Core) -> Result<(), String> {
+    let s = core.account_security().map_err(|e| e.to_string())?;
+    println!("two-step codes: {}", if s.two_step { "on" } else { "off" });
+    let when = |t: Option<i64>| t.map(|t| format!(" ({})", timefmt::utc(t))).unwrap_or_default();
+    let section = |title: &str, lines: Vec<String>| {
+        println!("{title}: {}", lines.len());
+        for line in lines {
+            println!("  {line}");
+        }
+    };
+    let credential = |c: &Credential| {
+        let expires = c.expires_at.map(|t| format!(", expires {}", timefmt::utc(t))).unwrap_or_default();
+        format!("{}  {}{expires}", c.id, one_line(&c.description))
+    };
+    section("app passwords", s.app_passwords.iter().map(credential).collect());
+    section("API keys", s.api_keys.iter().map(credential).collect());
+    section(
+        "passkeys",
+        s.passkeys.iter().map(|p| format!("{}  {}{}", p.id, one_line(&p.name), when(p.created_at))).collect(),
+    );
+    section(
+        "connected apps",
+        s.connected_apps
+            .iter()
+            .map(|a| {
+                let own = if a.is_this_app { "  (this app)" } else { "" };
+                format!("{}  {}  [{}]{own}", a.id, one_line(&a.name), a.scopes.join(", "))
+            })
+            .collect(),
+    );
+    Ok(())
 }
 
 /// Shows the away message, or switches it on (from now on, with the given text; the subject

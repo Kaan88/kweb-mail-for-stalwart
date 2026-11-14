@@ -7,23 +7,27 @@
 //! token expired, renew it) and [`is_cannot_calculate_changes`] (do a full resync). Both
 //! arrive as `Error::Temporary`; every other network or server problem does too.
 
+mod admin;
 mod calendar;
 mod calendars;
 mod clock;
 mod contacts;
 mod convert;
+mod enterprise;
 mod errors;
 mod features;
 mod files;
 mod folders;
 mod jscal;
 mod jscontact;
+mod manage;
 mod recur;
 mod send;
 mod send_later;
 mod shared;
 mod sharing;
 mod sieve;
+mod totp;
 mod vacation;
 
 use std::{collections::HashMap, io::Write, pin::Pin, time::Duration};
@@ -51,10 +55,11 @@ use convert::{
     order_by_ids, to_body, to_header, to_keywords, to_mailbox, Page,
 };
 use errors::from_jmap;
-pub use errors::{is_cannot_calculate_changes, is_unauthorized};
+pub use errors::{is_cannot_calculate_changes, is_forbidden, is_unauthorized};
 pub use features::RawSnippet;
 pub use files::UploadResume;
 pub use jscal::{check_span, sort as sort_agenda};
+pub use manage::{check_prefix as check_masked_prefix, new_two_step, AccountInfo, CredentialKind};
 pub use send::{CopyState, HeaderIds, Uploaded};
 pub use send_later::reply_to_json;
 pub use send_later::{EmailSummary, Held, Hold, IdentityFull, SubmissionInfo, Undo, MAX_HOLD_SECS};
@@ -118,6 +123,8 @@ pub struct Connection {
     /// For blob downloads, which may take long: see [`download_http`].
     downloads: reqwest::Client,
     account_id: String,
+    /// `scheme://host[:port]` of the server, for the few plain requests that are not JMAP.
+    origin: String,
     /// The longest span the server expands, in seconds; read from the session when first needed.
     calendar_span: tokio::sync::OnceCell<u64>,
     /// The raw session, read once for the limits of the file storage.
@@ -151,6 +158,7 @@ impl Connection {
             http,
             downloads,
             account_id,
+            origin: base.as_str().trim_end_matches('/').to_string(),
             calendar_span: tokio::sync::OnceCell::new(),
             files_session: tokio::sync::OnceCell::new(),
         })

@@ -7,9 +7,12 @@
 //! cause push events) or for server trouble (expired tokens, a dead stream, an outage).
 
 mod account;
+pub mod admin_mock;
 mod ai;
 mod calendar;
+mod enterprise;
 mod files;
+mod manage;
 mod oauth;
 mod shares;
 mod sharing;
@@ -36,6 +39,7 @@ use tokio::task::JoinHandle;
 use account::Account;
 use calendar::Calendar;
 use files::Files;
+use manage::Manage;
 use oauth::Oauth;
 use shares::OwnShares;
 use sharing::Sharing;
@@ -46,7 +50,11 @@ use state::{resolve_refs, Attachment, Mail, StreamMsg};
 #[allow(unused_imports)]
 pub use ai::{MockAi, ModelSpec, Models, Script};
 #[allow(unused_imports)]
+pub use enterprise::{iso, Enterprise, LiveEnd, ADMIN_KEY};
+#[allow(unused_imports)]
 pub use files::{EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
+#[allow(unused_imports)]
+pub use manage::{Edition, OTP_CODE, PASSWORD as ACCOUNT_PASSWORD};
 #[allow(unused_imports)]
 pub use sharing::ALL_MAIL_RIGHTS;
 /// An identity as the server holds it.
@@ -65,6 +73,8 @@ pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
 
 /// The file storage capability.
 const FILES_URN: &str = "urn:ietf:params:jmap:filenode";
+const SETTINGS_SCOPE: &str = "urn:stalwart:oauth:scope:settings";
+const SECURITY_SCOPE: &str = "urn:stalwart:oauth:scope:security";
 
 /// Ids of the seeded mailboxes.
 pub const INBOX_ID: &str = "mb1";
@@ -88,10 +98,13 @@ struct Shared {
     /// What other users share: mail folders, calendars and address books of `sh1` to `sh3`.
     sharing: Mutex<Sharing>,
     own_shares: Mutex<OwnShares>,
+    /// `/api/account` and the `x:` methods of the user's own account.
+    manage: Mutex<Manage>,
     /// Identities, address book and quotas.
     account: Mutex<Account>,
     /// The filter scripts. Taken before `account` when both are needed.
     sieve: Mutex<Sieve>,
+    admin: Mutex<admin_mock::Admin>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
     upload_limit: AtomicU64,
     /// See [`MockServer::lose_next_submission_answer`].
@@ -145,8 +158,10 @@ impl MockServer {
             files: Mutex::new(Files::default()),
             sharing: Mutex::new(Sharing::default()),
             own_shares: Mutex::new(OwnShares::default()),
+            manage: Mutex::new(Manage::default()),
             account: Mutex::new(Account::default()),
             sieve: Mutex::new(Sieve::default()),
+            admin: Mutex::new(admin_mock::Admin::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
             fail_submission_queries: AtomicUsize::new(0),
@@ -163,11 +178,13 @@ impl MockServer {
             .route("/token", post(token))
             .route("/revoke", post(revoke))
             .route("/.well-known/jmap", get(well_known))
+            .route("/api/account", get(account_any))
             .route("/jmap/session", get(session))
             .route("/jmap", post(jmap))
             .route("/jmap/upload/{account}", post(upload).layer(axum::extract::DefaultBodyLimit::disable()))
             .route("/jmap/download/{account}/{blob}/{name}", get(download))
             .route("/eventsource", get(eventsource))
+            .route("/api/live/metrics", get(enterprise::live))
             .layer(middleware::from_fn_with_state(shared.clone(), gate))
             .with_state(shared.clone());
         let task = tokio::spawn(async move {
@@ -187,6 +204,21 @@ impl MockServer {
 
     pub fn username(&self) -> &'static str {
         USERNAME
+    }
+
+    // ---- the account's own management (masked addresses, security) ---------------------
+
+    /// Changes what the server is like and reads or changes its state; see `support/manage.rs`.
+    pub fn manage<T>(&self, f: impl FnOnce(&mut Manage) -> T) -> T {
+        f(&mut self.shared.manage.lock().unwrap())
+    }
+
+    /// The server offers the settings and security scopes and grants them (or offers them and
+    /// grants nothing: a sign-in made before the app asked for them).
+    pub fn set_account_scopes(&self, offered: bool, granted: bool) {
+        let mut manage = self.shared.manage.lock().unwrap();
+        manage.offered = offered;
+        manage.granted = granted;
     }
 
     // ---- OAuth helpers ---------------------------------------------------------------
@@ -1051,7 +1083,7 @@ fn check_bearer(s: &Shared, headers: &HeaderMap) -> Result<(), Response> {
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if s.oauth.lock().unwrap().access_valid(token) {
+    if s.oauth.lock().unwrap().access_valid(token) || enterprise::key_accepted(s, token) {
         Ok(())
     } else {
         Err(unauthorized())
@@ -1059,7 +1091,15 @@ fn check_bearer(s: &Shared, headers: &HeaderMap) -> Result<(), Response> {
 }
 
 async fn oauth_metadata(State(s): State<Arc<Shared>>) -> Response {
+    if s.manage.lock().unwrap().metadata_down {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let b = &s.base;
+    let mut scopes =
+        vec!["openid", "offline_access", "urn:ietf:params:oauth:scope:mail", "urn:ietf:params:oauth:scope:calendars"];
+    if s.manage.lock().unwrap().offered {
+        scopes.extend([SETTINGS_SCOPE, SECURITY_SCOPE]);
+    }
     json_response(
         StatusCode::OK,
         json!({
@@ -1072,7 +1112,7 @@ async fn oauth_metadata(State(s): State<Arc<Shared>>) -> Response {
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none"],
-            "scopes_supported": ["openid", "offline_access", "urn:ietf:params:oauth:scope:mail", "urn:ietf:params:oauth:scope:calendars"],
+            "scopes_supported": scopes,
         }),
     )
 }
@@ -1114,7 +1154,19 @@ async fn authorize_http(State(s): State<Arc<Shared>>, axum::extract::RawQuery(q)
 }
 
 async fn token(State(s): State<Arc<Shared>>, body: Bytes) -> Response {
-    let result = s.oauth.lock().unwrap().token(&form(&body));
+    let fields = form(&body);
+    let result = s.oauth.lock().unwrap().token(&fields);
+    let mut scope =
+        "openid offline_access urn:ietf:params:oauth:scope:mail urn:ietf:params:oauth:scope:calendars".to_string();
+    {
+        let mut manage = s.manage.lock().unwrap();
+        if manage.granted && manage.offered {
+            scope = format!("{scope} {SETTINGS_SCOPE} {SECURITY_SCOPE}");
+        }
+        if result.is_ok() && fields.get("grant_type").map(String::as_str) == Some("authorization_code") {
+            manage.app_signed_in(fields.get("client_id").map(String::as_str).unwrap_or_default());
+        }
+    }
     match result {
         Ok(t) => json_response(
             StatusCode::OK,
@@ -1123,7 +1175,7 @@ async fn token(State(s): State<Arc<Shared>>, body: Bytes) -> Response {
                 "token_type": "Bearer",
                 "expires_in": t.expires_in,
                 "refresh_token": t.refresh_token,
-                "scope": "openid offline_access urn:ietf:params:oauth:scope:mail urn:ietf:params:oauth:scope:calendars",
+                "scope": scope,
                 "username": USERNAME,
             }),
         ),
@@ -1150,7 +1202,48 @@ async fn well_known(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Respons
         .unwrap()
 }
 
+/// `GET /api/account` for whoever asks: the Enterprise mock's key, an admin key of the admin mock, or the
+/// signed-in user's own token (the management side of the user's account).
+async fn account_any(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if enterprise::key_accepted(&s, token) {
+        return enterprise::account(State(s), headers).await;
+    }
+    if token.starts_with("API_") {
+        return admin_mock::account_route(State(s), headers).await;
+    }
+    api_account(State(s), headers).await
+}
+
+/// What the account may do and the edition; a server that does not know the address says 404.
+async fn api_account(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if let Err(r) = check_bearer(&s, &headers) {
+        return r;
+    }
+    let (answer, status) = {
+        let manage = s.manage.lock().unwrap();
+        (manage.account(), manage.account_status)
+    };
+    if let Some(code) = status.and_then(|c| StatusCode::from_u16(c).ok()) {
+        return code.into_response();
+    }
+    match answer {
+        Some(v) => json_response(StatusCode::OK, v),
+        None => json_response(
+            StatusCode::NOT_FOUND,
+            json!({ "type": "about:blank", "status": 404, "title": "Not Found", "detail": "The requested resource does not exist on this server." }),
+        ),
+    }
+}
+
 async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if let Some(r) = admin_mock::session(&s, &headers) {
+        return r;
+    }
     if let Err(r) = check_bearer(&s, &headers) {
         return r;
     }
@@ -1331,6 +1424,9 @@ async fn upload(
 }
 
 async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
+    if let Some(r) = admin_mock::jmap(&s, &headers, &body) {
+        return r;
+    }
     if let Err(r) = check_bearer(&s, &headers) {
         return r;
     }
@@ -1482,6 +1578,8 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
         }
     }
     match name {
+        x if x.starts_with("x:") && enterprise::owns(x) => enterprise::call(s, x, args).map(one),
+        x if x.starts_with("x:") => s.manage.lock().unwrap().call(x, args).map(one),
         "Calendar/get"
         | "ParticipantIdentity/get"
         | "CalendarEvent/get"

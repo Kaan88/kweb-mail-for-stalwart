@@ -81,6 +81,16 @@ Usage:
   kweb share set <kind> <id> <person-id> read|write|none
                               share it with a person, change how, or with none take it back
   kweb share people <text>    find users to share with (a server may not allow that)
+  kweb features               show what the server offers beyond mail: masked addresses,
+                              the account's security settings, and whether signing in again
+                              is needed to use them
+  kweb masked                 list the masked addresses (newest first) and the server's limit
+  kweb masked new <note> [--site <site>] [--prefix <p>]
+                              have the server make one; <note> may be \"\"
+  kweb masked on|off|rm <id>  switch one on or off, or delete it for good
+  kweb security               show the account's security settings: whether two-step codes
+                              are on, and the names of app passwords, API keys, passkeys and
+                              connected apps (never a secret)
   kweb away                   show the away message
   kweb away on <text>         switch it on from now until switched off, with this text
   kweb away off               switch it off
@@ -115,6 +125,20 @@ Usage:
                               uses $KWEB_AI_KEY if set, else the stored key
   kweb ai summary <message-id>
                               summarise a message, printed as it streams
+  kweb admin [status]         show what the stored admin key opens and the server's figures
+  kweb admin connect          store the admin API key in $KWEB_ADMIN_KEY (checked first)
+  kweb admin forget           forget the stored admin key on this device
+  kweb admin queue            the mail queue, the next to be tried first
+  kweb admin accounts [text]  the server's accounts and groups, or those matching the text
+  kweb admin blocked          the blocked network addresses, newest first
+  kweb admin logs [text]      the newest log lines, or those with the text
+  kweb admin history [hours]  the dashboard's history: 24 (default), 168 or 720 hours
+  kweb admin deliveries [text]
+                              the server's delivery history, newest first, with an address or queue id
+  kweb admin delivery <id>    one delivery, step by step
+  kweb admin deleted          deleted items the server still keeps (own account)
+  kweb admin alerts           the server's alerts
+  kweb admin tenants          the tenants with their disk use
   kweb sign-out               revoke the grant and wipe the cache
   kweb help                   this text
 
@@ -132,6 +156,7 @@ pub const MAX_AGENDA_DAYS: u32 = 365;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Help,
+    AdminEnterprise(crate::enterprise::Enterprise),
     SignIn { server_url: String },
     Status,
     Inbox { count: u32 },
@@ -148,6 +173,9 @@ pub enum Command {
     Calendars,
     Identities,
     Quota,
+    Features,
+    Masked(Masked),
+    Security,
     Contacts { query: String },
     Files { space: Option<String>, what: Files },
     Shared(Shared),
@@ -166,6 +194,7 @@ pub enum Command {
     Unschedule { id: String },
     Identity(Identity),
     Ai(Ai),
+    Admin(crate::admin::Admin),
     SignOut,
 }
 
@@ -187,6 +216,15 @@ pub enum Ai {
     Summary {
         id: String,
     },
+}
+
+/// What `kweb masked` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Masked {
+    List,
+    New { note: String, site: String, prefix: String },
+    Switch { id: String, on: bool },
+    Rm { id: String },
 }
 
 /// What `kweb files` does.
@@ -278,6 +316,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     };
     match name.as_str() {
         "help" | "--help" | "-h" => no_args(rest, Command::Help),
+        "admin" if crate::enterprise::owns(rest) => crate::enterprise::parse(rest).map(Command::AdminEnterprise),
         "status" => no_args(rest, Command::Status),
         "mailboxes" => no_args(rest, Command::Mailboxes),
         "watch" => no_args(rest, Command::Watch),
@@ -286,8 +325,12 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "agenda" => agenda(rest),
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
+        "features" => no_args(rest, Command::Features),
+        "security" => no_args(rest, Command::Security),
+        "masked" => masked(rest).map(Command::Masked),
         "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
         "files" => files(rest),
+        "admin" => crate::admin::parse(rest).map(Command::Admin),
         "shared" => shared(rest).map(Command::Shared),
         "share" => share(rest).map(Command::Share),
         "away" => away(rest),
@@ -466,6 +509,49 @@ fn share(rest: &[String]) -> Result<Share, String> {
         },
         [other, ..] => Err(format!("share takes list, set or people, not '{other}'")),
         [] => Err("share takes list, set or people".into()),
+    }
+}
+
+fn masked(rest: &[String]) -> Result<Masked, String> {
+    let too_many = |extra: &String| Err(format!("unexpected argument '{extra}'"));
+    match rest {
+        [] => Ok(Masked::List),
+        [word, tail @ ..] if word == "new" => {
+            let (mut site, mut prefix) = (String::new(), String::new());
+            let mut note: Option<String> = None;
+            let mut args = tail.iter();
+            while let Some(arg) = args.next() {
+                let (name, inline) = match arg.split_once('=') {
+                    Some((n, v)) if n.starts_with("--") => (n, Some(v.to_string())),
+                    _ => (arg.as_str(), None),
+                };
+                match name {
+                    "--site" | "--prefix" => {
+                        let value = match inline {
+                            Some(v) => v,
+                            None => args.next().ok_or(format!("{name} needs a value"))?.clone(),
+                        };
+                        if name == "--site" {
+                            site = value
+                        } else {
+                            prefix = value
+                        }
+                    }
+                    other if other.starts_with("--") => return Err(format!("unknown option '{other}'")),
+                    _ if note.is_none() => note = Some(arg.clone()),
+                    _ => return too_many(arg),
+                }
+            }
+            let note = note.ok_or("masked new needs a <note> (it may be \"\")")?;
+            Ok(Masked::New { note, site, prefix })
+        }
+        [word, tail @ ..] if matches!(word.as_str(), "on" | "off" | "rm") => match tail {
+            [id] if word == "rm" => Ok(Masked::Rm { id: id.clone() }),
+            [id] => Ok(Masked::Switch { id: id.clone(), on: word == "on" }),
+            [] => Err(format!("masked {word} needs an <id>")),
+            [_, extra, ..] => too_many(extra),
+        },
+        [other, ..] => Err(format!("masked takes new, on, off, rm, or nothing, not '{other}'")),
     }
 }
 
@@ -982,6 +1068,36 @@ mod tests {
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn features_masked_and_security() {
+        assert_eq!(p(&["features"]), Ok(Command::Features));
+        assert_eq!(p(&["security"]), Ok(Command::Security));
+        assert!(p(&["security", "x"]).is_err());
+        assert_eq!(p(&["masked"]), Ok(Command::Masked(Masked::List)));
+        assert_eq!(
+            p(&["masked", "new", "shop", "--site", "https://s.example", "--prefix", "shop"]),
+            Ok(Command::Masked(Masked::New {
+                note: "shop".into(),
+                site: "https://s.example".into(),
+                prefix: "shop".into()
+            }))
+        );
+        assert_eq!(
+            p(&["masked", "new", "--prefix=a", "", "--site=x"]),
+            Ok(Command::Masked(Masked::New { note: "".into(), site: "x".into(), prefix: "a".into() }))
+        );
+        assert!(p(&["masked", "new"]).is_err());
+        assert!(p(&["masked", "new", "a", "b"]).is_err());
+        assert!(p(&["masked", "new", "a", "--site"]).is_err());
+        assert!(p(&["masked", "new", "a", "--colour", "red"]).is_err());
+        assert_eq!(p(&["masked", "on", "m1"]), Ok(Command::Masked(Masked::Switch { id: "m1".into(), on: true })));
+        assert_eq!(p(&["masked", "off", "m1"]), Ok(Command::Masked(Masked::Switch { id: "m1".into(), on: false })));
+        assert_eq!(p(&["masked", "rm", "m1"]), Ok(Command::Masked(Masked::Rm { id: "m1".into() })));
+        assert!(p(&["masked", "rm"]).is_err());
+        assert!(p(&["masked", "on", "a", "b"]).is_err());
+        assert!(p(&["masked", "frob"]).is_err());
     }
 
     #[test]

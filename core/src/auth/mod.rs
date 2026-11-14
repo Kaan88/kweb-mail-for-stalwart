@@ -41,14 +41,38 @@ const SCOPES: &str = "openid offline_access urn:ietf:params:oauth:scope:mail \
 /// Stalwart server lists no file storage at all, and a server that does not know the scope
 /// must not be asked for it.
 const FILES_SCOPE: &str = "urn:ietf:params:oauth:scope:files";
+/// The account's own settings (masked addresses). Stalwart's own scope, asked for where offered.
+pub const SETTINGS_SCOPE: &str = "urn:stalwart:oauth:scope:settings";
+/// The account's own security settings (password, two-step codes, app passwords, API keys,
+/// passkeys, connected apps). Nothing administrative: an administrator's rights stay out of it.
+pub const SECURITY_SCOPE: &str = "urn:stalwart:oauth:scope:security";
 
-/// The scopes to ask this server for.
+/// The scopes to ask this server for: the base set, and each of the optional ones the server's
+/// metadata lists.
 fn scopes_for(meta: &Metadata) -> String {
-    if meta.scopes_supported.iter().any(|s| s == FILES_SCOPE) {
-        format!("{SCOPES} {FILES_SCOPE}")
-    } else {
-        SCOPES.to_string()
+    let mut scope = SCOPES.to_string();
+    for optional in [FILES_SCOPE, SETTINGS_SCOPE, SECURITY_SCOPE] {
+        if meta.scopes_supported.iter().any(|s| s == optional) {
+            scope.push(' ');
+            scope.push_str(optional);
+        }
     }
+    scope
+}
+
+/// Which of the account scopes (settings, security) a server offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountScopes {
+    pub settings: bool,
+    pub security: bool,
+}
+
+/// Asks the server's metadata which of the account scopes it offers. A server that cannot be
+/// asked offers none as far as the caller can tell: `Err` is for the caller to treat as that.
+pub async fn account_scopes_offered(server_url: &str) -> Result<AccountScopes> {
+    let meta = discover(server_url.trim()).await?;
+    let has = |scope: &str| meta.scopes_supported.iter().any(|s| s == scope);
+    Ok(AccountScopes { settings: has(SETTINGS_SCOPE), security: has(SECURITY_SCOPE) })
 }
 /// How long a host should wait for the browser to come back before giving up.
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
@@ -65,6 +89,18 @@ pub struct OAuthClient {
     /// then registers again at the next sign-in.
     #[serde(default)]
     pub scope: String,
+    /// The scopes the server granted at the sign-in, as its token answer says. Empty in what an
+    /// older version stored: that sign-in counts as having been granted none of the optional
+    /// ones, which is how the app knows to ask the user to sign in again.
+    #[serde(default)]
+    pub granted: String,
+}
+
+impl OAuthClient {
+    /// Whether the sign-in was granted this scope.
+    pub fn was_granted(&self, scope: &str) -> bool {
+        self.granted.split_whitespace().any(|s| s == scope)
+    }
 }
 
 /// A sign-in that has been started in the browser and not finished yet.
@@ -116,6 +152,8 @@ struct TokenResponse {
     expires_in: Option<u64>,
     refresh_token: Option<String>,
     username: Option<String>,
+    /// What was granted; left out by a server that granted what was asked for (RFC 6749 5.1).
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -319,6 +357,7 @@ pub async fn begin_sign_in(
         token_endpoint: meta.token_endpoint.clone(),
         revocation_endpoint: meta.revocation_endpoint.clone().unwrap_or_default(),
         scope: scope.clone(),
+        granted: String::new(),
     };
 
     let verifier = random_url_safe(32)?;
@@ -375,6 +414,8 @@ pub async fn complete_sign_in(
     .await?;
     let refresh = token.refresh_token.clone().ok_or_else(|| Error::temporary("the server issued no refresh token"))?;
     let username = token.username.clone().unwrap_or_default();
-    let tokens = Tokens::started(pending.client.clone(), secrets, &token, &refresh);
-    Ok(SignedIn { client: pending.client, username, tokens })
+    let mut client = pending.client;
+    client.granted = token.scope.clone().unwrap_or_else(|| client.scope.clone());
+    let tokens = Tokens::started(client.clone(), secrets, &token, &refresh);
+    Ok(SignedIn { client, username, tokens })
 }

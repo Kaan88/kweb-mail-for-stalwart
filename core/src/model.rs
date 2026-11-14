@@ -574,6 +574,103 @@ pub struct AiPreview {
     pub is_cut: bool,
 }
 
+/// What the server offers this account beyond mail, as far as the app's sign-in reaches.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AccountFeatures {
+    /// "enterprise", "community" (an Enterprise build without a licence), "oss", or empty when
+    /// the server does not say.
+    pub edition: String,
+    /// Masked addresses can be used: the permission is there and the server answered a read.
+    pub masked_email: bool,
+    /// The account's own security settings can be read (password, two-step codes, app
+    /// passwords, API keys, passkeys, connected apps).
+    pub security: bool,
+    /// The server offers these things but this sign-in was made before the app asked for them:
+    /// signing in again is all it takes. When true, the two flags above are false.
+    pub needs_sign_in: bool,
+}
+
+/// An address the server made up that delivers to the user. It only receives.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MaskedAddress {
+    pub id: String,
+    pub email: String,
+    /// The user's note on what it is for; may be empty.
+    pub description: String,
+    /// The site it was made for; empty when none was given.
+    pub for_domain: String,
+    /// Mail to it is delivered. Off: the server turns such mail away.
+    pub enabled: bool,
+    /// Unix seconds.
+    pub created_at: Option<i64>,
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct MaskedAddresses {
+    /// Newest first.
+    pub addresses: Vec<MaskedAddress>,
+    /// How many the server allows this account, switched-off ones included; `None` when it
+    /// does not say.
+    pub limit: Option<u32>,
+}
+
+/// An app password or an API key of the account. The secret itself is never listed.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Credential {
+    pub id: String,
+    pub description: String,
+    pub created_at: Option<i64>,
+    pub expires_at: Option<i64>,
+}
+
+/// A secret the server shows once, right after it was made.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct NewSecret {
+    pub id: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Passkey {
+    pub id: String,
+    pub name: String,
+    pub created_at: Option<i64>,
+}
+
+/// An app that was allowed to use the account.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ConnectedApp {
+    pub id: String,
+    /// The app's name as it registered itself.
+    pub name: String,
+    /// What it may reach, in the server's scope names.
+    pub scopes: Vec<String>,
+    pub created_at: Option<i64>,
+    /// This is the sign-in this app itself is using: revoking it signs the app out.
+    pub is_this_app: bool,
+}
+
+/// The account's own security settings.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AccountSecurity {
+    /// Two-step codes are switched on.
+    pub two_step: bool,
+    pub app_passwords: Vec<Credential>,
+    pub api_keys: Vec<Credential>,
+    pub passkeys: Vec<Passkey>,
+    pub connected_apps: Vec<ConnectedApp>,
+}
+
+/// What an authenticator app needs to start making two-step codes.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TwoStepSetup {
+    /// The `otpauth://` address, for a QR code or for opening the authenticator app.
+    pub otpauth_url: String,
+    /// The same secret for typing by hand, in groups of four characters.
+    pub secret: String,
+}
+
 /// How a mailing list lets the reader leave it (the List-Unsubscribe header).
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Unsubscribe {

@@ -13,6 +13,7 @@ use jmap_client::{
 use crate::Error;
 
 const UNAUTHORIZED_PREFIX: &str = "unauthorized: ";
+const FORBIDDEN_PREFIX: &str = "forbidden: ";
 const CANNOT_CALCULATE_PREFIX: &str = "cannot calculate changes: ";
 const STATE_MISMATCH_PREFIX: &str = "state mismatch: ";
 const NO_ACCOUNT_PREFIX: &str = "no such account: ";
@@ -44,6 +45,18 @@ pub fn is_unauthorized(e: &Error) -> bool {
     matches!(e, Error::Temporary { msg } if msg.starts_with(UNAUTHORIZED_PREFIX))
 }
 
+/// The server answered a request as a whole with HTTP 403 (a key limited to other addresses,
+/// an account that may not sign in). Still `Error::Temporary` for every caller that does not
+/// ask; the admin code turns it into a refusal of the key.
+pub fn is_forbidden(e: &Error) -> bool {
+    matches!(e, Error::Temporary { msg } if msg.starts_with(FORBIDDEN_PREFIX))
+}
+
+/// A 403 seen by code that does not go through jmap-client.
+pub(super) fn forbidden(detail: impl std::fmt::Display) -> Error {
+    Error::temporary(format!("{FORBIDDEN_PREFIX}{detail}"))
+}
+
 /// A `/changes` call the server answered with `cannotCalculateChanges`: the caller must
 /// fall back to a full resync.
 pub fn is_cannot_calculate_changes(e: &Error) -> bool {
@@ -58,6 +71,7 @@ pub(super) fn unauthorized(detail: impl std::fmt::Display) -> Error {
 #[derive(Debug, PartialEq)]
 enum Kind {
     Unauthorized,
+    Forbidden,
     CannotCalculateChanges,
     NotFound,
     /// The server refused the change and will refuse it again (a mailbox that is gone, no right
@@ -83,6 +97,9 @@ fn kind(e: &JmapError) -> Kind {
         // handle_error() formats the bare status for non-JSON error bodies: "401 Unauthorized".
         JmapError::Server(s) if s.split_whitespace().next() == Some("401") => Kind::Unauthorized,
         JmapError::Transport(t) if t.status().is_some_and(|s| s.as_u16() == 401) => Kind::Unauthorized,
+        JmapError::Problem(p) if p.status() == Some(403) => Kind::Forbidden,
+        JmapError::Server(s) if s.split_whitespace().next() == Some("403") => Kind::Forbidden,
+        JmapError::Transport(t) if t.status().is_some_and(|s| s.as_u16() == 403) => Kind::Forbidden,
         JmapError::Method(m) if *m.error() == MethodErrorType::CannotCalculateChanges => Kind::CannotCalculateChanges,
         JmapError::Method(m)
             if matches!(m.error(), MethodErrorType::AccountNotFound | MethodErrorType::AccountNotSupportedByMethod) =>
@@ -98,6 +115,7 @@ fn kind(e: &JmapError) -> Kind {
 pub(super) fn from_jmap(e: JmapError) -> Error {
     match kind(&e) {
         Kind::Unauthorized => Error::temporary(format!("{UNAUTHORIZED_PREFIX}{e}")),
+        Kind::Forbidden => Error::temporary(format!("{FORBIDDEN_PREFIX}{e}")),
         Kind::CannotCalculateChanges => Error::temporary(format!("{CANNOT_CALCULATE_PREFIX}{e}")),
         Kind::NoAccount => no_account(e),
         Kind::NotFound => Error::invalid(format!("not found on the server: {e}")),
@@ -130,6 +148,7 @@ mod tests {
         assert!(!is_cannot_calculate_changes(&e));
         let e = from_jmap(problem(r#"{"type":"about:blank","status":403}"#));
         assert!(!is_unauthorized(&e));
+        assert!(is_forbidden(&e));
     }
 
     #[test]

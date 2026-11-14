@@ -54,8 +54,13 @@ fn pkce_challenge_matches_rfc7636_example() {
 
 #[test]
 fn tiny_or_zero_lifetimes_do_not_renew_at_once() {
-    let token =
-        |life| TokenResponse { access_token: "t".into(), expires_in: Some(life), refresh_token: None, username: None };
+    let token = |life| TokenResponse {
+        access_token: "t".into(),
+        expires_in: Some(life),
+        refresh_token: None,
+        username: None,
+        scope: None,
+    };
     for life in [0, 1, 10] {
         assert!(keep(&token(life)).renew_at >= Instant::now() + Duration::from_secs(14));
     }
@@ -146,6 +151,8 @@ struct Srv {
     token_endpoint_override: Option<String>,
     /// What the metadata lists as `scopes_supported`; `None` leaves the field out.
     scopes_supported: Option<Vec<String>>,
+    /// What the token answer of a sign-in says was granted; `None` leaves the field out.
+    granted: Option<String>,
     last_code_form: Vec<(String, String)>,
 }
 
@@ -184,13 +191,14 @@ async fn token(State(s): State<Shared>, body: Bytes) -> (StatusCode, Json<Value>
                 s.last_code_form = form.clone();
                 s.rotations += 1;
                 s.valid_refresh = format!("R{}", s.rotations);
-                (
-                    StatusCode::OK,
-                    json!({
-                        "access_token": "A0", "expires_in": s.expires_in,
-                        "refresh_token": s.valid_refresh, "username": "alice@example.com",
-                    }),
-                )
+                let mut answer = json!({
+                    "access_token": "A0", "expires_in": s.expires_in,
+                    "refresh_token": s.valid_refresh, "username": "alice@example.com",
+                });
+                if let Some(granted) = &s.granted {
+                    answer["scope"] = json!(granted);
+                }
+                (StatusCode::OK, answer)
             }
             "refresh_token" => {
                 s.refresh_calls += 1;
@@ -237,6 +245,7 @@ async fn start_server() -> (String, Shared) {
         expires_in: 3600,
         token_endpoint_override: None,
         scopes_supported: None,
+        granted: None,
         last_code_form: vec![],
     }));
     let app = Router::new()
@@ -293,6 +302,7 @@ fn client_for(base: &str) -> OAuthClient {
         token_endpoint: format!("{base}/token"),
         revocation_endpoint: format!("{base}/revoke"),
         scope: SCOPES.into(),
+        granted: String::new(),
     }
 }
 
@@ -409,6 +419,65 @@ async fn file_storage_is_asked_for_only_where_the_server_offers_it() {
     // Unchanged, it is reused.
     let again = begin_sign_in(&base, REDIRECT, Some(&with_files.client)).await.unwrap();
     assert_eq!(again.client.client_id, "client-2");
+}
+
+#[tokio::test]
+async fn account_scopes_are_asked_for_only_where_the_server_offers_them() {
+    let (base, shared) = start_server().await;
+    let scope_of = |p: &PendingSignIn| {
+        let url = Url::parse(&p.authorize_url).unwrap();
+        let found = url.query_pairs().find(|(n, _)| n == "scope").map(|(_, v)| v.into_owned());
+        found.unwrap()
+    };
+    let plain = begin_sign_in(&base, REDIRECT, None).await.unwrap();
+    assert_eq!(scope_of(&plain), SCOPES);
+
+    // Only one of them offered: only that one is asked for, and the client registers again.
+    shared.lock().unwrap().scopes_supported = Some(vec!["openid".into(), SETTINGS_SCOPE.into()]);
+    let settings = begin_sign_in(&base, REDIRECT, Some(&plain.client)).await.unwrap();
+    assert_eq!(scope_of(&settings), format!("{SCOPES} {SETTINGS_SCOPE}"));
+    assert_eq!(settings.client.client_id, "client-2");
+
+    shared.lock().unwrap().scopes_supported =
+        Some(vec!["openid".into(), FILES_SCOPE.into(), SECURITY_SCOPE.into(), SETTINGS_SCOPE.into()]);
+    let all = begin_sign_in(&base, REDIRECT, Some(&settings.client)).await.unwrap();
+    assert_eq!(scope_of(&all), format!("{SCOPES} {FILES_SCOPE} {SETTINGS_SCOPE} {SECURITY_SCOPE}"));
+    assert_eq!(all.client.client_id, "client-3");
+    // Unchanged, it is reused.
+    let again = begin_sign_in(&base, REDIRECT, Some(&all.client)).await.unwrap();
+    assert_eq!(again.client.client_id, "client-3");
+
+    let offered = account_scopes_offered(&base).await.unwrap();
+    assert_eq!(offered, AccountScopes { settings: true, security: true });
+    shared.lock().unwrap().scopes_supported = Some(vec!["openid".into(), SECURITY_SCOPE.into()]);
+    assert_eq!(account_scopes_offered(&base).await.unwrap(), AccountScopes { settings: false, security: true });
+}
+
+#[tokio::test]
+async fn the_granted_scopes_are_kept_with_the_client() {
+    let (base, shared) = start_server().await;
+    // The answer names what was granted: that is what counts, not what was asked.
+    shared.lock().unwrap().granted = Some(format!("openid {SETTINGS_SCOPE}"));
+    let signed = sign_in(&base, Arc::new(MemorySecrets::default())).await;
+    assert!(signed.client.was_granted(SETTINGS_SCOPE));
+    assert!(!signed.client.was_granted(SECURITY_SCOPE));
+    assert!(!signed.client.was_granted("urn:stalwart:oauth:scope:sett"));
+
+    // An answer without the field means what was asked for was granted.
+    shared.lock().unwrap().granted = None;
+    shared.lock().unwrap().scopes_supported = Some(vec![SECURITY_SCOPE.into()]);
+    let signed = sign_in(&base, Arc::new(MemorySecrets::default())).await;
+    assert!(signed.client.was_granted(SECURITY_SCOPE));
+    assert!(signed.client.was_granted("openid"));
+
+    // A client stored by an older version has no record: it counts as granted none.
+    let old: OAuthClient = serde_json::from_value(json!({
+        "server_url": base, "client_id": "client-2", "token_endpoint": format!("{base}/token"),
+        "revocation_endpoint": "", "scope": SCOPES,
+    }))
+    .unwrap();
+    assert!(!old.was_granted("openid"));
+    assert!(!old.was_granted(SETTINGS_SCOPE));
 }
 
 #[tokio::test]
