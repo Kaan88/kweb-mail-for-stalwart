@@ -173,9 +173,21 @@ Built 2026-11-14. How it works:
 
 Not built: the day view (the agenda with its week strip stands in for it), answering an invitation from the mail that carried it, showing or hiding single calendars, creating calendars.
 
+Checked on the emulator against the local Stalwart ([design/m5-emulator.png](design/m5-emulator.png)): the bottom bar with the unread badge, the agenda with two timed events, an all-day event, a five-day series and a task, in the phone's time zone, and the screen of one occurrence of the series. The emulator ran without acceleration (the owner's VM was up) and was too slow for more. Not checked there: creating, changing and deleting an entry, ticking a task, answering an invitation, the reminder tap, the offline agenda. Not checked on the real phone.
+
 ### M6: contacts and away message
 
 Contact list, view, edit. Vacation response switch.
+
+Built 2026-11-14. How it works:
+
+- **Contacts** (`core/src/contacts.rs`, `jmap/jscontact.rs`, `jmap/contacts.rs`, `store/contacts.rs`): the list is fetched from the server and kept in the cache, so the list, one contact and a search work offline; the recipient suggestions of M4 read the same cards. A save is a patch of what the app shows (name, organization, mail addresses, phone numbers, postal addresses, notes, the address book); pictures, extra names and everything else on a card stay. The core remembers the card as the form got it, so a field someone else changed meanwhile is not overwritten by a field the user did not touch.
+- **Away message** (`jmap/vacation.rs`): read and set on the server's VacationResponse, with optional start and end.
+- **Android:** Contacts is the third root of the bottom bar: a searchable list under letter headings, a contact's screen (a tap on an address writes to it, on a number dials, on a postal address opens a map; recent mail with the contact), a form to create and change one, and an "Away message" screen in Settings.
+
+Not built: contact pictures, a letter index at the edge, opening or creating a contact from a sender in a mail, creating address books.
+
+Not checked on a device at all: the owner's VM was running, which makes the emulator too slow to drive (see M5). Core and Android unit tests pass, and the core's requests were replayed against the local Stalwart by the agent that wrote them.
 
 ### M7: sharing, files, second push route, AI assistant
 
@@ -282,3 +294,10 @@ M5
 - An entry's colour comes from its calendar's position in the list (primary, secondary, tertiary containers), not from the colour stored on the server, so it follows the theme.
 - Invitations are answered in the calendar. Answering from the mail that carried one is left for later.
 - The bottom bar (Mail, Calendar) arrives with M5 and shows on the two root screens only.
+- The event screen shows an entry at the phone's time, as the agenda does, and names the entry's own zone and time after it when they differ.
+
+M6
+- Stalwart stores a contact card as it is sent (it validates nothing), so the core checks names and mail addresses before a save.
+- The order of a contact's mail addresses and phone numbers is the server's (by key); reordering them in the form does not persist.
+- Sorting folds case and Latin accents only; other scripts sort by code point.
+- A mail address tapped on a contact starts a new draft to it. The away message is plain text; an HTML one written elsewhere is shown as text and replaced by text on save.
