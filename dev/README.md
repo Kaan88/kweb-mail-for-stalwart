@@ -87,11 +87,7 @@ avdmanager create avd -n kweb35 -k "system-images;android-35;google_apis;x86_64"
 
 ### VirtualBox and KVM
 
-On the owner's machine a VirtualBox VM (`Inbound-Win11-Test`) is sometimes running. While it runs, the emulator with KVM crashes (`KVM: entry failed, hardware error 0x0`; the kernel log has `kvm_intel: vmwrite failed`). Do not stop that VM. Either ask the owner to stop it, or start the emulator without acceleration: `KWEB_EMU_ACCEL=off dev/emulator.sh` (slow: boot takes minutes and the UI is sluggish, but it works). With the VM off, a boot with KVM takes about 15 s. `dev/emulator.sh` refuses to start with KVM while a VirtualBox VM process is running.
-
-Why: the VM's log (`Logs/VBox.log`) says `Using execution engine 1` and `HM: Enabled VMX`, so VirtualBox 7.2 runs the guest with its own VT-x code in `vboxdrv`, not through KVM (it only opens `/dev/kvm` to switch VMX on). On each CPU it loads its own VMCS, and KVM, which believes the emulator's VMCS is still loaded there, then fails every `vmread`/`vmwrite` (the kernel warnings name `qemu-system-x86`, the emulator's process). The fault is between two kernel modules, so no emulator flag (CPU model, core count, GPU, image) avoids it.
-
-Possible way to run both at once, not tried: make VirtualBox use KVM for that VM, with the VM powered off, `VBoxManage modifyvm Inbound-Win11-Test --vm-execution-engine native-api` (back: `--vm-execution-engine default`). This is the owner's choice; it may make the Windows guest slower or fail to start on this build.
+The emulator runs with KVM beside the owner's VirtualBox VMs (owner, 2026-11-14: the earlier conflict, `KVM: entry failed, hardware error 0x0`, is fixed). Never stop or change a VM. `KWEB_EMU_ACCEL=off dev/emulator.sh` still starts the emulator without KVM, slowly, if it is ever needed.
 
 ## Driving the app on the emulator
 
