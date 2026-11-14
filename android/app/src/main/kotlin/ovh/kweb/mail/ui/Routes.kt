@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui
 
+import ovh.kweb.mail.ui.folders.FolderAction
 import uniffi.kweb_core.Address
 
 /** The screens of the app. The sign-in screen for a signed-out app is not a route. */
@@ -22,9 +23,9 @@ sealed interface Route {
 
     /**
      * The form for a new entry ([eventId] null, [startHint] the day it starts on as "2026-11-12") or for
-     * changing one.
+     * changing one. [account] is the owner's account when it is in a calendar shared with the user (null: the user's own).
      */
-    data class EditEvent(val eventId: String?, val startHint: String?) : Route
+    data class EditEvent(val eventId: String?, val startHint: String?, val account: String? = null) : Route
 
     /** The contacts: the third root beside the mail list and the agenda. */
     data object Contacts : Route
@@ -63,14 +64,23 @@ sealed interface Route {
     /** One contact. */
     data class Contact(val contactId: String) : Route
 
-    /** The form for a new contact ([contactId] null) or for changing one. */
-    data class EditContact(val contactId: String?) : Route
+    /** The form for a new contact ([contactId] null) or for changing one; [account] as for [EditEvent]. */
+    data class EditContact(val contactId: String?, val account: String? = null) : Route
+
+    /** Whom one thing of the user's own is shared with: a mail folder, calendar, address book or file folder [id], called [name]. */
+    data class Share(val kind: uniffi.kweb_core.ShareKind, val id: String, val name: String) : Route
 
     /** The away message, reached from Settings. */
     data object Away : Route
 
     /** The mail filters, reached from Settings; [fromMessageId] opens the rule editor for a new rule made from that message. */
     data class Filters(val fromMessageId: String? = null) : Route
+
+    /**
+     * The folders as a tree with their bells and menus, reached from the folder drawer. [folderId] and [action]
+     * (a long press in the drawer) open that folder's rename, move, new-folder or delete dialog at once.
+     */
+    data class Folders(val folderId: String? = null, val action: FolderAction? = null) : Route
 
     /** The settings of the AI assistant, reached from Settings. */
     data object Assistant : Route
@@ -116,9 +126,9 @@ object BackStack {
 
     fun pop(stack: List<Route>): List<Route> = if (stack.size > 1) stack.dropLast(1) else stack
 
-    /** What a tap on the notification of a cached message shows: the message over the list. */
-    fun forNotification(threadId: String, inboxId: String?, messageId: String): List<Route> =
-        initial + Route.Thread(threadId, inboxId, messageId)
+    /** What a tap on the notification of a cached message shows: the message, opened from [mailboxId] (the folder that notified), over the list. */
+    fun forNotification(threadId: String, mailboxId: String?, messageId: String): List<Route> =
+        initial + Route.Thread(threadId, mailboxId, messageId)
 
     /** What a tap on the reminder of an event shows: the event over the agenda over the list. */
     fun forReminder(eventId: String, recurrenceId: String?): List<Route> = switchTo(Route.Calendar) + Route.Event(eventId, recurrenceId)
@@ -137,7 +147,7 @@ object BackStack {
 
     /** After an entry was saved: the form and the event screens that showed the old values are gone, the agenda is on top. */
     fun afterEventSaved(stack: List<Route>): List<Route> =
-        stack.dropLastWhile { it is Route.EditEvent || it is Route.Event }.ifEmpty { initial }
+        stack.dropLastWhile { it is Route.EditEvent || it is Route.Event || it is Route.SharedEventView }.ifEmpty { initial }
 
     /**
      * After a contact was saved: the form is gone. A changed contact shows again (it reads again when it comes

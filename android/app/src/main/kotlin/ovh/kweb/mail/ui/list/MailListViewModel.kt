@@ -21,6 +21,8 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.ui.MailActions
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.UiMessage
+import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.compose.Outbox
 import ovh.kweb.mail.ui.compose.SendRules
@@ -75,6 +77,12 @@ sealed interface ListEvent {
 
     /** [messageIds] were taken out of [mailboxId]; undoing moves them back. */
     data class Undo(val textRes: Int, val messageIds: List<String>, val mailboxId: String) : ListEvent
+
+    /** A refusal in the core's own words, or any text that is not one of the app's strings. */
+    data class Text(val message: UiMessage) : ListEvent
+
+    /** [messageIds] were reported as spam ([wasSpam] true) or taken back; undoing does the opposite. */
+    data class UndoSpam(val textRes: Int, val messageIds: List<String>, val wasSpam: Boolean, val fromId: String?, val fromRole: String?) : ListEvent
 
     /** Open the compose screen on this draft (a new one, an answer, or one taken back by Undo). */
     data class OpenDraft(val draftId: String) : ListEvent
@@ -232,9 +240,61 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     fun move(row: ThreadRow, mailboxId: String) = submit(MailActions.move(row.messageIds, mailboxId))
 
+    /**
+     * Report spam (or, in the Junk folder, "Not spam") for the whole conversation, with an Undo that does the
+     * opposite. The core's refusal (no Junk folder) is shown as it is.
+     */
     fun spam(row: ThreadRow) {
-        val junk = Folders.withRole(stateFlow.value.mailboxes, "junk") ?: return
-        submit(MailActions.move(row.messageIds, junk.id))
+        val from = stateFlow.value.current
+        val isSpam = !SpamRules.isNotSpamEntry(from?.role)
+        reportSpam(row.messageIds, isSpam) {
+            eventChannel.send(
+                ListEvent.UndoSpam(if (isSpam) R.string.spam_reported else R.string.spam_cleared, row.messageIds, isSpam, from?.id, from?.role),
+            )
+        }
+    }
+
+    /** Puts the mail back where the report was made from (see [SpamRules.undoGoesTo]). */
+    fun undoSpam(event: ListEvent.UndoSpam) {
+        val to = SpamRules.undoGoesTo(event.wasSpam, event.fromId, event.fromRole)
+        if (to == null) reportSpam(event.messageIds, !event.wasSpam) else submit(MailActions.move(event.messageIds, to))
+    }
+
+    private fun reportSpam(ids: List<String>, isSpam: Boolean, onDone: suspend () -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                MailActions.reportSpam(getApplication(), ids, isSpam)
+                reload()
+                onDone()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reporting spam failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(swipeEpoch = it.swipeEpoch + 1) }
+                reload()
+                eventChannel.send(ListEvent.Text(SpamRules.failure(e)))
+            }
+        }
+    }
+
+    /** The bell of a folder from the drawer's menu. The list reads again when the core has it. */
+    fun setNotify(mailboxId: String, notify: Boolean) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val core = Background.core(getApplication())
+                    core.setMailboxNotify(mailboxId, notify)
+                    if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
+                }
+                reload()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "switching a folder's notifications failed: ${e.javaClass.simpleName}")
+                reload()
+                eventChannel.send(ListEvent.Text(UiMessage.of(e, R.string.folders_notify_failed)))
+            }
+        }
     }
 
     /** Starts a draft of [kind] and has the screen open it. One at a time: a double tap makes one draft. */

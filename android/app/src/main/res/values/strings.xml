@@ -85,7 +85,7 @@
     <string name="delivery_check_queued">A check will run as soon as there is a network</string>
 
     <string name="delivery_what_to_show">What to show</string>
-    <string name="delivery_show_mail">New mail in Inbox</string>
+    <string name="delivery_show_mail">New mail</string>
     <string name="delivery_show_reminders">Calendar and task reminders</string>
     <string name="delivery_remove_elsewhere">Remove when read elsewhere</string>
     <string name="delivery_send_test">Send a test notification</string>

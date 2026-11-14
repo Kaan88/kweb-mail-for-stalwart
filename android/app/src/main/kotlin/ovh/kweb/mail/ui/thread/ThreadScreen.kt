@@ -22,8 +22,14 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.saveable.rememberSaveable
+import ovh.kweb.mail.ui.folders.SpamRules
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,7 +86,7 @@ import uniffi.kweb_core.DraftKind
 /** One conversation: its messages oldest first as cards, and what can be done with the thread. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}) {
+fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}, onOpenFilters: () -> Unit = {}) {
     val context = LocalContext.current
     val vm: ThreadViewModel = viewModel(
         key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
@@ -93,6 +99,8 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     val activity = LocalActivity.current
     var moving by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    // The message whose sender is asked about; saved, so a rotation keeps the question.
+    var blockingId by rememberSaveable { mutableStateOf<String?>(null) }
     var busyBlobId by remember { mutableStateOf<String?>(null) }
 
     fun say(textRes: Int) {
@@ -124,6 +132,17 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         vm.events.collect { event ->
             when (event) {
                 is ThreadEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
+                is ThreadEvent.Text -> snackbar.showSnackbar(event.message.resolve(resources))
+                is ThreadEvent.Blocked -> snackbar.showSnackbar(resources.getString(R.string.block_done, event.address))
+                is ThreadEvent.BlockRefused -> {
+                    // The core's words as they are, with the way to the place where the user decides.
+                    val result = snackbar.showSnackbar(
+                        event.text,
+                        actionLabel = resources.getString(R.string.block_open_filters),
+                        duration = SnackbarDuration.Long,
+                    )
+                    if (result == SnackbarResult.ActionPerformed) onOpenFilters()
+                }
                 ThreadEvent.Close -> onBack()
                 is ThreadEvent.OpenDraft -> onCompose(event.draftId)
             }
@@ -278,9 +297,12 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                 enabled = canAct,
                                 onClick = { menuOpen = false; moving = true },
                             )
-                            if (junk != null && junk.id != route.mailboxId) {
+                            if (SpamRules.threadOffered(from, junk != null)) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.action_spam)) },
+                                    text = {
+                                        val notSpam = SpamRules.threadIsNotSpam(state.messages, targets, route.mailboxId, state.mailboxes)
+                                        Text(stringResource(if (notSpam) R.string.spam_not else R.string.spam_report))
+                                    },
                                     enabled = canAct,
                                     onClick = { menuOpen = false; vm.spam() },
                                 )
@@ -331,6 +353,11 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
                             onForward = { vm.startDraft(DraftKind.Forward(header.id)) },
                             onFilterLike = { onFilterLike(header.id) },
+                            onBlockSender = if (ThreadRules.canBlockSender(header, state.myAddress)) {
+                                { blockingId = header.id }
+                            } else {
+                                null
+                            },
                             onSummarize = if (AssistantRules.Kind.SUMMARY in offered) {
                                 { assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeMessage(header.id)) }
                             } else {
@@ -369,6 +396,24 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             },
             onDismiss = { moving = false },
         )
+    }
+    blockingId?.let { id ->
+        val address = state.messages.firstOrNull { it.id == id }?.fromEmail
+        if (address == null) {
+            blockingId = null
+        } else {
+            AlertDialog(
+                onDismissRequest = { blockingId = null },
+                title = { Text(stringResource(R.string.block_title, address)) },
+                text = { Text(stringResource(R.string.block_text, address)) },
+                confirmButton = {
+                    TextButton(onClick = { blockingId = null; vm.blockSender(id) }) {
+                        Text(stringResource(R.string.block_confirm), color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = { TextButton(onClick = { blockingId = null }) { Text(stringResource(R.string.cancel)) } },
+            )
+        }
     }
     if (confirmingDelete) {
         DeleteForeverDialog(

@@ -282,6 +282,8 @@ data class SharedAgendaState(
     val refreshing: Boolean = false,
     val loadingMore: Boolean = false,
     val error: UiMessage? = null,
+    /** At least one of the calendars may be written to: a new event can be added. */
+    val canAdd: Boolean = false,
 ) {
     val canLoadMore: Boolean get() = SharedRules.canExtend(window)
 }
@@ -364,6 +366,7 @@ class SharedAgendaController(
                     it.copy(
                         window = span,
                         calendarIds = calendars?.map { c -> c.id } ?: it.calendarIds,
+                        canAdd = calendars?.any { c -> c.mayWrite } ?: it.canAdd,
                         rows = AgendaRules.rows(days, zone),
                         loaded = true,
                         loading = false,

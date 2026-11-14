@@ -73,17 +73,19 @@ import ovh.kweb.mail.ui.thread.FileNames
 import ovh.kweb.mail.ui.thread.MessageCard
 import ovh.kweb.mail.ui.thread.UrlPolicy
 import uniffi.kweb_core.Attachment
+import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.SharedAction
 
 /**
  * A message of a shared folder, drawn with the card and the locked-down WebView of the thread screen: the same
  * blocking of remote pictures, the same handling of links, attachments opened and saved the same way (but
  * downloaded from the owner's account). Opening it does not mark it read. What may be done to it (mark, flag, move,
- * delete) is offered only where the folder's rights allow it; there is no reply, forward or archive.
+ * delete) is offered only where the folder's rights allow it; there is no archive. Reply, reply to all and forward are
+ * always offered: the draft is the user's own and goes from the user's own address ([onCompose] opens it).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit) {
+fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: (draftId: String) -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: SharedMessageViewModel = viewModel(
@@ -107,6 +109,14 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit) {
 
     // A message that is gone (moved or deleted by someone) or a share that is gone ends here; the list reads itself again.
     CollectSharedEvents(c.events, snackbar, onGone = onBack, onDone = onBack)
+    // The user's own reply or forward: the ordinary compose screen opens with that draft.
+    LaunchedEffect(vm) { vm.drafts.draftStarted.collect { onCompose(it) } }
+    LaunchedEffect(vm) {
+        vm.drafts.problems.collect {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(it.resolve(resources))
+        }
+    }
     LifecycleResumeEffect(vm) {
         c.show()
         onPauseOrDispose { }
@@ -207,6 +217,7 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit) {
     val canMark = state.allows(SharedActionKind.MARK)
     val canMove = state.allows(SharedActionKind.MOVE)
     val canDelete = state.allows(SharedActionKind.DELETE)
+    val starting by vm.drafts.busy.collectAsStateWithLifecycle()
     val idle = shared != null && !state.busy
 
     Scaffold(
@@ -258,6 +269,7 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+            if (starting) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
             when {
                 shared != null -> {
                     if (state.foldersFailed) {
@@ -290,10 +302,10 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit) {
                                     saver.launch(FileNames.safe(it.name))
                                 }
                             },
-                            onReply = {},
-                            onReplyAll = {},
-                            onForward = {},
-                            showMenu = false,
+                            onReply = { vm.drafts.start(DraftKind.Reply(shared.header.id)) },
+                            onReplyAll = { vm.drafts.start(DraftKind.ReplyAll(shared.header.id)) },
+                            onForward = { vm.drafts.start(DraftKind.Forward(shared.header.id)) },
+                            showMenu = true,
                         ),
                     )
                     Spacer(Modifier.height(24.dp))

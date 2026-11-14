@@ -34,6 +34,7 @@ import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
 import ovh.kweb.mail.ui.files.FilesScreen
 import ovh.kweb.mail.ui.filters.FiltersScreen
+import ovh.kweb.mail.ui.folders.FoldersScreen
 import ovh.kweb.mail.ui.list.MailListScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.search.SearchScreen
@@ -47,6 +48,8 @@ import ovh.kweb.mail.ui.shared.SharedFolderScreen
 import ovh.kweb.mail.ui.shared.SharedFoldersScreen
 import ovh.kweb.mail.ui.shared.SharedMessageScreen
 import ovh.kweb.mail.ui.shared.SharedScreen
+import ovh.kweb.mail.ui.sharing.LocalOpenShare
+import ovh.kweb.mail.ui.sharing.ShareScreen
 import ovh.kweb.mail.ui.thread.ThreadScreen
 import ovh.kweb.mail.ui.signin.SignInScreen
 
@@ -79,6 +82,8 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 mailList.state.map { s -> s.mailboxes.firstOrNull { it.role == "inbox" }?.unreadEmails?.toInt() ?: 0 }.distinctUntilChanged()
             }.collectAsStateWithLifecycle(0)
             val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
+            val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
+            CompositionLocalProvider(LocalOpenShare provides openShare) {
             when (val route = stack.last()) {
                 Route.MailList -> MailListScreen(
                     onOpenThread = { threadId, mailboxId -> app.open(Route.Thread(threadId, mailboxId, null)) },
@@ -87,6 +92,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onOpenSettings = { app.open(Route.Settings) },
                     onCompose = { app.open(Route.Compose(it)) },
                     onOpenShared = { app.open(Route.Shared) },
+                    onOpenFolders = { folderId, action -> app.open(Route.Folders(folderId, action)) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
@@ -111,7 +117,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 }
                 is Route.EditEvent -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved)
+                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account)
                     }
                 }
                 is Route.Contact -> key(route) {
@@ -127,7 +133,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 }
                 is Route.EditContact -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        EditContactScreen(route.contactId, onBack = app::back, onSaved = app::contactSaved)
+                        EditContactScreen(route.contactId, onBack = app::back, onSaved = app::contactSaved, account = route.account)
                     }
                 }
                 // The shared screens: one store per route, and the account is part of every route.
@@ -163,7 +169,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 }
                 is Route.SharedMail -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        SharedMessageScreen(route, onBack = app::back)
+                        SharedMessageScreen(route, onBack = app::back, onCompose = { app.open(Route.Compose(it)) })
                     }
                 }
                 is Route.SharedCalendar -> key(route) {
@@ -173,12 +179,13 @@ fun AppContent(app: AppViewModel = viewModel()) {
                             onBack = app::back,
                             onGone = app::sharedGone,
                             onOpenEvent = { eventId, recurrenceId -> app.open(Route.SharedEventView(route.account, eventId, recurrenceId)) },
+                            onAddEvent = { app.open(Route.EditEvent(null, it, route.account)) },
                         )
                     }
                 }
                 is Route.SharedEventView -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        SharedEventScreen(route, onBack = app::back)
+                        SharedEventScreen(route, onBack = app::back, onEdit = { app.open(Route.EditEvent(it, null, route.account)) })
                     }
                 }
                 is Route.SharedContacts -> key(route) {
@@ -188,12 +195,23 @@ fun AppContent(app: AppViewModel = viewModel()) {
                             onBack = app::back,
                             onGone = app::sharedGone,
                             onOpenContact = { app.open(Route.SharedContactView(route.account, it)) },
+                            onAddContact = { app.open(Route.EditContact(null, route.account)) },
                         )
                     }
                 }
                 is Route.SharedContactView -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        SharedContactScreen(route, onBack = app::back, onWrite = { id, to -> app.open(Route.Compose(id, to)) })
+                        SharedContactScreen(
+                            route,
+                            onBack = app::back,
+                            onWrite = { id, to -> app.open(Route.Compose(id, to)) },
+                            onEdit = { app.open(Route.EditContact(it, route.account)) },
+                        )
+                    }
+                }
+                is Route.Share -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        ShareScreen(route, onBack = app::back)
                     }
                 }
                 Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
@@ -201,6 +219,11 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 }
                 is Route.Filters -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     FiltersScreen(route, onBack = app::back)
+                }
+                is Route.Folders -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        FoldersScreen(route, onBack = app::back)
+                    }
                 }
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AssistantScreen(onBack = app::back)
@@ -212,6 +235,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                         onBack = app::back,
                         onCompose = { app.open(Route.Compose(it)) },
                         onFilterLike = { app.open(Route.Filters(it)) },
+                        onOpenFilters = { app.open(Route.Filters()) },
                     )
                 }
                 is Route.Compose -> key(route) { ComposeScreen(route.draftId, route.prefillTo, onLeave = app::back, onSent = app::sent) }
@@ -231,6 +255,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onSignInAgain = { app.open(Route.SignInAgain) },
                 )
                 Route.SignInAgain -> SignInAgain(app)
+            }
             }
             // The root screens put it above their bottom bar themselves.
             if (!BackStack.isRoot(stack.last())) {

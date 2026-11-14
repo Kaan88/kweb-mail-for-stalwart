@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.NotificationTarget
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import uniffi.kweb_core.DraftKind
@@ -132,19 +133,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * The activity was opened from the notification of [messageId]: show that message over the
      * list. A message the cache does not have (it should) leaves just the list.
      */
-    fun focusMessage(messageId: String) {
+    fun focusMessage(messageId: String, showFolder: (mailboxId: String?) -> Unit = {}) {
         viewModelScope.launch {
-            val stack = withContext(Dispatchers.IO) {
+            // The folder the message is opened from: its own, as mail of a folder other than the Inbox can notify too.
+            val found = withContext(Dispatchers.IO) {
                 try {
                     val core = Background.core(getApplication())
                     val header = core.message(messageId)
-                    val inboxId = core.mailboxes().firstOrNull { it.role == "inbox" }?.id
-                    if (header == null) BackStack.initial else BackStack.forNotification(header.threadId, inboxId, messageId)
+                    val folder = header?.let { NotificationTarget.folderFor(it.mailboxIds, core.mailboxes()) }
+                    header to folder
                 } catch (e: kotlin.Exception) {
                     Log.w(Background.TAG, "looking up the tapped message failed", e)
-                    BackStack.initial
+                    null to null
                 }
             }
+            val (header, folder) = found
+            val stack = if (header == null) BackStack.initial else BackStack.forNotification(header.threadId, folder?.id, messageId)
+            // The list behind it shows that folder too (null: the Inbox).
+            showFolder(folder?.takeIf { it.role != "inbox" }?.id)
             stackFlow.update { BackStack.showOver(it, stack) }
         }
     }

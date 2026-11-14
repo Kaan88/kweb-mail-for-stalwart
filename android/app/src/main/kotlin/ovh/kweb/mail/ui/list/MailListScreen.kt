@@ -83,6 +83,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,8 +96,18 @@ import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.delivery.NotificationFix
+import ovh.kweb.mail.ui.folders.FolderAction
+import ovh.kweb.mail.ui.folders.FolderMenu
+import ovh.kweb.mail.ui.folders.FolderRules
+import ovh.kweb.mail.ui.folders.FolderMenuItem
+import ovh.kweb.mail.ui.folders.SpamRules
+import ovh.kweb.mail.ui.folders.longPressMenu
+import ovh.kweb.mail.ui.sharing.LocalOpenShare
+import ovh.kweb.mail.ui.sharing.ShareRules
+import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.ListFilter
+import uniffi.kweb_core.ShareKind
 import uniffi.kweb_core.ThreadRow
 
 /**
@@ -112,6 +123,7 @@ fun MailListScreen(
     onOpenSettings: () -> Unit,
     onCompose: (draftId: String) -> Unit,
     onOpenShared: () -> Unit,
+    onOpenFolders: (folderId: String?, action: FolderAction?) -> Unit,
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
@@ -146,6 +158,7 @@ fun MailListScreen(
             launch {
                 when (event) {
                     is ListEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
+                    is ListEvent.Text -> snackbar.showSnackbar(event.message.resolve(resources))
                     is ListEvent.OpenDraft -> onCompose(event.draftId)
                     is ListEvent.Undo -> {
                         val result = snackbar.showSnackbar(
@@ -154,6 +167,14 @@ fun MailListScreen(
                             duration = SnackbarDuration.Long,
                         )
                         if (result == SnackbarResult.ActionPerformed) vm.undo(event)
+                    }
+                    is ListEvent.UndoSpam -> {
+                        val result = snackbar.showSnackbar(
+                            resources.getString(event.textRes),
+                            actionLabel = resources.getString(R.string.action_undo),
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) vm.undoSpam(event)
                     }
                 }
             }
@@ -192,6 +213,18 @@ fun MailListScreen(
                 onFolder = {
                     scope.launch { drawerState.close() }
                     vm.selectFolder(it)
+                },
+                onFolderMenu = { folder, item ->
+                    scope.launch { drawerState.close() }
+                    when (item) {
+                        FolderMenuItem.NOTIFY_ON -> vm.setNotify(folder.id, true)
+                        FolderMenuItem.NOTIFY_OFF -> vm.setNotify(folder.id, false)
+                        else -> onOpenFolders(folder.id, FolderRules.action(item))
+                    }
+                },
+                onManageFolders = {
+                    scope.launch { drawerState.close() }
+                    onOpenFolders(null, null)
                 },
                 onShared = {
                     scope.launch { drawerState.close() }
@@ -265,7 +298,7 @@ fun MailListScreen(
                                     row = row,
                                     shape = Groups.shape(index, state.rows.size),
                                     role = current?.role,
-                                    junkAvailable = junk != null && current?.id != junk.id,
+                                    spamOffered = SpamRules.offered(current?.role, junk != null),
                                     onOpen = {
                                         current?.let {
                                             if (ListRules.opensCompose(it.role)) {
@@ -456,6 +489,8 @@ private fun DrawerContent(
     folders: List<FolderEntry>,
     currentId: String?,
     onFolder: (String) -> Unit,
+    onFolderMenu: (Mailbox, FolderMenuItem) -> Unit,
+    onManageFolders: () -> Unit,
     onShared: () -> Unit,
     onDeliveryCheck: () -> Unit,
     onSettings: () -> Unit,
@@ -470,24 +505,71 @@ private fun DrawerContent(
                 Avatar(Sender.initial(username, ""))
                 Text(username, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            val openShare = LocalOpenShare.current
             folders.forEach { entry ->
-                val unread = entry.mailbox.unreadEmails.toInt()
-                NavigationDrawerItem(
-                    label = { Text(folderName(entry.mailbox), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    selected = entry.mailbox.id == currentId,
-                    onClick = { onFolder(entry.mailbox.id) },
-                    modifier = Modifier.padding(start = (16 * entry.depth).dp),
-                    icon = { FolderIcon(entry.mailbox.role) },
-                    badge = if (unread > 0) {
-                        {
-                            val description = pluralStringResource(R.plurals.unread_count, unread, unread)
-                            Text(unread.toString(), modifier = Modifier.semantics { contentDescription = description })
-                        }
-                    } else {
-                        null
-                    },
-                )
+                val folder = entry.mailbox
+                val unread = folder.unreadEmails.toInt()
+                val bell = FolderRules.showsDrawerBell(folder)
+                var menuOpen by remember { mutableStateOf(false) }
+                val shareable = ShareRules.mailboxShareable(folder.role)
+                val hasMenu = shareable || FolderRules.menu(folder, withBell = true).isNotEmpty()
+                val shareName = folderName(folder)
+                Box {
+                    NavigationDrawerItem(
+                        label = { Text(folderName(folder), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        selected = folder.id == currentId,
+                        onClick = { onFolder(folder.id) },
+                        modifier = Modifier
+                            .padding(start = (16 * entry.depth).dp)
+                            .then(if (hasMenu) Modifier.longPressMenu(stringResource(R.string.folders_options_for, folderName(folder))) { menuOpen = true } else Modifier),
+                        icon = { FolderIcon(folder.role) },
+                        badge = if (unread > 0 || bell) {
+                            {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    if (bell) {
+                                        Icon(
+                                            Icons.Filled.Notifications,
+                                            contentDescription = stringResource(R.string.folders_drawer_bell),
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
+                                    if (unread > 0) {
+                                        val description = pluralStringResource(R.plurals.unread_count, unread, unread)
+                                        Text(unread.toString(), modifier = Modifier.semantics { contentDescription = description })
+                                    }
+                                }
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                    if (hasMenu) {
+                        // One menu: the folder entries of the folders feature, and Share (sharing feature) when the folder can be shared.
+                        FolderMenu(
+                            folder,
+                            withBell = true,
+                            expanded = menuOpen,
+                            onDismiss = { menuOpen = false },
+                            extra = if (shareable) {
+                                {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.share_menu)) },
+                                        onClick = { menuOpen = false; openShare(ShareKind.MAILBOX, folder.id, shareName) },
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                        ) { onFolderMenu(folder, it) }
+                    }
+                }
             }
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.folders_manage)) },
+                icon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
+                selected = false,
+                onClick = onManageFolders,
+            )
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.shared_title)) },
@@ -561,7 +643,7 @@ private fun ConversationItem(
     row: ThreadRow,
     shape: Shape,
     role: String?,
-    junkAvailable: Boolean,
+    spamOffered: Boolean,
     onOpen: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
@@ -641,8 +723,8 @@ private fun ConversationItem(
                     menuOpen = false
                     onMove()
                 }
-                if (junkAvailable) {
-                    MenuItem(R.string.action_spam) {
+                if (spamOffered) {
+                    MenuItem(if (SpamRules.isNotSpamEntry(role)) R.string.spam_not else R.string.spam_report) {
                         menuOpen = false
                         onSpam()
                     }

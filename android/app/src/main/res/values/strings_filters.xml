@@ -21,7 +21,7 @@
     <string name="filters_move_up">Move %1$s up</string>
     <string name="filters_move_down">Move %1$s down</string>
     <string name="filters_folder_missing">The folder for this rule is gone. Open the rule and choose another.</string>
-    <string name="filters_inbox_note">Mail that a rule moves out of the Inbox does not notify, because notifications are for the Inbox.</string>
+    <string name="filters_inbox_note">Mail that a rule moves out of the Inbox notifies only if the bell of that folder is on (Manage folders in the folder list).</string>
 
     <string name="filters_banner_away">The away message is on, so the filters are paused. Switching them on will switch the away message off.</string>
     <string name="filters_banner_other">Another filter script, %1$s, is on. Switching these filters on will switch it off.</string>

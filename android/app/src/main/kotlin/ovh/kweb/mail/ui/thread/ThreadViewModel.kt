@@ -20,13 +20,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.ui.MailActions
 import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.compose.DraftLauncher
-import ovh.kweb.mail.ui.list.Folders
+import ovh.kweb.mail.ui.UiMessage
+import ovh.kweb.mail.ui.folders.SpamRules
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.Attachment
+import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.MessageBody
@@ -69,6 +72,15 @@ data class ThreadState(
 sealed interface ThreadEvent {
     data class Message(val textRes: Int) : ThreadEvent
 
+    /** A refusal in the core's own words (spam). */
+    data class Text(val message: UiMessage) : ThreadEvent
+
+    /** [address] is blocked: their mail goes to the Trash from now on. */
+    data class Blocked(val address: String) : ThreadEvent
+
+    /** The core refused to block; [text] is its reason. The screen offers the filters screen next to it. */
+    data class BlockRefused(val text: String) : ThreadEvent
+
     /** Leave the screen: the thread was acted on or is gone. */
     data object Close : ThreadEvent
 
@@ -91,6 +103,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private var markedRead = false
     private var closeSent = false
     private var startingDraft = false
+    private var blocking = false
 
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
@@ -175,9 +188,56 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
 
     fun move(mailboxId: String) = onTargets { MailActions.move(it, mailboxId) }
 
+    /** Report spam for the thread's messages, or "Not spam" for those in Junk; closes the screen like Archive. */
     fun spam() {
-        val junk = Folders.withRole(stateFlow.value.mailboxes, "junk") ?: return
-        move(junk.id)
+        val s = stateFlow.value
+        val ids = targets()
+        if (ids.isEmpty()) return
+        val isSpam = !SpamRules.threadIsNotSpam(s.messages, ids, route.mailboxId, s.mailboxes)
+        viewModelScope.launch {
+            try {
+                MailActions.reportSpam(getApplication(), ids, isSpam)
+                reload()
+                close()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reporting spam failed: ${e.javaClass.simpleName}")
+                reload()
+                eventChannel.send(ThreadEvent.Text(SpamRules.failure(e)))
+            }
+        }
+    }
+
+    /**
+     * Blocks the sender of [messageId]. The core decides (and refuses with words for the user); one block at a
+     * time. Stays on the screen: the message is in the Trash after it and the cards show that.
+     */
+    fun blockSender(messageId: String) {
+        val address = stateFlow.value.messages.firstOrNull { it.id == messageId }?.fromEmail.orEmpty()
+        if (blocking) return
+        blocking = true
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val core = Background.core(getApplication())
+                    core.blockSender(messageId)
+                    // The delete waits in the outbox; without a live connection nothing else would send it soon.
+                    if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
+                }
+                reload()
+                eventChannel.send(ThreadEvent.Blocked(address))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: CoreException.Invalid) {
+                eventChannel.send(if (e.msg.isNotBlank()) ThreadEvent.BlockRefused(e.msg) else ThreadEvent.Message(R.string.block_failed))
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "blocking a sender failed: ${e.javaClass.simpleName}")
+                eventChannel.send(ThreadEvent.Message(R.string.block_failed))
+            } finally {
+                blocking = false
+            }
+        }
     }
 
     fun markUnread() {

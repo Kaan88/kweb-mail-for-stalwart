@@ -93,6 +93,10 @@ object SharedRules {
         else -> UiMessage.Res(R.string.shared_failed)
     }
 
+    /** As [message], but [fallback] where there are no words of the core's to say. */
+    fun message(error: Throwable, @androidx.annotation.StringRes fallback: Int): UiMessage =
+        message(error).let { if (it == UiMessage.Res(R.string.shared_failed)) UiMessage.Res(fallback) else it }
+
     // ---- accounts
 
     /** The kinds an account shares, in the order the screen lists them. */

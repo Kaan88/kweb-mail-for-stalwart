@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Texts of the folder features (M10): managing folders, their bells, spam and blocking a sender. -->
+<resources>
+    <string name="folders_title">Manage folders</string>
+    <string name="folders_manage">Manage folders</string>
+    <string name="folders_load_failed">The folders could not be loaded.</string>
+    <string name="folders_empty">There are no folders yet.</string>
+    <string name="folders_notify_note">A bell means new mail in that folder notifies you. A folder you switch on notifies about mail that arrives after that. The Inbox always notifies.</string>
+    <string name="folders_new">New folder</string>
+    <string name="folders_new_inside">New folder inside</string>
+    <string name="folders_rename">Rename</string>
+    <string name="folders_move">Move to…</string>
+    <string name="folders_delete">Delete</string>
+    <string name="folders_notify_on">Notify for new mail</string>
+    <string name="folders_notify_off">Stop notifying</string>
+    <string name="folders_options_for">Options for %1$s</string>
+    <string name="folders_bell_fixed">Notifications for %1$s are always on</string>
+    <string name="folders_bell_is_on">Notifications for %1$s are on. Switch off</string>
+    <string name="folders_bell_is_off">Notifications for %1$s are off. Switch on</string>
+    <string name="folders_drawer_bell">Notifies</string>
+
+    <string name="folders_name_label">Folder name</string>
+    <string name="folders_new_title">New folder</string>
+    <string name="folders_new_in_title">New folder in %1$s</string>
+    <string name="folders_rename_title">Rename folder</string>
+    <string name="folders_create">Create</string>
+    <string name="folders_save">Save</string>
+    <string name="folders_move_title">Move %1$s to</string>
+    <string name="folders_top_level">Top level</string>
+    <string name="folders_move_nowhere">There is no other place for this folder.</string>
+    <string name="folders_delete_title">Delete %1$s?</string>
+    <string name="folders_delete_empty_text">The folder is empty.</string>
+    <plurals name="folders_delete_mail_text">
+        <item quantity="one">%1$d message in it goes to the Trash.</item>
+        <item quantity="other">%1$d messages in it go to the Trash.</item>
+    </plurals>
+    <string name="folders_delete_blocked_text">%1$s has folders inside. Delete those first.</string>
+    <string name="folders_delete_blocked_title">Folder not empty</string>
+    <string name="folders_got_it">OK</string>
+
+    <string name="folders_notify_failed">The change could not be saved.</string>
+    <string name="folders_create_failed">The folder could not be made.</string>
+    <string name="folders_rename_failed">The folder could not be renamed.</string>
+    <string name="folders_move_failed">The folder could not be moved.</string>
+    <string name="folders_delete_failed">The folder could not be deleted.</string>
+
+    <string name="spam_report">Report spam</string>
+    <string name="spam_not">Not spam</string>
+    <string name="spam_reported">Reported as spam</string>
+    <string name="spam_cleared">Marked as not spam</string>
+    <string name="spam_failed">The change could not be made.</string>
+
+    <string name="block_sender">Block sender</string>
+    <string name="block_title">Block %1$s?</string>
+    <string name="block_text">Mail from %1$s will go to the Trash from now on, and your mail filters will be switched on.</string>
+    <string name="block_confirm">Block</string>
+    <string name="block_done">Blocked %1$s</string>
+    <string name="block_failed">The sender could not be blocked.</string>
+    <string name="block_open_filters">Open filters</string>
+</resources>

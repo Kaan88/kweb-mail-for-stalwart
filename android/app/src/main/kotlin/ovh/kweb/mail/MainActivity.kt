@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
         intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
         mailList.showInbox()
-        app.focusMessage(messageId)
+        app.focusMessage(messageId, showFolder = mailList::selectFolder)
         // The tap removed the notification while the mail is still unread. Tell the core it is
         // gone on purpose, like a swipe, or the next 15-minute check would put it back.
         val appContext = applicationContext

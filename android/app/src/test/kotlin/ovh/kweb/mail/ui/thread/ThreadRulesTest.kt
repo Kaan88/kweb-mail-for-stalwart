@@ -35,7 +35,7 @@ class ThreadRulesTest {
         assertTrue(ThreadRules.isGone(loaded = true, refreshed = true, count = 0))
     }
 
-    private fun box(id: String, role: String?) = Mailbox(id, id, role, null, 0u, 0u, 0u)
+    private fun box(id: String, role: String?) = Mailbox(id, id, role, null, 0u, 0u, 0u, false)
 
     private val boxes = listOf(
         box("inbox", "inbox"), box("sent", "sent"), box("drafts", "drafts"), box("trash", "trash"), box("work", null),

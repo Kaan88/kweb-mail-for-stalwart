@@ -40,7 +40,14 @@ data class EditState(
 }
 
 /** The form for a new entry ([eventId] null) or for changing one. */
-class EditEventViewModel(app: Application, private val eventId: String?, private val startHint: String?) : AndroidViewModel(app) {
+class EditEventViewModel(
+    app: Application,
+    private val eventId: String?,
+    private val startHint: String?,
+    /** The owner's account when the entry is in a calendar shared with the user; null for the user's own. */
+    account: String? = null,
+) : AndroidViewModel(app) {
+    private val backend = eventFormBackend({ Background.core(app) }, account)
     private val stateFlow = MutableStateFlow(EditState(creating = eventId == null))
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null
@@ -59,8 +66,7 @@ class EditEventViewModel(app: Application, private val eventId: String?, private
             try {
                 val zone = ZoneId.systemDefault()
                 val (all, detail) = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
-                    core.calendars() to eventId?.let { core.event(it, null) }
+                    backend.calendars() to eventId?.let { backend.event(it) }
                 }
                 val menu = FormChoices.calendars(all, detail?.input?.calendarId)
                 val form = if (detail != null) {
@@ -118,7 +124,7 @@ class EditEventViewModel(app: Application, private val eventId: String?, private
         viewModelScope.launch {
             try {
                 val input = EventForms.toInput(form)
-                withContext(Dispatchers.IO) { Background.core(getApplication()).saveEvent(eventId, input) }
+                withContext(Dispatchers.IO) { backend.save(eventId, input) }
                 doneChannel.send(Unit)
             } catch (e: CancellationException) {
                 throw e

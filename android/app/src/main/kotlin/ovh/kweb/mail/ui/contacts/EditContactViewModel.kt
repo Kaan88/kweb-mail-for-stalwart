@@ -38,7 +38,13 @@ data class EditContactState(
 }
 
 /** The form for a new contact ([contactId] null) or for changing one. It lives as long as its route (see ScreenStores). */
-class EditContactViewModel(app: Application, private val contactId: String?) : AndroidViewModel(app) {
+class EditContactViewModel(
+    app: Application,
+    private val contactId: String?,
+    /** The owner's account when the contact is in an address book shared with the user; null for the user's own. */
+    account: String? = null,
+) : AndroidViewModel(app) {
+    private val backend = contactFormBackend({ Background.core(app) }, account)
     private val stateFlow = MutableStateFlow(EditContactState(creating = contactId == null))
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null
@@ -56,11 +62,10 @@ class EditContactViewModel(app: Application, private val contactId: String?) : A
         loadJob = viewModelScope.launch {
             try {
                 val (books, detail) = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
-                    val detail = contactId?.let { core.contact(it) }
+                    val detail = contactId?.let { backend.contact(it) }
                     // For a change the books only fill the menu: a failure leaves the contact where it is.
                     val books = try {
-                        core.addressBooks()
+                        backend.addressBooks()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -118,14 +123,13 @@ class EditContactViewModel(app: Application, private val contactId: String?) : A
                 val wanted = ContactForms.toContact(form)
                 val base = state.initial?.let(ContactForms::toContact)
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
                     if (contactId == null || base == null) {
-                        core.saveContact(contactId, wanted)
+                        backend.save(contactId, wanted)
                     } else {
                         // The form may show an old copy, or the card may have changed while it was open: the changes
                         // go onto the card as it is now, so nothing added elsewhere is deleted.
-                        val current = ContactForms.normalized(core.contact(contactId).contact)
-                        core.saveContact(contactId, ContactForms.merge(base, wanted, current))
+                        val current = ContactForms.normalized(backend.contact(contactId).contact)
+                        backend.save(contactId, ContactForms.merge(base, wanted, current))
                     }
                 }
                 doneChannel.send(Unit)

@@ -146,7 +146,7 @@ fun EventScreen(eventId: String, recurrenceId: String?, onBack: () -> Unit, onEd
 }
 
 @Composable
-private fun DeleteDialog(ask: EventRules.DeleteAsk, isTask: Boolean, onDelete: (DeleteScope) -> Unit, onDismiss: () -> Unit) {
+internal fun DeleteDialog(ask: EventRules.DeleteAsk, isTask: Boolean, onDelete: (DeleteScope) -> Unit, onDismiss: () -> Unit) {
     val title = stringResource(if (isTask) R.string.cal_delete_task_title else R.string.cal_delete_title)
     when (ask) {
         EventRules.DeleteAsk.ONE_OR_ALL -> AlertDialog(

@@ -69,6 +69,8 @@ import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.abs
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.sharing.PickKind
+import ovh.kweb.mail.ui.sharing.SharePickerButton
 import uniffi.kweb_core.Occurrence
 
 /**
@@ -124,6 +126,10 @@ fun CalendarScreen(
                     onSelect = vm::select,
                     onWeek = vm::moveWeek,
                 )
+                // Its own line, so the month title keeps the whole width of the title row.
+                Row(Modifier.fillMaxWidth().padding(end = 12.dp), horizontalArrangement = Arrangement.End) {
+                    SharePickerButton(PickKind.CALENDAR)
+                }
             }
         },
         bottomBar = bottomBar,

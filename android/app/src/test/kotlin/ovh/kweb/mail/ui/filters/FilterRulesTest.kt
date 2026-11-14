@@ -37,7 +37,7 @@ internal fun filters(
 ) = Filters(rules, active, stale, edited, text, away, other, other?.let { "text" })
 
 internal fun box(id: String, name: String, parent: String? = null, role: String? = null, order: UInt = 0u) =
-    Mailbox(id, name, role, parent, order, 0u, 0u)
+    Mailbox(id, name, role, parent, order, 0u, 0u, false)
 
 private val words = FilterWords(
     from = "From", recipient = "To or Cc", subject = "Subject", header = { "$it header" },

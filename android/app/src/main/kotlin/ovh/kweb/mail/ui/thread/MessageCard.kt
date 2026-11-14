@@ -80,6 +80,8 @@ class CardActions(
     val onDraftReply: (() -> Unit)? = null,
     /** "Filter mail like this" in the message's menu; null where it does not apply (a shared folder). */
     val onFilterLike: (() -> Unit)? = null,
+    /** "Block sender" in the message's menu; null where it does not apply (a shared folder, or a message the user sent). */
+    val onBlockSender: (() -> Unit)? = null,
     /** False for a message that may not be answered (one of a shared folder): the card has no menu. */
     val showMenu: Boolean = true,
 )
@@ -229,6 +231,13 @@ private fun MessageMenu(actions: CardActions) {
                     text = { Text(stringResource(R.string.filters_menu_item)) },
                     leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                     onClick = { open = false; filter() },
+                )
+            }
+            actions.onBlockSender?.let { block ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.block_sender)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) },
+                    onClick = { open = false; block() },
                 )
             }
             actions.onSummarize?.let { summarize ->

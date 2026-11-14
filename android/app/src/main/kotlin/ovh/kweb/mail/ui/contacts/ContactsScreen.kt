@@ -61,6 +61,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.platform.LocalFocusManager
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.sharing.PickKind
+import ovh.kweb.mail.ui.sharing.SharePickerButton
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.calendar.rememberLocale
 import ovh.kweb.mail.ui.list.Groups
@@ -92,7 +94,10 @@ fun ContactsScreen(
     Scaffold(
         topBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
-                SearchPill(initial = state.query, onChange = vm::onQueryChange)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { SearchPill(initial = state.query, onChange = vm::onQueryChange) }
+                    SharePickerButton(PickKind.ADDRESS_BOOK, Modifier.padding(end = 8.dp))
+                }
             }
         },
         bottomBar = bottomBar,

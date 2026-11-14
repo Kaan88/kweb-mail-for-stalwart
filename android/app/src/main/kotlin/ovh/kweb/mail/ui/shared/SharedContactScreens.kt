@@ -9,7 +9,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -18,6 +27,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -44,7 +56,13 @@ import uniffi.kweb_core.Address
 /** The contacts of the address books one account shares, with the search field of the own contacts. Read from the server every time. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SharedContactsScreen(route: Route.SharedContacts, onBack: () -> Unit, onGone: () -> Unit, onOpenContact: (contactId: String) -> Unit) {
+fun SharedContactsScreen(
+    route: Route.SharedContacts,
+    onBack: () -> Unit,
+    onGone: () -> Unit,
+    onOpenContact: (contactId: String) -> Unit,
+    onAddContact: () -> Unit,
+) {
     val app = LocalContext.current.applicationContext as Application
     val vm: SharedContactsViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactsViewModel(app, route.account) } })
     val c = vm.controller
@@ -52,16 +70,26 @@ fun SharedContactsScreen(route: Route.SharedContacts, onBack: () -> Unit, onGone
     val snackbar = remember { SnackbarHostState() }
     val locale = rememberLocale()
     val entries = remember(state.rows, locale) { state.rows?.let { ContactRules.group(it, locale) } }
+    val books by vm.books.state.collectAsStateWithLifecycle()
+    // A new contact only where an address book may be written to.
+    val canAdd = books.value?.any { it.mayWrite } == true
     CollectSharedEvents(c.events, snackbar, onGone = onGone)
     LifecycleResumeEffect(vm) {
         c.show()
+        vm.books.show()
         onPauseOrDispose { }
     }
 
     Scaffold(
         topBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background)) {
-                SharedTopBar(route.owner, onBack)
+                SharedTopBar(route.owner, onBack, actions = {
+                    if (canAdd) {
+                        IconButton(onClick = onAddContact) {
+                            Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.contacts_add))
+                        }
+                    }
+                })
                 SearchPill(initial = state.query, onChange = c::onQueryChange)
             }
         },
@@ -70,13 +98,13 @@ fun SharedContactsScreen(route: Route.SharedContacts, onBack: () -> Unit, onGone
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.refreshing,
-            onRefresh = c::refresh,
+            onRefresh = { c.refresh(); vm.books.refresh() },
             modifier = Modifier.padding(padding).fillMaxSize(),
         ) {
             LazyColumn(Modifier.fillMaxSize(), state = vm.listState, contentPadding = PaddingValues(bottom = 24.dp)) {
                 when {
                     entries == null && state.error != null -> item(key = "failed") {
-                        SharedCentered { Note(stringResource(R.string.shared_contacts_failed) + "\n" + state.error!!.text(), onRetry = c::refresh) }
+                        SharedCentered { Note(stringResource(R.string.shared_contacts_failed) + "\n" + state.error!!.text(), onRetry = { c.refresh(); vm.books.refresh() }) }
                     }
                     entries == null -> item(key = "loading") { SharedCentered { Loading() } }
                     entries.isEmpty() -> item(key = "empty") {
@@ -102,12 +130,17 @@ private fun entryKey(account: String, entry: ContactRules.Entry): String = when 
 }
 
 /**
- * One shared contact: the content of the contact screen, with nothing to edit or delete. A tap on a mail
- * address starts a new message of the user's own.
+ * One shared contact: the content of the contact screen. Edit and Delete are offered where the address book may be
+ * written to ([onEdit] opens the ordinary form). A tap on a mail address starts a new message of the user's own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SharedContactScreen(route: Route.SharedContactView, onBack: () -> Unit, onWrite: (draftId: String, to: Address) -> Unit) {
+fun SharedContactScreen(
+    route: Route.SharedContactView,
+    onBack: () -> Unit,
+    onWrite: (draftId: String, to: Address) -> Unit,
+    onEdit: (contactId: String) -> Unit,
+) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
     val vm: SharedContactViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactViewModel(app, route.account, route.contactId) } })
@@ -116,15 +149,29 @@ fun SharedContactScreen(route: Route.SharedContactView, onBack: () -> Unit, onWr
     val problem by vm.problem.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectSharedEvents(c.events, snackbar, onGone = {})
+    CollectSharedEvents(vm.deleter.events, snackbar, onGone = {}, onDone = onBack)
     LifecycleResumeEffect(vm) {
         c.show()
         onPauseOrDispose { }
     }
     LaunchedEffect(vm) { vm.draftStarted.collect { onWrite(it.draftId, it.to) } }
     val detail = state.value
+    val busy by vm.deleter.busy.collectAsStateWithLifecycle()
+    var asking by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
-        topBar = { SharedTopBar("", onBack) },
+        topBar = {
+            SharedTopBar("", onBack, actions = {
+                if (detail != null && detail.mayWrite) {
+                    IconButton(onClick = { onEdit(detail.id) }, enabled = !busy) {
+                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.contact_edit))
+                    }
+                    IconButton(onClick = { asking = true }, enabled = !busy) {
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.contact_delete))
+                    }
+                }
+            })
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -146,4 +193,21 @@ fun SharedContactScreen(route: Route.SharedContactView, onBack: () -> Unit, onWr
             }
         }
     }
+
+    if (asking && detail != null) {
+        AlertDialog(
+            onDismissRequest = { asking = false },
+            title = { Text(stringResource(R.string.contact_delete_title, detail.contact.name)) },
+            text = { Text(stringResource(R.string.contact_delete_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    asking = false
+                    vm.deleter.delete(Unit)
+                }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { asking = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
 }
+
+

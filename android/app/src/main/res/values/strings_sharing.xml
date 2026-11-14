@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The "Share" entry of a folder, a calendar, an address book and a file folder -->
+    <string name="share_menu">Share</string>
+    <string name="share_title">Share %1$s</string>
+
+    <string name="share_with_heading">Shared with</string>
+    <string name="share_nobody">Not shared with anyone yet.</string>
+    <string name="share_failed">The people this is shared with could not be read.</string>
+    <string name="share_level_read">Can see</string>
+    <string name="share_level_write">Can change</string>
+    <string name="share_stop">Stop sharing</string>
+
+    <string name="share_remove_title">Stop sharing with %1$s?</string>
+    <string name="share_remove_text">They lose access at once. Nothing is deleted.</string>
+
+    <string name="share_add_heading">Add a person</string>
+    <string name="share_new_level">They can</string>
+    <string name="share_search_label">Name or address</string>
+    <string name="share_search_hint">Type at least 2 letters to look someone up.</string>
+    <string name="share_searching">Looking…</string>
+    <string name="share_no_people">Nobody found.</string>
+    <string name="share_search_failed">The search did not work.</string>
+    <string name="share_add_person">Share with %1$s</string>
+    <string name="share_clear_search">Clear</string>
+
+    <!-- Choosing which calendar or address book to share -->
+    <string name="share_calendar_menu">Share a calendar…</string>
+    <string name="share_book_menu">Share an address book…</string>
+    <string name="share_pick_calendar">Share which calendar?</string>
+    <string name="share_pick_book">Share which address book?</string>
+    <string name="share_pick_empty">There is nothing to share.</string>
+    <string name="share_pick_failed">The list could not be read.</string>
+    <string name="share_more">More options</string>
+
+</resources>

@@ -25,6 +25,19 @@ object MailActions {
     fun move(ids: List<String>, mailboxId: String) = ids.map { Action.Move(it, mailboxId) }
 
     /**
+     * Report spam ([isSpam] true) or take it back, for [ids]. The core applies it to the cache at once and queues
+     * it for the server; a check is scheduled when the live connection is down. Throws what the core throws.
+     */
+    suspend fun reportSpam(context: Context, ids: List<String>, isSpam: Boolean) {
+        if (ids.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            val core = Background.core(context)
+            core.reportSpam(ids, isSpam)
+            if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(context)
+        }
+    }
+
+    /**
      * Hands [actions] to the core with one `submitAll`. The core applies them one by one and stops
      * at the first error, so after a failure the earlier ones stay applied: callers reload. When
      * the live connection is down a check is scheduled, so they reach the server as soon as there

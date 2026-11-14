@@ -87,6 +87,9 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.calendar.rememberLocale
 import ovh.kweb.mail.ui.list.Groups
+import ovh.kweb.mail.ui.sharing.LocalOpenShare
+import ovh.kweb.mail.ui.sharing.ShareRules
+import uniffi.kweb_core.ShareKind
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
 import uniffi.kweb_core.FileSpace
@@ -535,6 +538,9 @@ private fun GroupRow(
 @Composable
 private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String, onAction: (FileEntry, RowAction) -> Unit) {
     val actions = remember(entry) { FileRules.rowActions(entry) }
+    // "Share" for a folder of the user's own space; the entries of a shared space are not the user's to share.
+    val openShare = LocalOpenShare.current
+    val shareable = ShareRules.fileFolderShareable(entry)
     var menu by remember { mutableStateOf(false) }
     val labels = mapOf(
         RowAction.Open to R.string.files_open,
@@ -551,10 +557,10 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
             icon = FileRules.iconFor(entry.kind, entry.mediaType, entry.name),
             title = entry.name,
             subtitle = subtitle,
-            onLongClick = if (actions.isEmpty()) null else ({ menu = true }),
-            endPadding = if (actions.isEmpty()) 16.dp else 4.dp,
+            onLongClick = if (actions.isEmpty() && !shareable) null else ({ menu = true }),
+            endPadding = if (actions.isEmpty() && !shareable) 16.dp else 4.dp,
             trailing = {
-                if (actions.isNotEmpty()) {
+                if (actions.isNotEmpty() || shareable) {
                     IconButton(onClick = { menu = true }) {
                         Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.files_more, entry.name))
                     }
@@ -568,6 +574,15 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
                     onClick = {
                         menu = false
                         onAction(entry, action)
+                    },
+                )
+            }
+            if (shareable) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.share_menu)) },
+                    onClick = {
+                        menu = false
+                        openShare(ShareKind.FILE_FOLDER, entry.id, entry.name)
                     },
                 )
             }

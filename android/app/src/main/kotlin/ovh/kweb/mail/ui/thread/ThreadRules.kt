@@ -49,6 +49,13 @@ object ThreadRules {
         return messages.lastOrNull { m -> m.mailboxIds.none { it in drafts } } ?: messages.lastOrNull()
     }
 
+    /**
+     * "Block sender" is offered for a message that has a sender address other than the user's own ([myAddress]).
+     * The core refuses the user's own addresses (it knows the identities); this only spares the obvious one.
+     */
+    fun canBlockSender(header: MessageHeader, myAddress: String?): Boolean =
+        header.fromEmail.isNotBlank() && !header.fromEmail.equals(myAddress, ignoreCase = true)
+
     /** Delete on any of these removes mail for good: one of them is in Trash. */
     fun deletesForever(messages: List<MessageHeader>, targetIds: List<String>, mailboxes: List<Mailbox>): Boolean {
         val trash = mailboxes.firstOrNull { it.role == "trash" }?.id ?: return false

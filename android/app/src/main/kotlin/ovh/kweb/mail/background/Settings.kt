@@ -55,7 +55,7 @@ class Settings(private val values: KeyValues) {
     /** Increases after every write; collect it to know when to read the settings again. */
     val changes: StateFlow<Long> get() = ticks
 
-    /** "New mail in Inbox". Off: no mail notification is posted. */
+    /** "New mail" (Inbox and the folders the user switched on). Off: no mail notification is posted. */
     var mailEnabled: Boolean
         get() = values.getBoolean(MAIL, true)
         set(value) = write { putBoolean(MAIL, value) }

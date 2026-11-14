@@ -78,10 +78,10 @@ import ovh.kweb.mail.ui.list.Groups
  * changes go; [onSaved] is called once the core has the contact.
  */
 @Composable
-fun EditContactScreen(contactId: String?, onBack: () -> Unit, onSaved: () -> Unit) {
+fun EditContactScreen(contactId: String?, onBack: () -> Unit, onSaved: () -> Unit, account: String? = null) {
     // The view model belongs to this visit (the store of its route, see ScreenStores): it survives a rotation and goes with the screen.
     val app = LocalContext.current.applicationContext as Application
-    val vm: EditContactViewModel = viewModel(factory = viewModelFactory { initializer { EditContactViewModel(app, contactId) } })
+    val vm: EditContactViewModel = viewModel(factory = viewModelFactory { initializer { EditContactViewModel(app, contactId, account) } })
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     val form = state.form

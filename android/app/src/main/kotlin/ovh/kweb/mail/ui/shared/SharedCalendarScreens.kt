@@ -11,7 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -22,6 +28,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,7 +49,9 @@ import ovh.kweb.mail.ui.calendar.AgendaRules
 import ovh.kweb.mail.ui.calendar.DayHeading
 import ovh.kweb.mail.ui.calendar.EntryCard
 import ovh.kweb.mail.ui.calendar.EventDetails
+import ovh.kweb.mail.ui.calendar.DeleteDialog
 import ovh.kweb.mail.ui.calendar.EventPhase
+import ovh.kweb.mail.ui.calendar.EventRules
 import ovh.kweb.mail.ui.calendar.EventState
 import ovh.kweb.mail.ui.calendar.rememberLocale
 import ovh.kweb.mail.ui.calendar.rememberWords
@@ -56,6 +67,7 @@ fun SharedCalendarScreen(
     onBack: () -> Unit,
     onGone: () -> Unit,
     onOpenEvent: (eventId: String, recurrenceId: String?) -> Unit,
+    onAddEvent: (startHint: String) -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as Application
     val vm: SharedAgendaViewModel = viewModel(factory = viewModelFactory { initializer { SharedAgendaViewModel(app, route.account) } })
@@ -71,7 +83,16 @@ fun SharedCalendarScreen(
     }
 
     Scaffold(
-        topBar = { SharedTopBar(route.owner, onBack) },
+        topBar = {
+            SharedTopBar(route.owner, onBack, actions = {
+                // Only where a calendar may be written to.
+                if (state.canAdd) {
+                    IconButton(onClick = { onAddEvent(state.today.toString()) }) {
+                        Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cal_add))
+                    }
+                }
+            })
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -137,10 +158,13 @@ private fun rowKey(account: String, row: AgendaRules.Row): String = when (row) {
     is AgendaRules.Row.Entry -> SharedRules.key(account, "entry/${row.key}")
 }
 
-/** One event of a shared calendar: the content of the event screen, with nothing to edit, delete or answer. */
+/**
+ * One event of a shared calendar: the content of the event screen. Edit and Delete are offered where the calendar
+ * may be written to ([onEdit] opens the ordinary form); an invitation cannot be answered here.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SharedEventScreen(route: Route.SharedEventView, onBack: () -> Unit) {
+fun SharedEventScreen(route: Route.SharedEventView, onBack: () -> Unit, onEdit: (eventId: String) -> Unit) {
     val app = LocalContext.current.applicationContext as Application
     val vm: SharedEventViewModel = viewModel(
         factory = viewModelFactory { initializer { SharedEventViewModel(app, route.account, route.eventId, route.recurrenceId) } },
@@ -149,14 +173,29 @@ fun SharedEventScreen(route: Route.SharedEventView, onBack: () -> Unit) {
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     CollectSharedEvents(c.events, snackbar, onGone = {})
+    // A delete that worked: the event is gone, back to the agenda (which reads itself again).
+    CollectSharedEvents(vm.deleter.events, snackbar, onGone = {}, onDone = onBack)
     LifecycleResumeEffect(vm) {
         c.show()
         onPauseOrDispose { }
     }
     val data = state.value
+    val busy by vm.deleter.busy.collectAsStateWithLifecycle()
+    var asking by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
-        topBar = { SharedTopBar("", onBack) },
+        topBar = {
+            SharedTopBar("", onBack, actions = {
+                if (data != null && data.detail.mayWrite) {
+                    IconButton(onClick = { onEdit(data.detail.eventId) }, enabled = !busy) {
+                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.cal_edit))
+                    }
+                    IconButton(onClick = { asking = true }, enabled = !busy) {
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.cal_delete))
+                    }
+                }
+            })
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -175,5 +214,17 @@ fun SharedEventScreen(route: Route.SharedEventView, onBack: () -> Unit) {
                 else -> SharedCenteredBox { Loading() }
             }
         }
+    }
+
+    if (asking && data != null) {
+        DeleteDialog(
+            ask = EventRules.deleteAsk(data.detail.input.repeat != null || data.detail.hasComplexRepeat, route.recurrenceId),
+            isTask = data.detail.input.isTask,
+            onDelete = { part ->
+                asking = false
+                vm.deleter.delete(part)
+            },
+            onDismiss = { asking = false },
+        )
     }
 }

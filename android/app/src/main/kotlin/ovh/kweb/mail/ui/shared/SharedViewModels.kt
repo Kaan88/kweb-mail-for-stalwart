@@ -23,8 +23,10 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.UiMessage
 import ovh.kweb.mail.ui.compose.DraftLauncher
+import ovh.kweb.mail.ui.calendar.DeleteScope
 import ovh.kweb.mail.ui.contacts.ContactRules
 import uniffi.kweb_core.Address
+import uniffi.kweb_core.AddressBook
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.ContactDetail
 import uniffi.kweb_core.DraftKind
@@ -38,6 +40,8 @@ import uniffi.kweb_core.SharedMailbox
  */
 
 private fun backendOf(app: Application): SharedBackend = CoreSharedBackend { Background.core(app) }
+
+private fun writeBackendOf(app: Application): SharedWriteBackend = CoreSharedWriteBackend { Background.core(app) }
 
 /** Signing out under an open screen leaves nothing to show. */
 private fun CoroutineScope.onSignedOut(reset: () -> Unit) {
@@ -83,6 +87,9 @@ class SharedMessageViewModel(app: Application, account: String, mailboxId: Strin
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
 
+    /** Starts the user's own reply, reply to all or forward of this message. */
+    val drafts = SharedDraftStarter(viewModelScope, Dispatchers.IO, writeBackendOf(app), account)
+
     init {
         viewModelScope.onSignedOut(controller::reset)
     }
@@ -103,8 +110,14 @@ class SharedEventViewModel(app: Application, account: String, eventId: String, r
         readSharedEvent(backend, account, eventId, recurrenceId)
     }
 
+    /** Deletes the event (or one occurrence of it) where the calendar may be written to. */
+    val deleter = SharedDeleter<DeleteScope>(viewModelScope, Dispatchers.IO, R.string.cal_delete_failed) { scope ->
+        writeBackendOf(app).deleteEvent(account, eventId, recurrenceId.takeIf { scope == DeleteScope.THIS_ONE })
+    }
+
     init {
         viewModelScope.onSignedOut(controller::reset)
+        viewModelScope.onSignedOut(deleter::reset)
     }
 }
 
@@ -112,8 +125,14 @@ class SharedContactsViewModel(app: Application, account: String) : AndroidViewMo
     val controller = SharedContactsController(viewModelScope, Dispatchers.IO, backendOf(app), account)
     val listState = LazyListState()
 
+    /** The address books the account shares, for knowing whether a new contact can be added. */
+    val books = LoadController<List<AddressBook>>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) {
+        writeBackendOf(app).addressBooks(account)
+    }
+
     init {
         viewModelScope.onSignedOut(controller::reset)
+        viewModelScope.onSignedOut(books::reset)
     }
 }
 
@@ -123,6 +142,11 @@ data class StartedSharedDraft(val draftId: String, val to: Address)
 class SharedContactViewModel(app: Application, account: String, contactId: String) : AndroidViewModel(app) {
     private val backend = backendOf(app)
     val controller = LoadController<ContactDetail>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) { backend.contact(account, contactId) }
+
+    /** Deletes the contact where its address book may be written to. */
+    val deleter = SharedDeleter<Unit>(viewModelScope, Dispatchers.IO, R.string.contact_delete_failed) {
+        writeBackendOf(app).deleteContact(account, contactId)
+    }
     private val draftChannel = Channel<StartedSharedDraft>(Channel.BUFFERED)
     private val problems = MutableStateFlow<UiMessage?>(null)
     private var startingDraft = false
@@ -134,6 +158,7 @@ class SharedContactViewModel(app: Application, account: String, contactId: Strin
 
     init {
         viewModelScope.onSignedOut(controller::reset)
+        viewModelScope.onSignedOut(deleter::reset)
     }
 
     /**

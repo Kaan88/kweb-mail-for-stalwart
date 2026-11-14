@@ -99,11 +99,11 @@ private enum class Picking { START_DATE, START_TIME, END_DATE, END_TIME, UNTIL }
  * changing one. [onBack] leaves, after a save and when the user lets changes go.
  */
 @Composable
-fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, onSaved: () -> Unit) {
+fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, onSaved: () -> Unit, account: String? = null) {
     // The view model belongs to this visit (the store of its route, see ScreenStores): it survives a rotation and goes with the screen.
     val app = LocalContext.current.applicationContext as Application
     val vm: EditEventViewModel = viewModel(
-        factory = viewModelFactory { initializer { EditEventViewModel(app, eventId, startHint) } },
+        factory = viewModelFactory { initializer { EditEventViewModel(app, eventId, startHint, account) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by remember { mutableStateOf(false) }

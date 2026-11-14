@@ -6,7 +6,7 @@ import uniffi.kweb_core.Mailbox
 
 class FoldersTest {
     private fun box(id: String, name: String = id, role: String? = null, parent: String? = null, order: UInt = 0u) =
-        Mailbox(id, name, role, parent, order, 0u, 0u)
+        Mailbox(id, name, role, parent, order, 0u, 0u, false)
 
     private fun listed(vararg boxes: Mailbox) = Folders.ordered(boxes.toList()).map { it.mailbox.id to it.depth }
 
