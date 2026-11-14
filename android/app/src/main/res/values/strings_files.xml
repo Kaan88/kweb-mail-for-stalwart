@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bottom bar and top bar -->
+    <string name="tab_files">Files</string>
+    <string name="files_title">Files</string>
+    <string name="files_my">My files</string>
+    <string name="files_shared_with_you">Shared with you</string>
+    <string name="files_up">Up one level</string>
+    <string name="files_search">Search files</string>
+    <string name="files_search_close">Close search</string>
+    <string name="files_search_clear">Clear search</string>
+
+    <!-- States -->
+    <string name="files_no_storage">No file storage was found. If your server has it, sign out and sign in again so the app is allowed to use it.</string>
+    <string name="files_empty">This folder is empty</string>
+    <string name="files_load_failed">The files could not be loaded.</string>
+    <string name="files_search_none">Nothing found</string>
+    <string name="files_search_hint">Type to search this space</string>
+    <string name="files_in_folder">in %1$s</string>
+    <string name="files_failed">That did not work.</string>
+    <string name="files_sign_in_needed">Sign in again to see your files.</string>
+
+    <!-- Row menu -->
+    <string name="files_more">More options for %1$s</string>
+    <string name="files_open">Open</string>
+    <string name="files_save">Save to device</string>
+    <string name="files_rename">Rename</string>
+    <string name="files_move">Move</string>
+    <string name="files_delete">Delete</string>
+
+    <!-- Opening and saving -->
+    <string name="files_opening">Opening %1$s</string>
+    <string name="files_saving">Saving %1$s</string>
+    <string name="files_unit_b">B</string>
+    <string name="files_unit_kb">KB</string>
+    <string name="files_unit_mb">MB</string>
+    <string name="files_unit_gb">GB</string>
+    <string name="files_unit_tb">TB</string>
+    <string name="files_cannot_open">This kind of item cannot be opened here.</string>
+    <string name="files_no_app">No app on this phone can open this file.</string>
+    <string name="files_saved">Saved.</string>
+    <string name="files_save_failed">The file could not be saved.</string>
+
+    <!-- Dialogs -->
+    <string name="files_name">Name</string>
+    <string name="files_new_folder">New folder</string>
+    <string name="files_folder_name">Folder name</string>
+    <string name="files_create">Create</string>
+    <string name="files_rename_title">Rename</string>
+    <string name="files_rename_action">Rename</string>
+    <string name="files_move_title">Move “%1$s”</string>
+    <string name="files_move_here">Move here</string>
+    <string name="files_move_no_folders">No folders here</string>
+    <string name="files_move_cannot_add">You cannot move things into this folder.</string>
+    <string name="files_delete_title">Delete “%1$s”?</string>
+    <string name="files_delete_file_text">The file is deleted from the server. This cannot be undone.</string>
+    <string name="files_delete_folder_text">The folder and everything in it are deleted from the server. This cannot be undone.</string>
+    <string name="files_working">Working…</string>
+
+    <!-- Upload -->
+    <string name="files_add">Add</string>
+    <string name="files_upload">Upload files</string>
+    <string name="files_uploading">Uploading %1$d of %2$d</string>
+    <string name="files_stop">Stop</string>
+    <string name="files_stopping">Stopping after this file</string>
+    <string name="files_upload_running">An upload is already running.</string>
+    <string name="files_conflict_title">“%1$s” is already here</string>
+    <string name="files_conflict_file_text">Replace the file on the server, keep both under different names, or skip this one.</string>
+    <string name="files_conflict_folder_text">A folder has this name. Keep both under different names, or skip this one.</string>
+    <string name="files_replace">Replace</string>
+    <string name="files_keep_both">Keep both</string>
+    <string name="files_skip">Skip</string>
+    <string name="files_too_large">“%1$s” is %2$s. This server takes files up to %3$s, so it was not sent.</string>
+    <string name="files_unreadable">“%1$s” could not be read, so it was not sent.</string>
+    <string name="files_unreadable_generic">A file could not be read, so it was not sent.</string>
+    <plurals name="files_upload_done">
+        <item quantity="one">Uploaded %1$d file.</item>
+        <item quantity="other">Uploaded %1$d files.</item>
+    </plurals>
+    <string name="files_upload_summary">%1$d of %2$d files uploaded.</string>
+</resources>

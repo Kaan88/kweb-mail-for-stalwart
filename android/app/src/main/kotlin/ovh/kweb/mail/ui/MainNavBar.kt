@@ -27,11 +27,12 @@ object MainTabs {
         MainTab(Route.MailList, R.string.tab_mail, R.drawable.ic_mail),
         MainTab(Route.Calendar, R.string.tab_calendar, R.drawable.ic_calendar),
         MainTab(Route.Contacts, R.string.tab_contacts, R.drawable.ic_person),
+        MainTab(Route.Files, R.string.tab_files, R.drawable.ic_files),
     )
 }
 
 /**
- * The tonal bottom bar of the Inbox, Calendar and Contacts figures. [selected] is the route on
+ * The tonal bottom bar of the Inbox, Calendar, Contacts and Files figures. [selected] is the route on
  * screen; [mailUnread] is the count on the Mail entry, the Inbox's unread mail.
  */
 @Composable

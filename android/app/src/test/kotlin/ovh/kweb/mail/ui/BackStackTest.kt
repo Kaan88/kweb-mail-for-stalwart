@@ -135,10 +135,13 @@ class BackStackTest {
         assertEquals(BackStack.initial, BackStack.switchTo(Route.MailList))
     }
 
-    @Test fun onlyTheThreeRootsShowTheBottomBar() {
+    @Test fun theFilesSitOnTheMailList() =
+        assertEquals(listOf(Route.MailList, Route.Files), BackStack.switchTo(Route.Files))
+
+    @Test fun onlyTheFourRootsShowTheBottomBar() {
         assertEquals(
-            listOf(true, true, true),
-            listOf(Route.MailList, Route.Calendar, Route.Contacts).map(BackStack::isRoot),
+            listOf(true, true, true, true),
+            listOf(Route.MailList, Route.Calendar, Route.Contacts, Route.Files).map(BackStack::isRoot),
         )
         assertEquals(
             listOf(false, false, false, false),

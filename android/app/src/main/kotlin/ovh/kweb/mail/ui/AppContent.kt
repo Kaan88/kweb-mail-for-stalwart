@@ -32,6 +32,7 @@ import ovh.kweb.mail.ui.contacts.ContactScreen
 import ovh.kweb.mail.ui.contacts.ContactsScreen
 import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
+import ovh.kweb.mail.ui.files.FilesScreen
 import ovh.kweb.mail.ui.list.MailListScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.search.SearchScreen
@@ -91,6 +92,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
+                Route.Files -> FilesScreen(bottomBar = bottomBar, appSnackbar = snackbar)
                 // These keep their state in a store of their own that goes when the route does (see ScreenStores).
                 is Route.Event -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {

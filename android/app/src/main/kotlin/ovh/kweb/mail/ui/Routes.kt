@@ -29,6 +29,9 @@ sealed interface Route {
     /** The contacts: the third root beside the mail list and the agenda. */
     data object Contacts : Route
 
+    /** The file storage: the fourth root. Which folder it shows is the state of its view model. */
+    data object Files : Route
+
     /** One contact. */
     data class Contact(val contactId: String) : Route
 
@@ -71,8 +74,8 @@ object BackStack {
      */
     fun switchTo(root: Route): List<Route> = if (root == Route.MailList) initial else initial + root
 
-    /** The three screens the bottom bar leads to; only they show it. */
-    fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Calendar || route == Route.Contacts
+    /** The four screens the bottom bar leads to; only they show it. */
+    fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Calendar || route == Route.Contacts || route == Route.Files
 
     fun pop(stack: List<Route>): List<Route> = if (stack.size > 1) stack.dropLast(1) else stack
 
