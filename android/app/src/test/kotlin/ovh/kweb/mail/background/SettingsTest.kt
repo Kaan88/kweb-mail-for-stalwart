@@ -11,6 +11,8 @@ private class MapValues : KeyValues {
     val map = mutableMapOf<String, Any>()
     override fun getBoolean(key: String, default: Boolean) = map[key] as Boolean? ?: default
     override fun putBoolean(key: String, value: Boolean) { map[key] = value }
+    override fun putString(key: String, value: String) { map[key] = value }
+    override fun putLong(key: String, value: Long) { map[key] = value }
     override fun getLong(key: String, default: Long) = map[key] as Long? ?: default
     override fun getString(key: String) = map[key] as String?
     override fun putLongAndString(longKey: String, long: Long, stringKey: String, string: String?) {
@@ -91,5 +93,34 @@ class SettingsTest {
         assertTrue(log.changes.value > before)
         log.clearStartFailure()
         assertNull(log.lastStartFailure)
+    }
+
+    @Test
+    fun deliveryModeDefaultsToTheConnectionAndKeepsWhatWasSet() {
+        assertEquals(DeliveryMode.Connection, settings.deliveryMode)
+        settings.deliveryMode = DeliveryMode.Google
+        assertEquals(DeliveryMode.Google, settings.deliveryMode)
+    }
+
+    @Test
+    fun theRegistrationIsKeptAndCleared() {
+        settings.recordPushRegistration("wp:s", "K", "tok", 5L, 3L)
+        settings.pushTries = 2
+        settings.pushSetup = true
+        assertEquals("wp:s", settings.pushSubtype)
+        assertEquals("tok", settings.pushToken)
+        assertEquals(5L, settings.pushTokenAt)
+        assertEquals(3L, settings.pushAppVersion)
+        assertEquals(2, settings.pushTries)
+        settings.recordFallback(FallbackReason.NotVerified, 9L, "E")
+        settings.clearPushRegistration()
+        assertNull(settings.pushToken)
+        assertNull(settings.pushSubtype)
+        assertFalse(settings.pushSetup)
+        assertEquals(0, settings.pushTries)
+        // The reason survives the clean-up, for the Delivery check.
+        assertEquals(PushFallback(FallbackReason.NotVerified, 9L, "E"), settings.pushFallback)
+        settings.clearFallback()
+        assertNull(settings.pushFallback)
     }
 }

@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.DeliveryMode
+import ovh.kweb.mail.background.GooglePush
 import ovh.kweb.mail.background.KeystoreSecrets
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.background.Settings
@@ -68,12 +70,24 @@ object Accounts {
     val connection: StateFlow<ConnectionSummary> by lazy {
         // The first value is computed from what is known now, never an empty placeholder: a reader that acts on
         // "no accounts" (the service ends itself then) must not see one for accounts that exist.
-        combine(recordsFlow, statuses, ::summarise)
+        combine(recordsFlow, statuses, modeTicks) { records, map, _ -> summarise(records, map) }
             .stateIn(scope, SharingStarted.Eagerly, summarise(recordsFlow.value, statuses.value))
     }
 
     private fun summarise(records: List<AccountRecord>, map: Map<String, ConnectionStatus>) =
-        ConnectionSummary(records.map { AccountStatus(it, map[it.id] ?: ConnectionStatus.Connecting) })
+        ConnectionSummary(
+            records.map {
+                // An account that gets its news through Google has no connection of its own: it is never "not connected".
+                AccountStatus(it, map[it.id] ?: ConnectionStatus.Connecting, Settings.of(app, it).deliveryMode == DeliveryMode.Google)
+            },
+        )
+
+    private val modeTicks = MutableStateFlow(0L)
+
+    /** Call after an account's delivery mode changed: the connection summary and the service entry follow. */
+    fun modeChanged() {
+        modeTicks.update { it + 1 }
+    }
 
     /** One counter per account that grows with every "the cache changed" call of its core. Not blocking. */
     val cacheTicks: StateFlow<Map<String, Long>> get() = cacheCounts
@@ -317,9 +331,12 @@ object Accounts {
             // The cache cannot be opened, so there is no grant to revoke through it; the files still go.
             Log.w(Background.TAG, "the account could not be opened to sign it out", e)
             val record = recordsFlow.value.firstOrNull { it.id == id } ?: return true
+            GooglePush.unregisterFromSettings(app, record)
             finishRemoval(record)
             return true
         } ?: return true
+        // Push through Google ends first: the subscription on the server, then Play services (errors do not stop the removal).
+        GooglePush.tearDownForRemoval(app, session)
         try {
             session.core.signOut()
         } catch (e: CancellationException) {

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Push through Google: the option to the permanent connection -->
+    <string name="push_title">Push through Google</string>
+    <string name="push_row_off">Off: the app keeps a connection</string>
+    <string name="push_row_on">On: no permanent connection</string>
+    <string name="push_row_busy">Switching…</string>
+    <string name="push_row_fell_back">Went back to the connection</string>
+
+    <string name="push_on_title">Use push through Google?</string>
+    <string name="push_on_intro">Your server sends its notices to Google\'s push service, and your phone takes them from there. The app then needs no permanent connection and no entry in the status bar for this account.</string>
+    <string name="push_note_privacy">Google sees when a message comes and how big it is, never what is in it.</string>
+    <string name="push_note_mail">New mail arrives at once.</string>
+    <string name="push_note_late">A notification that goes away when you read the mail elsewhere, and calendar reminders, can be late while the phone is idle: the server sends those without urgency. Reminders are not yet scheduled on the phone itself.</string>
+    <string name="push_note_play">It needs Google Play services.</string>
+    <string name="push_note_force_stop">If you force-stop the app in the system settings, nothing arrives until you open it again.</string>
+    <string name="push_on_confirm">Switch on</string>
+
+    <string name="push_off_title">Back to the permanent connection?</string>
+    <string name="push_off_text">The app keeps a connection to your server again and shows its quiet entry in the status bar. Push through Google is switched off for this account.</string>
+    <string name="push_off_confirm">Switch off</string>
+
+    <string name="push_done_on">Push through Google is on for this account.</string>
+    <string name="push_done_off">The permanent connection is back.</string>
+    <string name="push_failed_no_play_services">Google Play services did not answer, so this phone cannot use push through Google. Nothing was changed.</string>
+    <string name="push_failed_no_server_key">Your server has no key for push through Google. Nothing was changed.</string>
+    <string name="push_failed_registration_refused">Google\'s push service or your server refused the registration. Nothing was changed.</string>
+    <string name="push_failed_not_verified">Your server\'s verification did not arrive. Nothing was changed.</string>
+    <string name="push_failed_subscription_gone">Your server no longer has the subscription. Nothing was changed.</string>
+    <string name="push_failed_unreachable">Your server could not be reached. Nothing was changed.</string>
+    <string name="push_failed_connection">The connection could not be started, so push through Google stays on.</string>
+
+    <!-- Delivery check -->
+    <string name="push_delivery_title">Push through Google</string>
+    <string name="push_pill_registered">Registered</string>
+    <string name="push_pill_verifying">Verifying</string>
+    <string name="push_pill_problem">Not working</string>
+    <string name="push_detail_registered">Registered until %1$s</string>
+    <string name="push_detail_registered_last">Registered until %1$s. %2$s</string>
+    <string name="push_detail_verifying">Waiting for your server\'s verification</string>
+    <string name="push_detail_off">Not registered</string>
+    <string name="push_detail_key_changed">Your server\'s key changed; the app registers again the next time it is opened</string>
+    <string name="push_detail_gone">Your server no longer has the subscription</string>
+    <string name="push_hint_open">Open the app to register again</string>
+    <string name="push_fallback_line">Went back to the permanent connection: %1$s</string>
+    <string name="push_fallback_detail">%1$s (%2$s)</string>
+    <string name="push_reason_no_play_services">Google Play services did not answer</string>
+    <string name="push_reason_no_server_key">your server has no key for push through Google</string>
+    <string name="push_reason_registration_refused">the registration was refused</string>
+    <string name="push_reason_not_verified">your server\'s verification never arrived</string>
+    <string name="push_reason_subscription_gone">your server dropped the subscription</string>
+    <string name="push_reason_unreachable">your server could not be reached</string>
+    <string name="push_mode_on">Switch off push through Google</string>
+    <string name="push_mode_off">Use push through Google instead</string>
+</resources>

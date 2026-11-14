@@ -7,8 +7,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Push through Google: Play services hands the server's Web Push to the app (no Firebase, no Google library). -->
+    <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
     <!-- WorkManager adds ACCESS_NETWORK_STATE, WAKE_LOCK and its own boot and foreground
          permissions through manifest merging. -->
+
+    <!-- Play services is asked for a push registration by an intent (package visibility, Android 11+). -->
+    <queries>
+        <package android:name="com.google.android.gms" />
+    </queries>
 
     <application
         android:name=".KwebApp"
@@ -80,6 +87,24 @@
         <receiver
             android:name=".background.ActionReceiver"
             android:exported="false" />
+
+        <!-- Push through Google. Exported, but only Play services holds the permission that may send to them. -->
+        <receiver
+            android:name=".background.PushMessageReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".background.PushRegistrationReceiver"
+            android:exported="true"
+            android:permission="com.google.android.c2dm.permission.SEND">
+            <intent-filter>
+                <action android:name="com.google.android.c2dm.intent.REGISTRATION" />
+            </intent-filter>
+        </receiver>
 
         <!-- System broadcasts reach a receiver that is not exported. -->
         <receiver

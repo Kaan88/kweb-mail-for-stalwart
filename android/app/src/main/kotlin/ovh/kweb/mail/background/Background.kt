@@ -39,11 +39,27 @@ object Background {
         if (Accounts.load(context).isEmpty()) return
         PushService.start(context)
         CheckScheduler.schedulePeriodic(context)
+        // Accounts in Google mode run the ordinary live loop while the app is on screen, and register again when due.
+        LiveWindow.onForeground(context)
+        GooglePush.onAppStart(context)
         // Accounts.sessions() leaves out an account that cannot be opened, so it cannot stop the others.
         Accounts.sessions().forEach {
             it.core.poke()
             it.publishStatus(it.core.status())
         }
+    }
+
+    /** Call on the main thread in `onStart`, before [onAppForeground]: the app is on screen from this moment. */
+    fun onAppOnScreen(context: Context) {
+        LiveWindow.screenOn(context)
+    }
+
+    /**
+     * Call when the app leaves the screen (`onStop`): the live connections of Google-mode accounts stop 30 seconds
+     * later, and what the user did that is still owed to the server is scheduled as a check (decision 4).
+     */
+    fun onAppBackground(context: Context) {
+        LiveWindow.screenOff(context)
     }
 
     /**

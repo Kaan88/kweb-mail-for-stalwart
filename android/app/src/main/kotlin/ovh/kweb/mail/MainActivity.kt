@@ -43,6 +43,8 @@ class MainActivity : ComponentActivity() {
         // Brings the service back if Android killed it. Off the main thread because the first use
         // of the core opens the cache; the app is still in the foreground, which is what counts.
         val appContext = applicationContext
+        // The flag at once and in order with onStop; the slow work follows.
+        Background.onAppOnScreen(appContext)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 Background.onAppForeground(appContext)
@@ -51,6 +53,17 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 android.util.Log.e(Background.TAG, "the foreground set-up failed", e)
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // The flag and the pending stop at once, in order with onStart; what is owed to the server is asked for on a
+        // thread of the live window.
+        try {
+            Background.onAppBackground(applicationContext)
+        } catch (e: Exception) {
+            android.util.Log.e(Background.TAG, "the background set-up failed", e)
         }
     }
 

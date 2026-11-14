@@ -93,6 +93,8 @@ import androidx.compose.ui.text.toUpperCase
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.background.CheckRecord
+import ovh.kweb.mail.background.DeliveryMode
+import ovh.kweb.mail.background.ModeRules
 import ovh.kweb.mail.ui.UiPrefs
 import uniffi.kweb_core.ConnectionStatus
 
@@ -119,6 +121,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     val resources = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
     val signOutPrompt by vm.signOutPrompt.collectAsStateWithLifecycle()
+    val googlePrompt by vm.googlePrompt.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
 
     // The user comes back from the system settings: read the permission and battery state again.
@@ -174,6 +177,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
             }
             Verdict(items)
             items.forEach { CheckRow(it) }
+            GoogleModeSection(state.push, now, vm::askGoogleMode)
             SectionTitle(stringResource(R.string.delivery_what_to_show))
             SwitchRow(stringResource(R.string.delivery_show_mail), state.mailEnabled, vm::setMailEnabled)
             SwitchRow(stringResource(R.string.delivery_show_reminders), state.remindersEnabled, vm::setRemindersEnabled)
@@ -197,6 +201,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
         }
     }
 
+    googlePrompt?.let { GoogleModeDialog(it, onConfirm = vm::confirmGoogleMode, onDismiss = vm::dismissGoogleMode) }
     signOutPrompt?.let { SignOutDialog(it, onConfirm = vm::signOut, onDismiss = vm::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) }
 }
 
@@ -226,8 +231,11 @@ private fun rememberActions(
 }
 
 @Composable
-private fun checkItems(state: DeliveryState, now: Long, actions: Actions): List<CheckItem> = listOf(
-    connectionItem(state, now, actions),
+private fun checkItems(state: DeliveryState, now: Long, actions: Actions): List<CheckItem> = listOfNotNull(
+    // In Google mode there is no connection to report: its place is taken by the state of the push.
+    if (state.push.mode == DeliveryMode.Google) googleItem(state, now) else connectionItem(state, now, actions),
+    // While switching on, the mode is still the connection, and the push shows next to it as verifying.
+    if (state.push.mode != DeliveryMode.Google && state.push.busy) googleItem(state, now) else null,
     notificationItem(state, actions),
     batteryItem(state, actions),
     safetyItem(state, now, actions),
@@ -276,6 +284,20 @@ private fun connectionItem(state: DeliveryState, now: Long, actions: Actions): C
             onClick = actions.signInAgain,
         )
     }
+}
+
+@Composable
+private fun googleItem(state: DeliveryState, now: Long): CheckItem {
+    val push = state.push
+    val ok = PushTexts.working(push)
+    val verifying = push.line is ModeRules.Line.Verifying || (push.busy && push.mode != DeliveryMode.Google)
+    return CheckItem(
+        stringResource(R.string.push_delivery_title),
+        if (push.busy && push.mode != DeliveryMode.Google) stringResource(R.string.push_detail_verifying) else pushDetail(push, now),
+        stringResource(if (ok) R.string.push_pill_registered else if (verifying) R.string.push_pill_verifying else R.string.push_pill_problem),
+        ok = ok || verifying,
+        hint = stringResource(R.string.push_hint_open).takeIf { push.line is ModeRules.Line.KeyChanged },
+    )
 }
 
 @Composable

@@ -47,12 +47,44 @@ object CheckScheduler {
             .enqueueUniqueWork(if (shadeCleared) ONE_OFF_AFTER_BOOT else ONE_OFF, ExistingWorkPolicy.KEEP, request)
     }
 
+    /**
+     * Schedules the check for work owed to the server that no connection will send (decision 4): [inMs] from now.
+     * Up to a minute ahead it is an expedited one-off that starts at once and waits inside the worker; further
+     * ahead a plain one-off with that delay. [ownSlot]: the slot of the due worker that asks, so a worker never
+     * enqueues its own name with REPLACE (that would cancel itself); it uses the other one. At the end of a worker
+     * ([fromWorker]) work owed *now* means the pass could not do it: the retry backs off and ends ([DueRules.plan],
+     * [attempt] retries so far).
+     */
+    fun checkAt(context: Context, inMs: Long, fromWorker: Boolean = false, ownSlot: Int? = null, attempt: Int = 0) {
+        val plan = DueRules.plan(inMs, fromWorker, attempt) ?: return
+        val slot = ownSlot?.let { DueRules.otherSlot(it) } ?: 0
+        val builder = OneTimeWorkRequestBuilder<CheckWorker>()
+            .setConstraints(needsNetwork)
+        val wait = when (plan) {
+            is DuePlan.Delayed -> plan.delayMs
+            is DuePlan.Expedited -> plan.waitMs
+        }
+        val retry = fromWorker && inMs <= 0L
+        val data = workDataOf(
+            CheckWorker.KEY_ONE_OFF to true,
+            CheckWorker.KEY_SLOT to slot,
+            CheckWorker.KEY_NOT_BEFORE to System.currentTimeMillis() + wait,
+            CheckWorker.KEY_ATTEMPT to (if (retry) attempt + 1 else 0),
+        )
+        val request = when (plan) {
+            is DuePlan.Expedited -> builder.setInputData(data).setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST).build()
+            is DuePlan.Delayed -> builder.setInputData(data).setInitialDelay(plan.delayMs, TimeUnit.MILLISECONDS).build()
+        }
+        WorkManager.getInstance(context).enqueueUniqueWork(DueRules.workName(slot), ExistingWorkPolicy.REPLACE, request)
+    }
+
     /** Cancels every scheduled and waiting check (sign-out). */
     fun cancelAll(context: Context) {
         WorkManager.getInstance(context).run {
             cancelUniqueWork(PERIODIC)
             cancelUniqueWork(ONE_OFF)
             cancelUniqueWork(ONE_OFF_AFTER_BOOT)
+            for (slot in 0 until DueRules.SLOTS) cancelUniqueWork(DueRules.workName(slot))
         }
     }
 }

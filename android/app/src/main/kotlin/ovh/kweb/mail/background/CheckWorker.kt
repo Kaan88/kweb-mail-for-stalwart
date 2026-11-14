@@ -7,6 +7,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.accounts.AccountRecord
@@ -23,13 +24,19 @@ import uniffi.kweb_core.Exception as CoreException
  * [Notifier.apply] is idempotent and never re-alerts for a notification already on screen.
  */
 class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    /** The accounts whose pass said "sign in": only a sign-in cures that, so nothing is scheduled for them. */
+    private var signInNeeded: Set<String> = emptySet()
+
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val records = Accounts.load(applicationContext)
         if (records.isEmpty()) return@withContext Result.success()
+        // Work owed at a certain moment (the end of an Undo window): the pass starts then, at most a minute ahead.
+        inputData.getLong(KEY_NOT_BEFORE, 0L).takeIf { it > 0 }?.let { delay(DueRules.waitLeft(it, System.currentTimeMillis())) }
         try {
             runChecks(records)
         } finally {
             PushService.start(applicationContext)
+            afterRun(records)
         }
     }
 
@@ -56,9 +63,21 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 throw e
             }
         }
+        signInNeeded = failures.filter { it.error is CoreException.SignInNeeded }.map { it.item.id }.toSet()
         val retry = failures.any { it.error is CoreException.Temporary } &&
             inputData.getBoolean(KEY_ONE_OFF, false) && runAttemptCount < MAX_ATTEMPTS
         return if (retry) Result.retry() else Result.success()
+    }
+
+    /**
+     * The steps for accounts in Google mode: renew the subscription (or fall back, or register again), then ask
+     * what is still owed to the server and schedule it, since no connection runs for them.
+     */
+    private suspend fun afterRun(records: List<AccountRecord>) {
+        for (record in records) GooglePush.renewStep(applicationContext, record)
+        val ownSlot = inputData.getInt(KEY_SLOT, -1).takeIf { it >= 0 && inputData.getLong(KEY_NOT_BEFORE, 0L) > 0 }
+        val attempt = if (ownSlot != null) inputData.getInt(KEY_ATTEMPT, 0) else 0
+        LiveWindow.scheduleDue(applicationContext, fromWorker = true, ownSlot = ownSlot, attempt = attempt, skip = signInNeeded)
     }
 
     /** Needed by expedited work on Android 11 and older, where it runs as a foreground service. */
@@ -88,6 +107,13 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
         /** Input flag: this is a one-off check, which may be retried. */
         const val KEY_ONE_OFF = "oneOff"
+
+        /** Input of the due check: its slot ([DueRules.workName]) and the wall-clock time (ms) before which it does nothing. */
+        const val KEY_SLOT = "slot"
+        const val KEY_NOT_BEFORE = "notBefore"
+
+        /** Input of a retry of the due check: how many retries came before it (they back off, see [DueRules.plan]). */
+        const val KEY_ATTEMPT = "attempt"
         private const val MAX_ATTEMPTS = 5
     }
 }

@@ -17,6 +17,8 @@ data class StartFailure(val atMillis: Long, val text: String)
 interface KeyValues {
     fun getBoolean(key: String, default: Boolean): Boolean
     fun putBoolean(key: String, value: Boolean)
+    fun putString(key: String, value: String)
+    fun putLong(key: String, value: Long)
     fun getLong(key: String, default: Long): Long
     fun getString(key: String): String?
 
@@ -29,6 +31,8 @@ interface KeyValues {
 class PrefsKeyValues(private val prefs: SharedPreferences) : KeyValues {
     override fun getBoolean(key: String, default: Boolean) = prefs.getBoolean(key, default)
     override fun putBoolean(key: String, value: Boolean) = prefs.edit().putBoolean(key, value).apply()
+    override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
+    override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
     override fun getLong(key: String, default: Long) = prefs.getLong(key, default)
     override fun getString(key: String): String? = prefs.getString(key, null)
 
@@ -79,6 +83,61 @@ class Settings(private val values: KeyValues) {
 
     fun recordCheck(atMillis: Long, error: String?) = write { putLongAndString(CHECK_AT, atMillis, CHECK_ERROR, error) }
 
+    /** How this account's news reaches the phone. Written to [DeliveryMode.Google] only once the registration is verified. */
+    var deliveryMode: DeliveryMode
+        get() = DeliveryMode.parse(values.getString(DELIVERY_MODE))
+        set(value) = write { putString(DELIVERY_MODE, value.key) }
+
+    /** True while a switch to Google or a new registration is under way (a process that died leaves it true). */
+    var pushSetup: Boolean
+        get() = values.getBoolean(PUSH_SETUP, false)
+        set(value) = write { putBoolean(PUSH_SETUP, value) }
+
+    /** The `wp:` subtype of this account's registration: how a message finds its account. */
+    val pushSubtype: String? get() = values.getString(PUSH_SUBTYPE)
+
+    /** The server key the registration was made for (public; needed to unregister without asking the server). */
+    val pushSender: String? get() = values.getString(PUSH_SENDER)
+
+    /** The token Play services gave, null before the first registration. */
+    val pushToken: String? get() = values.getString(PUSH_TOKEN)
+    val pushTokenAt: Long get() = values.getLong(PUSH_TOKEN_AT, 0L)
+
+    /** The app's version code at the last registration. */
+    val pushAppVersion: Long get() = values.getLong(PUSH_APP_VERSION, 0L)
+
+    /** Verification tries used (0 to 3). */
+    var pushTries: Int
+        get() = values.getLong(PUSH_TRIES, 0L).toInt()
+        set(value) = write { putLong(PUSH_TRIES, value.toLong()) }
+
+    fun recordPushRegistration(subtype: String, sender: String, token: String, atMillis: Long, appVersion: Long) = write {
+        putString(PUSH_SUBTYPE, subtype)
+        putString(PUSH_SENDER, sender)
+        putString(PUSH_TOKEN, token)
+        putLong(PUSH_TOKEN_AT, atMillis)
+        putLong(PUSH_APP_VERSION, appVersion)
+    }
+
+    /** Why the account is in connection mode although Google was wanted, until the next switch on. */
+    val pushFallback: PushFallback?
+        get() = FallbackReason.parse(values.getString(PUSH_FALLBACK))?.let {
+            PushFallback(it, values.getLong(PUSH_FALLBACK_AT, 0L), values.getString(PUSH_FALLBACK_DETAIL))
+        }
+
+    fun recordFallback(reason: FallbackReason, atMillis: Long, detail: String?) = write {
+        putString(PUSH_FALLBACK, reason.key)
+        putLong(PUSH_FALLBACK_AT, atMillis)
+        if (detail == null) remove(PUSH_FALLBACK_DETAIL) else putString(PUSH_FALLBACK_DETAIL, detail)
+    }
+
+    fun clearFallback() = write { remove(PUSH_FALLBACK, PUSH_FALLBACK_AT, PUSH_FALLBACK_DETAIL) }
+
+    /** Forgets the registration (not the mode and not the fallback reason). */
+    fun clearPushRegistration() = write {
+        remove(PUSH_SETUP, PUSH_SUBTYPE, PUSH_SENDER, PUSH_TOKEN, PUSH_TOKEN_AT, PUSH_APP_VERSION, PUSH_TRIES)
+    }
+
     /** Takes the three switches of [old] (the settings an older, single-account install left behind). */
     fun takeSwitchesFrom(old: Settings) {
         mailEnabled = old.mailEnabled
@@ -100,6 +159,17 @@ class Settings(private val values: KeyValues) {
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
         private const val CHECK_AT = "check_at"
         private const val CHECK_ERROR = "check_error"
+        private const val DELIVERY_MODE = "delivery_mode"
+        private const val PUSH_SETUP = "push_setup"
+        private const val PUSH_SUBTYPE = "push_subtype"
+        private const val PUSH_SENDER = "push_sender"
+        private const val PUSH_TOKEN = "push_token"
+        private const val PUSH_TOKEN_AT = "push_token_at"
+        private const val PUSH_APP_VERSION = "push_app_version"
+        private const val PUSH_TRIES = "push_tries"
+        private const val PUSH_FALLBACK = "push_fallback"
+        private const val PUSH_FALLBACK_AT = "push_fallback_at"
+        private const val PUSH_FALLBACK_DETAIL = "push_fallback_detail"
 
         private val instances = HashMap<String, Settings>()
 

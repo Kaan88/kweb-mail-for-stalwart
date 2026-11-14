@@ -79,7 +79,7 @@ internal fun forRegistered(status: ConnectionStatus): ConnectionStatus =
     if (status == ConnectionStatus.SignedOut) ConnectionStatus.SignInNeeded else status
 
 /** One account and what its connection last said. */
-data class AccountStatus(val record: AccountRecord, val status: ConnectionStatus)
+data class AccountStatus(val record: AccountRecord, val status: ConnectionStatus, val google: Boolean = false)
 
 /** All accounts with their connection state, in the order of the registry. */
 data class ConnectionSummary(val items: List<AccountStatus>)

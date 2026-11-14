@@ -70,7 +70,8 @@ class PushService : Service() {
         synchronized(renderLock) { destroyed = true }
         scope.cancel()
         worker.shutdown()
-        val cores = Accounts.openSessions().map { it.core }
+        // Only the connections of connection-mode accounts: a Google-mode account's loop belongs to LiveWindow.
+        val cores = Accounts.openSessions().filter { it.settings.deliveryMode == DeliveryMode.Connection }.map { it.core }
         // stop() blocks until the connection is down, so never on the main thread.
         // A service started right after this one waits for it ([begin]), or it would have its
         // fresh connections stopped by this call.
@@ -105,8 +106,9 @@ class PushService : Service() {
     private fun begin() {
         try {
             pendingStop?.join()
-            val records = Accounts.load(this)
+            val records = ModeRules.connectionOnly(Accounts.load(this)) { Settings.of(this, it).deliveryMode }
             if (records.isEmpty()) {
+                // No account needs the connection (none, or all get their news through Google): no service, no entry.
                 stopSelf()
                 return
             }
@@ -144,19 +146,21 @@ class PushService : Service() {
         if (collecting != null) return
         collecting = scope.launch {
             Accounts.connection.collect { summary ->
-                if (summary.items.isEmpty()) stopSelf() else render(summary)
+                if (ModeRules.serviceItems(summary.items).isEmpty()) stopSelf() else render(summary)
             }
         }
     }
 
     private fun renderCurrent() {
         val summary = Accounts.connection.value
-        if (summary.items.isNotEmpty()) render(summary)
+        if (ModeRules.serviceItems(summary.items).isNotEmpty()) render(summary)
     }
 
     private fun render(summary: ConnectionSummary) {
+        // The entry speaks of the connections the service holds; a Google-mode account is not one of them.
+        val items = ModeRules.serviceItems(summary.items)
         val labels = AccountLabels.of(summary.items.map { it.record })
-        render(ServiceEntryRules.plan(summary.items.map { labels.getValue(it.record.id) to it.status }))
+        render(ServiceEntryRules.plan(items.map { labels.getValue(it.record.id) to it.status }))
     }
 
     /** Updates the "Connected" entry; does nothing once the service is gone, so it cannot come back as a plain notification. */
@@ -218,6 +222,12 @@ class PushService : Service() {
          */
         fun start(context: Context): Boolean {
             val app = context.applicationContext
+            // Decision 5: with no account in connection mode there is no service and no entry, and nothing starts it.
+            val modes = Accounts.load(app).map { Settings.of(app, it).deliveryMode }
+            if (!ModeRules.needsService(modes)) {
+                app.stopService(Intent(app, PushService::class.java))
+                return true
+            }
             return try {
                 ContextCompat.startForegroundService(app, Intent(app, PushService::class.java))
                 true

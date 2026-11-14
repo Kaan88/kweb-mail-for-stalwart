@@ -224,6 +224,8 @@ class ShareControllerTest {
         await("answer") { c.state.value.people.isNotEmpty() }
         c.add(c.state.value.people.first())
         await("added") { c.state.value.shares?.any { it.person.id == "1" } == true }
+        // The shares are set before the search field is emptied, so the emptying is waited for too.
+        await("search emptied") { c.state.value.query == "" }
         assertEquals(ShareLevel.WRITE, c.state.value.shares!!.first().level)
         assertEquals("", c.state.value.query)
         assertTrue(c.state.value.people.isEmpty())

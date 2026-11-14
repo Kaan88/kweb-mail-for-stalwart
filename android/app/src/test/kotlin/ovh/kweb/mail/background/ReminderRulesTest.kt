@@ -67,4 +67,13 @@ class ReminderRulesTest {
         assertNull(format("", null))
         assertNull(format("garbage", null))
     }
+
+    @Test
+    fun anAlertThatComesByTwoRoadsInOneMinuteIsShownOnce() {
+        assertEquals(false, ReminderRules.isRepeat(null, 1_000))
+        assertEquals(true, ReminderRules.isRepeat(1_000, 1_300))
+        assertEquals(false, ReminderRules.isRepeat(1_000, 1_000 + ReminderRules.REPEAT_WINDOW_MS))
+        // A snooze ends minutes later and shows again.
+        assertEquals(false, ReminderRules.isRepeat(1_000, 1_000 + 10 * 60_000L))
+    }
 }

@@ -31,6 +31,9 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.DeliveryMode
+import ovh.kweb.mail.background.GooglePush
+import ovh.kweb.mail.background.ModeRules
 import ovh.kweb.mail.background.ServiceLog
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.background.CheckScheduler
@@ -55,6 +58,8 @@ data class DeliveryState(
     val removeWhenReadElsewhere: Boolean = true,
     val coreVersion: String? = null,
     val signingOut: Boolean = false,
+    /** Push through Google of this account. */
+    val push: PushView = PushView(),
 )
 
 /** The state of the phone that the app cannot observe: re-read on every resume. */
@@ -69,17 +74,27 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
     private val serviceLog = ServiceLog.of(app)
     private val system = MutableStateFlow(readSystem())
     private val extras = MutableStateFlow(Extras())
+    private val googleMode = GoogleModeController(
+        switchOn = { GooglePush.switchOn(app, session) },
+        switchOff = { GooglePush.switchOff(app, session) },
+    )
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
 
     val state: StateFlow<DeliveryState> = combine(
         session.status,
         session.settings.changes,
-        serviceLog.changes,
+        combine(serviceLog.changes, googleMode.busy, GooglePush.switching) { tick, busy, others -> Triple(tick, busy, others) },
         system,
         extras,
     ) { status, _, _, sys, extra ->
         val settings = settings
         DeliveryState(
+            push = PushView(
+                mode = settings.deliveryMode,
+                line = ModeRules.line(session.core.webPushState()),
+                fallback = settings.pushFallback,
+                busy = googleMode.busy.value || session.record.id in GooglePush.switching.value,
+            ),
             host = extra.host,
             status = status,
             startFailure = serviceLog.lastStartFailure,
@@ -93,6 +108,31 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
             signingOut = extra.signingOut,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DeliveryState())
+
+    /** Set while the question about push through Google is open: true when it is about switching on. */
+    val googlePrompt: StateFlow<Boolean?> get() = googlePromptFlow
+
+    private val googlePromptFlow = MutableStateFlow<Boolean?>(null)
+
+    /** The Settings row and the Delivery check button: asks before switching, with the warning when switching on. */
+    fun askGoogleMode() {
+        if (googleMode.busy.value || session.record.id in GooglePush.switching.value) return
+        googlePromptFlow.value = session.settings.deliveryMode != DeliveryMode.Google
+    }
+
+    fun dismissGoogleMode() {
+        googlePromptFlow.value = null
+    }
+
+    /** The user said yes. The sequence runs on the account's own lock and can take a minute and a half. */
+    fun confirmGoogleMode() {
+        val turningOn = googlePromptFlow.value ?: return
+        googlePromptFlow.value = null
+        viewModelScope.launch {
+            val result = if (turningOn) googleMode.turnOn() else googleMode.turnOff()
+            PushTexts.result(result)?.let { messageChannel.send(it) }
+        }
+    }
 
     /** Short texts for a snackbar, as string resource ids. */
     val messages: Flow<Int> get() = messageChannel.receiveAsFlow()

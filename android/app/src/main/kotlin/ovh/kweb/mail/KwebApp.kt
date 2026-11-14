@@ -7,6 +7,7 @@ import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Channels
 import ovh.kweb.mail.background.CheckScheduler
+import ovh.kweb.mail.background.GooglePush
 
 /**
  * Runs before any activity, service or receiver of the process, which is what the
@@ -29,6 +30,7 @@ class KwebApp : Application() {
             Accounts.sessions()
             Background.refreshStatus(this)
             CheckScheduler.schedulePeriodic(this)
+            GooglePush.onAppStart(this)
         } catch (e: Exception) {
             Log.e(Background.TAG, "warm-up failed", e)
         }

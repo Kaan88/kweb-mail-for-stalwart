@@ -215,6 +215,8 @@ class FilesControllerTest {
         c.askRename(f)
         c.rename(f, " g.txt ")
         await("dialog gone") { c.state.value.dialog == null && !c.state.value.busy }
+        // The dialog closes before the reload is asked for, so the reload is waited for too.
+        await("reloaded") { backend.calls.count { it == "files:null" } >= 2 }
         assertTrue("rename:f:g.txt" in backend.calls)
         assertEquals(2, backend.calls.count { it == "files:null" })
     }

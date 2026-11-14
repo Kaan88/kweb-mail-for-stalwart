@@ -66,6 +66,8 @@ import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
+import ovh.kweb.mail.ui.delivery.GoogleModeDialog
+import ovh.kweb.mail.ui.delivery.pushRowLine
 import ovh.kweb.mail.ui.delivery.SignOutDialog
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.theme.ThemePickerDialog
@@ -103,6 +105,7 @@ fun SettingsScreen(
     val resources = LocalResources.current
     var pickingTheme by remember { mutableStateOf(false) }
     val signOutPrompt by delivery.signOutPrompt.collectAsStateWithLifecycle()
+    val googlePrompt by delivery.googlePrompt.collectAsStateWithLifecycle()
 
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -195,18 +198,25 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_app))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 2),
+                    Groups.shape(0, 3),
                     stringResource(R.string.theme_title),
                     stringResource(themeName(theme)),
                     icon = { Icon(painterResource(R.drawable.ic_palette), contentDescription = null) },
                     onClick = { pickingTheme = true },
                 )
                 SettingsRow(
-                    Groups.shape(1, 2),
+                    Groups.shape(1, 3),
                     stringResource(R.string.delivery_check_title),
                     stringResource(R.string.settings_delivery_detail),
                     icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
                     onClick = onOpenDeliveryCheck,
+                )
+                SettingsRow(
+                    Groups.shape(2, 3),
+                    stringResource(R.string.push_title),
+                    pushRowLine(deliveryState.push),
+                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
+                    onClick = if (deliveryState.push.busy) null else ({ delivery.askGoogleMode() }),
                 )
             }
 
@@ -224,6 +234,7 @@ fun SettingsScreen(
     }
 
     if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
+    googlePrompt?.let { GoogleModeDialog(it, onConfirm = delivery::confirmGoogleMode, onDismiss = delivery::dismissGoogleMode) }
     signOutPrompt?.let {
         SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size))
     }

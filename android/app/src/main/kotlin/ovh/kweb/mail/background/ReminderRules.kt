@@ -19,6 +19,13 @@ internal object ReminderRules {
     /** Whether [id] is one a reminder's notification can have: nothing else (mail, summary, service) is. */
     fun isReminderId(id: Int): Boolean = id in FIRST_ID until FIRST_ID + SPAN
 
+    /** An alert that was shown less than this long ago is not shown again: the live loop and the push both deliver it. */
+    const val REPEAT_WINDOW_MS = 60_000L
+
+    /** Whether an alert last shown at [lastShownMillis] (null: never) is the same one arriving by a second road. */
+    fun isRepeat(lastShownMillis: Long?, nowMillis: Long): Boolean =
+        lastShownMillis != null && nowMillis - lastShownMillis in 0 until REPEAT_WINDOW_MS
+
     /**
      * The id of a reminder's notification: the same alert always gets the same id, so a snoozed
      * reminder replaces the one it came from, and different alerts rarely collide.

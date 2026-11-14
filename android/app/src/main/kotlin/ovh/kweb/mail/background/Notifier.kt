@@ -108,6 +108,13 @@ class Notifier(context: Context) {
     fun showReminder(record: AccountRecord, reminder: Reminder) {
         if (!Settings.of(context, record).remindersEnabled) return
         val id = ReminderRules.notificationId(reminder.eventId, reminder.alertId)
+        // The live loop and the push both bring a fired alert: it alerts once.
+        val key = NotificationKeys.tag(record) + "/" + id
+        val now = System.currentTimeMillis()
+        synchronized(recentReminders) {
+            if (ReminderRules.isRepeat(recentReminders[key], now)) return
+            recentReminders[key] = now
+        }
         val open = NotificationIntents.openReminder(context, record, id, reminder)
         val notification = NotificationCompat.Builder(context, Channels.REMINDERS)
             .setSmallIcon(R.drawable.ic_stat_mail)
@@ -217,6 +224,9 @@ class Notifier(context: Context) {
     }
 
     companion object {
+        /** When a reminder notification was last posted, by tag and id (see [ReminderRules.isRepeat]). */
+        private val recentReminders = HashMap<String, Long>()
+
         /** Extra of the intent that opens the app from a mail notification: the JMAP message id (String). */
         const val EXTRA_MESSAGE_ID = "ovh.kweb.mail.extra.MESSAGE_ID"
 
