@@ -367,6 +367,11 @@ pub struct Mail {
     dirty_email: bool,
     dirty_mailbox: bool,
     pub push_enabled: bool,
+    /// The id the next folder made through `Mailbox/set` gets.
+    next_mailbox: u64,
+    /// How many more message changes `Email/set` carries out before it answers `serverFail` to
+    /// the rest (`None`: no limit). For the tests of a failure part-way.
+    pub email_set_budget: Option<usize>,
     /// `Email/get` that asks for body values fails (see `MockServer::set_bodies_fail`).
     pub bodies_fail: bool,
     /// The List-Id header of some messages, by message id.
@@ -454,6 +459,8 @@ impl Mail {
             dirty_email: false,
             dirty_mailbox: false,
             push_enabled: true,
+            next_mailbox: 100,
+            email_set_budget: None,
             bodies_fail: false,
             list_ids: BTreeMap::new(),
             uploads: BTreeMap::new(),
@@ -671,16 +678,29 @@ impl Mail {
         preview: &str,
         received_at: i64,
     ) -> String {
+        let inbox = self.mailbox_id_by_role("inbox").expect("seeded");
+        self.deliver_in(&inbox, from_name, from_email, subject, preview, received_at)
+    }
+
+    /// Like `deliver`, into the mailbox `inbox` instead of the Inbox (a filter put it there).
+    pub fn deliver_in(
+        &mut self,
+        inbox: &str,
+        from_name: &str,
+        from_email: &str,
+        subject: &str,
+        preview: &str,
+        received_at: i64,
+    ) -> String {
         let seq = self.next_seq;
         self.next_seq += 1;
         let id = format!("e{seq}");
-        let inbox = self.mailbox_id_by_role("inbox").expect("seeded");
         self.emails.insert(
             id.clone(),
             Email {
                 id: id.clone(),
                 seq,
-                mailbox_ids: set_of(&[&inbox]),
+                mailbox_ids: set_of(&[inbox]),
                 keywords: BTreeSet::new(),
                 from_name: from_name.into(),
                 from_email: from_email.into(),
@@ -699,7 +719,7 @@ impl Mail {
             },
         );
         self.log_email(&id, Kind::Created);
-        self.touch_mailboxes(set_of(&[&inbox]));
+        self.touch_mailboxes(set_of(&[inbox]));
         self.flush();
         id
     }
@@ -760,6 +780,7 @@ impl Mail {
             "Mailbox/get" => self.mailbox_get(args),
             "Mailbox/query" => self.mailbox_query(args),
             "Mailbox/changes" => self.mailbox_changes(args),
+            "Mailbox/set" => self.mailbox_set(args),
             "Email/get" => self.email_get(args),
             "Email/query" => self.email_query(args),
             "Email/changes" => self.email_changes(args),
@@ -1034,6 +1055,244 @@ impl Mail {
         Ok(changes_json(changes(&self.email_log, "es", args)?))
     }
 
+    /// `Mailbox/set` as Stalwart 1.1.0 answers it (`dev/notes/stalwart-mail-features.md`): names
+    /// are unique among siblings without regard to case, at most 255 bytes, nesting stops at ten
+    /// levels, Inbox, Trash and Junk cannot be destroyed (Drafts and the rest can, when empty),
+    /// roles cannot be changed, and role folders can be renamed and moved.
+    fn mailbox_set(&mut self, args: &Value) -> MResult {
+        let old_state = self.mailbox_state();
+        if let Some(s) = args.get("ifInState").and_then(Value::as_str) {
+            if s != old_state {
+                return Err(merr("stateMismatch", "ifInState does not match"));
+            }
+        }
+        let mut out = Map::new();
+        out.insert("accountId".into(), json!(ACCOUNT_ID));
+        out.insert("oldState".into(), json!(old_state));
+        if let Some(Value::Object(create)) = args.get("create") {
+            let (mut created, mut not_created) = (Map::new(), Map::new());
+            for (key, object) in create {
+                match self.create_mailbox(object) {
+                    Ok(id) => {
+                        created.insert(key.clone(), json!({"id": id, "totalEmails": 0, "unreadEmails": 0}));
+                    }
+                    Err(e) => {
+                        not_created.insert(key.clone(), e);
+                    }
+                }
+            }
+            out.insert("created".into(), Value::Object(created));
+            if !not_created.is_empty() {
+                out.insert("notCreated".into(), Value::Object(not_created));
+            }
+        }
+        if let Some(Value::Object(update)) = args.get("update") {
+            let (mut updated, mut not_updated) = (Map::new(), Map::new());
+            for (id, patch) in update {
+                match self.update_mailbox(id, patch) {
+                    Ok(()) => {
+                        updated.insert(id.clone(), Value::Null);
+                    }
+                    Err(e) => {
+                        not_updated.insert(id.clone(), e);
+                    }
+                }
+            }
+            out.insert("updated".into(), Value::Object(updated));
+            if !not_updated.is_empty() {
+                out.insert("notUpdated".into(), Value::Object(not_updated));
+            }
+        }
+        if let Some(ids) = opt_strings(args.get("destroy"))? {
+            let remove_emails = args.get("onDestroyRemoveEmails").and_then(Value::as_bool) == Some(true);
+            let (mut destroyed, mut not_destroyed) = (Vec::new(), Map::new());
+            for id in ids {
+                match self.destroy_mailbox(&id, remove_emails) {
+                    Ok(()) => destroyed.push(id),
+                    Err(e) => {
+                        not_destroyed.insert(id, e);
+                    }
+                }
+            }
+            out.insert("destroyed".into(), json!(destroyed));
+            if !not_destroyed.is_empty() {
+                out.insert("notDestroyed".into(), Value::Object(not_destroyed));
+            }
+        }
+        out.insert("newState".into(), json!(self.mailbox_state()));
+        Ok(Value::Object(out))
+    }
+
+    fn mailbox_depth(&self, id: &str) -> usize {
+        let mut depth = 0;
+        let mut at = Some(id.to_string());
+        while let Some(current) = at {
+            depth += 1;
+            if depth > 100 {
+                break;
+            }
+            at = self.mailboxes.iter().find(|m| m.id == current).and_then(|m| m.parent_id.clone());
+        }
+        depth
+    }
+
+    fn mailbox_height(&self, id: &str) -> usize {
+        let below = self.mailboxes.iter().filter(|m| m.parent_id.as_deref() == Some(id));
+        below.map(|m| 1 + self.mailbox_height(&m.id)).max().unwrap_or(0)
+    }
+
+    /// The sibling with this name (any case) other than `except`, as the SetError the server gives.
+    fn name_taken(&self, parent: Option<&str>, name: &str, except: Option<&str>) -> Option<Value> {
+        let wanted = name.to_lowercase();
+        let found = self.mailboxes.iter().find(|m| {
+            m.parent_id.as_deref() == parent && Some(m.id.as_str()) != except && m.name.to_lowercase() == wanted
+        })?;
+        Some(json!({
+            "type": "alreadyExists",
+            "description": format!("A mailbox with name '{name}' already exists."),
+            "existingId": found.id,
+        }))
+    }
+
+    fn check_mailbox_name(name: &str) -> Result<(), Value> {
+        let bad = |why: &str| json!({"type": "invalidProperties", "description": why, "properties": ["name"]});
+        if name.trim().is_empty() {
+            return Err(bad("Mailbox name cannot be empty."));
+        }
+        if name.len() > 255 {
+            return Err(bad("Mailbox name is too long."));
+        }
+        Ok(())
+    }
+
+    fn create_mailbox(&mut self, object: &Value) -> Result<String, Value> {
+        let name = object.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+        Self::check_mailbox_name(&name)?;
+        let parent = object.get("parentId").and_then(Value::as_str).map(str::to_string);
+        if let Some(p) = &parent {
+            if !self.mailboxes.iter().any(|m| &m.id == p) {
+                return Err(json!({"type": "invalidProperties", "description": "Parent ID does not exist."}));
+            }
+            if self.mailbox_depth(p) + 1 > 10 {
+                return Err(json!({
+                    "type": "invalidProperties",
+                    "description": "Mailbox parent-child relationship is too deep.",
+                    "properties": ["parentId"],
+                }));
+            }
+        }
+        if let Some(e) = self.name_taken(parent.as_deref(), &name, None) {
+            return Err(e);
+        }
+        self.next_mailbox += 1;
+        let id = format!("mb{}", self.next_mailbox);
+        let sort_order = object.get("sortOrder").and_then(Value::as_u64).unwrap_or(0) as u32;
+        self.mailboxes.push(MailboxRec { id: id.clone(), name, role: None, sort_order, parent_id: parent });
+        self.log_mailbox(&id, Kind::Created);
+        Ok(id)
+    }
+
+    fn update_mailbox(&mut self, id: &str, patch: &Value) -> Result<(), Value> {
+        let Some(mut folder) = self.mailboxes.iter().find(|m| m.id == id).cloned() else {
+            return Err(json!({"type": "notFound"}));
+        };
+        let patch = patch.as_object().ok_or(json!({"type": "invalidPatch"}))?;
+        for (key, value) in patch {
+            match key.as_str() {
+                "name" => {
+                    let name = value.as_str().ok_or(json!({
+                        "type": "invalidProperties", "description": "Invalid property or value.", "properties": ["name"]
+                    }))?;
+                    Self::check_mailbox_name(name)?;
+                    folder.name = name.to_string();
+                }
+                "parentId" => {
+                    let parent = value.as_str().map(str::to_string);
+                    if let Some(p) = &parent {
+                        let bad = |why: &str| json!({"type": "invalidProperties", "description": why, "properties": ["parentId"]});
+                        if p == id {
+                            return Err(bad("Mailbox cannot be a parent of itself."));
+                        }
+                        if !self.mailboxes.iter().any(|m| &m.id == p) {
+                            return Err(
+                                json!({"type": "invalidProperties", "description": "Parent ID does not exist."}),
+                            );
+                        }
+                        let mut up = Some(p.clone());
+                        while let Some(current) = up {
+                            if current == id {
+                                return Err(bad("Mailbox cannot be a parent of itself."));
+                            }
+                            up = self.mailboxes.iter().find(|m| m.id == current).and_then(|m| m.parent_id.clone());
+                        }
+                        if self.mailbox_depth(p) + 1 + self.mailbox_height(id) > 10 {
+                            return Err(bad("Mailbox parent-child relationship is too deep."));
+                        }
+                    }
+                    folder.parent_id = parent;
+                }
+                "sortOrder" | "isSubscribed" => {}
+                "role" => {
+                    return Err(json!({
+                        "type": "invalidProperties",
+                        "description": "You are not allowed to change the role of Inbox, Junk or Trash folders.",
+                        "properties": ["role"],
+                    }))
+                }
+                other => {
+                    return Err(
+                        json!({"type": "invalidProperties", "description": "Invalid property or value.", "properties": [other]}),
+                    )
+                }
+            }
+        }
+        if let Some(e) = self.name_taken(folder.parent_id.as_deref(), &folder.name, Some(id)) {
+            return Err(e);
+        }
+        if let Some(slot) = self.mailboxes.iter_mut().find(|m| m.id == id) {
+            *slot = folder;
+        }
+        self.log_mailbox(id, Kind::Updated);
+        Ok(())
+    }
+
+    fn destroy_mailbox(&mut self, id: &str, remove_emails: bool) -> Result<(), Value> {
+        let Some(folder) = self.mailboxes.iter().find(|m| m.id == id).cloned() else {
+            return Err(json!({"type": "notFound"}));
+        };
+        if matches!(folder.role, Some("inbox" | "trash" | "junk")) {
+            return Err(
+                json!({"type": "forbidden", "description": "You are not allowed to delete Inbox, Junk or Trash folders."}),
+            );
+        }
+        if self.mailboxes.iter().any(|m| m.parent_id.as_deref() == Some(id)) {
+            return Err(json!({"type": "mailboxHasChild", "description": "Mailbox has at least one children."}));
+        }
+        let inside: Vec<String> =
+            self.emails.values().filter(|e| e.mailbox_ids.contains(id)).map(|e| e.id.clone()).collect();
+        if !inside.is_empty() && !remove_emails {
+            return Err(json!({"type": "mailboxHasEmail", "description": "Mailbox is not empty."}));
+        }
+        for email in inside {
+            let Some(mut e) = self.emails.get(&email).cloned() else { continue };
+            e.mailbox_ids.remove(id);
+            if e.mailbox_ids.is_empty() {
+                self.destroy_internal(&email);
+            } else {
+                self.commit(e);
+            }
+        }
+        self.mailboxes.retain(|m| m.id != id);
+        self.log_mailbox(id, Kind::Destroyed);
+        Ok(())
+    }
+
+    fn log_mailbox(&mut self, id: &str, kind: Kind) {
+        let s = self.mailbox_log.bump();
+        self.mailbox_log.entries.push((s, id.to_string(), kind));
+        self.dirty_mailbox = true;
+    }
+
     fn email_set(&mut self, args: &Value) -> MResult {
         let old_state = self.email_state();
         if let Some(s) = args.get("ifInState").and_then(Value::as_str) {
@@ -1067,6 +1326,14 @@ impl Mail {
             let mut updated = Map::new();
             let mut not_updated = Map::new();
             for (id, patch) in update {
+                if let Some(left) = self.email_set_budget.as_mut() {
+                    if *left == 0 {
+                        not_updated
+                            .insert(id.clone(), json!({"type": "serverFail", "description": "mock: out of budget"}));
+                        continue;
+                    }
+                    *left -= 1;
+                }
                 match self.apply_patch(id, patch) {
                     Ok(()) => {
                         updated.insert(id.clone(), Value::Null);

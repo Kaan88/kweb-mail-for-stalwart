@@ -32,7 +32,7 @@ use crate::{
     Error, Result,
 };
 
-const FILES_CAPABILITY: &str = "urn:ietf:params:jmap:filenode";
+pub(super) const FILES_CAPABILITY: &str = "urn:ietf:params:jmap:filenode";
 const NO_FILES: &str = "the server has no file storage";
 const GONE: &str = "that file or folder is no longer there";
 const FOLDER_GONE: &str = "that folder is no longer there";

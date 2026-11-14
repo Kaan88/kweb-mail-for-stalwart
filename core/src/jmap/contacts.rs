@@ -94,10 +94,6 @@ impl Connection {
 
     /// One card with the state of the cards it was read at. One the server does not have is
     /// `Error::Invalid`.
-    async fn card_get(&self, id: &str) -> Result<(Value, Option<String>)> {
-        self.card_get_in(&self.contacts_account_id(), id).await
-    }
-
     async fn card_get_in(&self, account: &str, id: &str) -> Result<(Value, Option<String>)> {
         let args = json!({ "accountId": account, "ids": [id] });
         let responses = self.contacts_call(&[("ContactCard/get", args)]).await?;
@@ -122,17 +118,28 @@ impl Connection {
     /// opened with (`None`: as the card is now); what was changed elsewhere since stays. A
     /// change that changes nothing sends nothing.
     pub async fn save_contact(&self, id: Option<&str>, contact: &Contact, base: Option<&Contact>) -> Result<String> {
-        let books = self.address_books().await?;
+        self.save_contact_in(&self.contacts_account_id(), id, contact, base).await
+    }
+
+    /// Like [`Connection::save_contact`], in the address books of the account `account`.
+    pub(super) async fn save_contact_in(
+        &self,
+        account: &str,
+        id: Option<&str>,
+        contact: &Contact,
+        base: Option<&Contact>,
+    ) -> Result<String> {
+        let books = self.address_books_in(account).await?;
         let Some(id) = id else {
             let clean = jscontact::validate(contact, &books, None)?;
             let args = json!({
-                "accountId": self.contacts_account_id(),
+                "accountId": account,
                 "create": { CREATE_ID: jscontact::create_object(&clean) },
             });
             let responses = self.contacts_call(&[("ContactCard/set", args)]).await?;
             return created_id(response(&responses, "ContactCard/set")?);
         };
-        self.change_card(id, |card| {
+        self.change_card(account, id, |card| {
             let now = jscontact::contact_from(card);
             let clean = jscontact::validate(contact, &books, Some(base.unwrap_or(&now)))?;
             Ok(jscontact::update_patch(card, &clean, base.unwrap_or(&now)))
@@ -143,7 +150,12 @@ impl Connection {
 
     /// Deletes a contact. One that is already gone is as good as deleted.
     pub async fn delete_contact(&self, id: &str) -> Result<()> {
-        let args = json!({ "accountId": self.contacts_account_id(), "destroy": [id] });
+        self.delete_contact_in(&self.contacts_account_id(), id).await
+    }
+
+    /// Like [`Connection::delete_contact`], in the address books of the account `account`.
+    pub(super) async fn delete_contact_in(&self, account: &str, id: &str) -> Result<()> {
+        let args = json!({ "accountId": account, "destroy": [id] });
         let responses = self.contacts_call(&[("ContactCard/set", args)]).await?;
         destroyed(response(&responses, "ContactCard/set")?, id)
     }
@@ -151,14 +163,14 @@ impl Connection {
     /// Reads the card, builds a patch from it and sends it as of the state it was read at. A
     /// card someone else changed in between is read again and the patch rebuilt, once. An empty
     /// patch sends nothing.
-    async fn change_card(&self, id: &str, build: impl Fn(&Value) -> Result<Value>) -> Result<()> {
+    async fn change_card(&self, account: &str, id: &str, build: impl Fn(&Value) -> Result<Value>) -> Result<()> {
         for _ in 0..2 {
-            let (card, state) = self.card_get(id).await?;
+            let (card, state) = self.card_get_in(account, id).await?;
             let patch = build(&card)?;
             if patch.as_object().is_some_and(|fields| fields.is_empty()) {
                 return Ok(());
             }
-            let mut args = json!({ "accountId": self.contacts_account_id(), "update": { id: patch } });
+            let mut args = json!({ "accountId": account, "update": { id: patch } });
             if let Some(state) = state {
                 args["ifInState"] = json!(state);
             }

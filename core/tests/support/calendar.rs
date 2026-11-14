@@ -117,6 +117,11 @@ impl Calendar {
         }));
     }
 
+    /// Whether the calendar may be written (`mayWriteAll` is what the mock sets with `writable`).
+    pub fn writable(&self, id: &str) -> bool {
+        self.calendars.iter().any(|c| c["id"] == id && c["myRights"]["mayWriteAll"] == true)
+    }
+
     /// Drops the calendars, for a shared account that starts with only what the test adds.
     pub fn clear_calendars(&mut self) {
         self.calendars.clear();

@@ -152,11 +152,7 @@ impl Connection {
 
     /// One event or task, whole, with the state of the calendar events it was read at. One the
     /// server does not have is `Error::Invalid`.
-    async fn event_get(&self, id: &str) -> Result<(Value, Option<String>)> {
-        self.event_get_in(&self.calendar_account_id(), id).await
-    }
-
-    async fn event_get_in(&self, account: &str, id: &str) -> Result<(Value, Option<String>)> {
+    pub(super) async fn event_get_in(&self, account: &str, id: &str) -> Result<(Value, Option<String>)> {
         let args = json!({ "accountId": account, "ids": [id] });
         let responses = self.calendar_call(&[("CalendarEvent/get", args)]).await?;
         let answer = response(&responses, "CalendarEvent/get")?;
@@ -184,17 +180,22 @@ impl Connection {
     /// Creates an event or task (`id` is `None`) or changes one. Returns its id. Only what the
     /// app owns is written; an update that changes nothing sends nothing.
     pub async fn save_event(&self, id: Option<&str>, input: &EventInput) -> Result<String> {
-        let calendars = self.calendars().await?;
+        self.save_event_in(&self.calendar_account_id(), id, input).await
+    }
+
+    /// Like [`Connection::save_event`], in the calendars of the account `account`.
+    pub(super) async fn save_event_in(&self, account: &str, id: Option<&str>, input: &EventInput) -> Result<String> {
+        let calendars = self.calendars_in(account).await?;
         let Some(id) = id else {
             jscal::validate(input, &calendars, None)?;
             let args = json!({
-                "accountId": self.calendar_account_id(),
+                "accountId": account,
                 "create": { CREATE_ID: jscal::create_object(input) },
             });
             let responses = self.calendar_call(&[("CalendarEvent/set", args)]).await?;
             return created_id(response(&responses, "CalendarEvent/set")?);
         };
-        self.change(id, false, |event| {
+        self.change(account, id, false, |event| {
             jscal::validate(input, &calendars, jscal::current_input(event).as_ref())?;
             jscal::update_patch(event, input)
         })
@@ -204,10 +205,15 @@ impl Connection {
 
     /// Deletes an event or task, or one occurrence of a repeating event.
     pub async fn delete_event(&self, id: &str, recurrence_id: Option<&str>) -> Result<()> {
+        self.delete_event_in(&self.calendar_account_id(), id, recurrence_id).await
+    }
+
+    /// Like [`Connection::delete_event`], in the calendars of the account `account`.
+    pub(super) async fn delete_event_in(&self, account: &str, id: &str, recurrence_id: Option<&str>) -> Result<()> {
         if let Some(recurrence_id) = recurrence_id {
-            return self.change(id, false, |event| jscal::exclude_patch(event, recurrence_id)).await;
+            return self.change(account, id, false, |event| jscal::exclude_patch(event, recurrence_id)).await;
         }
-        let args = json!({ "accountId": self.calendar_account_id(), "destroy": [id] });
+        let args = json!({ "accountId": account, "destroy": [id] });
         let responses = self.calendar_call(&[("CalendarEvent/set", args)]).await?;
         destroyed(response(&responses, "CalendarEvent/set")?, id)
     }
@@ -215,25 +221,31 @@ impl Connection {
     /// Answers an invitation; the server tells the organizer.
     pub async fn respond_to_event(&self, id: &str, status: &str) -> Result<()> {
         let me = self.my_addresses().await?;
-        self.change(id, true, |event| jscal::respond_patch(event, &me, status)).await
+        self.change(&self.calendar_account_id(), id, true, |event| jscal::respond_patch(event, &me, status)).await
     }
 
     pub async fn set_task_done(&self, id: &str, done: bool) -> Result<()> {
-        self.change(id, false, |event| jscal::progress_patch(event, done)).await
+        self.change(&self.calendar_account_id(), id, false, |event| jscal::progress_patch(event, done)).await
     }
 
     /// Reads the event, builds a patch from it and sends it as of the state it was read at. The
     /// patches set whole maps, so an event someone else changed in between must not be written
     /// over: then it is read again and the patch rebuilt, once. An empty patch sends nothing.
     /// With `notify` the server also sends the scheduling messages the change calls for.
-    async fn change(&self, id: &str, notify: bool, build: impl Fn(&Value) -> Result<Value>) -> Result<()> {
+    async fn change(
+        &self,
+        account: &str,
+        id: &str,
+        notify: bool,
+        build: impl Fn(&Value) -> Result<Value>,
+    ) -> Result<()> {
         for _ in 0..2 {
-            let (event, state) = self.event_get(id).await?;
+            let (event, state) = self.event_get_in(account, id).await?;
             let patch = build(&event)?;
             if patch.as_object().is_some_and(|fields| fields.is_empty()) {
                 return Ok(());
             }
-            let mut args = json!({ "accountId": self.calendar_account_id(), "update": { id: patch } });
+            let mut args = json!({ "accountId": account, "update": { id: patch } });
             if let Some(state) = state {
                 args["ifInState"] = json!(state);
             }

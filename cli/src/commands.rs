@@ -7,7 +7,7 @@ use kweb_core::{
     ffi::{Core, Shade},
     model::{
         Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, FileEntry, FileKind,
-        Identity, MessageBody, MessageHeader, Occurrence, Quota, Reminder,
+        Identity, MessageBody, MessageHeader, Occurrence, Quota, Reminder, ShareLevel,
     },
     notify::Plan,
     push::Listener,
@@ -15,7 +15,7 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files, Filters, Shared},
+    args::{Away, Command, Files, Filters, Folder, Share, Shared},
     timefmt,
 };
 
@@ -41,8 +41,12 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Contacts { query } => contacts(core, query),
         Command::Files { space, what } => files(core, space, what),
         Command::Shared(what) => shared(core, what),
+        Command::Share(what) => share(core, what),
         Command::Away(what) => away(core, what),
         Command::Filters(what) => filters(core, what),
+        Command::Folder(what) => folder(core, what),
+        Command::Spam { id, is_spam } => spam(core, id, is_spam),
+        Command::Block { id } => block(core, id),
         Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
         Command::SignOut => sign_out(core),
@@ -139,11 +143,64 @@ fn message_line(m: &MessageHeader) -> String {
 fn mailboxes(core: &Core) -> Result<(), String> {
     core.check_once(Shade::Unknown).map_err(|e| e.to_string())?;
     let boxes = core.mailboxes().map_err(|e| e.to_string())?;
-    println!("{:<10} {:<24} {:>6} {:>7}  id", "role", "name", "total", "unread");
+    println!("{:<10} {:<24} {:>6} {:>7} {:<6} id", "role", "name", "total", "unread", "notify");
     for m in boxes {
         let role = m.role.as_deref().unwrap_or("-");
-        println!("{:<10} {:<24} {:>6} {:>7}  {}", role, m.name, m.total_emails, m.unread_emails, m.id);
+        let notify = if m.notify { "yes" } else { "-" };
+        println!("{:<10} {:<24} {:>6} {:>7} {:<6} {}", role, m.name, m.total_emails, m.unread_emails, notify, m.id);
     }
+    Ok(())
+}
+
+/// Folder commands work from the cache and the server: a pass first, so the cache is current
+/// and the refusals (a name that is taken, a role folder) are judged on what the server has.
+fn folder(core: &Core, what: Folder) -> Result<(), String> {
+    let failed = |e: kweb_core::Error| e.to_string();
+    core.check_once(Shade::Unknown).map_err(failed)?;
+    match what {
+        Folder::Add { name, parent } => {
+            let made = core.create_mailbox(name, parent).map_err(failed)?;
+            println!("Made the folder {} [{}].", one_line(&made.name), made.id);
+        }
+        Folder::Rename { id, name } => {
+            core.rename_mailbox(id.clone(), name).map_err(failed)?;
+            println!("{id}: renamed.");
+        }
+        Folder::Move { id, parent } => {
+            core.move_mailbox(id.clone(), parent).map_err(failed)?;
+            println!("{id}: moved.");
+        }
+        Folder::Rm { id, with_mail } => {
+            core.delete_mailbox(id.clone(), with_mail).map_err(failed)?;
+            println!("{id}: deleted{}.", if with_mail { " (its mail went to the Trash)" } else { "" });
+        }
+        Folder::Notify { id, on } => {
+            core.set_mailbox_notify(id.clone(), on).map_err(failed)?;
+            println!("{id}: notifications {}.", if on { "on" } else { "off" });
+        }
+    }
+    Ok(())
+}
+
+fn spam(core: &Core, id: String, is_spam: bool) -> Result<(), String> {
+    core.report_spam(vec![id.clone()], is_spam).map_err(|e| e.to_string())?;
+    core.check_once(Shade::Unknown).map_err(|e| {
+        format!("{id} is changed locally but not sent yet (the next kweb command or watch will send it): {e}")
+    })?;
+    println!(
+        "{id}: {}.",
+        if is_spam { "reported as spam, moved to Junk" } else { "reported as not spam, moved to the Inbox" }
+    );
+    Ok(())
+}
+
+fn block(core: &Core, id: String) -> Result<(), String> {
+    let filters = core.block_sender(id.clone()).map_err(|e| e.to_string())?;
+    core.check_once(Shade::Unknown).map_err(|e| {
+        format!("{id} is changed locally but not sent yet (the next kweb command or watch will send it): {e}")
+    })?;
+    println!("{id}: sender blocked, message moved to the Trash.");
+    println!("{}", filters_text(&filters));
     Ok(())
 }
 
@@ -405,6 +462,42 @@ fn contact_line(r: &ContactRow) -> String {
 
 /// How many messages `kweb shared mail <account> <mailbox-id>` lists.
 const SHARED_MAIL_LIMIT: u32 = 20;
+
+fn share(core: &Core, what: Share) -> Result<(), String> {
+    let fail = |e: kweb_core::Error| e.to_string();
+    let show = |shares: &[kweb_core::model::Share]| {
+        if shares.is_empty() {
+            println!("Not shared with anybody.");
+        }
+        for s in shares {
+            let level = match s.level {
+                ShareLevel::Read => "read",
+                ShareLevel::Write => "write",
+            };
+            println!(
+                "{}  {}  {}  [{}]",
+                level,
+                one_line(&s.person.name),
+                one_line(&s.person.email),
+                one_line(&s.person.id)
+            );
+        }
+    };
+    match what {
+        Share::List { kind, id } => show(&core.shares(kind, id).map_err(fail)?),
+        Share::Set { kind, id, person, level } => show(&core.set_share(kind, id, person, level).map_err(fail)?),
+        Share::People { text } => {
+            let people = core.share_people(text).map_err(fail)?;
+            if people.is_empty() {
+                println!("Nobody found.");
+            }
+            for p in &people {
+                println!("{}  {}  [{}]", one_line(&p.name), one_line(&p.email), one_line(&p.id));
+            }
+        }
+    }
+    Ok(())
+}
 
 fn shared(core: &Core, what: Shared) -> Result<(), String> {
     let fail = |e: kweb_core::Error| e.to_string();

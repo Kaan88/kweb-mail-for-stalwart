@@ -14,7 +14,7 @@
 use crate::{
     jmap::{ActionContext, Connection},
     model::Action,
-    store::Store,
+    store::{Job, Store},
     Error, Result,
 };
 
@@ -106,13 +106,50 @@ pub fn submit_all(store: &Store, account_id: &str, actions: &[Action]) -> Result
     actions.iter().try_for_each(|action| submit(store, account_id, action))
 }
 
+/// Marks messages as spam (to Junk, `$junk` set, `$notjunk` cleared) or as not spam (back to the
+/// Inbox, `$notjunk` set, `$junk` cleared): applied to the cache at once and queued, like
+/// [`submit`]. The cache then shows the message only in that folder, so the notification rule
+/// sees it leave wherever it was. No Junk folder (or, for not spam, no Inbox) is
+/// `Error::Invalid` and queues nothing.
+pub fn submit_spam(store: &Store, account_id: &str, message_ids: &[String], is_spam: bool) -> Result<()> {
+    let junk = role_id(store, account_id, "junk")?;
+    let inbox = role_id(store, account_id, "inbox")?;
+    // Checked once for all of them, so that nothing is queued when the answer is no.
+    spam_target(is_spam, junk.as_deref(), inbox.as_deref())?;
+    for id in message_ids {
+        store.outbox_enqueue_job(account_id, &Job::Spam { message_id: id.clone(), is_spam })?;
+        write_edit(store, account_id, &spam_edit(id, is_spam, junk.as_deref(), inbox.as_deref())?)?;
+    }
+    Ok(())
+}
+
+/// The folder a spam report puts the message in.
+fn spam_target<'a>(is_spam: bool, junk: Option<&'a str>, inbox: Option<&'a str>) -> Result<&'a str> {
+    if is_spam {
+        junk.ok_or_else(|| Error::invalid("The account has no Junk folder."))
+    } else {
+        inbox.ok_or_else(|| Error::invalid("The account has no Inbox."))
+    }
+}
+
+fn spam_edit(id: &str, is_spam: bool, junk: Option<&str>, inbox: Option<&str>) -> Result<Edit> {
+    let target = spam_target(is_spam, junk, inbox)?;
+    Ok(Edit::Mailboxes { id: id.to_string(), mailboxes: vec![target.to_string()] })
+}
+
 /// Puts every queued action back on the cache. Called by `sync` after it wrote server data.
 /// Actions that cannot be applied (the mailbox is gone) are skipped: `flush` will drop them.
 pub(crate) fn reapply_pending(store: &Store, account_id: &str) -> Result<()> {
     let archive = role_id(store, account_id, "archive")?;
     let trash = role_id(store, account_id, "trash")?;
-    for (_, action, _) in store.outbox_pending(account_id)? {
-        if let Ok(edit) = edit_for(&action, archive.as_deref(), trash.as_deref()) {
+    let junk = role_id(store, account_id, "junk")?;
+    let inbox = role_id(store, account_id, "inbox")?;
+    for (_, job, _) in store.outbox_jobs(account_id)? {
+        let edit = match &job {
+            Job::Action(action) => edit_for(action, archive.as_deref(), trash.as_deref()),
+            Job::Spam { message_id, is_spam } => spam_edit(message_id, *is_spam, junk.as_deref(), inbox.as_deref()),
+        };
+        if let Ok(edit) = edit {
             write_edit(store, account_id, &edit)?;
         }
     }
@@ -137,16 +174,26 @@ fn context(store: &Store, account_id: &str) -> Result<ActionContext> {
 /// retries later.
 pub async fn flush(conn: &Connection, store: &Store, account_id: &str) -> Result<usize> {
     let mut applied = 0;
-    for (row, action, _) in store.outbox_pending(account_id)? {
-        let ctx = context(store, account_id)?;
-        match conn.apply(&action, &ctx).await {
+    for (row, job, _) in store.outbox_jobs(account_id)? {
+        let outcome = match &job {
+            Job::Action(action) => conn.apply(action, &context(store, account_id)?).await,
+            Job::Spam { message_id, is_spam } => {
+                let junk = role_id(store, account_id, "junk")?;
+                let inbox = role_id(store, account_id, "inbox")?;
+                match spam_target(*is_spam, junk.as_deref(), inbox.as_deref()) {
+                    Ok(target) => conn.apply_spam(message_id, *is_spam, target).await,
+                    Err(e) => Err(e),
+                }
+            }
+        };
+        match outcome {
             Ok(()) => {
                 store.outbox_done(row)?;
                 applied += 1;
             }
             Err(Error::Invalid { .. }) => {
                 store.outbox_done(row)?;
-                undo_in_cache(conn, store, account_id, message_id(&action)).await;
+                undo_in_cache(conn, store, account_id, job.message_id()).await;
             }
             Err(e) => {
                 store.outbox_failed(row, &e.to_string())?;

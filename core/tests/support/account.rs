@@ -136,6 +136,11 @@ impl Account {
         self.address_books.push(address_book(id, name, false, may_write));
     }
 
+    /// Whether the address book may be written.
+    pub fn book_writable(&self, id: &str) -> bool {
+        self.address_books.iter().any(|b| b["id"] == id && b["myRights"]["mayWrite"] == true)
+    }
+
     /// Drops the address books, for a shared account that starts with only what the test adds.
     pub fn clear_address_books(&mut self) {
         self.address_books.clear();

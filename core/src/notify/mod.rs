@@ -1,9 +1,12 @@
 //! Decides which notifications should exist.
 //!
-//! The rule: the notifications on screen must equal the unread Inbox mail that arrived after
-//! sign-in and that the user has not swiped away. [`plan`] compares that set with what is
-//! shown and says what to post and what to cancel. It is a pure function; the store supplies
-//! both sets and remembers the result.
+//! The rule: the notifications on screen must equal the unread mail, in the Inbox and in every
+//! folder the user switched on for notifications, that arrived after sign-in (for such a folder:
+//! after it was switched on) and that the user has not swiped away. Mail counts however it got
+//! into the folder: delivered there, put there by a filter, or moved there by another client. A
+//! message that is in both the Inbox and such a folder is one notification. [`plan`] compares
+//! that set with what is shown and says what to post and what to cancel. It is a pure function;
+//! the store supplies both sets and remembers the result.
 
 use std::collections::HashSet;
 
@@ -77,7 +80,8 @@ pub fn android_id(message_id: &str) -> i32 {
 
 /// Compares what should be shown with what is shown.
 ///
-/// - `desired`: unread Inbox mail that arrived after sign-in and was not swiped away.
+/// - `desired`: unread mail of the Inbox and the folders that notify, that arrived after
+///   sign-in and was not swiped away.
 /// - `shown`: the message ids the core last told Android to show.
 /// - `on_screen`: what the host knows about the shade. A mail that is in `shown` but not on
 ///   screen is posted again silently: it was announced once already.
@@ -175,6 +179,7 @@ mod store_tests {
             sort_order: 0,
             total_emails: 0,
             unread_emails: 0,
+            notify: false,
         };
         store.upsert_mailboxes(&account.id, &[inbox]).unwrap();
         (store, account)
@@ -268,6 +273,7 @@ mod store_tests {
                 sort_order: 0,
                 total_emails: 0,
                 unread_emails: 0,
+                notify: false,
             };
             store.upsert_mailboxes(&account.id, &[inbox]).unwrap();
             store.upsert_messages(&account.id, &[mail("a", NOW)]).unwrap();
@@ -285,6 +291,216 @@ mod store_tests {
         let (_, account) = setup();
         store.save_account(&account).unwrap();
         assert!(run(&store, &account, OnScreen::Unknown, NOW).unwrap().is_empty());
+    }
+
+    // ---- folders that notify (M10) ----
+
+    /// When the folder "work" is switched on in these tests; mail received from here on counts.
+    const ON: i64 = 1_800_000_050;
+
+    fn folder(id: &str, name: &str, role: Option<&str>) -> Mailbox {
+        Mailbox {
+            id: id.into(),
+            name: name.into(),
+            role: role.map(str::to_string),
+            parent_id: None,
+            sort_order: 0,
+            total_emails: 0,
+            unread_emails: 0,
+            notify: false,
+        }
+    }
+
+    fn mail_in(id: &str, received_at: i64, mailboxes: &[&str]) -> MessageHeader {
+        MessageHeader { mailbox_ids: mailboxes.iter().map(|m| m.to_string()).collect(), ..mail(id, received_at) }
+    }
+
+    /// The Inbox, a folder "work" that notifies from `ON`, "later" that does not, and Junk.
+    fn with_folders() -> (Store, Account) {
+        let (store, account) = setup();
+        let boxes =
+            [folder("work", "Work", None), folder("later", "Later", None), folder("junk", "Junk", Some("junk"))];
+        store.upsert_mailboxes(&account.id, &boxes).unwrap();
+        assert!(store.set_mailbox_notify(&account.id, "work", true, ON).unwrap());
+        (store, account)
+    }
+
+    fn pass(store: &Store, account: &Account) -> Plan {
+        run(store, account, OnScreen::Unknown, NOW).unwrap()
+    }
+
+    #[test]
+    fn mail_that_arrives_in_a_folder_that_notifies_is_posted_and_one_that_does_not_is_not() {
+        let (store, account) = with_folders();
+        let both = [mail_in("w", ON + 1, &["work"]), mail_in("l", ON + 1, &["later"])];
+        store.upsert_messages(&account.id, &both).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["w"]);
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn a_folder_switched_on_later_does_not_announce_the_mail_that_was_already_in_it() {
+        let (store, account) = with_folders();
+        // Unread mail in "later" from before the user switches it on, and one that arrives after.
+        store.upsert_messages(&account.id, &[mail_in("old", ON + 10, &["later"])]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+        store.set_mailbox_notify(&account.id, "later", true, ON + 20).unwrap();
+        assert!(pass(&store, &account).is_empty(), "the old mail stays quiet");
+        store.upsert_messages(&account.id, &[mail_in("new", ON + 21, &["later"])]).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["new"]);
+        // The same in the folder that was on from the start: mail from before that is quiet.
+        store.upsert_messages(&account.id, &[mail_in("before", ON - 1, &["work"])]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn mail_from_before_sign_in_is_quiet_in_every_folder() {
+        let (store, account) = with_folders();
+        store.set_mailbox_notify(&account.id, "work", true, account.signed_in_at - 100).unwrap();
+        // Switching on again keeps the first time, which here is before sign-in.
+        store.upsert_messages(&account.id, &[mail_in("old", account.signed_in_at - 1, &["work"])]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn a_message_in_the_inbox_and_in_a_folder_that_notifies_is_one_notification() {
+        let (store, account) = with_folders();
+        store.upsert_messages(&account.id, &[mail_in("both", ON + 1, &["inbox", "work"])]).unwrap();
+        let desired = store.notifiable(&account.id, "inbox", account.signed_in_at).unwrap();
+        assert_eq!(desired.len(), 1);
+        assert_eq!(posted(&pass(&store, &account)), ["both"]);
+        assert!(pass(&store, &account).is_empty());
+        // Taken out of the Inbox, it is still wanted for the folder: nothing to cancel.
+        store.set_message_mailboxes(&account.id, "both", &["work".to_string()]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn a_filter_or_a_move_elsewhere_that_brings_mail_into_the_folder_counts() {
+        let (store, account) = with_folders();
+        // Delivered to the Inbox, then a filter (or another client) moved it into "work": the
+        // Inbox posted it first and the folder keeps it.
+        store.upsert_messages(&account.id, &[mail_in("f", ON + 1, &["inbox"])]).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["f"]);
+        store.set_message_mailboxes(&account.id, "f", &["work".to_string()]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+        // New mail from "later" that is moved into "work" before this device ever saw it in the
+        // Inbox is announced for "work".
+        store.upsert_messages(&account.id, &[mail_in("m", ON + 2, &["later"])]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+        store.set_message_mailboxes(&account.id, "m", &["work".to_string()]).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["m"]);
+        // Mail that was received before the folder was switched on is not announced by being moved in.
+        store.upsert_messages(&account.id, &[mail_in("o", ON - 5, &["later"])]).unwrap();
+        store.set_message_mailboxes(&account.id, "o", &["work".to_string()]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn what_ends_an_inbox_notification_ends_a_folders_too() {
+        let (store, account) = with_folders();
+        let all = [
+            mail_in("read", ON + 1, &["work"]),
+            mail_in("moved", ON + 2, &["work"]),
+            mail_in("gone", ON + 3, &["work"]),
+            mail_in("swiped", ON + 4, &["work"]),
+            mail_in("junked", ON + 5, &["work"]),
+        ];
+        store.upsert_messages(&account.id, &all).unwrap();
+        assert_eq!(pass(&store, &account).post.len(), 5);
+        store.set_unread(&account.id, "read", false).unwrap();
+        store.set_message_mailboxes(&account.id, "moved", &["later".to_string()]).unwrap();
+        store.delete_messages(&account.id, &["gone".to_string()]).unwrap();
+        swiped(&store, &account.id, "swiped").unwrap();
+        store.set_message_mailboxes(&account.id, "junked", &["junk".to_string()]).unwrap();
+        let plan = pass(&store, &account);
+        assert!(plan.post.is_empty());
+        assert_eq!(cancelled(&plan), ["gone", "junked", "moved", "read"]);
+        // The swipe holds, also after the screen was emptied behind the app's back.
+        let plan = run(&store, &account, OnScreen::Cleared, NOW).unwrap();
+        assert!(plan.post.is_empty());
+        // Unread again elsewhere: a fresh reason to notify.
+        store.set_unread(&account.id, "read", true).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["read"]);
+    }
+
+    #[test]
+    fn switching_a_folder_off_withdraws_its_notifications_and_on_again_starts_from_then() {
+        let (store, account) = with_folders();
+        store
+            .upsert_messages(&account.id, &[mail_in("w", ON + 1, &["work"]), mail_in("i", ON + 1, &["inbox"])])
+            .unwrap();
+        assert_eq!(pass(&store, &account).post.len(), 2);
+        store.set_mailbox_notify(&account.id, "work", false, ON + 2).unwrap();
+        assert_eq!(cancelled(&pass(&store, &account)), ["w"], "the Inbox's stays");
+        // On again: the mail that is still unread in it is old now.
+        store.set_mailbox_notify(&account.id, "work", true, ON + 3).unwrap();
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn a_folder_with_a_role_that_never_notifies_does_not_even_with_a_row() {
+        let (store, account) = with_folders();
+        assert!(store.set_mailbox_notify(&account.id, "junk", true, ON).unwrap());
+        store.upsert_messages(&account.id, &[mail_in("j", ON + 1, &["junk"])]).unwrap();
+        assert!(pass(&store, &account).is_empty());
+        assert!(!store.get_mailbox(&account.id, "junk").unwrap().unwrap().notify);
+    }
+
+    #[test]
+    fn the_choice_is_kept_when_the_list_is_refreshed_and_goes_with_the_folder() {
+        let (store, account) = with_folders();
+        assert!(store.get_mailbox(&account.id, "work").unwrap().unwrap().notify);
+        assert!(store.get_mailbox(&account.id, "inbox").unwrap().unwrap().notify, "the Inbox always does");
+        assert!(!store.get_mailbox(&account.id, "later").unwrap().unwrap().notify);
+        // A full refresh of the list, as the server gives it (it knows nothing of the choice).
+        let fresh =
+            [folder("inbox", "Inbox", Some("inbox")), folder("work", "Work", None), folder("later", "Later", None)];
+        store.replace_mailboxes(&account.id, &fresh).unwrap();
+        assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), Some(ON));
+        // An update of one folder keeps it too.
+        store.upsert_mailboxes(&account.id, &[folder("work", "Work 2", None)]).unwrap();
+        assert!(store.get_mailbox(&account.id, "work").unwrap().unwrap().notify);
+        // Switching on again does not move the time forward.
+        store.set_mailbox_notify(&account.id, "work", true, ON + 500).unwrap();
+        assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), Some(ON));
+        // The folder goes: a refresh without it, or the server's word that it was destroyed.
+        store.replace_mailboxes(&account.id, &[folder("inbox", "Inbox", Some("inbox"))]).unwrap();
+        assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), None);
+        store.upsert_mailboxes(&account.id, &[folder("work", "Work", None)]).unwrap();
+        assert!(!store.get_mailbox(&account.id, "work").unwrap().unwrap().notify, "a new folder starts off");
+        store.set_mailbox_notify(&account.id, "work", true, ON).unwrap();
+        store.delete_mailboxes(&account.id, &["work".to_string()]).unwrap();
+        assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), None);
+        // A folder the cache does not know cannot be switched on.
+        assert!(!store.set_mailbox_notify(&account.id, "nope", true, ON).unwrap());
+    }
+
+    #[test]
+    fn a_deleted_folder_leaves_its_mail_in_the_trash_or_drops_it() {
+        let (store, account) = with_folders();
+        store.upsert_mailboxes(&account.id, &[folder("trash", "Trash", Some("trash"))]).unwrap();
+        store
+            .upsert_messages(
+                &account.id,
+                &[
+                    mail_in("only", ON + 1, &["work"]),
+                    mail_in("also", ON + 1, &["work", "later"]),
+                    mail_in("kept", ON + 1, &["later"]),
+                ],
+            )
+            .unwrap();
+        store.forget_mailbox(&account.id, "work", Some("trash")).unwrap();
+        let home = |id: &str| store.get_message(&account.id, id).unwrap().unwrap().mailbox_ids;
+        assert_eq!(home("only"), ["trash"]);
+        assert_eq!(home("also"), ["later"]);
+        assert_eq!(home("kept"), ["later"]);
+        assert!(store.get_mailbox(&account.id, "work").unwrap().is_none());
+        assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), None);
+        // Without a Trash the mail that was only there is dropped.
+        store.forget_mailbox(&account.id, "later", None).unwrap();
+        assert!(store.get_message(&account.id, "kept").unwrap().is_none());
+        assert!(store.get_message(&account.id, "only").unwrap().is_some());
     }
 }
 

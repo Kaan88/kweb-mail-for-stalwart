@@ -14,11 +14,13 @@ mod contacts;
 mod convert;
 mod errors;
 mod files;
+mod folders;
 mod jscal;
 mod jscontact;
 mod recur;
 mod send;
 mod shared;
+mod sharing;
 mod sieve;
 mod vacation;
 

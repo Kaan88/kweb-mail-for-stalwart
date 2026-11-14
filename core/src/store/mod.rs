@@ -18,6 +18,7 @@ mod tests;
 mod threads;
 
 pub use drafts::{DraftRow, DraftState, Threading, DIRECTORY_EVERY};
+pub use outbox::Job;
 
 use crate::model::Account;
 use crate::Result;

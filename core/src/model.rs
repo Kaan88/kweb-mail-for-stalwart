@@ -23,6 +23,9 @@ pub struct Mailbox {
     pub sort_order: u32,
     pub total_emails: u32,
     pub unread_emails: u32,
+    /// New mail in this folder notifies. Always true for the Inbox; for any other folder the
+    /// user's choice ([`crate::ffi::Core::set_mailbox_notify`]), kept on this device, off at first.
+    pub notify: bool,
 }
 
 /// One mail address as a header carries it.
@@ -569,6 +572,44 @@ pub struct AiPreview {
     pub characters: u32,
     /// Something was left out to stay within the limits.
     pub is_cut: bool,
+}
+
+/// How far a share goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ShareLevel {
+    /// See it.
+    Read,
+    /// See and change it: add, change and remove what is in it. Never share it onward, rename
+    /// or delete the folder, calendar or address book itself.
+    Write,
+}
+
+/// What of the user's own can be shared with another user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ShareKind {
+    Mailbox,
+    Calendar,
+    AddressBook,
+    FileFolder,
+}
+
+/// A user of the same server.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Person {
+    /// The server's id for them; passed back when sharing.
+    pub id: String,
+    /// Their name, or the address when the server gives no name.
+    pub name: String,
+    /// Empty when the server does not say.
+    pub email: String,
+}
+
+/// One user something is shared with.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Share {
+    /// When the server does not let the app look users up, `name` is the id and `email` empty.
+    pub person: Person,
+    pub level: ShareLevel,
 }
 
 /// Which part of a message a filter condition looks at.

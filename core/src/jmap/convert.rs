@@ -206,6 +206,7 @@ pub(super) fn to_mailbox(m: &JmapMailbox<Get>) -> Option<Mailbox> {
         sort_order: m.sort_order(),
         total_emails: clamp_u32(m.total_emails()),
         unread_emails: clamp_u32(m.unread_emails()),
+        notify: false,
     })
 }
 

@@ -322,6 +322,91 @@ pub fn rule_from(message: &MessageHeader, list_id: Option<&str>) -> Result<Filte
     })
 }
 
+/// The rule "Blocked: <address>": From contains the address, delete, stop.
+pub fn block_rule(message: &MessageHeader) -> Result<FilterRule> {
+    let mut rule = rule_from(message, None)?;
+    let address = rule.conditions[0].value.clone();
+    rule.name = format!("Blocked: {address}");
+    rule.delete = true;
+    rule.stop = true;
+    Ok(rule)
+}
+
+/// Whether `rule` is what [`block_rule`] makes for this address (the address compared without
+/// regard to case) and is on.
+fn blocks(rule: &FilterRule, address: &str) -> bool {
+    rule.enabled
+        && rule.delete
+        && rule.match_all
+        && rule.move_to.is_none()
+        && matches!(rule.conditions.as_slice(), [c] if c.field == FilterField::From
+            && c.how == FilterMatch::Contains && c.value.eq_ignore_ascii_case(address))
+}
+
+/// Puts the rule that blocks the sender first in the app's filters and switches the filters on.
+/// `own` are the user's own addresses (lower case): blocking one is refused. A sender that is
+/// blocked already changes nothing (except that a script that was switched off is switched on).
+/// Refused, with words for the user, when the server has no filters, when the away message or
+/// another script is active, or when the app's script was edited by hand.
+pub async fn block(conn: &Connection, message: &MessageHeader, own: &HashSet<String>) -> Result<Loaded> {
+    let rule = block_rule(message)?;
+    let address = rule.conditions[0].value.clone();
+    let mut own = own.clone();
+    match conn.identities().await {
+        Ok(identities) => own.extend(identities.iter().map(|i| i.email.trim().to_lowercase())),
+        Err(e) if crate::jmap::is_unauthorized(&e) => return Err(e),
+        // The cached identities and the sign-in name stand in.
+        Err(_) => {}
+    }
+    // The rule is "From contains", so an own address that merely ends in this one (joann@ for
+    // ann@) would be caught by it too.
+    let wanted = address.to_lowercase();
+    if own.iter().any(|o| o.contains(&wanted)) {
+        return Err(Error::invalid(
+            "That is one of your own addresses. Blocking it would send your own mail to the Trash.",
+        ));
+    }
+    if !conn.has_sieve() {
+        return Err(Error::invalid("This server has no mail filters, so a sender cannot be blocked here."));
+    }
+    let loaded = load(conn).await?;
+    let f = &loaded.filters;
+    if f.away_is_on {
+        return Err(Error::invalid(
+            "The away message is on, and the server runs it instead of any filter. Decide in Filters what \
+             should be on, then block the sender.",
+        ));
+    }
+    if let Some(other) = &f.other_active {
+        return Err(Error::invalid(format!(
+            "Another filter script, \"{other}\", is the one the server runs, and blocking would switch it off. \
+             Decide in Filters what should be on, then block the sender."
+        )));
+    }
+    if f.is_edited {
+        return Err(Error::invalid(
+            "The filter script on the server was changed by hand, so the app cannot add to it. Open Filters to \
+             decide what to do with it.",
+        ));
+    }
+    if f.rules.iter().any(|r| blocks(r, &address)) {
+        return match f.is_active {
+            true => Ok(loaded),
+            false => set_active(conn, Some(&loaded.state), true).await,
+        };
+    }
+    if let Some((index, other)) = f.rules.iter().enumerate().find(|(_, r)| r.enabled && r.folder_missing) {
+        return Err(Error::invalid(format!(
+            "Blocking has to save all the filters, and {} moves mail to a folder that no longer exists. \
+             Open Filters, choose another folder or switch that rule off, then block the sender.",
+            check::label(other, index)
+        )));
+    }
+    let mut rules = vec![rule];
+    rules.extend(f.rules.iter().cloned());
+    save(conn, Some(&loaded.state), &rules, true, false).await
+}
+
 /// The id inside the angle brackets of a List-Id (`Name <list.example.org>`), else the whole
 /// value. Control characters would be refused by the rule check, so they are dropped here.
 fn list_address(value: &str) -> String {
@@ -342,6 +427,7 @@ mod tests {
             sort_order: 0,
             total_emails: 0,
             unread_emails: 0,
+            notify: false,
         }
     }
 
@@ -358,6 +444,41 @@ mod tests {
         assert_eq!(path_of(&boxes, "zz"), Path::Missing);
         assert_eq!(path_of(&boxes, "c"), Path::Unaddressable("A/B".into()));
         assert_eq!(path_of(&boxes, "d"), Path::Missing);
+    }
+
+    #[test]
+    fn a_block_rule_is_the_senders_address_deleted_and_stopped() {
+        let message = MessageHeader {
+            id: "m".into(),
+            thread_id: "t".into(),
+            mailbox_ids: vec![],
+            from_name: "Ann Example".into(),
+            from_email: " Ann@Example.org ".into(),
+            to: vec![],
+            subject: String::new(),
+            preview: String::new(),
+            received_at: 0,
+            is_unread: true,
+            is_flagged: false,
+            has_attachment: false,
+            size: 0,
+        };
+        let rule = block_rule(&message).unwrap();
+        assert_eq!(rule.name, "Blocked: Ann@Example.org");
+        assert!(rule.enabled && rule.delete && rule.stop && rule.move_to.is_none());
+        assert_eq!(rule.conditions[0].field, FilterField::From);
+        assert_eq!(rule.conditions[0].value, "Ann@Example.org");
+        assert!(blocks(&rule, "ann@example.org"));
+        let mut off = rule.clone();
+        off.enabled = false;
+        assert!(!blocks(&off, "ann@example.org"));
+        let mut moves = rule.clone();
+        moves.delete = false;
+        moves.move_to = Some("x".into());
+        assert!(!blocks(&moves, "ann@example.org"));
+        assert!(!blocks(&rule, "bob@example.org"));
+        let nobody = MessageHeader { from_email: String::new(), ..message };
+        assert!(matches!(block_rule(&nobody), Err(Error::Invalid { .. })));
     }
 
     #[test]

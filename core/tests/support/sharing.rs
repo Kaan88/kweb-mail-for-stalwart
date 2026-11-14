@@ -78,6 +78,9 @@ pub struct Sharing {
     /// `(account, area)` answers every method of the area (`mail`, `calendar`, `contacts`) with
     /// this error type.
     refusals: BTreeMap<(String, &'static str), &'static str>,
+    /// Accounts whose rights were taken back after the user read them: every write to a
+    /// calendar or address book of theirs is `forbidden`, whatever the rights read say.
+    pub deny_writes: BTreeSet<String>,
     /// `(account, method)` of every call that reached a shared account, in order.
     pub calls: Vec<(String, String)>,
 }
@@ -97,6 +100,7 @@ impl Default for Sharing {
         Sharing {
             accounts: accounts.into_iter().map(|(id, a)| (id.to_string(), a)).collect(),
             refusals: BTreeMap::new(),
+            deny_writes: BTreeSet::new(),
             calls: Vec::new(),
         }
     }
@@ -290,6 +294,7 @@ impl Sharing {
     pub fn call(&mut self, account: &str, name: &str, args: &Value) -> Result<Value, MethodError> {
         self.calls.push((account.to_string(), name.to_string()));
         let refusals = self.refusals.clone();
+        let denied = self.deny_writes.contains(account);
         let Some(a) = self.accounts.get_mut(account) else {
             return Err(merr("accountNotFound", "The accountId does not correspond to a valid account"));
         };
@@ -316,19 +321,102 @@ impl Sharing {
             "calendar" => {
                 let calendar = a.calendar.as_mut().ok_or_else(not_supported)?;
                 if name == "CalendarEvent/set" {
-                    return Err(merr("forbidden", "You are not allowed to modify this event."));
+                    // The rights are the calendar's: an event is written only where it is.
+                    let (allowed, refused) = guard_set(
+                        args,
+                        "calendarIds",
+                        &|id| calendar.event(id),
+                        &|c| !denied && calendar.writable(c),
+                        ["add calendar events to calendar", "modify this event", "remove events from calendar"],
+                    );
+                    return merge_refused(calendar.call(name, &allowed)?, refused);
                 }
                 calendar.call(name, args)
             }
             _ => {
                 let contacts = a.contacts.as_mut().ok_or_else(not_supported)?;
                 if name == "ContactCard/set" {
-                    return Err(merr("forbidden", "You are not allowed to modify address book."));
+                    let (allowed, refused) = guard_set(
+                        args,
+                        "addressBookIds",
+                        &|id| contacts.card(id),
+                        &|b| !denied && contacts.book_writable(b),
+                        ["add contacts to address book", "modify address book", "remove contacts from address book"],
+                    );
+                    return merge_refused(contacts.call(name, &allowed)?, refused);
                 }
                 contacts.call(name, args)
             }
         }
     }
+}
+
+/// What a `/set` of events or cards may do given where its objects are: the request without
+/// what is refused, and the set errors of what was (`notCreated`, `notUpdated`,
+/// `notDestroyed`). `container` is the property that names the calendars or address books,
+/// `words` the end of the refusal texts for create, update and destroy.
+fn guard_set(
+    args: &Value,
+    container: &str,
+    object: &dyn Fn(&str) -> Option<Value>,
+    writable: &dyn Fn(&str) -> bool,
+    words: [&str; 3],
+) -> (Value, [Map<String, Value>; 3]) {
+    let forbidden = |what: &str, place: &str| json!({ "type": "forbidden", "description": format!("You are not allowed to {what} {place}.") });
+    let first_closed = |holder: &Value| {
+        holder[container].as_object().into_iter().flatten().map(|(c, _)| c.clone()).find(|c| !writable(c))
+    };
+    let mut allowed = args.clone();
+    let mut refused = [Map::new(), Map::new(), Map::new()];
+    let mut keep = Map::new();
+    for (cid, spec) in args["create"].as_object().into_iter().flatten() {
+        match first_closed(spec) {
+            Some(place) => {
+                refused[0].insert(cid.clone(), forbidden(words[0], &place));
+            }
+            None => {
+                keep.insert(cid.clone(), spec.clone());
+            }
+        }
+    }
+    allowed["create"] = Value::Object(keep);
+    let mut keep = Map::new();
+    for (id, patch) in args["update"].as_object().into_iter().flatten() {
+        let closed = object(id).and_then(|o| first_closed(&o));
+        if closed.is_some() {
+            refused[1].insert(id.clone(), forbidden(words[1], ""));
+        } else {
+            keep.insert(id.clone(), patch.clone());
+        }
+    }
+    allowed["update"] = Value::Object(keep);
+    let mut keep = Vec::new();
+    for id in args["destroy"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        match object(id).and_then(|o| first_closed(&o)) {
+            Some(place) => {
+                refused[2].insert(id.to_string(), forbidden(words[2], &place));
+            }
+            None => keep.push(json!(id)),
+        }
+    }
+    allowed["destroy"] = Value::Array(keep);
+    (allowed, refused)
+}
+
+/// The answer of a `/set` with the refusals put in.
+fn merge_refused(mut answer: Value, refused: [Map<String, Value>; 3]) -> Result<Value, MethodError> {
+    for (key, errors) in ["notCreated", "notUpdated", "notDestroyed"].into_iter().zip(refused) {
+        if errors.is_empty() {
+            continue;
+        }
+        if !answer[key].is_object() {
+            answer[key] = json!({});
+        }
+        for (id, e) in errors {
+            answer[key][id] = e;
+        }
+    }
+    Ok(answer)
 }
 
 fn strings(v: &Value) -> Option<Vec<String>> {
@@ -487,6 +575,9 @@ impl SharedMail {
             ("bcc", json!([])),
             ("replyTo", json!([])),
             ("subject", json!(m.subject)),
+            ("messageId", json!([format!("m-{}@shared.test", m.id)])),
+            ("inReplyTo", json!([])),
+            ("references", json!([format!("root-{}@shared.test", m.id)])),
             ("preview", json!(format!("Preview of {}", m.subject))),
             ("receivedAt", json!(rfc3339(m.received_at))),
             ("sentAt", json!(rfc3339(m.received_at - 60))),

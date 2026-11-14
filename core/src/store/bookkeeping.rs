@@ -1,21 +1,32 @@
 //! Notification bookkeeping: what is shown, what the user swiped away.
 
+use super::mailboxes::QUIET_ROLES;
 use super::messages::{query_headers, COLUMNS};
 use super::Store;
 use crate::model::MessageHeader;
 use crate::Result;
 
 impl Store {
-    /// Messages that should have a notification: in `inbox_id`, unread, received at or after
-    /// `since`, and not dismissed. Newest first.
+    /// Messages that should have a notification: unread, not dismissed, and either in
+    /// `inbox_id` and received at or after `since`, or in a folder switched on for
+    /// notifications and received at or after `since` and after it was switched on. A message in
+    /// both is listed once. Newest first.
     pub fn notifiable(&self, account_id: &str, inbox_id: &str, since: i64) -> Result<Vec<MessageHeader>> {
         self.read(|c| {
             let sql = format!(
                 "SELECT {COLUMNS} FROM messages m
-                 JOIN message_mailboxes mm ON mm.account_id = m.account_id AND mm.message_id = m.id
-                 WHERE m.account_id = ?1 AND mm.mailbox_id = ?2 AND m.is_unread = 1 AND m.received_at >= ?3
+                 WHERE m.account_id = ?1 AND m.is_unread = 1
                    AND NOT EXISTS (SELECT 1 FROM notifications_dismissed d
                                    WHERE d.account_id = m.account_id AND d.message_id = m.id)
+                   AND EXISTS (
+                       SELECT 1 FROM message_mailboxes mm
+                       LEFT JOIN mailbox_notify n ON n.account_id = mm.account_id AND n.mailbox_id = mm.mailbox_id
+                       LEFT JOIN mailboxes b ON b.account_id = mm.account_id AND b.id = mm.mailbox_id
+                       WHERE mm.account_id = m.account_id AND mm.message_id = m.id
+                         AND ((mm.mailbox_id = ?2 AND m.received_at >= ?3)
+                              OR (n.mailbox_id IS NOT NULL AND m.received_at >= MAX(?3, n.since)
+                                  AND COALESCE(b.role, '') NOT IN ({QUIET_ROLES})))
+                   )
                  ORDER BY m.received_at DESC, m.id DESC"
             );
             query_headers(c, &sql, rusqlite::params![account_id, inbox_id, since], account_id)

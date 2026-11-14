@@ -5,7 +5,7 @@
 //! a blocking function of [`Core`] from inside the callback.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     future::Future,
     path::Path,
@@ -21,14 +21,14 @@ use tokio::{net::TcpListener, runtime::Runtime};
 use crate::{
     actions, assistant,
     auth::{self, loopback, OAuthClient, PendingSignIn, Tokens},
-    compose, contacts, filters,
+    compose, contacts, filters, folders,
     jmap::{self, is_unauthorized, Connection},
     model::{
         Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
         Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, ContactRow, Draft,
         DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, FilterRule, Filters, Identity,
-        ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, SharedAccount,
-        SharedAction, SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
+        ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Person, Quota, Reminder, SearchResult, Share,
+        ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -743,6 +743,25 @@ impl Core {
         }
     }
 
+    /// Makes the notification plan from the cache alone and hands it to the listener. Without
+    /// a listener nothing is done: the plan would be recorded as delivered to nobody.
+    fn replan_from_cache(&self) -> Result<()> {
+        let (account, listener) = {
+            let inner = self.lock();
+            let Some(session) = inner.session.as_ref() else { return Ok(()) };
+            let Some(listener) = inner.listener.clone() else { return Ok(()) };
+            (session.account.clone(), listener)
+        };
+        let plan = self.rt.block_on(async {
+            let _one_at_a_time = self.store.pass_lock().lock().await;
+            notify::run(&self.store, &account, OnScreen::Unknown, now())
+        })?;
+        if !plan.is_empty() {
+            listener.notifications(plan);
+        }
+        Ok(())
+    }
+
     fn account_id(&self) -> Result<String> {
         self.lock().session.as_ref().map(|s| s.account.id.clone()).ok_or_else(not_signed_in)
     }
@@ -1388,8 +1407,8 @@ impl Core {
         self.with_connection(|conn| async move { conn.shared_agenda(account, from, to, zone).await })
     }
 
-    /// One event of a shared calendar, as [`Core::event`]. Shown only: this stage has no way
-    /// to change a shared event.
+    /// One event of a shared calendar, as [`Core::event`]; `may_write` says whether the user may
+    /// change it (see [`Core::shared_save_event`]).
     pub fn shared_event(
         &self,
         account: String,
@@ -1407,7 +1426,8 @@ impl Core {
         self.with_connection(|conn| async move { conn.shared_contacts(account, query).await })
     }
 
-    /// One shared contact, as [`Core::contact`]. Shown only.
+    /// One shared contact, as [`Core::contact`]; `may_write` says whether its address book may
+    /// be written.
     pub fn shared_contact(&self, account: String, contact_id: String) -> Result<ContactDetail> {
         let (account, id) = (account.as_str(), contact_id.as_str());
         self.with_connection(|conn| async move { conn.shared_contact(account, id).await })
@@ -1502,5 +1522,240 @@ impl Core {
             Err(e) => return Err(e),
         };
         filters::rule_from(&message, list_id.as_deref())
+    }
+}
+
+// ---- M7: sharing with others, and working in what is shared ----
+
+#[uniffi::export]
+impl Core {
+    /// Users of the server whose name or address has `text`, at most 20, for choosing whom to
+    /// share with. A server that does not let apps look users up (the default) is
+    /// `Error::Invalid` with words that say so; a blank text is an empty list.
+    pub fn share_people(&self, text: String) -> Result<Vec<Person>> {
+        let text = text.as_str();
+        self.with_connection(|conn| async move { conn.share_people(text).await })
+    }
+
+    /// Whom the user's own folder, calendar, address book or file folder `id` is shared with.
+    pub fn shares(&self, kind: ShareKind, id: String) -> Result<Vec<Share>> {
+        let id = id.as_str();
+        self.with_connection(|conn| async move { conn.share_list(kind, id).await })
+    }
+
+    /// Shares the user's own `id` with `person_id` at `level`, changes the level, or with
+    /// `None` takes the share back. Only that person's entry is touched. Returns the shares as
+    /// they are afterwards. Sharing with oneself, the Inbox's special folders that must stay
+    /// private (Drafts), and an id that is not the user's own are `Error::Invalid`.
+    pub fn set_share(
+        &self,
+        kind: ShareKind,
+        id: String,
+        person_id: String,
+        level: Option<ShareLevel>,
+    ) -> Result<Vec<Share>> {
+        let (id, person) = (id.as_str(), person_id.as_str());
+        self.with_connection(|conn| async move { conn.set_share(kind, id, person, level).await })
+    }
+
+    /// A draft that answers or forwards a message of a shared folder, as [`Core::new_draft`]
+    /// makes one for the user's own mail: `kind` names the message (its `message_id` is an id
+    /// in `account`) and must be a reply, reply to all or forward. The draft is the user's own,
+    /// sent from the user's own address; attachments of a forwarded message are copied into
+    /// the user's own account so they can be sent.
+    pub fn new_draft_from_shared(&self, account: String, kind: DraftKind) -> Result<Draft> {
+        let (all, forward, message_id) = match kind {
+            DraftKind::Reply { message_id } => (false, false, message_id),
+            DraftKind::ReplyAll { message_id } => (true, false, message_id),
+            DraftKind::Forward { message_id } => (false, true, message_id),
+            DraftKind::New | DraftKind::Existing { .. } => {
+                return Err(Error::invalid("a message of a shared folder can be answered or forwarded"))
+            }
+        };
+        let account_id = self.account_id()?;
+        let identities = self.store.identities_list(&account_id)?;
+        let (id, at) = (compose::new_id()?, now());
+        let (shared, mid) = (account.as_str(), message_id.as_str());
+        // Nothing of the shared message is cached: it is read here and only the draft is kept.
+        let (message, ids) = self.with_connection(|conn| async move {
+            Ok((conn.shared_message(shared, mid).await?, conn.shared_header_ids(shared, mid).await?))
+        })?;
+        let source = (&message.header, &message.body);
+        let mut draft = if forward {
+            compose::forward(source, &identities, id, at)
+        } else {
+            compose::answer(all, source, &identities, id, at)
+        };
+        // The source is not a message of the user's own account: sending must not mark an own
+        // message of the same id as answered, and the threading is taken from here.
+        draft.source_message_id = None;
+        if forward {
+            let files = std::mem::take(&mut draft.attachments);
+            if !files.is_empty() {
+                let files = &files;
+                draft.attachments =
+                    self.with_connection(|conn| async move { conn.shared_copy_files(shared, files).await })?;
+            }
+        }
+        let threading = if forward { Threading::default() } else { compose::answer_threading(&ids) };
+        // Copied files are referenced by nothing on the server yet: a dirty draft makes the
+        // Drafts copy at once, which pins them (as `add_attachment` does).
+        let copied = !draft.attachments.is_empty();
+        self.store.draft_insert(&account_id, &draft, Some(&threading), copied)?;
+        if copied {
+            self.poke();
+        }
+        Ok(draft)
+    }
+
+    /// Creates (`event_id` `None`) or changes an event in a calendar shared from `account`, as
+    /// [`Core::save_event`] does for the user's own, with the same rule: only what the app owns
+    /// is patched. Where the user may not write, `Error::Invalid` with words for the user.
+    /// From now on [`Core::shared_calendars`] and [`Core::shared_event`] report `may_write`
+    /// as the rights really are.
+    pub fn shared_save_event(&self, account: String, event_id: Option<String>, input: EventInput) -> Result<String> {
+        let (account, id, input) = (account.as_str(), event_id.as_deref(), &input);
+        self.with_connection(|conn| async move { conn.shared_save_event(account, id, input).await })
+    }
+
+    /// Deletes an event, or one occurrence of it, in a shared calendar, as [`Core::delete_event`].
+    pub fn shared_delete_event(&self, account: String, event_id: String, recurrence_id: Option<String>) -> Result<()> {
+        let (account, id, recurrence) = (account.as_str(), event_id.as_str(), recurrence_id.as_deref());
+        self.with_connection(|conn| async move { conn.shared_delete_event(account, id, recurrence).await })
+    }
+
+    /// The address books shared from `account`, with `may_write` as the rights are.
+    pub fn shared_address_books(&self, account: String) -> Result<Vec<AddressBook>> {
+        let account = account.as_str();
+        self.with_connection(|conn| async move { conn.shared_address_books(account).await })
+    }
+
+    /// Creates or changes a contact in an address book shared from `account`, as
+    /// [`Core::save_contact`] (a change keeps what the app does not show). From now on
+    /// [`Core::shared_contact`] reports whether it may be changed as the rights really are.
+    pub fn shared_save_contact(&self, account: String, contact_id: Option<String>, contact: Contact) -> Result<String> {
+        // The base is the card as it is now: nothing of a shared card is remembered between calls.
+        let (account, id, contact) = (account.as_str(), contact_id.as_deref(), &contact);
+        self.with_connection(|conn| async move { conn.shared_save_contact(account, id, contact, None).await })
+    }
+
+    pub fn shared_delete_contact(&self, account: String, contact_id: String) -> Result<()> {
+        let (account, id) = (account.as_str(), contact_id.as_str());
+        self.with_connection(|conn| async move { conn.shared_delete_contact(account, id).await })
+    }
+}
+
+// ---- M10: folders, their notifications, spam and blocking ----
+
+#[uniffi::export]
+impl Core {
+    /// Whether new mail in the folder notifies. Kept on this device. The notification rule
+    /// becomes: what is on screen equals the unread mail, in the Inbox and in every folder
+    /// switched on here, that arrived after sign-in (for such a folder: after it was switched
+    /// on) and was not swiped. Switching off takes that folder's notifications away. The
+    /// Inbox cannot be switched off here (`Error::Invalid`); Drafts, Sent, Trash and Junk
+    /// cannot be switched on.
+    pub fn set_mailbox_notify(&self, mailbox_id: String, notify: bool) -> Result<()> {
+        folders::set_notify(&self.store, &self.account_id()?, &mailbox_id, notify, now())?;
+        // Withdrawing what this changes needs nothing from the server, so it is done from the
+        // cache now: offline, or with no live loop, it would wait for a pass. Showing is left
+        // to the next pass.
+        if !notify {
+            self.replan_from_cache()?;
+        }
+        self.poke();
+        Ok(())
+    }
+
+    /// Makes a folder named `name` in `parent_id` (`None`: the top level). Needs the server.
+    /// A blank name, a name with "/" or a control character, a name that is already there, too
+    /// deep, or a parent that is Drafts, Trash or Junk is `Error::Invalid` with words for the
+    /// user. The folder is in the cache when this returns.
+    pub fn create_mailbox(&self, name: String, parent_id: Option<String>) -> Result<Mailbox> {
+        let account_id = self.account_id()?;
+        let (store, account, name, parent) = (&self.store, &account_id, &name, parent_id.as_deref());
+        let made =
+            self.with_connection(|conn| async move { folders::create(&conn, store, account, name, parent).await })?;
+        self.poke();
+        Ok(made)
+    }
+
+    /// Renames a folder the user made. Folders with a role (Inbox, Sent, Trash, ...) cannot be
+    /// renamed, moved or deleted here although the server would allow some of it.
+    pub fn rename_mailbox(&self, mailbox_id: String, name: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        let (store, account, id, name) = (&self.store, &account_id, &mailbox_id, &name);
+        self.with_connection(|conn| async move { folders::rename(&conn, store, account, id, name).await })?;
+        self.poke();
+        Ok(())
+    }
+
+    /// Moves a folder under `parent_id` (`None`: the top level). Not into itself or a folder
+    /// inside itself.
+    pub fn move_mailbox(&self, mailbox_id: String, parent_id: Option<String>) -> Result<()> {
+        let account_id = self.account_id()?;
+        let (store, account, id, parent) = (&self.store, &account_id, &mailbox_id, parent_id.as_deref());
+        self.with_connection(|conn| async move { folders::move_to(&conn, store, account, id, parent).await })?;
+        self.poke();
+        Ok(())
+    }
+
+    /// Deletes a folder the user made. One that has folders inside is refused
+    /// (`Error::Invalid`: delete those first). With `with_mail` false a folder that still holds
+    /// mail is refused; with true its mail is moved to the Trash first, never destroyed (mail
+    /// that is also in another folder just leaves this one). Filter rules that move mail into
+    /// it are not changed: the filters then show the folder as missing.
+    pub fn delete_mailbox(&self, mailbox_id: String, with_mail: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        let (store, account, id) = (&self.store, &account_id, &mailbox_id);
+        let result =
+            self.with_connection(|conn| async move { folders::delete(&conn, store, account, id, with_mail).await });
+        // Mail may have moved even when the delete did not finish: a pass brings the counts.
+        self.poke();
+        result
+    }
+
+    /// Marks the messages as spam (`is_spam` true: into the Junk folder with the `$junk`
+    /// keyword set and `$notjunk` cleared) or as not spam (back to the Inbox with `$notjunk`
+    /// set and `$junk` cleared). Applied to the cache at once and queued like the other
+    /// actions, so it works without a connection. No Junk folder is `Error::Invalid`.
+    pub fn report_spam(&self, message_ids: Vec<String>, is_spam: bool) -> Result<()> {
+        let result = actions::submit_spam(&self.store, &self.account_id()?, &message_ids, is_spam);
+        self.poke();
+        result
+    }
+
+    /// Blocks the sender of a message of the user's own mail: a filter rule "Blocked: <address>"
+    /// (From contains that address, delete, stop) is put first in the mail filters and the
+    /// filters are switched on, and the message itself goes to the Trash. A sender that is
+    /// already blocked changes nothing. Refused with `Error::Invalid` and words for the user
+    /// when the server has no filters, when the away message or another script is active (the
+    /// user decides that in the filters screen), when the app's script was edited by hand, or
+    /// when the sender is one of the user's own addresses. Returns the filters afterwards.
+    pub fn block_sender(&self, message_id: String) -> Result<Filters> {
+        let account_id = self.account_id()?;
+        let message = self
+            .store
+            .get_message(&account_id, &message_id)?
+            .ok_or_else(|| Error::invalid("That message is not in the cache."))?;
+        // Everything that can be refused without the server is, before anything is changed.
+        filters::block_rule(&message)?;
+        let trash = self.store.mailbox_by_role(&account_id, "trash")?;
+        let trash = trash.ok_or_else(|| Error::invalid("The account has no Trash folder."))?;
+        let mut own: HashSet<String> =
+            self.store.identities_list(&account_id)?.iter().map(|i| i.email.trim().to_lowercase()).collect();
+        if let Some(account) = self.account() {
+            own.insert(account.username.trim().to_lowercase());
+        }
+        let (message, own) = (&message, &own);
+        let result = self.with_connection(|conn| async move { filters::block(&conn, message, own).await });
+        let filters = self.filters_result(result)?;
+        // The rule is in place. A message that is in the Trash already stays there: deleting it
+        // there would destroy it.
+        if !message.mailbox_ids.contains(&trash.id) {
+            actions::submit(&self.store, &account_id, &Action::Delete { message_id })?;
+            self.poke();
+        }
+        Ok(filters)
     }
 }

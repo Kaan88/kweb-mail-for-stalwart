@@ -214,6 +214,17 @@ pub(super) const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX contact_cards_by_name ON contact_cards (account_id, sort_key, id);
     ",
+    // 6: M10 (folders). Which folders notify, and since when. Local only, never sent to the
+    // server. It is a table of its own so that a refresh of the mailbox list (which replaces the
+    // rows of `mailboxes`) keeps it; it goes with its mailbox.
+    "
+    CREATE TABLE mailbox_notify (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        mailbox_id TEXT NOT NULL,
+        since      INTEGER NOT NULL,
+        PRIMARY KEY (account_id, mailbox_id)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

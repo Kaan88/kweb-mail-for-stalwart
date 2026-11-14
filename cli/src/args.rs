@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kweb_core::model::{AiEffort, AiProvider};
+use kweb_core::model::{AiEffort, AiProvider, ShareKind, ShareLevel};
 
 pub const USAGE: &str = "\
 kweb: a developer tool that drives kweb-core against a Stalwart server.
@@ -11,9 +11,24 @@ Usage:
   kweb sign-in <server-url>   sign in through the browser
   kweb status                 show the account
   kweb inbox [-n N]           sync, then show the newest N Inbox messages (default 20)
-  kweb mailboxes              sync, then list mailboxes with totals
+  kweb mailboxes              sync, then list mailboxes with totals and whether they notify
   kweb show <message-id>      show a message: headers, text, attachments
   kweb search <query>         search all mail on the server (the cache when offline)
+  kweb folder add <name> [parent-id]
+                              make a folder (at the top level without a parent)
+  kweb folder rename <id> <name>
+                              rename a folder you made
+  kweb folder move <id> [parent-id]
+                              move a folder you made under another (to the top without one)
+  kweb folder rm <id> [--with-mail]
+                              delete a folder you made; with --with-mail its mail goes to
+                              the Trash first (without it a folder that holds mail is refused)
+  kweb folder notify <id> on|off
+                              whether new mail in the folder notifies (on this device only)
+  kweb spam <message-id>      report a message as spam: to Junk, marked $junk
+  kweb notspam <message-id>   report it as not spam: back to the Inbox, marked $notjunk
+  kweb block <message-id>     block the sender: a filter rule that deletes their mail, and
+                              the message goes to the Trash
   kweb watch                  follow live changes until Ctrl+C
   kweb read <message-id>      mark a message read
   kweb unread <message-id>    mark a message unread
@@ -49,6 +64,13 @@ Usage:
   kweb shared contacts <account> [query]
                               list the contacts an account shares, or those matching the query
                               everything shared is read from the server each time, never kept
+  kweb share list <kind> <id>
+                              show whom one of your folders, calendars, address books or file
+                              folders is shared with, and how (read or write); <kind> is
+                              mailbox, calendar, addressbook or folder
+  kweb share set <kind> <id> <person-id> read|write|none
+                              share it with a person, change how, or with none take it back
+  kweb share people <text>    find users to share with (a server may not allow that)
   kweb away                   show the away message
   kweb away on <text>         switch it on from now until switched off, with this text
   kweb away off               switch it off
@@ -109,8 +131,12 @@ pub enum Command {
     Contacts { query: String },
     Files { space: Option<String>, what: Files },
     Shared(Shared),
+    Share(Share),
     Away(Away),
     Filters(Filters),
+    Folder(Folder),
+    Spam { id: String, is_spam: bool },
+    Block { id: String },
     Send { to: String, subject: String, text: String },
     Ai(Ai),
     SignOut,
@@ -157,6 +183,14 @@ pub enum Shared {
     Contacts { account: String, query: String },
 }
 
+/// What `kweb share` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Share {
+    List { kind: ShareKind, id: String },
+    Set { kind: ShareKind, id: String, person: String, level: Option<ShareLevel> },
+    People { text: String },
+}
+
 /// What `kweb filters` does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Filters {
@@ -165,6 +199,16 @@ pub enum Filters {
     On,
     Off,
     AddFrom { message_id: String, folder_id: String },
+}
+
+/// What `kweb folder` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Folder {
+    Add { name: String, parent: Option<String> },
+    Rename { id: String, name: String },
+    Move { id: String, parent: Option<String> },
+    Rm { id: String, with_mail: bool },
+    Notify { id: String, on: bool },
 }
 
 /// What `kweb away` does.
@@ -193,8 +237,13 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
         "files" => files(rest),
         "shared" => shared(rest).map(Command::Shared),
+        "share" => share(rest).map(Command::Share),
         "away" => away(rest),
         "filters" => filters(rest).map(Command::Filters),
+        "folder" => folder(rest).map(Command::Folder),
+        "spam" => one_arg(name, "message-id", rest).map(|id| Command::Spam { id, is_spam: true }),
+        "notspam" => one_arg(name, "message-id", rest).map(|id| Command::Spam { id, is_spam: false }),
+        "block" => one_arg(name, "message-id", rest).map(|id| Command::Block { id }),
         "send" => send(rest),
         "ai" => ai(rest).map(Command::Ai),
         "sign-in" => one_arg(name, "server-url", rest).map(|server_url| Command::SignIn { server_url }),
@@ -322,6 +371,45 @@ fn shared(rest: &[String]) -> Result<Shared, String> {
     }
 }
 
+fn share_kind(word: &str) -> Result<ShareKind, String> {
+    match word {
+        "mailbox" => Ok(ShareKind::Mailbox),
+        "calendar" => Ok(ShareKind::Calendar),
+        "addressbook" => Ok(ShareKind::AddressBook),
+        "folder" => Ok(ShareKind::FileFolder),
+        other => Err(format!("the kind is mailbox, calendar, addressbook or folder, not '{other}'")),
+    }
+}
+
+fn share(rest: &[String]) -> Result<Share, String> {
+    match rest {
+        [word, tail @ ..] if word == "list" => match tail {
+            [kind, id] => Ok(Share::List { kind: share_kind(kind)?, id: id.clone() }),
+            [_, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+            _ => Err("share list needs a <kind> and an <id>".into()),
+        },
+        [word, tail @ ..] if word == "set" => match tail {
+            [kind, id, person, level] => {
+                let level = match level.as_str() {
+                    "read" => Some(ShareLevel::Read),
+                    "write" => Some(ShareLevel::Write),
+                    "none" => None,
+                    other => return Err(format!("the level is read, write or none, not '{other}'")),
+                };
+                Ok(Share::Set { kind: share_kind(kind)?, id: id.clone(), person: person.clone(), level })
+            }
+            [_, _, _, _, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+            _ => Err("share set needs a <kind>, an <id>, a <person-id> and read, write or none".into()),
+        },
+        [word, words @ ..] if word == "people" => match words {
+            [] => Err("share people needs some text to look for".into()),
+            words => Ok(Share::People { text: words.join(" ") }),
+        },
+        [other, ..] => Err(format!("share takes list, set or people, not '{other}'")),
+        [] => Err("share takes list, set or people".into()),
+    }
+}
+
 fn away(rest: &[String]) -> Result<Command, String> {
     match rest {
         [] => Ok(Command::Away(Away::Show)),
@@ -350,6 +438,42 @@ fn filters(rest: &[String]) -> Result<Filters, String> {
         }
         [word, ..] if word == "add-from" => Err("filters add-from needs <message-id> and <folder-id>".into()),
         [other, ..] => Err(format!("filters takes text, on, off, add-from, or nothing, not '{other}'")),
+    }
+}
+
+fn folder(rest: &[String]) -> Result<Folder, String> {
+    let too_many = |extra: &String| Err(format!("unexpected argument '{extra}'"));
+    let Some((sub, rest)) = rest.split_first() else {
+        return Err("folder takes add, rename, move, rm or notify".into());
+    };
+    match (sub.as_str(), rest) {
+        ("add", []) => Err("folder add needs a <name>".into()),
+        ("add", [name]) => Ok(Folder::Add { name: name.clone(), parent: None }),
+        ("add", [name, parent]) => Ok(Folder::Add { name: name.clone(), parent: Some(parent.clone()) }),
+        ("add", [_, _, extra, ..]) => too_many(extra),
+        ("rename", [id, name]) => Ok(Folder::Rename { id: id.clone(), name: name.clone() }),
+        ("rename", [_, _, extra, ..]) => too_many(extra),
+        ("rename", _) => Err("folder rename needs an <id> and a <name>".into()),
+        ("move", []) => Err("folder move needs an <id>".into()),
+        ("move", [id]) => Ok(Folder::Move { id: id.clone(), parent: None }),
+        ("move", [id, parent]) => Ok(Folder::Move { id: id.clone(), parent: Some(parent.clone()) }),
+        ("move", [_, _, extra, ..]) => too_many(extra),
+        ("rm", words) => {
+            let with_mail = words.iter().any(|w| w == "--with-mail");
+            let ids: Vec<&String> = words.iter().filter(|w| *w != "--with-mail").collect();
+            match ids.as_slice() {
+                [] => Err("folder rm needs an <id>".into()),
+                [id] => Ok(Folder::Rm { id: (*id).clone(), with_mail }),
+                [_, extra, ..] => too_many(extra),
+            }
+        }
+        ("notify", [id, state]) if state == "on" || state == "off" => {
+            Ok(Folder::Notify { id: id.clone(), on: state == "on" })
+        }
+        ("notify", [_, state]) => Err(format!("folder notify takes on or off, not '{state}'")),
+        ("notify", [_, _, extra, ..]) => too_many(extra),
+        ("notify", _) => Err("folder notify needs an <id> and on or off".into()),
+        (other, _) => Err(format!("folder takes add, rename, move, rm or notify, not '{other}'")),
     }
 }
 
@@ -479,6 +603,45 @@ mod tests {
         assert_eq!(p(&[]), Ok(Command::Help));
         assert_eq!(p(&["help"]), Ok(Command::Help));
         assert_eq!(p(&["--help"]), Ok(Command::Help));
+    }
+
+    #[test]
+    fn folder_commands() {
+        let f = |w: &[&str]| {
+            let mut args = vec!["folder"];
+            args.extend_from_slice(w);
+            p(&args)
+        };
+        assert_eq!(f(&["add", "Work"]), Ok(Command::Folder(Folder::Add { name: "Work".into(), parent: None })));
+        assert_eq!(
+            f(&["add", "Bills", "mb7"]),
+            Ok(Command::Folder(Folder::Add { name: "Bills".into(), parent: Some("mb7".into()) }))
+        );
+        assert_eq!(
+            f(&["rename", "mb7", "Jobs"]),
+            Ok(Command::Folder(Folder::Rename { id: "mb7".into(), name: "Jobs".into() }))
+        );
+        assert_eq!(f(&["move", "mb7"]), Ok(Command::Folder(Folder::Move { id: "mb7".into(), parent: None })));
+        assert_eq!(
+            f(&["move", "mb7", "mb8"]),
+            Ok(Command::Folder(Folder::Move { id: "mb7".into(), parent: Some("mb8".into()) }))
+        );
+        assert_eq!(f(&["rm", "mb7"]), Ok(Command::Folder(Folder::Rm { id: "mb7".into(), with_mail: false })));
+        assert_eq!(
+            f(&["rm", "--with-mail", "mb7"]),
+            Ok(Command::Folder(Folder::Rm { id: "mb7".into(), with_mail: true }))
+        );
+        assert_eq!(f(&["rm", "mb7", "--with-mail"]), f(&["rm", "--with-mail", "mb7"]));
+        assert_eq!(f(&["notify", "mb7", "on"]), Ok(Command::Folder(Folder::Notify { id: "mb7".into(), on: true })));
+        assert_eq!(f(&["notify", "mb7", "off"]), Ok(Command::Folder(Folder::Notify { id: "mb7".into(), on: false })));
+        assert!(f(&["notify", "mb7", "maybe"]).is_err());
+        assert!(f(&["notify", "mb7"]).is_err());
+        assert!(f(&["add"]).is_err() && f(&["rm"]).is_err() && f(&["rename", "a"]).is_err() && f(&[]).is_err());
+        assert!(f(&["add", "a", "b", "c"]).is_err() && f(&["bogus"]).is_err());
+        assert_eq!(p(&["spam", "e1"]), Ok(Command::Spam { id: "e1".into(), is_spam: true }));
+        assert_eq!(p(&["notspam", "e1"]), Ok(Command::Spam { id: "e1".into(), is_spam: false }));
+        assert_eq!(p(&["block", "e1"]), Ok(Command::Block { id: "e1".into() }));
+        assert!(p(&["block"]).is_err() && p(&["spam", "a", "b"]).is_err());
     }
 
     #[test]
@@ -613,6 +776,34 @@ mod tests {
         assert_eq!(p(&["contacts"]), Ok(Command::Contacts { query: String::new() }));
         assert_eq!(p(&["contacts", "ann"]), Ok(Command::Contacts { query: "ann".into() }));
         assert_eq!(p(&["contacts", "ann", "lee"]), Ok(Command::Contacts { query: "ann lee".into() }));
+    }
+
+    #[test]
+    fn share_commands() {
+        let s = |what| Ok(Command::Share(what));
+        assert_eq!(
+            p(&["share", "list", "calendar", "c1"]),
+            s(Share::List { kind: ShareKind::Calendar, id: "c1".into() })
+        );
+        assert_eq!(
+            p(&["share", "set", "mailbox", "m", "d", "write"]),
+            s(Share::Set {
+                kind: ShareKind::Mailbox,
+                id: "m".into(),
+                person: "d".into(),
+                level: Some(ShareLevel::Write)
+            })
+        );
+        assert_eq!(
+            p(&["share", "set", "folder", "f", "d", "none"]),
+            s(Share::Set { kind: ShareKind::FileFolder, id: "f".into(), person: "d".into(), level: None })
+        );
+        assert_eq!(p(&["share", "people", "ann", "lee"]), s(Share::People { text: "ann lee".into() }));
+        assert!(p(&["share", "set", "mailbox", "m", "d", "all"]).is_err());
+        assert!(p(&["share", "list", "contacts", "x"]).is_err());
+        assert!(p(&["share", "list", "mailbox"]).is_err());
+        assert!(p(&["share", "people"]).is_err());
+        assert!(p(&["share"]).is_err());
     }
 
     #[test]

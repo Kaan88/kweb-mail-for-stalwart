@@ -694,16 +694,22 @@ fn a_shared_agenda_without_a_connection_is_an_error_not_an_old_list() {
 }
 
 #[test]
-fn a_shared_event_is_shown_and_may_not_be_changed() {
+fn a_shared_event_may_be_changed_as_far_as_its_calendar_may() {
     let rig = Rig::new();
     let detail = rig.core.shared_event(OWNER.into(), "ev1".into(), None).unwrap();
     assert_eq!((detail.event_id.as_str(), detail.input.title.as_str()), ("ev1", "Standup"));
-    assert!(!detail.may_write, "the calendar is writable but this stage only shows");
+    assert!(detail.may_write, "the calendar is writable");
     let (from, _) = week();
     let rec = rig.core.shared_agenda(OWNER.into(), from, from + 14 * 86_400, ZONE.into()).unwrap();
     let second = rec.entries[1].recurrence_id.clone();
     let occurrence = rig.core.shared_event(OWNER.into(), "ev1".into(), second).unwrap();
-    assert!(!occurrence.may_write);
+    assert!(occurrence.may_write);
+    rig.server.sharing(|s| {
+        s.calendar(OWNER).add_calendar("cal2", "Read only", true, false);
+        s.calendar(OWNER).add(json!({"@type": "Event", "title": "Look only", "start": "2026-11-18T10:00:00",
+            "timeZone": ZONE, "duration": "PT30M", "calendarIds": {"cal2": true}}));
+    });
+    assert!(!rig.core.shared_event(OWNER.into(), "ev2".into(), None).unwrap().may_write);
     assert_eq!(
         invalid(rig.core.shared_event(OWNER.into(), "ev99".into(), None).unwrap_err()),
         "the event no longer exists on the server"
@@ -735,10 +741,17 @@ fn shared_contacts_are_not_the_users_own_and_never_suggested() {
 }
 
 #[test]
-fn a_shared_contact_is_shown_and_may_not_be_changed() {
+fn a_shared_contact_may_be_changed_as_far_as_its_address_book_may() {
     let rig = Rig::new();
     let detail = rig.core.shared_contact(OWNER.into(), "c2".into()).unwrap();
-    assert_eq!((detail.id.as_str(), detail.contact.name.as_str(), detail.may_write), ("c2", "Amy Adler", false));
+    assert_eq!((detail.id.as_str(), detail.contact.name.as_str(), detail.may_write), ("c2", "Amy Adler", true));
+    rig.server.sharing(|s| {
+        s.contacts(OWNER).add_address_book("ro", "Read only", false);
+        s.contacts(OWNER).add_contact(json!({"name": {"full": "Ro Reader"}, "addressBookIds": {"ro": true}}));
+    });
+    assert!(!rig.core.shared_contact(OWNER.into(), "c3".into()).unwrap().may_write);
+    let books = rig.core.shared_address_books(OWNER.into()).unwrap();
+    assert_eq!(books.iter().map(|b| (b.id.as_str(), b.may_write)).collect::<Vec<_>>(), [("b", true), ("ro", false)]);
     assert_eq!(detail.contact.emails[0].value, "amy@shared.test");
     let e = rig.core.shared_contact(OWNER.into(), "c9".into()).unwrap_err();
     assert_eq!(invalid(e), "the contact no longer exists on the server");

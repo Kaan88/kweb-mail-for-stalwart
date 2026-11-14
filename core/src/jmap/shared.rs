@@ -27,13 +27,13 @@ use super::{
     contacts::CONTACTS_CAPABILITY,
     errors::{from_jmap, is_no_account},
     send::{response, set_error},
-    Connection, MAIL_CAPABILITY,
+    Connection, HeaderIds, MAIL_CAPABILITY,
 };
 use crate::{
     contacts::{select, Indexed},
     model::{
-        Agenda, Calendar, ContactDetail, ContactRow, EventDetail, MessageHeader, SharedAccount, SharedAction,
-        SharedMailbox, SharedMessage, SharedMessages,
+        AddressBook, Agenda, Attachment, Calendar, Contact, ContactDetail, ContactRow, EventDetail, EventInput,
+        MessageHeader, SharedAccount, SharedAction, SharedMailbox, SharedMessage, SharedMessages,
     },
     Error, Result,
 };
@@ -221,7 +221,7 @@ impl Connection {
         Ok(Agenda { entries, from_cache: false })
     }
 
-    /// An event of a shared calendar. This stage only shows it, so the user may not change it.
+    /// An event of a shared calendar; `may_write` is what the rights of its calendar say.
     pub async fn shared_event(
         &self,
         account: &str,
@@ -229,9 +229,22 @@ impl Connection {
         recurrence_id: Option<&str>,
     ) -> Result<EventDetail> {
         self.shared_check(account).await?;
-        let mut detail = self.event_detail_in(account, event_id, recurrence_id).await.map_err(unshared)?;
-        detail.may_write = false;
-        Ok(detail)
+        self.event_detail_in(account, event_id, recurrence_id).await.map_err(unshared)
+    }
+
+    /// Creates or changes an event in a calendar of the account, as the user's own are. A
+    /// refusal for want of rights is in words for the user.
+    pub async fn shared_save_event(&self, account: &str, id: Option<&str>, input: &EventInput) -> Result<String> {
+        self.shared_check(account).await?;
+        let saved = self.save_event_in(account, id, input).await;
+        refusal(saved.map_err(unshared), "you are not allowed to change events in this calendar")
+    }
+
+    /// Deletes an event, or one occurrence of it, in a calendar of the account.
+    pub async fn shared_delete_event(&self, account: &str, id: &str, recurrence_id: Option<&str>) -> Result<()> {
+        self.shared_check(account).await?;
+        let done = self.delete_event_in(account, id, recurrence_id).await;
+        refusal(done.map_err(unshared), "you are not allowed to delete events from this calendar")
     }
 
     // ---- contacts ----
@@ -245,11 +258,87 @@ impl Connection {
         Ok(select(index, query))
     }
 
-    /// A contact of a shared address book. Shown only.
+    /// A contact of a shared address book; it may be changed when its address book may.
     pub async fn shared_contact(&self, account: &str, contact_id: &str) -> Result<ContactDetail> {
         self.shared_check(account).await?;
         let entry = self.contact_card_in(account, contact_id).await.map_err(unshared)?;
-        Ok(ContactDetail { id: entry.id, contact: entry.contact, may_write: false })
+        let books = self.address_books_in(account).await.map_err(unshared)?;
+        let may_write = books.iter().any(|b| b.id == entry.contact.address_book_id && b.may_write);
+        Ok(ContactDetail { id: entry.id, contact: entry.contact, may_write })
+    }
+
+    /// The address books the account shares, with the rights the user has in each.
+    pub async fn shared_address_books(&self, account: &str) -> Result<Vec<AddressBook>> {
+        self.shared_check(account).await?;
+        self.address_books_in(account).await.map_err(unshared)
+    }
+
+    /// Creates or changes a contact in an address book of the account, as the user's own.
+    pub async fn shared_save_contact(
+        &self,
+        account: &str,
+        id: Option<&str>,
+        contact: &Contact,
+        base: Option<&Contact>,
+    ) -> Result<String> {
+        self.shared_check(account).await?;
+        let saved = self.save_contact_in(account, id, contact, base).await;
+        refusal(saved.map_err(unshared), "you are not allowed to change contacts in this address book")
+    }
+
+    pub async fn shared_delete_contact(&self, account: &str, id: &str) -> Result<()> {
+        self.shared_check(account).await?;
+        let done = self.delete_contact_in(account, id).await;
+        refusal(done.map_err(unshared), "you are not allowed to delete contacts from this address book")
+    }
+
+    // ---- answering ----
+
+    /// The Message-ID, In-Reply-To and References of a shared message, for the draft that
+    /// answers it. A message that is gone is `Error::Invalid`.
+    pub async fn shared_header_ids(&self, account: &str, message_id: &str) -> Result<HeaderIds> {
+        self.shared_check(account).await?;
+        let found = self.header_ids_in(account, message_id).await.map_err(unshared)?;
+        found.ok_or_else(|| Error::invalid(MESSAGE_GONE))
+    }
+
+    /// Puts the files of a shared message into the user's own account, so a message of the
+    /// user's own can carry them: a blob of another account cannot be named in a message, and
+    /// the server takes an upload only into the user's own account, so each file is downloaded
+    /// and uploaded again. The files come back in the order given, with their new blobs. A file
+    /// larger than the server takes is `Error::Invalid`.
+    pub async fn shared_copy_files(&self, account: &str, files: &[Attachment]) -> Result<Vec<Attachment>> {
+        self.shared_check(account).await?;
+        let limit = self.max_upload();
+        let mut out = Vec::with_capacity(files.len());
+        for file in files {
+            if limit > 0 && file.size > limit {
+                return Err(Error::invalid(format!(
+                    "the file {} is larger than the server takes ({limit} bytes)",
+                    file.name
+                )));
+            }
+            let mut bytes = Vec::new();
+            self.download_from(account, &file.blob_id, &mut bytes).await.map_err(unshared)?;
+            if limit > 0 && bytes.len() as u64 > limit {
+                return Err(Error::invalid(format!(
+                    "the file {} is larger than the server takes ({limit} bytes)",
+                    file.name
+                )));
+            }
+            let uploaded = self.upload(bytes, &file.mime_type).await?;
+            out.push(Attachment { blob_id: uploaded.blob_id, size: uploaded.size, ..file.clone() });
+        }
+        Ok(out)
+    }
+}
+
+/// An answer in which the server said the user may not do it becomes `words`, which say what
+/// could not be done: the server's own text names an object by an id.
+fn refusal<T>(result: Result<T>, words: &str) -> Result<T> {
+    match result {
+        Err(Error::Invalid { msg }) if msg.to_lowercase().contains("not allowed") => Err(Error::invalid(words)),
+        other => other,
     }
 }
 

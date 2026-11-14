@@ -11,6 +11,7 @@ mod ai;
 mod calendar;
 mod files;
 mod oauth;
+mod shares;
 mod sharing;
 mod sieve;
 mod state;
@@ -36,6 +37,7 @@ use account::Account;
 use calendar::Calendar;
 use files::Files;
 use oauth::Oauth;
+use shares::OwnShares;
 use sharing::Sharing;
 use sieve::Sieve;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
@@ -73,6 +75,7 @@ struct Shared {
     files: Mutex<Files>,
     /// What other users share: mail folders, calendars and address books of `sh1` to `sh3`.
     sharing: Mutex<Sharing>,
+    own_shares: Mutex<OwnShares>,
     /// Identities, address book and quotas.
     account: Mutex<Account>,
     /// The filter scripts. Taken before `account` when both are needed.
@@ -127,6 +130,7 @@ impl MockServer {
             oauth: Mutex::new(Oauth::new()),
             files: Mutex::new(Files::default()),
             sharing: Mutex::new(Sharing::default()),
+            own_shares: Mutex::new(OwnShares::default()),
             account: Mutex::new(Account::default()),
             sieve: Mutex::new(Sieve::default()),
             upload_limit: AtomicU64::new(50_000_000),
@@ -202,6 +206,69 @@ impl MockServer {
         received_at: i64,
     ) -> String {
         self.shared.mail().deliver(from_name, from_email, subject, preview, received_at)
+    }
+
+    /// Like `deliver`, into the folder `mailbox_id` (a filter, or a rule of the server, put it
+    /// there): a push event as for any new mail.
+    pub fn deliver_in(
+        &self,
+        mailbox_id: &str,
+        from_name: &str,
+        from_email: &str,
+        subject: &str,
+        preview: &str,
+    ) -> String {
+        self.deliver_in_at(mailbox_id, from_name, from_email, subject, preview, state::now_secs())
+    }
+
+    /// Like `deliver_in`, with `received_at` in Unix seconds.
+    pub fn deliver_in_at(
+        &self,
+        mailbox_id: &str,
+        from_name: &str,
+        from_email: &str,
+        subject: &str,
+        preview: &str,
+        received_at: i64,
+    ) -> String {
+        self.shared.mail().deliver_in(mailbox_id, from_name, from_email, subject, preview, received_at)
+    }
+
+    /// Another client moves the message so that it is only in this folder.
+    pub fn move_to_mailbox(&self, id: &str, mailbox_id: &str) {
+        let mut mail = self.shared.mail();
+        let target = mailbox_id.to_string();
+        assert!(
+            mail.update_email(id, |e| {
+                e.mailbox_ids.clear();
+                e.mailbox_ids.insert(target);
+            }),
+            "no message '{id}'"
+        );
+    }
+
+    /// Another client files the message in one more folder.
+    pub fn add_to_mailbox(&self, id: &str, mailbox_id: &str) {
+        let mut mail = self.shared.mail();
+        let target = mailbox_id.to_string();
+        assert!(
+            mail.update_email(id, |e| {
+                e.mailbox_ids.insert(target);
+            }),
+            "no message '{id}'"
+        );
+    }
+
+    /// After this many more message changes `Email/set` answers `serverFail` for the rest.
+    pub fn set_email_set_budget(&self, budget: Option<usize>) {
+        self.shared.mail().email_set_budget = budget;
+    }
+
+    /// The folders as the server holds them: `(id, name, parent, role)`, in the order made.
+    pub fn mailbox_list(&self) -> Vec<(String, String, Option<String>, Option<String>)> {
+        let mail = self.shared.mail();
+        let all = mail.mailboxes.iter();
+        all.map(|m| (m.id.clone(), m.name.clone(), m.parent_id.clone(), m.role.map(str::to_string))).collect()
     }
 
     pub fn mark_read(&self, id: &str) {
@@ -529,6 +596,12 @@ impl MockServer {
     pub fn sharing<T>(&self, f: impl FnOnce(&mut Sharing) -> T) -> T {
         self.shared.redirect_session.store(true, Ordering::SeqCst);
         f(&mut self.shared.sharing.lock().unwrap())
+    }
+
+    /// Runs `f` on what the mock holds of the user's own shares: whom their folders, calendars,
+    /// address books and file folders are shared with, and the directory of users.
+    pub fn own_shares<T>(&self, f: impl FnOnce(&mut OwnShares) -> T) -> T {
+        f(&mut self.shared.own_shares.lock().unwrap())
     }
 
     /// Adds a JSContact card to the address book and returns its id.
@@ -999,7 +1072,9 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
         (account.contacts_enabled, account.quota_enabled, account.vacation_enabled)
     };
     let upload_limit = s.upload_limit.load(Ordering::SeqCst);
-    let mut capabilities = json!({ core: core_caps, mail: {}, submission: {}, calendars: {} });
+    let mut capabilities = json!({
+        core: core_caps, mail: {}, submission: {}, calendars: {}, "urn:ietf:params:jmap:principals": {},
+    });
     // Stalwart states the longest span it expands among the calendar account capabilities.
     let calendar_caps = match s.calendar.lock().unwrap().max_span.clone() {
         Some(span) => json!({ "maxExpandedQueryDuration": span, "maxCalendarsPerEvent": 10 }),
@@ -1198,6 +1273,95 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
 /// Calendar methods are answered from the calendar, the account's own from the account,
 /// everything else from the mail. A method may answer with more than one response.
 fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value)>, state::MethodError> {
+    if args["accountId"].as_str().is_none_or(|a| a == ACCOUNT_ID) {
+        if let Some(answer) = own_shares_method(s, name, args) {
+            return answer;
+        }
+    }
+    call_plain(s, name, args)
+}
+
+/// The share side of the user's own `Mailbox`, `Calendar`, `AddressBook` and `FileNode`
+/// methods, and `Principal`: a get that asks for `shareWith` has it put in, a set that patches
+/// it has that done. `None` for any other call.
+fn own_shares_method(s: &Shared, name: &str, args: &Value) -> Option<Result<Vec<(String, Value)>, state::MethodError>> {
+    let one = |value: Value| vec![(name.to_string(), value)];
+    let (object, method) = name.split_once('/')?;
+    if object == "Principal" {
+        return Some(s.own_shares.lock().unwrap().principal(name, args).map(one));
+    }
+    if !matches!(object, "Mailbox" | "Calendar" | "AddressBook" | "FileNode") {
+        return None;
+    }
+    if method == "get" {
+        let mut wanted = args.clone();
+        let asks = wanted["properties"].as_array().is_some_and(|p| p.iter().any(|p| p == "shareWith"));
+        if !asks {
+            return None;
+        }
+        if let Some(list) = wanted["properties"].as_array_mut() {
+            list.retain(|p| p != "shareWith");
+        }
+        return Some(call_plain(s, name, &wanted).map(|mut answers| {
+            let shares = s.own_shares.lock().unwrap();
+            for (_, answer) in answers.iter_mut() {
+                for item in answer["list"].as_array_mut().into_iter().flatten() {
+                    if let Some(id) = item["id"].as_str().map(str::to_string) {
+                        item["shareWith"] = shares.share_with(object, &id);
+                    }
+                }
+            }
+            answers
+        }));
+    }
+    if method != "set" {
+        return None;
+    }
+    let updates = args["update"].as_object()?;
+    if !updates.values().any(|p| p.as_object().is_some_and(|p| p.keys().any(|k| k.starts_with("shareWith")))) {
+        return None;
+    }
+    // Each patch is split: the keys about sharing here, the rest to the ordinary method.
+    let (mut updated, mut not_updated) = (serde_json::Map::new(), serde_json::Map::new());
+    let mut rest = serde_json::Map::new();
+    for (id, patch) in updates {
+        let Some(patch) = patch.as_object() else { continue };
+        let (mine, other): (serde_json::Map<String, Value>, serde_json::Map<String, Value>) =
+            patch.clone().into_iter().partition(|(k, _)| k.starts_with("shareWith"));
+        let exists = call_plain(
+            s,
+            &format!("{object}/get"),
+            &json!({ "accountId": ACCOUNT_ID, "ids": [id], "properties": ["id"] }),
+        );
+        let found =
+            exists.ok().is_some_and(|a| a.iter().any(|(_, v)| v["list"].as_array().is_some_and(|l| !l.is_empty())));
+        if !found {
+            not_updated.insert(id.clone(), json!({ "type": "notFound" }));
+            continue;
+        }
+        match s.own_shares.lock().unwrap().patch(object, id, &mine) {
+            Ok(()) => {
+                updated.insert(id.clone(), Value::Null);
+            }
+            Err(e) => {
+                not_updated.insert(id.clone(), e);
+            }
+        }
+        if !other.is_empty() {
+            rest.insert(id.clone(), Value::Object(other));
+        }
+    }
+    if !rest.is_empty() {
+        let mut other = args.clone();
+        other["update"] = Value::Object(rest);
+        return Some(call_plain(s, name, &other));
+    }
+    Some(Ok(one(json!({
+        "accountId": ACCOUNT_ID, "oldState": "s0", "newState": "s1", "updated": updated, "notUpdated": not_updated,
+    }))))
+}
+
+fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value)>, state::MethodError> {
     let one = |value: Value| vec![(name.to_string(), value)];
     // A method that names another account is about what that account shares with the user.
     if !name.starts_with("FileNode/") {

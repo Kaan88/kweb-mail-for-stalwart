@@ -11,6 +11,7 @@ pub mod contacts;
 pub mod error;
 pub mod ffi;
 pub mod filters;
+pub mod folders;
 pub mod jmap;
 pub mod model;
 pub mod notify;

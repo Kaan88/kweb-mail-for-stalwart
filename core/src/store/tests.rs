@@ -31,6 +31,7 @@ fn mbox(id: &str, name: &str, role: Option<&str>, sort: u32) -> Mailbox {
         sort_order: sort,
         total_emails: 3,
         unread_emails: 1,
+        notify: false,
     }
 }
 
@@ -1358,7 +1359,7 @@ fn migration_four_keeps_what_the_earlier_ones_stored() {
 
     assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..4]).unwrap(), 1);
     let st = Store::init(conn).unwrap();
-    assert_eq!(st.schema_version().unwrap(), 5);
+    assert_eq!(st.schema_version().unwrap() as usize, schema::MIGRATIONS.len());
     assert_eq!(st.get_message(A, "m1").unwrap().unwrap().subject, "Hi");
     assert_eq!(st.identities_list(A).unwrap()[0].email, "k@x");
     assert_eq!(st.contacts_list(A).unwrap().len(), 1);
@@ -1383,9 +1384,9 @@ fn migration_five_keeps_what_a_version_four_database_stored() {
     )
     .unwrap();
 
-    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), 1);
+    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), schema::MIGRATIONS.len() - 4);
     let st = Store::init(conn).unwrap();
-    assert_eq!(st.schema_version().unwrap(), 5);
+    assert_eq!(st.schema_version().unwrap() as usize, schema::MIGRATIONS.len());
     assert_eq!(st.contacts_list(A).unwrap(), [Address { name: "Ann".into(), email: "ann@x".into() }]);
     assert_eq!(st.calendars_list(A).unwrap()[0].name, "Personal");
     assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
@@ -1480,4 +1481,31 @@ fn signing_out_takes_the_calendar_cache_with_it() {
     st.save_account(&account(A)).unwrap();
     assert!(st.calendars_list(A).unwrap().is_empty());
     assert!(st.agenda_list(A, 0, 100).unwrap().is_empty());
+}
+
+#[test]
+fn migration_six_keeps_a_version_five_database_and_adds_the_notify_table() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+    assert_eq!(schema::migrate(&mut conn, &schema::MIGRATIONS[..5]).unwrap(), 5);
+    conn.execute_batch(
+        "INSERT INTO accounts VALUES ('acc1', 'https://x', 'kaan', 5);
+         INSERT INTO mailboxes VALUES ('acc1', 'in', 'Inbox', 'inbox', NULL, 1, 0, 0);
+         INSERT INTO mailboxes VALUES ('acc1', 'w', 'Work', NULL, NULL, 2, 0, 0);
+         INSERT INTO sync_state VALUES ('acc1', 'Email', 's1');",
+    )
+    .unwrap();
+
+    assert_eq!(schema::migrate(&mut conn, schema::MIGRATIONS).unwrap(), schema::MIGRATIONS.len() - 5);
+    let st = Store::init(conn).unwrap();
+    assert_eq!(st.schema_version().unwrap() as usize, schema::MIGRATIONS.len());
+    assert_eq!(st.get_state(A, "Email").unwrap(), Some("s1".into()));
+    // Nothing notifies yet but the Inbox, and the choice can be made.
+    let before: Vec<(String, bool)> = st.list_mailboxes(A).unwrap().into_iter().map(|m| (m.id, m.notify)).collect();
+    assert_eq!(before, [("in".to_string(), true), ("w".to_string(), false)]);
+    assert!(st.set_mailbox_notify(A, "w", true, 7).unwrap());
+    assert_eq!(st.mailbox_notify_since(A, "w").unwrap(), Some(7));
+    // It goes with the account.
+    st.delete_account(A).unwrap();
+    assert_eq!(st.mailbox_notify_since(A, "w").unwrap(), None);
 }

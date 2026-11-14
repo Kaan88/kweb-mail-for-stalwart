@@ -270,8 +270,13 @@ impl Connection {
     /// The Message-ID, In-Reply-To and References of a message; `None` when the server does
     /// not have it.
     pub async fn header_ids(&self, email_id: &str) -> Result<Option<HeaderIds>> {
+        self.header_ids_in(&self.account_id, email_id).await
+    }
+
+    /// Like [`Connection::header_ids`], for a message of the account `account`.
+    pub(super) async fn header_ids_in(&self, account: &str, email_id: &str) -> Result<Option<HeaderIds>> {
         let args = json!({
-            "accountId": self.account_id,
+            "accountId": account,
             "ids": [email_id],
             "properties": ["messageId", "inReplyTo", "references"],
         });
