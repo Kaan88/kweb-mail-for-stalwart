@@ -2,6 +2,7 @@ package ovh.kweb.mail.ui.thread
 
 import android.content.Context
 import java.io.File
+import ovh.kweb.mail.accounts.AccountPaths
 import uniffi.kweb_core.Core
 
 /**
@@ -9,17 +10,21 @@ import uniffi.kweb_core.Core
  * Names come from a hash of the blob id, never from the mail. A blob of another user's account (shared
  * with the user) is keyed by the account too, since blob ids are only unique within one account.
  *
- * - `blobs/<sha256 of blob id>`: pictures that HTML mail shows inline.
- * - `attachments/<sha256 of blob id>/<safe file name>`: attachments, the only place the
+ * - `blobs/<account id>/<sha256 of blob id>`: pictures that HTML mail shows inline.
+ * - `attachments/<account id>/<sha256 of blob id>/<safe file name>`: attachments, the only place the
  *   `FileProvider` hands to other apps.
+ *
+ * Each account has its own directory (blob ids repeat between accounts).
  */
-class BlobFiles(context: Context) {
+class BlobFiles(context: Context, accountId: String) {
     private val cache = context.cacheDir
+    private val blobs = AccountPaths.blobs(accountId)
+    private val attachments = AccountPaths.attachments(accountId)
 
-    fun inlineFile(blobId: String, account: String? = null) = File(cache, "blobs/${FileNames.sha256Hex(FileNames.blobKey(account, blobId))}")
+    fun inlineFile(blobId: String, account: String? = null) = File(cache, "$blobs/${FileNames.sha256Hex(FileNames.blobKey(account, blobId))}")
 
     fun attachmentFile(blobId: String, name: String, account: String? = null) =
-        File(cache, "attachments/${FileNames.sha256Hex(FileNames.blobKey(account, blobId))}/${FileNames.safe(name)}")
+        File(cache, "$attachments/${FileNames.sha256Hex(FileNames.blobKey(account, blobId))}/${FileNames.safe(name)}")
 
     /**
      * [file] with the blob in it: as it is when it is there, else downloaded first. [account] is the owner's
@@ -34,10 +39,10 @@ class BlobFiles(context: Context) {
     }
 
     companion object {
-        /** Deletes every downloaded blob and attachment (on sign-out). Blocks; call it off the main thread. */
-        fun clear(context: Context) {
-            File(context.cacheDir, "blobs").deleteRecursively()
-            File(context.cacheDir, "attachments").deleteRecursively()
+        /** Deletes every downloaded blob and attachment of one account (on removal). Blocks; call it off the main thread. */
+        fun clear(context: Context, accountId: String) {
+            File(context.cacheDir, AccountPaths.blobs(accountId)).deleteRecursively()
+            File(context.cacheDir, AccountPaths.attachments(accountId)).deleteRecursively()
         }
     }
 }

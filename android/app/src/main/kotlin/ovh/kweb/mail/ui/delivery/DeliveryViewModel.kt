@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.delivery
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
@@ -18,21 +19,25 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.ServiceLog
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.background.Settings
 import ovh.kweb.mail.background.StartFailure
 import ovh.kweb.mail.ui.SessionState
-import ovh.kweb.mail.ui.thread.BlobFiles
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.coreVersion
 
@@ -57,22 +62,27 @@ private data class SystemState(val notificationsAllowed: Boolean, val batteryExe
 
 private data class Extras(val host: String? = null, val version: String? = null, val signingOut: Boolean = false)
 
-class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
-    private val settings = Settings.of(app)
+@OptIn(ExperimentalCoroutinesApi::class)
+class DeliveryViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
+    /** The switches and the last check of the account this screen is for. */
+    private val settings: Settings get() = session.settings
+    private val serviceLog = ServiceLog.of(app)
     private val system = MutableStateFlow(readSystem())
     private val extras = MutableStateFlow(Extras())
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
 
     val state: StateFlow<DeliveryState> = combine(
-        Background.status,
-        settings.changes,
+        session.status,
+        session.settings.changes,
+        serviceLog.changes,
         system,
         extras,
-    ) { status, _, sys, extra ->
+    ) { status, _, _, sys, extra ->
+        val settings = settings
         DeliveryState(
             host = extra.host,
             status = status,
-            startFailure = settings.lastStartFailure,
+            startFailure = serviceLog.lastStartFailure,
             notificationsAllowed = sys.notificationsAllowed,
             batteryExempt = sys.batteryExempt,
             lastCheck = settings.lastCheck,
@@ -96,7 +106,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             val (host, version) = withContext(Dispatchers.IO) {
-                val account = Background.core(getApplication()).account()
+                val account = session.core.account()
                 hostOf(account?.serverUrl) to coreVersion()
             }
             extras.update { it.copy(host = host, version = version) }
@@ -154,8 +164,9 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 promptFlow.value = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
-                    SignOutRules.unsent(core.pendingSends(), core.drafts())
+                    val core = session.core
+                    // A core with no session (a removal that was cut short) has nothing to read and nothing to lose.
+                    if (core.account() == null) SignOutRules.unsent(emptyList(), emptyList()) else SignOutRules.unsent(core.pendingSends(), core.drafts())
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -172,30 +183,19 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
         promptFlow.value = null
     }
 
-    /** Signs out of the core, tidies the background half, and sends the app to the sign-in screen. */
+    /**
+     * Removes the active account: signs it out of its core, takes it off the list, cancels its notifications and
+     * deletes its files; the other accounts are not touched. Sends the app to the sign-in screen when none is
+     * left (otherwise the screens start over on the next account).
+     */
     fun signOut() {
         promptFlow.value = null
         if (extras.value.signingOut) return
         extras.update { it.copy(signingOut = true) }
         viewModelScope.launch {
-            val signedOut = try {
+            val removed = try {
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
-                    try {
-                        core.signOut()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        Log.w(Background.TAG, "sign-out reported an error", e)
-                    }
-                    // Whatever the error was, an account that is gone from the core is signed out.
-                    val gone = core.account() == null
-                    if (gone) {
-                        Background.afterSignOut(getApplication())
-                        // Downloaded attachments and pictures are mail too; this block runs off the main thread.
-                        BlobFiles.clear(getApplication())
-                    }
-                    gone
+                    Accounts.remove(session.record.id)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -204,7 +204,7 @@ class DeliveryViewModel(app: Application) : AndroidViewModel(app) {
                 false
             }
             extras.update { it.copy(signingOut = false) }
-            if (signedOut) SessionState.set(false) else messageChannel.send(R.string.delivery_sign_out_failed)
+            if (removed) SessionState.set(Accounts.records.value.isNotEmpty()) else messageChannel.send(R.string.delivery_sign_out_failed)
         }
     }
 

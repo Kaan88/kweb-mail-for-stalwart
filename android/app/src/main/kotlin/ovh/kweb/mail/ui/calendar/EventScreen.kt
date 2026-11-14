@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.calendar
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -74,8 +75,9 @@ import uniffi.kweb_core.Participant
 fun EventScreen(eventId: String, recurrenceId: String?, onBack: () -> Unit, onEdit: (eventId: String) -> Unit) {
     // The view model belongs to this visit (the store of its route, see ScreenStores), so a new visit asks the core again.
     val app = LocalContext.current.applicationContext as Application
+    val accountSession = LocalAccountSession.current
     val vm: EventViewModel = viewModel(
-        factory = viewModelFactory { initializer { EventViewModel(app, eventId, recurrenceId) } },
+        factory = viewModelFactory { initializer { EventViewModel(app, accountSession, eventId, recurrenceId) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
     val detail = state.detail

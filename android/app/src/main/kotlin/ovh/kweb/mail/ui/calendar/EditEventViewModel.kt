@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.calendar
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -41,13 +42,13 @@ data class EditState(
 
 /** The form for a new entry ([eventId] null) or for changing one. */
 class EditEventViewModel(
-    app: Application,
+    app: Application, private val session: AccountSession,
     private val eventId: String?,
     private val startHint: String?,
     /** The owner's account when the entry is in a calendar shared with the user; null for the user's own. */
     account: String? = null,
 ) : AndroidViewModel(app) {
-    private val backend = eventFormBackend({ Background.core(app) }, account)
+    private val backend = eventFormBackend({ session.core }, account)
     private val stateFlow = MutableStateFlow(EditState(creating = eventId == null))
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null

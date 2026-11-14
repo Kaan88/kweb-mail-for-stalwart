@@ -10,6 +10,12 @@ sealed interface SignInError {
     data object NoBrowserAnswer : SignInError
     data object Refused : SignInError
     data object NoBrowser : SignInError
+
+    /** The account the sign-in ended with is one the app already has. */
+    data object AlreadyAdded : SignInError
+
+    /** The app was closed while the browser was in front; the sign-in it was part of is gone. */
+    data object Interrupted : SignInError
     data class Other(val detail: String) : SignInError
 
     companion object {

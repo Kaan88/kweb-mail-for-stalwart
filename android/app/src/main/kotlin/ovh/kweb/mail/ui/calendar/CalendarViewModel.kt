@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.calendar
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.compose.foundation.lazy.LazyListState
@@ -46,7 +47,7 @@ data class AgendaState(
  * The agenda: the entries around the selected week from the core, grouped by day. It lives as long
  * as the activity so that going to a mail and back keeps the week and the place in the list.
  */
-class CalendarViewModel(app: Application) : AndroidViewModel(app) {
+class CalendarViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(initial())
     private val messageChannel = Channel<CalendarMessage>(Channel.BUFFERED)
     private val scrollChannel = Channel<LocalDate>(Channel.BUFFERED)
@@ -112,7 +113,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             try {
                 val (calendarIds, agenda) = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     val ids = try {
                         core.calendars().map { it.id }
                     } catch (e: CancellationException) {
@@ -178,7 +179,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
         replace(entry, done)
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).setTaskDone(entry.eventId, done) }
+                withContext(Dispatchers.IO) { session.core.setTaskDone(entry.eventId, done) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

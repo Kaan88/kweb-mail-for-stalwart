@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.filters
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,11 +10,11 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
 
 /** The filter screens' state. It lives as long as the route (see ScreenStores), so a rotation keeps the open rule. */
-class FiltersViewModel(app: Application) : AndroidViewModel(app) {
+class FiltersViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     val controller = FiltersController(
         scope = viewModelScope,
         io = Dispatchers.IO,
-        backend = CoreFiltersBackend { Background.core(app) },
+        backend = CoreFiltersBackend { session.core },
     )
 
     init {

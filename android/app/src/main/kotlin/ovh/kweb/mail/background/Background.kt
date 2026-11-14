@@ -1,92 +1,76 @@
 package ovh.kweb.mail.background
 
 import android.content.Context
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import ovh.kweb.mail.KwebApp
+import kotlinx.coroutines.flow.Flow
+import ovh.kweb.mail.accounts.AccountRecord
+import ovh.kweb.mail.accounts.Accounts
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.Core
 
 /**
  * The one place the screens use to reach the background half of the app.
  *
- * - [core]: the process-wide `Core`. Its functions block (see core/src/ffi.rs): call them from
- *   `Dispatchers.IO`, except `account()`, `status()` and `poke()`.
- * - [status] and [cacheChanges]: what the service's listener reports, for the UI to observe.
- * - [onAppForeground], [afterSignIn], [afterSignOut]: call them at the moments their names say.
+ * - The app runs one `Core` per account (see [ovh.kweb.mail.accounts.Accounts]); a screen gets the one of its
+ *   account from its [ovh.kweb.mail.accounts.AccountSession], never from here. Core functions block (see
+ *   core/src/ffi.rs): call them from `Dispatchers.IO`, except `account()`, `status()` and `poke()`.
+ * - [onAppForeground], [afterAccountAdded], [afterAccountRemoved]: call them at the moments their names say.
  * - Elsewhere in this package: [PushService] (`start`, `stop`), [CheckScheduler] (periodic and
  *   one-off checks), [Notifier] (`sendTest`, `activeMailIds`), [Settings] (the switches and the
- *   bookkeeping of the Delivery check), [Notifier.EXTRA_MESSAGE_ID] and
- *   [Notifier.EXTRA_EVENT_ID] (the extras of the intent a notification tap sends to MainActivity;
- *   handle them in both `onCreate` and `onNewIntent`, and mark that mail read when it is opened).
+ *   bookkeeping of the Delivery check of one account), [ServiceLog] (the device's), [Notifier.EXTRA_MESSAGE_ID]
+ *   and [Notifier.EXTRA_EVENT_ID] (the extras of the intent a notification tap sends to MainActivity, next to
+ *   [Notifier.EXTRA_ACCOUNT]; handle them in both `onCreate` and `onNewIntent`, and mark that mail read when it
+ *   is opened).
  */
 object Background {
     /** Tag of every log line of the background half. */
     const val TAG = "KwebMail"
 
-    private val statusFlow = MutableStateFlow<ConnectionStatus>(ConnectionStatus.SignedOut)
-    private val cacheFlow = MutableStateFlow(0L)
-
-    /**
-     * The state of the live connection, as last reported by the core. Fed by the service's
-     * listener; [refreshStatus] and [onAppForeground] bring it up to date when no service runs.
-     */
-    val status: StateFlow<ConnectionStatus> get() = statusFlow
-
-    /**
-     * Counts every "the cache changed" call of the core. The value means nothing; collect it and
-     * reload the lists on screen whenever it changes.
-     */
-    val cacheChanges: StateFlow<Long> get() = cacheFlow
-
-    /** The `Core` of this process, created on first use. */
-    fun core(context: Context): Core = (context.applicationContext as KwebApp).core
-
-    /** Sets [status] from the core's own answer. Does not block. */
-    fun refreshStatus(context: Context) = publishStatus(core(context).status())
+    /** Sets the status of every open account from its core's own answer. Does not block. */
+    fun refreshStatus(@Suppress("UNUSED_PARAMETER") context: Context) {
+        Accounts.openSessions().forEach { it.publishStatus(it.core.status()) }
+    }
 
     /**
      * Call when the app comes to the foreground (`onStart`), signed in or not. It is the one
      * moment Android always allows a foreground service to start, so it also brings the
-     * service back after Android killed it. Asks the live connection for a pass now.
+     * service back after Android killed it. Asks every live connection for a pass now.
      */
     fun onAppForeground(context: Context) {
-        val core = core(context)
-        if (core.account() == null) return publishStatus(core.status())
+        if (Accounts.load(context).isEmpty()) return
         PushService.start(context)
         CheckScheduler.schedulePeriodic(context)
-        core.poke()
-        publishStatus(core.status())
+        // Accounts.sessions() leaves out an account that cannot be opened, so it cannot stop the others.
+        Accounts.sessions().forEach {
+            it.core.poke()
+            it.publishStatus(it.core.status())
+        }
     }
 
     /**
-     * Call right after `completeSignIn()` succeeded: starts the service and schedules the
-     * 15-minute check.
+     * Call right after an account was added or signed in again: starts the service (which starts a live
+     * connection for an account that has none yet) and schedules the 15-minute check.
      */
-    fun afterSignIn(context: Context) {
-        Settings.of(context).clearStartFailure()
+    fun afterAccountAdded(context: Context) {
+        ServiceLog.of(context).clearStartFailure()
         CheckScheduler.schedulePeriodic(context)
         PushService.start(context)
-        publishStatus(core(context).status())
+        Notifier(context).refreshSummaries()
+        Accounts.sessions().forEach { it.publishStatus(it.core.status()) }
     }
 
     /**
-     * Call right after `signOut()` returned: stops the service, cancels every scheduled check and
-     * removes all notifications and the Delivery check bookkeeping. The switches are kept.
+     * Call right after an account was removed: the notifications that belong to it are gone, the pending
+     * snooze alarms of its reminders show nothing (their account is unknown). With no account left it stops
+     * the service and cancels every scheduled check; otherwise the service re-renders its entry.
      */
-    fun afterSignOut(context: Context) {
-        PushService.stop(context)
-        CheckScheduler.cancelAll(context)
-        Notifier(context).cancelAll()
-        Settings.of(context).clearBookkeeping()
-        publishStatus(ConnectionStatus.SignedOut)
-    }
-
-    internal fun publishStatus(status: ConnectionStatus) {
-        statusFlow.value = status
-    }
-
-    internal fun publishCacheChanged() {
-        cacheFlow.value = cacheFlow.value + 1
+    fun afterAccountRemoved(context: Context, record: AccountRecord) {
+        Notifier(context).cancelAccount(record)
+        if (Accounts.records.value.isEmpty()) {
+            PushService.stop(context)
+            CheckScheduler.cancelAll(context)
+        } else {
+            PushService.start(context)
+            Notifier(context).refreshSummaries()
+        }
     }
 }

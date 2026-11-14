@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The account switcher, the "Send from" sheet and everything that names an account. Names are shown only with more than one account. -->
+    <string name="accounts_title">Accounts</string>
+    <string name="accounts_add">Add account</string>
+    <string name="accounts_current">Shown now</string>
+    <string name="accounts_sign_in_needed">Sign-in needed</string>
+    <string name="accounts_open_switcher">Switch account</string>
+    <string name="accounts_unfold">Show accounts</string>
+    <string name="accounts_fold">Hide accounts</string>
+    <string name="accounts_switch">Switch</string>
+    <string name="accounts_this_is_for">This is for %1$s</string>
+    <string name="accounts_draft_saved_in">Saved as a draft in %1$s</string>
+    <string name="accounts_open_failed">An account could not be opened. Showing another one.</string>
+    <string name="accounts_broken_title">This account cannot be opened</string>
+    <string name="accounts_broken_remove">Remove account</string>
+    <string name="accounts_send_from">Send from</string>
+    <string name="accounts_settings_account">Account</string>
+    <string name="accounts_remove">Remove account</string>
+    <string name="accounts_remove_title">Remove %1$s?</string>
+    <string name="accounts_remove_text">This removes this account\'s mail from this phone and stops its notifications. Your other accounts stay as they are. Everything stays on the server.</string>
+    <string name="accounts_remove_anyway">Remove anyway</string>
+    <string name="accounts_delivery_for">Account: %1$s</string>
+</resources>

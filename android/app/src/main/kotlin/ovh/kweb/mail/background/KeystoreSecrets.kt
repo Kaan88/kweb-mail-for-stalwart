@@ -8,6 +8,8 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import ovh.kweb.mail.accounts.AccountPaths
+import ovh.kweb.mail.accounts.AccountRecord
 import uniffi.kweb_core.SecretException
 import uniffi.kweb_core.SecretStore
 
@@ -21,10 +23,14 @@ import uniffi.kweb_core.SecretStore
  * The core tells "nothing stored" (null) from "cannot read right now" (an error), so every
  * failure to decrypt or to reach the Keystore is thrown as [SecretException.Failed] and only a
  * missing entry is null. The name of a value is bound to its ciphertext as associated data, so
- * ciphertexts cannot be swapped between names.
+ * ciphertexts cannot be swapped between names; for every account but the migrated one the account's id is
+ * bound too, so they cannot be moved between accounts. All accounts share the one Keystore key.
  */
-class KeystoreSecrets(context: Context) : SecretStore {
-    private val prefs = context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+class KeystoreSecrets(context: Context, private val id: String, private val legacy: Boolean) : SecretStore {
+    /** The store of [record]. The migrated account keeps today's file and associated data; the others have their own. */
+    constructor(context: Context, record: AccountRecord) : this(context, record.id, record.legacy)
+
+    private val prefs = context.applicationContext.getSharedPreferences(AccountPaths.secretsPrefs(id, legacy), Context.MODE_PRIVATE)
 
     @Synchronized
     override fun get(key: String): String? {
@@ -34,7 +40,7 @@ class KeystoreSecrets(context: Context) : SecretStore {
             val secretKey = existingKey() ?: throw IllegalStateException("the Keystore key is gone")
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_BITS, sealed.iv))
-            cipher.updateAAD(key.toByteArray())
+            cipher.updateAAD(AccountPaths.secretAad(id, legacy, key))
             String(cipher.doFinal(sealed.ciphertext))
         } catch (e: Exception) {
             throw failed("read", e)
@@ -46,7 +52,7 @@ class KeystoreSecrets(context: Context) : SecretStore {
         val sealed = try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.ENCRYPT_MODE, existingKey() ?: createKey())
-            cipher.updateAAD(key.toByteArray())
+            cipher.updateAAD(AccountPaths.secretAad(id, legacy, key))
             SealedValue(cipher.iv, cipher.doFinal(value.toByteArray()))
         } catch (e: Exception) {
             throw failed("write", e)
@@ -88,7 +94,6 @@ class KeystoreSecrets(context: Context) : SecretStore {
     }
 
     private companion object {
-        const val FILE = "secrets"
         const val ALIAS = "kweb_secrets_v1"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

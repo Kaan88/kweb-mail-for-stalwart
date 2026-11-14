@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.list
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -91,7 +92,7 @@ sealed interface ListEvent {
 }
 
 /** The conversations of one folder from the local cache, and the things a row can do. */
-class MailListViewModel(app: Application) : AndroidViewModel(app) {
+class MailListViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(MailListState())
     private val reloads = Channel<Unit>(Channel.CONFLATED)
     private val eventChannel = Channel<ListEvent>(Channel.BUFFERED)
@@ -106,7 +107,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     val labels = LabelStore(
         viewModelScope,
         Dispatchers.IO,
-        CoreMailExtrasBackend { Background.core(app) },
+        CoreMailExtrasBackend { session.core },
         onError = { eventChannel.trySend(ListEvent.Text(it)) },
     )
 
@@ -116,8 +117,8 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // One loader, so that a burst of changes costs one read and loads never overlap.
         viewModelScope.launch { reloads.receiveAsFlow().collect { load() } }
-        viewModelScope.launch { Background.cacheChanges.collect { reload() } }
-        viewModelScope.launch { Outbox.sent.collect { hold(it) } }
+        viewModelScope.launch { session.cacheChanges.collect { reload() } }
+        viewModelScope.launch { Outbox.sent(session.record.id).collect { hold(it) } }
         viewModelScope.launch {
             SessionState.signedIn.collect { signedIn ->
                 when (signedIn) {
@@ -206,7 +207,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
             var read: Read? = null
             try {
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     more = core.hasOlder(mailbox.id) && core.loadOlder(mailbox.id)
                     read = read(asked)
                 }
@@ -275,7 +276,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     private fun reportSpam(ids: List<String>, isSpam: Boolean, onDone: suspend () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                MailActions.reportSpam(getApplication(), ids, isSpam)
+                MailActions.reportSpam(getApplication(), session.core, ids, isSpam)
                 reload()
                 onDone()
             } catch (e: CancellationException) {
@@ -294,7 +295,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     core.setMailboxNotify(mailboxId, notify)
                     if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
                 }
@@ -315,7 +316,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         startingDraft = true
         viewModelScope.launch {
             try {
-                eventChannel.send(ListEvent.OpenDraft(DraftLauncher.create(getApplication(), kind)))
+                eventChannel.send(ListEvent.OpenDraft(DraftLauncher.create(session.core, kind)))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -352,7 +353,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).undoSend(draftId) }
+                withContext(Dispatchers.IO) { session.core.undoSend(draftId) }
                 eventChannel.send(ListEvent.OpenDraft(draftId))
             } catch (e: CancellationException) {
                 throw e
@@ -378,7 +379,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     private fun submit(actions: List<Action>, onDone: suspend () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                MailActions.submit(getApplication(), actions)
+                MailActions.submit(getApplication(), session.core, actions)
                 reload()
                 onDone()
             } catch (e: CancellationException) {
@@ -395,7 +396,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun pokeOrCheck() {
         try {
-            val core = Background.core(getApplication())
+            val core = session.core
             core.poke()
             if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
         } catch (e: Exception) {
@@ -429,7 +430,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun readOutbox() {
         val outbox = withContext(Dispatchers.IO) {
             try {
-                val core = Background.core(getApplication())
+                val core = session.core
                 val pending = core.pendingSends()
                 OutboxRead(ListRules.failedDraft(core.drafts())?.id, ListRules.waiting(pending), ListRules.holding(pending, System.currentTimeMillis()), pending.map { it.draftId }.toSet())
             } catch (e: CoreException) {
@@ -467,7 +468,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
     private class Read(val username: String, val mailboxes: List<Mailbox>, val current: Mailbox?, val rows: List<ThreadRow>)
 
     private fun read(asked: MailListState): Read {
-        val core = Background.core(getApplication())
+        val core = session.core
         val mailboxes = core.mailboxes()
         val current = mailboxes.firstOrNull { it.id == asked.selectedId } ?: Folders.withRole(mailboxes, "inbox")
         val rows = current?.let { core.threads(it.id, asked.filter, asked.limit.toUInt(), 0u) }.orEmpty()

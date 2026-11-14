@@ -13,7 +13,6 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.ui.AppContent
 import ovh.kweb.mail.ui.AppViewModel
-import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.sending.IntentShare
 import ovh.kweb.mail.ui.theme.KwebTheme
 import ovh.kweb.mail.ui.theme.ThemeState
@@ -21,7 +20,6 @@ import ovh.kweb.mail.ui.theme.ThemeState
 /** The one activity. Screens and navigation are in `ovh.kweb.mail.ui`. */
 class MainActivity : ComponentActivity() {
     private val app: AppViewModel by viewModels()
-    private val mailList: MailListViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,7 +43,15 @@ class MainActivity : ComponentActivity() {
         // Brings the service back if Android killed it. Off the main thread because the first use
         // of the core opens the cache; the app is still in the foreground, which is what counts.
         val appContext = applicationContext
-        lifecycleScope.launch(Dispatchers.IO) { Background.onAppForeground(appContext) }
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                Background.onAppForeground(appContext)
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e(Background.TAG, "the foreground set-up failed", e)
+            }
+        }
     }
 
     /**
@@ -55,25 +61,30 @@ class MainActivity : ComponentActivity() {
     private fun handleReplyIntent(intent: Intent): Boolean {
         val messageId = intent.getStringExtra(Notifier.EXTRA_REPLY_MESSAGE_ID) ?: return false
         val androidId = intent.getIntExtra(Notifier.EXTRA_REPLY_ANDROID_ID, 0)
+        val account = intent.takeAccount()
         intent.removeExtra(Notifier.EXTRA_REPLY_MESSAGE_ID)
         intent.removeExtra(Notifier.EXTRA_REPLY_ANDROID_ID)
-        mailList.showInbox()
-        app.replyTo(messageId, androidId)
+        app.replyTo(account, messageId, androidId)
         return true
     }
+
+    /**
+     * The account a notification intent is for (null when it names none: the account that was there before
+     * several existed), taken off the intent so that a recreation does not use it twice. [AppViewModel] resolves
+     * it, switches to it, and drops the intent when the account is gone.
+     */
+    private fun Intent.takeAccount(): String? = getStringExtra(Notifier.EXTRA_ACCOUNT).also { removeExtra(Notifier.EXTRA_ACCOUNT) }
 
     /** A tap on the reminder of an event or task opens that entry. */
     private fun handleReminderIntent(intent: Intent): Boolean {
         val eventId = intent.getStringExtra(Notifier.EXTRA_EVENT_ID) ?: return false
         val recurrenceId = intent.getStringExtra(Notifier.EXTRA_RECURRENCE_ID)
         val androidId = intent.getIntExtra(Notifier.EXTRA_REMINDER_ANDROID_ID, 0)
+        val account = intent.takeAccount()
         intent.removeExtra(Notifier.EXTRA_EVENT_ID)
         intent.removeExtra(Notifier.EXTRA_RECURRENCE_ID)
         intent.removeExtra(Notifier.EXTRA_REMINDER_ANDROID_ID)
-        app.openReminder(eventId, recurrenceId)
-        // The Open button does not remove its notification by itself.
-        val appContext = applicationContext
-        lifecycleScope.launch(Dispatchers.IO) { runCatching { Notifier(appContext).cancelReminder(androidId) } }
+        app.openReminder(account, eventId, recurrenceId, androidId)
         return true
     }
 
@@ -92,15 +103,17 @@ class MainActivity : ComponentActivity() {
     private fun handleNotificationIntent(intent: Intent) {
         if (handleShareIntent(intent)) return
         if (handleReplyIntent(intent) || handleReminderIntent(intent)) return
-        val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
-        intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
-        mailList.showInbox()
-        app.focusMessage(messageId, showFolder = mailList::selectFolder)
-        // The tap removed the notification while the mail is still unread. Tell the core it is
-        // gone on purpose, like a swipe, or the next 15-minute check would put it back.
-        val appContext = applicationContext
-        lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { Background.core(appContext).notificationSwiped(messageId) }
+        val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID)
+        if (messageId == null) {
+            // The tap on a group summary names only the account whose mail it counts.
+            intent.takeAccount()?.let { app.showAccount(it) }
+            return
         }
+        val account = intent.takeAccount()
+        intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)
+        // The view model also tells the core the notification is gone on purpose (like a swipe), or the next
+        // 15-minute check would put it back.
+        app.focusMessage(account, messageId)
     }
+
 }

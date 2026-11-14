@@ -188,4 +188,10 @@ class BackStackTest {
         assertEquals(stack + Route.Thread("t", null, "m"), shown)
         assertEquals(false, BackStack.isRoot(Route.Assistant))
     }
+
+    @Test fun aSwitchOfAccountStartsAtTheList() {
+        val deep = listOf(Route.MailList, Route.Thread("t", null, null), Route.Compose("d"))
+        assertEquals(BackStack.initial, BackStack.afterAccountSwitch())
+        assertNotEquals(deep, BackStack.afterAccountSwitch())
+    }
 }

@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.contacts
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -39,12 +40,12 @@ data class EditContactState(
 
 /** The form for a new contact ([contactId] null) or for changing one. It lives as long as its route (see ScreenStores). */
 class EditContactViewModel(
-    app: Application,
+    app: Application, private val session: AccountSession,
     private val contactId: String?,
     /** The owner's account when the contact is in an address book shared with the user; null for the user's own. */
     account: String? = null,
 ) : AndroidViewModel(app) {
-    private val backend = contactFormBackend({ Background.core(app) }, account)
+    private val backend = contactFormBackend({ session.core }, account)
     private val stateFlow = MutableStateFlow(EditContactState(creating = contactId == null))
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null

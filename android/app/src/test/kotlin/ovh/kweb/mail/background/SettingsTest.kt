@@ -41,7 +41,7 @@ class SettingsTest {
     @Test
     fun nothingIsRecordedAtFirst() {
         assertNull(settings.lastCheck)
-        assertNull(settings.lastStartFailure)
+        assertNull(ServiceLog(MapValues()).lastStartFailure)
     }
 
     @Test
@@ -53,16 +53,43 @@ class SettingsTest {
     }
 
     @Test
-    fun aStartFailureCanBeClearedAndSignOutClearsBookkeepingButNotSwitches() {
-        settings.recordStartFailure(5L, "not allowed")
-        assertEquals(StartFailure(5L, "not allowed"), settings.lastStartFailure)
-        settings.clearStartFailure()
-        assertNull(settings.lastStartFailure)
-
+    fun removingAnAccountClearsItsBookkeepingButNotItsSwitches() {
         settings.mailEnabled = false
         settings.recordCheck(1L, null)
         settings.clearBookkeeping()
         assertNull(settings.lastCheck)
         assertFalse(settings.mailEnabled)
+    }
+
+    @Test
+    fun twoAccountsKeepTheirOwnSwitchesAndChecks() {
+        val other = Settings(MapValues())
+        settings.mailEnabled = false
+        settings.recordCheck(7L, "offline")
+        assertTrue(other.mailEnabled)
+        assertNull(other.lastCheck)
+    }
+
+    @Test
+    fun theSwitchesOfAnOlderInstallCanBeTakenOver() {
+        val old = Settings(MapValues())
+        old.mailEnabled = false
+        old.remindersEnabled = false
+        val fresh = Settings(MapValues())
+        fresh.takeSwitchesFrom(old)
+        assertFalse(fresh.mailEnabled)
+        assertFalse(fresh.remindersEnabled)
+        assertTrue(fresh.removeWhenReadElsewhere)
+    }
+
+    @Test
+    fun theServiceLogRecordsClearsAndTicks() {
+        val log = ServiceLog(MapValues())
+        val before = log.changes.value
+        log.recordStartFailure(5L, "not allowed")
+        assertEquals(StartFailure(5L, "not allowed"), log.lastStartFailure)
+        assertTrue(log.changes.value > before)
+        log.clearStartFailure()
+        assertNull(log.lastStartFailure)
     }
 }

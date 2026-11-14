@@ -9,11 +9,13 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountRecord
+import ovh.kweb.mail.accounts.Accounts
 import uniffi.kweb_core.Shade
 import uniffi.kweb_core.Exception as CoreException
 
 /**
- * One pass of the notification rule without the live connection: the 15-minute safety check, and
+ * One pass of the notification rule without the live connection, for every account: the 15-minute safety check, and
  * the one-off checks after a boot or after an action that the connection could not send.
  * Also restarts the service, so a service Android killed comes back within 15 minutes.
  *
@@ -22,32 +24,41 @@ import uniffi.kweb_core.Exception as CoreException
  */
 class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val core = Background.core(applicationContext)
-        if (core.account() == null) return@withContext Result.success()
+        val records = Accounts.load(applicationContext)
+        if (records.isEmpty()) return@withContext Result.success()
         try {
-            runCheck(core)
+            runChecks(records)
         } finally {
             PushService.start(applicationContext)
         }
     }
 
-    private fun runCheck(core: uniffi.kweb_core.Core): Result {
-        val settings = Settings.of(applicationContext)
+    /**
+     * Checks every account in order. A failure of one is recorded in that account's [Settings] and does not skip
+     * the next. A one-off is retried (with backoff, while the network trouble lasts) when any account had a
+     * temporary failure; the periodic job runs again in 15 minutes anyway.
+     */
+    private fun runChecks(records: List<AccountRecord>): Result {
         val notifier = Notifier(applicationContext)
-        return try {
-            val shade = if (inputData.getBoolean(KEY_SHADE_CLEARED, false)) Shade.Cleared else Shade.Ids(notifier.activeMailIds())
-            notifier.apply(core.checkOnce(shade))
-            settings.recordCheck(System.currentTimeMillis(), null)
-            Result.success()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            settings.recordCheck(System.currentTimeMillis(), describe(e))
-            // A one-off is retried with backoff while the network trouble lasts; the periodic job
-            // runs again in 15 minutes anyway.
-            val retry = e is CoreException.Temporary && inputData.getBoolean(KEY_ONE_OFF, false) && runAttemptCount < MAX_ATTEMPTS
-            if (retry) Result.retry() else Result.success()
+        val shadeCleared = inputData.getBoolean(KEY_SHADE_CLEARED, false)
+        val failures = CheckRound.runAll(records) { record ->
+            val settings = Settings.of(applicationContext, record)
+            try {
+                val core = Accounts.session(record.id)?.core ?: return@runAll
+                if (core.account() == null) return@runAll
+                val shade = if (shadeCleared) Shade.Cleared else Shade.Ids(notifier.activeMailIds(record))
+                notifier.apply(record, core.checkOnce(shade))
+                settings.recordCheck(System.currentTimeMillis(), null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                settings.recordCheck(System.currentTimeMillis(), describe(e))
+                throw e
+            }
         }
+        val retry = failures.any { it.error is CoreException.Temporary } &&
+            inputData.getBoolean(KEY_ONE_OFF, false) && runAttemptCount < MAX_ATTEMPTS
+        return if (retry) Result.retry() else Result.success()
     }
 
     /** Needed by expedited work on Android 11 and older, where it runs as a foreground service. */

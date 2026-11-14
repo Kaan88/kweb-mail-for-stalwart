@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -54,7 +56,20 @@ import ovh.kweb.mail.ui.shared.SharedScreen
 import ovh.kweb.mail.ui.sharing.LocalOpenShare
 import ovh.kweb.mail.ui.sharing.ShareScreen
 import ovh.kweb.mail.ui.thread.ThreadScreen
+import android.app.Application
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.accounts.AccountSheet
+import ovh.kweb.mail.ui.accounts.AccountStoreOwner
+import ovh.kweb.mail.ui.accounts.AccountSwitcherViewModel
+import ovh.kweb.mail.ui.accounts.AccountsUi
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
+import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import ovh.kweb.mail.ui.signin.SignInScreen
+import ovh.kweb.mail.ui.signin.SignInTarget
 
 /**
  * The whole app: the sign-in screen while there is no account, otherwise the top of the back
@@ -63,28 +78,105 @@ import ovh.kweb.mail.ui.signin.SignInScreen
 @Composable
 fun AppContent(app: AppViewModel = viewModel()) {
     val signedIn by SessionState.signedIn.collectAsStateWithLifecycle()
-    val stack by app.stack.collectAsStateWithLifecycle()
+    val session by app.session.collectAsStateWithLifecycle()
+    val switcher: AccountSwitcherViewModel = viewModel()
+    val rows by switcher.rows.collectAsStateWithLifecycle()
+    val application = LocalContext.current.applicationContext as Application
 
     when (signedIn) {
         null -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         false -> SignInScreen()
-        true -> Box(Modifier.fillMaxSize()) {
+        // The screens of one account: its own view models (they hold its session), dropped on a switch.
+        true -> {
+          // The snackbar and its collectors are not inside the key of the account: a message sent right after a switch must reach the screen.
+          val snackbar = remember { SnackbarHostState() }
+          val resources = LocalResources.current
+          LaunchedEffect(app) { app.messages.collect { snackbar.showSnackbar(resources.getString(it)) } }
+          LaunchedEffect(app) { app.notices.collect { snackbar.showSnackbar(it.resolve(resources)) } }
+          // Something arrived for another account while a form is open: offer the switch instead of dropping the form.
+          LaunchedEffect(app) {
+              app.offers.collect { offer ->
+                  val result = snackbar.showSnackbar(
+                      resources.getString(R.string.accounts_this_is_for, offer.label),
+                      actionLabel = resources.getString(R.string.accounts_switch),
+                      duration = SnackbarDuration.Long,
+                  )
+                  if (result == SnackbarResult.ActionPerformed) offer.accept()
+              }
+          }
+          session.let { current ->
+            if (current == null) {
+                BrokenAccount(app, snackbar)
+            } else {
+                key(current.record.id) {
+                    val owner = remember(current.record.id) { AccountStoreOwner(application, current, app.accountStore) }
+                    val ui = remember(rows) { AccountsUi(rows, app::selectAccount) { app.open(Route.AddAccount) } }
+                    CompositionLocalProvider(
+                        LocalAccountSession provides current,
+                        LocalViewModelStoreOwner provides owner,
+                        LocalAccountsUi provides ui,
+                    ) { SignedInContent(app, snackbar) }
+                }
+            }
+          }
+        }
+    }
+}
+
+/** The active account's cache cannot be opened and no other account can take its place: the one thing to do is to remove it. */
+@Composable
+private fun BrokenAccount(app: AppViewModel, snackbar: SnackbarHostState) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        androidx.compose.foundation.layout.Column(
+            Modifier.align(Alignment.Center).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            androidx.compose.material3.Text(stringResource(R.string.accounts_broken_title), style = MaterialTheme.typography.titleMedium)
+            androidx.compose.material3.Button(onClick = app::removeBrokenAccount, modifier = Modifier.padding(top = 16.dp)) {
+                androidx.compose.material3.Text(stringResource(R.string.accounts_broken_remove))
+            }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+    }
+}
+
+/** The signed-in screens: the top of the back stack, with the snackbars and the sheets that belong to the whole app. */
+@Composable
+private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
+    val stack by app.stack.collectAsStateWithLifecycle()
+    Box(Modifier.fillMaxSize()) {
             BackHandler(enabled = stack.size > 1) { app.back() }
             // The search is forgotten once its screen is gone from the stack, not when a thread opens over it.
             val search: SearchViewModel = viewModel()
             val searchOpen = Route.Search in stack
             LaunchedEffect(searchOpen) { if (!searchOpen) search.clear() }
-            val snackbar = remember { SnackbarHostState() }
-            val resources = LocalResources.current
-            LaunchedEffect(app) {
-                app.messages.collect { snackbar.showSnackbar(resources.getString(it)) }
-            }
-            LaunchedEffect(app) { app.notices.collect { snackbar.showSnackbar(it.resolve(resources)) } }
+            val accounts = LocalAccountsUi.current
+            val account = LocalAccountSession.current.record.id
+            // A notification tap named a folder of this account: the list shows it.
+            val command by app.listCommand.collectAsStateWithLifecycle()
             // The Inbox's unread count, the badge on Mail; read from the list's own state, so both sides agree.
             val mailList: MailListViewModel = viewModel()
             val unread by remember(mailList) {
                 mailList.state.map { s -> s.mailboxes.firstOrNull { it.role == "inbox" }?.unreadEmails?.toInt() ?: 0 }.distinctUntilChanged()
             }.collectAsStateWithLifecycle(0)
+            LaunchedEffect(mailList, command) {
+                val c = command ?: return@LaunchedEffect
+                if (c.accountId != account) return@LaunchedEffect
+                mailList.selectFolder(c.folderId)
+                app.listCommandDone(c)
+            }
+            // A share names no account: with several, say which one it is sent from.
+            val waitingShare by app.pendingShare.collectAsStateWithLifecycle()
+            if (waitingShare != null) {
+                AccountSheet(
+                    title = stringResource(R.string.accounts_send_from),
+                    onDismiss = app::cancelShare,
+                    ui = AccountsUi(accounts.rows, app::shareFrom) {
+                        app.cancelShare()
+                        app.open(Route.AddAccount)
+                    },
+                )
+            }
             val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
             CompositionLocalProvider(LocalOpenShare provides openShare) {
@@ -263,6 +355,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onOpenAssistant = { app.open(Route.Assistant) },
                     onOpenScheduled = { app.open(Route.Scheduled) },
                     onOpenSenders = { app.open(Route.Senders) },
+                    onAddAccount = { app.open(Route.AddAccount) },
                 )
                 Route.Search -> SearchScreen(
                     onBack = app::back,
@@ -272,14 +365,19 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onBack = app::back,
                     onSignInAgain = { app.open(Route.SignInAgain) },
                 )
-                Route.SignInAgain -> SignInAgain(app)
+                // Their sign-in is cancelled when the route leaves the stack (its store is cleared with it).
+                Route.SignInAgain -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { SignInAgain(app) }
+                }
+                Route.AddAccount -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { AddAccount(app) }
+                }
             }
             }
             // The root screens put it above their bottom bar themselves.
             if (!BackStack.isRoot(stack.last())) {
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
             }
-        }
     }
 }
 
@@ -287,5 +385,19 @@ fun AppContent(app: AppViewModel = viewModel()) {
 @Composable
 private fun SignInAgain(app: AppViewModel) {
     val serverUrl by app.serverUrl.collectAsStateWithLifecycle()
-    SignInScreen(suggestedAddress = serverUrl, onBack = app::back, onCompleted = app::back)
+    val accountId = LocalAccountSession.current.record.id
+    SignInScreen(
+        suggestedAddress = serverUrl,
+        onBack = app::back,
+        onCompleted = app::back,
+        target = SignInTarget.Again(accountId),
+    )
+}
+
+/** Adding an account: the server may be the same as the one signed in to, so its address is suggested. */
+@Composable
+private fun AddAccount(app: AppViewModel) {
+    val serverUrl by app.serverUrl.collectAsStateWithLifecycle()
+    // A finished sign-in makes the new account the active one, which resets the stack by itself.
+    SignInScreen(suggestedAddress = serverUrl, onBack = app::back, target = SignInTarget.New)
 }

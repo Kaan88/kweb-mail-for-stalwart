@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.away
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -38,7 +39,7 @@ data class AwayState(
 }
 
 /** The away message screen: reads the message from the server, changes the form, saves. It lives as long as its route. */
-class AwayViewModel(app: Application) : AndroidViewModel(app) {
+class AwayViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(AwayState())
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null
@@ -55,7 +56,7 @@ class AwayViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             // Only a hint on the screen: when the filters cannot be read, nothing is shown.
             try {
-                val filters = withContext(Dispatchers.IO) { Background.core(getApplication()).filters() }
+                val filters = withContext(Dispatchers.IO) { session.core.filters() }
                 stateFlow.update { it.copy(filtersOn = filters.isActive) }
             } catch (e: CancellationException) {
                 throw e
@@ -65,7 +66,7 @@ class AwayViewModel(app: Application) : AndroidViewModel(app) {
         }
         loadJob = viewModelScope.launch {
             try {
-                val message = withContext(Dispatchers.IO) { Background.core(getApplication()).awayMessage() }
+                val message = withContext(Dispatchers.IO) { session.core.awayMessage() }
                 val zone = ZoneId.systemDefault()
                 val form = AwayRules.fromMessage(message, zone)
                 stateFlow.update { it.copy(phase = AwayPhase.READY, form = form, initial = form, zone = zone, error = null) }
@@ -94,7 +95,7 @@ class AwayViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val message = AwayRules.toMessage(state.form, state.zone)
-                withContext(Dispatchers.IO) { Background.core(getApplication()).setAwayMessage(message) }
+                withContext(Dispatchers.IO) { session.core.setAwayMessage(message) }
                 doneChannel.send(Unit)
             } catch (e: CancellationException) {
                 throw e

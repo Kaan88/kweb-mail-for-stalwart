@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.search
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -35,13 +36,13 @@ sealed interface SearchResults {
 data class SearchState(val query: String = "", val results: SearchResults = SearchResults.Idle)
 
 /** Searches the mail 400 ms after the last key, and only the newest query counts. */
-class SearchViewModel(app: Application) : AndroidViewModel(app) {
+class SearchViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(SearchState())
     private var job: Job? = null
 
     val state: StateFlow<SearchState> get() = stateFlow
 
-    private val extras = CoreMailExtrasBackend { Background.core(app) }
+    private val extras = CoreMailExtrasBackend { session.core }
 
     /** Where the words were found, for the rows on screen. It never holds the list back: it arrives after it, or not at all. */
     val snippets = SnippetController(viewModelScope, Dispatchers.IO, extras)
@@ -51,7 +52,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { SessionState.signedIn.collect { if (it == false) onQueryChange("") } }
-        viewModelScope.launch { Background.cacheChanges.collect { refreshShown() } }
+        viewModelScope.launch { session.cacheChanges.collect { refreshShown() } }
     }
 
     /** Forget the query and the results (the Search screen was left for good). */
@@ -62,7 +63,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         val shown = stateFlow.value.results as? SearchResults.Found ?: return
         try {
             val fresh = withContext(Dispatchers.IO) {
-                val core = Background.core(getApplication())
+                val core = session.core
                 shown.messages.mapNotNull { core.message(it.id) }
             }
             labels.load(fresh.map { it.id })
@@ -92,7 +93,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                 // A search that was replaced meanwhile still finishes, but withContext sees the
                 // cancellation when it returns, so its answer is never shown.
                 val found = withContext(Dispatchers.IO) {
-                    Background.core(getApplication()).search(query.trim(), null, SearchRules.LIMIT)
+                    session.core.search(query.trim(), null, SearchRules.LIMIT)
                 }
                 SearchResults.Found(found.messages, found.fromCache)
             } catch (e: CancellationException) {

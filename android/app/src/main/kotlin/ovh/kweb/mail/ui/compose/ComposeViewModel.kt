@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.compose
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.net.Uri
 import android.util.Log
@@ -9,6 +10,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -112,7 +115,7 @@ sealed interface ComposeEvent {
  * is saved to the core 2 s after the last change, when the screen goes to the background and when
  * it is left. [start] loads it, [close] saves what is left and lets go of it.
  */
-class ComposeViewModel(app: Application, private val draftId: String, private val prefillTo: Address? = null) : AndroidViewModel(app) {
+class ComposeViewModel(app: Application, private val acct: AccountSession, private val draftId: String, private val prefillTo: Address? = null) : AndroidViewModel(app) {
     private val eventChannel = Channel<ComposeEvent>(Channel.BUFFERED)
 
     /** Keeps saves, uploads and the send from running into each other on the same draft. */
@@ -172,7 +175,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) {
                 try {
-                    val c = Background.core(getApplication())
+                    val c = acct.core
                     val draft = c.draft(draftId)
                     val identities = try {
                         c.identities()
@@ -301,7 +304,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
             delay(ComposeRules.SUGGEST_MILLIS)
             val found = withContext(Dispatchers.IO) {
                 try {
-                    Background.core(getApplication()).suggestRecipients(query, SUGGESTIONS.toUInt())
+                    acct.core.suggestRecipients(query, SUGGESTIONS.toUInt())
                 } catch (e: CoreException) {
                     Log.d(Background.TAG, "completion failed: ${e.javaClass.simpleName}")
                     emptyList()
@@ -346,7 +349,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
                 picked = copy
                 lock.withLock {
                     val before = base?.attachments.orEmpty()
-                    val after = Background.core(context).addAttachment(draftId, copy.file.path, copy.name, copy.mimeType)
+                    val after = acct.core.addAttachment(draftId, copy.file.path, copy.name, copy.mimeType)
                     if (session == epoch) base = after
                     // Only what is new: one the user removed meanwhile is in the core's list still and must stay removed.
                     after.attachments.filter { it !in before }
@@ -415,7 +418,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
         if (last != null && ComposeRules.sameContent(last, draft)) return true
         return try {
             withContext(Dispatchers.IO) {
-                lock.withLock { Background.core(getApplication()).saveDraft(withBookkeeping(draft)).also { base = it } }
+                lock.withLock { acct.core.saveDraft(withBookkeeping(draft)).also { base = it } }
             }
             saved = draft
             update { it.copy(savedAtMillis = System.currentTimeMillis(), saveFailed = false) }
@@ -479,7 +482,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
     }
 
     private suspend fun discard(): Boolean = try {
-        withContext(Dispatchers.IO) { lock.withLock { Background.core(getApplication()).discardDraft(draftId) } }
+        withContext(Dispatchers.IO) { lock.withLock { acct.core.discardDraft(draftId) } }
         true
     } catch (e: CancellationException) {
         throw e
@@ -506,11 +509,11 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
                     // Assembled once the save or upload in front of it has finished, so it carries what they changed.
                     lock.withLock {
                         val draft = withBookkeeping(checkNotNull(assemble()))
-                        Background.core(context).send(draft, ComposeRules.UNDO_SECONDS)
+                        acct.core.send(draft, ComposeRules.UNDO_SECONDS)
                     }
                 }
                 // The message is with the core whatever became of the screen: the list must hear of it.
-                Outbox.announce(pending)
+                Outbox.announce(acct.record.id, pending)
                 if (mine != epoch) return@launch
                 done = true
                 eventChannel.send(ComposeEvent.Sent)
@@ -552,7 +555,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
                 withContext(Dispatchers.IO) {
                     lock.withLock {
                         val draft = withBookkeeping(checkNotNull(assemble()))
-                        Background.core(context).scheduleSend(draft, sendAt)
+                        acct.core.scheduleSend(draft, sendAt)
                     }
                 }
                 // The message is with the core whatever became of the screen: the confirmation must still be shown.
@@ -584,7 +587,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
     private suspend fun afterUnsureSchedule(mine: Int, stillDraftText: Int) {
         val context = getApplication<Application>()
         val ordinary = try {
-            withContext(Dispatchers.IO) { Background.core(context).drafts().any { it.id == draftId } }
+            withContext(Dispatchers.IO) { acct.core.drafts().any { it.id == draftId } }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -626,7 +629,9 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
                 val known = base?.attachments.orEmpty()
                 val firstOpened = opened
                 val lastSaved = saved
-                viewModelScope.launch { finalSave(draft, firstOpened, lastSaved, known, jobs) }
+                // Not viewModelScope: when the account is switched this view model is cleared (which cancels that scope)
+                // before or while the screen goes, and the text of the message must still reach its own account.
+                lastSaveScope.launch { finalSave(draft, firstOpened, lastSaved, known, jobs) }
             }
         }
         leaving = false
@@ -649,7 +654,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
         try {
             withContext(Dispatchers.IO) {
                 lock.withLock {
-                    val core = Background.core(getApplication())
+                    val core = acct.core
                     val stored = if (jobs.isEmpty()) null else core.draft(draftId)
                     val late = stored?.attachments.orEmpty().filter { it !in known }
                     val last = draft.copy(attachments = draft.attachments + late).let {
@@ -669,7 +674,13 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
         }
     }
 
+    /** Whatever ends this view model (a switch of account clears it), the draft is saved in the account it was started in. */
+    override fun onCleared() {
+        close()
+    }
+
     companion object {
         private const val SUGGESTIONS = 6
+        private val lastSaveScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
 }

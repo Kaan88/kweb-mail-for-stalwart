@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import kotlin.concurrent.thread
+import ovh.kweb.mail.accounts.Accounts
 
 /**
  * After a restart of the phone or an update of the app: starts the service and the checks.
@@ -21,7 +22,7 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         thread(name = "kweb-boot") {
             try {
-                if (Background.core(app).account() != null) {
+                if (Accounts.load(app).isNotEmpty()) {
                     PushService.start(app)
                     CheckScheduler.schedulePeriodic(app)
                     CheckScheduler.checkSoon(app, shadeCleared = action == Intent.ACTION_BOOT_COMPLETED)

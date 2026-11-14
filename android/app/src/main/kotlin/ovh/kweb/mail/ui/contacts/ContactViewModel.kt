@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.contacts
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -43,7 +44,7 @@ data class ContactState(
 data class StartedDraft(val draftId: String, val to: Address)
 
 /** One contact for its own screen: reads it and its recent mail, deletes it, starts a message to one of its addresses. */
-class ContactViewModel(app: Application, private val contactId: String) : AndroidViewModel(app) {
+class ContactViewModel(app: Application, private val session: AccountSession, private val contactId: String) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(ContactState())
     private val leaveChannel = Channel<Unit>(Channel.BUFFERED)
     private val draftChannel = Channel<StartedDraft>(Channel.BUFFERED)
@@ -63,7 +64,7 @@ class ContactViewModel(app: Application, private val contactId: String) : Androi
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             val detail = try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).contact(contactId) }
+                withContext(Dispatchers.IO) { session.core.contact(contactId) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: CoreException.Invalid) {
@@ -85,7 +86,7 @@ class ContactViewModel(app: Application, private val contactId: String) : Androi
             }
             // A failure here is silent: the contact itself is on screen.
             val recent = try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).search(address, null, ContactRules.RECENT_LIMIT.toUInt()).messages }
+                withContext(Dispatchers.IO) { session.core.search(address, null, ContactRules.RECENT_LIMIT.toUInt()).messages }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -106,7 +107,7 @@ class ContactViewModel(app: Application, private val contactId: String) : Androi
         stateFlow.update { it.copy(busy = true, message = null) }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).deleteContact(contactId) }
+                withContext(Dispatchers.IO) { session.core.deleteContact(contactId) }
                 leaveChannel.send(Unit)
             } catch (e: CancellationException) {
                 throw e
@@ -132,7 +133,7 @@ class ContactViewModel(app: Application, private val contactId: String) : Androi
             var handedOver = false
             try {
                 // Not cancellable: a draft the core made must reach the discard below, or the screen.
-                draftId = withContext(NonCancellable) { DraftLauncher.create(getApplication(), DraftKind.New) }
+                draftId = withContext(NonCancellable) { DraftLauncher.create(session.core, DraftKind.New) }
                 ensureActive()
                 draftChannel.send(StartedDraft(draftId, Address(name = name, email = email)))
                 handedOver = true
@@ -143,7 +144,7 @@ class ContactViewModel(app: Application, private val contactId: String) : Androi
                 stateFlow.update { it.copy(message = UiMessage.Res(R.string.compose_start_failed)) }
             } finally {
                 val orphan = draftId
-                if (orphan != null && !handedOver) withContext(NonCancellable) { DraftLauncher.discard(getApplication(), orphan) }
+                if (orphan != null && !handedOver) withContext(NonCancellable) { DraftLauncher.discard(session.core, orphan) }
                 startingDraft = false
             }
         }

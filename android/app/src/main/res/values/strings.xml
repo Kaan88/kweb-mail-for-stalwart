@@ -21,6 +21,8 @@
     <string name="signin_error_no_answer">The browser did not come back within five minutes. Try again.</string>
     <string name="signin_error_refused">The sign-in was refused.</string>
     <string name="signin_error_no_browser">No browser was found to open the sign-in page.</string>
+    <string name="signin_error_already_added">This account is already in the app.</string>
+    <string name="signin_error_interrupted">The sign-in was interrupted. Please try again.</string>
     <string name="signin_error_other">Sign-in failed: %1$s</string>
 
     <!-- Mail list -->

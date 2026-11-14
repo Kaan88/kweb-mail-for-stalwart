@@ -95,6 +95,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.accounts.AccountList
+import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.accounts.AccountSheet
+import ovh.kweb.mail.ui.accounts.LocalAccountsUi
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.delivery.NotificationFix
 import ovh.kweb.mail.ui.folders.FolderAction
@@ -139,6 +145,7 @@ fun MailListScreen(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
+    var accountSheet by rememberSaveable { mutableStateOf(false) }
     var moving by remember { mutableStateOf<ThreadRow?>(null) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
     // The label whose Delete was asked for; saved, so a rotation keeps the question.
@@ -211,6 +218,8 @@ fun MailListScreen(
         snapshotFlow { listState.isScrollInProgress }.collect { if (it) vm.userScrolled() }
     }
 
+    if (accountSheet) AccountSheet(title = stringResource(R.string.accounts_title), onDismiss = { accountSheet = false })
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -252,6 +261,7 @@ fun MailListScreen(
                     scope.launch { drawerState.close() }
                     onOpenSettings()
                 },
+                onAccountChosen = { scope.launch { drawerState.close() } },
             )
         },
     ) {
@@ -261,7 +271,8 @@ fun MailListScreen(
                     SearchPill(
                         initial = Sender.initial("", state.username),
                         onSearch = onOpenSearch,
-                        onAccount = { scope.launch { drawerState.open() } },
+                        onMenu = { scope.launch { drawerState.open() } },
+                        onAccount = { accountSheet = true },
                     )
                     FilterChips(current?.let { folderName(it) }, state.filter, vm::selectFilter)
                 }
@@ -449,7 +460,7 @@ private fun SendingBar(onUndo: () -> Unit) {
 
 /** The rounded "Search mail" field with the account's round avatar at its right end. */
 @Composable
-private fun SearchPill(initial: String, onSearch: () -> Unit, onAccount: () -> Unit) {
+private fun SearchPill(initial: String, onSearch: () -> Unit, onMenu: () -> Unit, onAccount: () -> Unit) {
     Surface(
         modifier = Modifier.statusBarsPadding().padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth().height(52.dp),
         shape = CircleShape,
@@ -459,7 +470,7 @@ private fun SearchPill(initial: String, onSearch: () -> Unit, onAccount: () -> U
             Modifier.padding(start = 4.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onAccount) {
+            IconButton(onClick = onMenu) {
                 Icon(
                     Icons.Filled.Menu,
                     contentDescription = stringResource(R.string.list_open_folders),
@@ -479,7 +490,7 @@ private fun SearchPill(initial: String, onSearch: () -> Unit, onAccount: () -> U
             Box(
                 Modifier
                     .clip(CircleShape)
-                    .clickable(onClickLabel = stringResource(R.string.list_open_folders), onClick = onAccount),
+                    .clickable(onClickLabel = stringResource(R.string.accounts_open_switcher), onClick = onAccount),
             ) { Avatar(initial, size = 36.dp) }
         }
     }
@@ -527,17 +538,11 @@ private fun DrawerContent(
     onShared: () -> Unit,
     onDeliveryCheck: () -> Unit,
     onSettings: () -> Unit,
+    onAccountChosen: () -> Unit,
 ) {
     ModalDrawerSheet {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 16.dp)) {
-            Row(
-                Modifier.padding(start = 16.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Avatar(Sender.initial(username, ""))
-                Text(username, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            DrawerAccountHeader(username, onAccountChosen)
             val openShare = LocalOpenShare.current
             folders.forEach { entry ->
                 val folder = entry.mailbox
@@ -628,6 +633,58 @@ private fun DrawerContent(
 }
 
 /** The user's labels under the folders; a tap lists the mail with the label, a long press offers Delete. Nothing when there are none. */
+/**
+ * The head of the drawer: the account that is shown, with a chevron that unfolds the list of accounts (to switch
+ * or to add one). Several accounts are named; with one the plain login stays.
+ */
+@Composable
+private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
+    val ui = LocalAccountsUi.current
+    var open by rememberSaveable { mutableStateOf(false) }
+    val active = ui.rows.firstOrNull { it.active }
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClickLabel = stringResource(if (open) R.string.accounts_fold else R.string.accounts_unfold)) { open = !open }
+            .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Avatar(active?.initial ?: Sender.initial(username, ""))
+        Column(Modifier.weight(1f)) {
+            Text(active?.label ?: username, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (AccountRows.showsAccountNames(ui.rows.size) && active != null) {
+                Text(active.host, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Icon(
+            if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = colors.onSurfaceVariant,
+        )
+    }
+    if (open) {
+        AccountList(
+            rows = ui.rows,
+            onPick = {
+                open = false
+                onChosen()
+                ui.onSwitch(it)
+            },
+            onAdd = {
+                open = false
+                onChosen()
+                ui.onAdd()
+            },
+            modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
+        )
+    } else {
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
 @Composable
 private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete: (Label) -> Unit) {
     if (labels.isEmpty()) return

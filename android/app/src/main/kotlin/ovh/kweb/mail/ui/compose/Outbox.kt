@@ -1,12 +1,13 @@
 package ovh.kweb.mail.ui.compose
 
-import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.withContext
-import ovh.kweb.mail.background.Background
+import uniffi.kweb_core.Core
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.PendingSend
@@ -18,12 +19,16 @@ import uniffi.kweb_core.PendingSend
  * message is written. One reader: the list's view model.
  */
 object Outbox {
-    private val channel = Channel<PendingSend>(Channel.BUFFERED)
+    /** A message sent from account [accountId]. */
+    class Sent(val accountId: String, val pending: PendingSend)
 
-    val sent: Flow<PendingSend> get() = channel.receiveAsFlow()
+    private val channel = Channel<Sent>(Channel.BUFFERED)
 
-    fun announce(pending: PendingSend) {
-        channel.trySend(pending)
+    /** What was sent from [accountId]; the list of another account does not show it (its Undo would be for the wrong account). */
+    fun sent(accountId: String): Flow<PendingSend> = channel.receiveAsFlow().filter { it.accountId == accountId }.map { it.pending }
+
+    fun announce(accountId: String, pending: PendingSend) {
+        channel.trySend(Sent(accountId, pending))
     }
 }
 
@@ -42,11 +47,11 @@ object SendRules {
 /** Starts drafts for every way into the compose screen. */
 object DraftLauncher {
     /** Asks the core for a draft of [kind] (it is stored at once) and returns its id. Throws what the core throws. */
-    suspend fun create(context: Context, kind: DraftKind): String =
-        withContext(Dispatchers.IO) { Background.core(context).newDraft(kind).id }
+    suspend fun create(core: Core, kind: DraftKind): String =
+        withContext(Dispatchers.IO) { core.newDraft(kind).id }
 
     /** Throws the draft [id] away again; a failure is not worth more than a log line, so none is raised. */
-    suspend fun discard(context: Context, id: String) {
-        withContext(Dispatchers.IO) { runCatching { Background.core(context).discardDraft(id) } }
+    suspend fun discard(core: Core, id: String) {
+        withContext(Dispatchers.IO) { runCatching { core.discardDraft(id) } }
     }
 }

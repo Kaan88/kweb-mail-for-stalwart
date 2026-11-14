@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.contacts
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.compose.foundation.lazy.LazyListState
@@ -37,7 +38,7 @@ data class ContactsState(
  * The contact list and its search. It lives as long as the activity, so that a visit to a contact or to the
  * other roots keeps the query and the place in the list. Only the newest question counts.
  */
-class ContactsViewModel(app: Application) : AndroidViewModel(app) {
+class ContactsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(ContactsState())
     private var job: Job? = null
 
@@ -84,7 +85,7 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             try {
                 if (debounce) delay(ContactRules.DEBOUNCE_MILLIS)
-                val list = withContext(Dispatchers.IO) { Background.core(getApplication()).contacts(query) }
+                val list = withContext(Dispatchers.IO) { session.core.contacts(query) }
                 if (asked != generation) return@launch
                 stateFlow.update {
                     it.copy(

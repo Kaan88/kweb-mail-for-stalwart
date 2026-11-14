@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.sharing
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,7 +82,8 @@ internal fun levelLabel(level: ShareLevel): String =
 @Composable
 fun ShareScreen(route: Route.Share, onBack: () -> Unit) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: ShareViewModel = viewModel(factory = viewModelFactory { initializer { ShareViewModel(app, route.kind, route.id) } })
+    val accountSession = LocalAccountSession.current
+    val vm: ShareViewModel = viewModel(factory = viewModelFactory { initializer { ShareViewModel(app, accountSession, route.kind, route.id) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }

@@ -13,9 +13,9 @@ import ovh.kweb.mail.ui.thread.BlobFiles
 import ovh.kweb.mail.ui.thread.FileNames
 import uniffi.kweb_core.FileEntry
 
-class AndroidFilesPlatform(context: Context) : FilesPlatform {
+class AndroidFilesPlatform(context: Context, accountId: String) : FilesPlatform {
     private val context = context.applicationContext
-    private val blobs = BlobFiles(this.context)
+    private val blobs = BlobFiles(this.context, accountId)
 
     private companion object {
         /** Copies for upload, apart from the mail composer's own "outgoing", so a sweep never touches a draft's files. */

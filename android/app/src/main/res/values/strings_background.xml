@@ -12,6 +12,10 @@
     <string name="connection_connected">Connected</string>
     <string name="connection_offline">Offline: %1$s</string>
     <string name="connection_sign_in_needed">Sign-in needed</string>
+    <string name="connection_all_accounts">Connected · %1$d accounts</string>
+    <string name="connection_some_accounts">%1$d of %2$d accounts connected</string>
+    <string name="connection_account_offline">%1$s: offline, %2$s</string>
+    <string name="connection_account_sign_in_needed">%1$s: sign-in needed</string>
     <string name="connection_checking">Checking for new mail…</string>
 
     <string name="action_archive">Archive</string>

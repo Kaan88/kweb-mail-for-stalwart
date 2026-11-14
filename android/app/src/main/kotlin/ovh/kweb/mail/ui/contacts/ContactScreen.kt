@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.contacts
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -91,7 +92,8 @@ fun ContactScreen(
 ) {
     // The view model belongs to this visit (the store of its route, see ScreenStores), so a new visit asks the core again.
     val app = LocalContext.current.applicationContext as Application
-    val vm: ContactViewModel = viewModel(factory = viewModelFactory { initializer { ContactViewModel(app, contactId) } })
+    val accountSession = LocalAccountSession.current
+    val vm: ContactViewModel = viewModel(factory = viewModelFactory { initializer { ContactViewModel(app, accountSession, contactId) } })
     val state by vm.state.collectAsStateWithLifecycle()
     val detail = state.detail
     var asking by rememberSaveable { mutableStateOf(false) }

@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.calendar
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
@@ -102,8 +103,9 @@ private enum class Picking { START_DATE, START_TIME, END_DATE, END_TIME, UNTIL }
 fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, onSaved: () -> Unit, account: String? = null) {
     // The view model belongs to this visit (the store of its route, see ScreenStores): it survives a rotation and goes with the screen.
     val app = LocalContext.current.applicationContext as Application
+    val accountSession = LocalAccountSession.current
     val vm: EditEventViewModel = viewModel(
-        factory = viewModelFactory { initializer { EditEventViewModel(app, eventId, startHint, account) } },
+        factory = viewModelFactory { initializer { EditEventViewModel(app, accountSession, eventId, startHint, account) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by remember { mutableStateOf(false) }

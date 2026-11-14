@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountSession
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.UiMessage
 import ovh.kweb.mail.ui.compose.StartedFromShare
@@ -17,9 +18,16 @@ import ovh.kweb.mail.ui.compose.StartedFromShare
 object IncomingShareLauncher {
     /**
      * Parses [raw], and when somebody is signed in starts a new draft from it and calls [open] with the draft's id
-     * (even when a draft is open already: nothing is asked). [notify] gets what the user should be told.
+     * (even when a draft is open already: nothing is asked) in the account [session] gives. [notify] gets what the user should be told.
      */
-    fun handle(app: Application, scope: CoroutineScope, raw: RawShare, open: (String) -> Unit, notify: (UiMessage) -> Unit) {
+    fun handle(
+        app: Application,
+        scope: CoroutineScope,
+        raw: RawShare,
+        session: suspend () -> AccountSession?,
+        open: (String) -> Unit,
+        notify: (UiMessage) -> Unit,
+    ) {
         val content = IncomingShareRules.parse(raw, IntentShare.ownAuthority(app))
         scope.launch {
             val signedIn = SessionState.signedIn.first { it != null }
@@ -32,8 +40,9 @@ object IncomingShareLauncher {
                 notify(UiMessage.Res(R.string.incoming_share_nothing))
                 return@launch
             }
+            val target = session() ?: return@launch
             val outcome = try {
-                withContext(Dispatchers.IO) { IncomingShareIntake(CoreShareBackend(app), AndroidShareFiles(app)).run(content) }
+                withContext(Dispatchers.IO) { IncomingShareIntake(CoreShareBackend(target.core), AndroidShareFiles(app)).run(content) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

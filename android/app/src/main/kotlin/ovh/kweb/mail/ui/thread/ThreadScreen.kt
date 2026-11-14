@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.thread
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -95,9 +96,10 @@ import uniffi.kweb_core.DraftKind
 @Composable
 fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}, onOpenFilters: () -> Unit = {}) {
     val context = LocalContext.current
+    val accountSession = LocalAccountSession.current
     val vm: ThreadViewModel = viewModel(
         key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
-        factory = viewModelFactory { initializer { ThreadViewModel(this[APPLICATION_KEY] as Application, route) } },
+        factory = viewModelFactory { initializer { ThreadViewModel(this[APPLICATION_KEY] as Application, accountSession, route) } },
     )
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -164,11 +166,11 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         }
     }
 
-    val files = remember { BlobFiles(context.applicationContext) }
+    val files = remember { BlobFiles(context.applicationContext, accountSession.record.id) }
 
     /** The file of an attachment, downloaded if it is not there. */
     suspend fun fetch(attachment: Attachment) = withContext(Dispatchers.IO) {
-        files.ensure(Background.core(context), attachment.blobId, files.attachmentFile(attachment.blobId, attachment.name))
+        files.ensure(accountSession.core, attachment.blobId, files.attachmentFile(attachment.blobId, attachment.name))
     }
 
     fun openAttachment(attachment: Attachment) {

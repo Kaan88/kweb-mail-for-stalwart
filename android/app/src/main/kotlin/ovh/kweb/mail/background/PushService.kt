@@ -14,25 +14,34 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountLabels
+import ovh.kweb.mail.accounts.Accounts
+import ovh.kweb.mail.accounts.ConnectionSummary
 import uniffi.kweb_core.ConnectionStatus
-import uniffi.kweb_core.Listener
-import uniffi.kweb_core.Plan
-import uniffi.kweb_core.Reminder
 
 /**
- * The foreground service that holds the live connection to the server.
+ * The foreground service that holds the live connections to the servers: one per account, each in its own
+ * `Core` with its own loop and backoff, so an account that fails or needs a new sign-in cannot stall the others.
  *
- * It shows the silent "Connected" entry (Connection channel), whose text follows the core's
- * status, and registers a [Listener] with the core. Start and stop it with [start] and [stop];
- * [start] can be called from anywhere at any time. With no account the service ends itself.
+ * It shows the silent "Connected" entry (Connection channel), whose text follows the accounts' statuses, and
+ * registers each session's listener with its core. Start and stop it with [start] and [stop]; [start] can be
+ * called from anywhere at any time, and after an account was added it simply picks the new one up. With no
+ * account the service ends itself.
  *
  * Foreground service type `specialUse`: Android 15 limits `dataSync` services to six hours a
  * day, and `specialUse` is not among the types a BOOT_COMPLETED receiver may not start on 15.
  */
 class PushService : Service() {
-    private val settings by lazy { Settings.of(this) }
-    private val notifier by lazy { Notifier(this) }
+    private val log by lazy { ServiceLog.of(this) }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var collecting: Job? = null
 
     /** Everything that may block (opening the core, starting the connection) runs here, in order. */
     private val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "kweb-service") }
@@ -59,70 +68,108 @@ class PushService : Service() {
 
     override fun onDestroy() {
         synchronized(renderLock) { destroyed = true }
+        scope.cancel()
         worker.shutdown()
-        val core = Background.core(this)
+        val cores = Accounts.openSessions().map { it.core }
         // stop() blocks until the connection is down, so never on the main thread.
         // A service started right after this one waits for it ([begin]), or it would have its
-        // fresh connection stopped by this call.
+        // fresh connections stopped by this call.
         pendingStop = thread(name = "kweb-service-stop") {
-            try {
-                core.stop()
-            } catch (e: Exception) {
-                Log.e(Background.TAG, "stopping the core failed", e)
+            for (core in cores) {
+                try {
+                    core.stop()
+                } catch (e: Exception) {
+                    Log.e(Background.TAG, "stopping the core failed", e)
+                }
             }
         }
         super.onDestroy()
     }
 
     private fun enterForeground(): Boolean = try {
-        val entry = entry(ConnectionStatus.Connecting)
+        val entry = entry(ServiceEntryPlan.Single(ConnectionStatus.Connecting))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(Notifier.SERVICE_ID, entry, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             // Before 14 there is no specialUse type; the manifest's type is used.
             startForeground(Notifier.SERVICE_ID, entry)
         }
-        settings.clearStartFailure()
+        log.clearStartFailure()
         true
     } catch (e: Exception) {
         recordStartFailure(this, e)
         false
     }
 
-    /** Runs on [worker]: registers the listener, which starts the connection. */
+    /** Runs on [worker]: registers each account's listener, which starts its connection. One that fails does not stop the others. */
     private fun begin() {
         try {
             pendingStop?.join()
-            val core = Background.core(this)
-            if (core.account() == null) {
+            val records = Accounts.load(this)
+            if (records.isEmpty()) {
                 stopSelf()
                 return
             }
-            core.start(listener)
-            report(core.status())
+            var started = 0
+            var lastError: Exception? = null
+            for (record in records) {
+                try {
+                    val session = Accounts.session(record.id) ?: continue
+                    session.core.start(session.listener)
+                    session.publishStatus(session.core.status())
+                    started++
+                } catch (e: Exception) {
+                    Log.e(Background.TAG, "starting the connection of an account failed", e)
+                    lastError = e
+                }
+            }
+            if (started == 0) {
+                val e = lastError
+                log.recordStartFailure(System.currentTimeMillis(), "The core did not start: ${e?.message ?: e?.javaClass?.simpleName ?: "no account"}")
+                stopSelf()
+                return
+            }
+            follow()
+            // A start command on a running service put "Connecting" back; a status that did not change emits nothing.
+            renderCurrent()
         } catch (e: Exception) {
             Log.e(Background.TAG, "starting the connection failed", e)
-            settings.recordStartFailure(System.currentTimeMillis(), "The core did not start: ${e.message ?: e.javaClass.simpleName}")
+            log.recordStartFailure(System.currentTimeMillis(), "The core did not start: ${e.message ?: e.javaClass.simpleName}")
             stopSelf()
         }
     }
 
-    private fun report(status: ConnectionStatus) {
-        Background.publishStatus(status)
-        render(status)
-        if (status is ConnectionStatus.SignedOut) stopSelf()
+    /** Keeps the entry in step with the accounts' statuses, once per service. With no account left the service ends. */
+    private fun follow() {
+        if (collecting != null) return
+        collecting = scope.launch {
+            Accounts.connection.collect { summary ->
+                if (summary.items.isEmpty()) stopSelf() else render(summary)
+            }
+        }
+    }
+
+    private fun renderCurrent() {
+        val summary = Accounts.connection.value
+        if (summary.items.isNotEmpty()) render(summary)
+    }
+
+    private fun render(summary: ConnectionSummary) {
+        val labels = AccountLabels.of(summary.items.map { it.record })
+        render(ServiceEntryRules.plan(summary.items.map { labels.getValue(it.record.id) to it.status }))
     }
 
     /** Updates the "Connected" entry; does nothing once the service is gone, so it cannot come back as a plain notification. */
-    private fun render(status: ConnectionStatus) = synchronized(renderLock) {
-        if (!destroyed) getSystemService(NotificationManager::class.java).notify(Notifier.SERVICE_ID, entry(status))
+    private fun render(plan: ServiceEntryPlan) = synchronized(renderLock) {
+        if (!destroyed) getSystemService(NotificationManager::class.java).notify(Notifier.SERVICE_ID, entry(plan))
     }
 
-    private fun entry(status: ConnectionStatus): Notification =
+    private fun entry(plan: ServiceEntryPlan): Notification =
         NotificationCompat.Builder(this, Channels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(statusText(status))
+            .setContentText(statusText(plan))
+            .apply { details(plan)?.let { setStyle(NotificationCompat.BigTextStyle().bigText(it)) } }
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
@@ -134,41 +181,38 @@ class PushService : Service() {
             .setContentIntent(NotificationIntents.openAppPlain(this, Notifier.SERVICE_ID))
             .build()
 
-    private fun statusText(status: ConnectionStatus): String = when (status) {
-        is ConnectionStatus.Live -> getString(R.string.connection_connected)
-        is ConnectionStatus.Offline -> getString(R.string.connection_offline, status.reason)
-        ConnectionStatus.SignInNeeded -> getString(R.string.connection_sign_in_needed)
-        ConnectionStatus.Connecting, ConnectionStatus.SignedOut -> getString(R.string.connection_connecting)
-    }
-
-    /**
-     * The core's callbacks. They arrive on the core's own threads and must return quickly and
-     * must not call a blocking `Core` function. An exception must not travel back into Rust.
-     */
-    private val listener = object : Listener {
-        override fun status(status: ConnectionStatus) = guarded("status") { report(status) }
-        override fun notifications(plan: Plan) = guarded("notifications") { notifier.apply(plan) }
-        override fun cacheChanged() = guarded("cacheChanged") { Background.publishCacheChanged() }
-        override fun reminder(reminder: Reminder) = guarded("reminder") { notifier.showReminder(reminder) }
-    }
-
-    private fun guarded(what: String, block: () -> Unit) {
-        try {
-            block()
-        } catch (e: Exception) {
-            Log.e(Background.TAG, "listener $what failed", e)
+    private fun statusText(plan: ServiceEntryPlan): String = when (plan) {
+        is ServiceEntryPlan.Single -> when (val status = plan.status) {
+            is ConnectionStatus.Live -> getString(R.string.connection_connected)
+            is ConnectionStatus.Offline -> getString(R.string.connection_offline, status.reason)
+            ConnectionStatus.SignInNeeded -> getString(R.string.connection_sign_in_needed)
+            ConnectionStatus.Connecting, ConnectionStatus.SignedOut -> getString(R.string.connection_connecting)
         }
+        is ServiceEntryPlan.AllConnected -> getString(R.string.connection_all_accounts, plan.count)
+        is ServiceEntryPlan.Partial -> getString(R.string.connection_some_accounts, plan.connected, plan.total)
+    }
+
+    /** One line per account in trouble, for the expanded entry; null when there is nothing more to say. */
+    private fun details(plan: ServiceEntryPlan): String? {
+        if (plan !is ServiceEntryPlan.Partial || plan.troubles.isEmpty()) return null
+        val lines = plan.troubles.map { t ->
+            when (val status = t.status) {
+                is ConnectionStatus.Offline -> getString(R.string.connection_account_offline, t.label, status.reason)
+                else -> getString(R.string.connection_account_sign_in_needed, t.label)
+            }
+        }
+        return (listOf(statusText(plan)) + lines).joinToString("\n")
     }
 
     companion object {
-        /** The `core.stop()` of the service that was destroyed last, so the next one can wait for it. */
+        /** The `core.stop()` calls of the service that was destroyed last, so the next one can wait for them. */
         @Volatile private var pendingStop: Thread? = null
 
         /**
          * Starts the service (or tells it to look again). Safe from any thread, any process state
          * and any Android version: it never throws. From 12 on Android refuses to start a
          * foreground service from the background unless the app is exempt from battery
-         * optimisation; then this returns false and [Settings.lastStartFailure] says why, for the
+         * optimisation; then this returns false and [ServiceLog.lastStartFailure] says why, for the
          * Delivery check screen. A true result means Android accepted the request; the failure
          * is cleared once the service is really in the foreground.
          */
@@ -191,7 +235,7 @@ class PushService : Service() {
 
         private fun recordStartFailure(context: Context, e: Exception) {
             Log.w(Background.TAG, "the service could not be started", e)
-            Settings.of(context).recordStartFailure(System.currentTimeMillis(), describe(e))
+            ServiceLog.of(context).recordStartFailure(System.currentTimeMillis(), describe(e))
         }
 
         private fun describe(e: Exception): String =

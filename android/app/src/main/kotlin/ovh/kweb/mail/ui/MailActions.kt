@@ -3,10 +3,10 @@ package ovh.kweb.mail.ui
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.CheckScheduler
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.ConnectionStatus
+import uniffi.kweb_core.Core
 
 /** What a conversation menu or swipe does to a list of messages, shared by the list and the thread. */
 object MailActions {
@@ -28,10 +28,9 @@ object MailActions {
      * Report spam ([isSpam] true) or take it back, for [ids]. The core applies it to the cache at once and queues
      * it for the server; a check is scheduled when the live connection is down. Throws what the core throws.
      */
-    suspend fun reportSpam(context: Context, ids: List<String>, isSpam: Boolean) {
+    suspend fun reportSpam(context: Context, core: Core, ids: List<String>, isSpam: Boolean) {
         if (ids.isEmpty()) return
         withContext(Dispatchers.IO) {
-            val core = Background.core(context)
             core.reportSpam(ids, isSpam)
             if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(context)
         }
@@ -43,10 +42,9 @@ object MailActions {
      * the live connection is down a check is scheduled, so they reach the server as soon as there
      * is a network. Throws what the core throws.
      */
-    suspend fun submit(context: Context, actions: List<Action>) {
+    suspend fun submit(context: Context, core: Core, actions: List<Action>) {
         if (actions.isEmpty()) return
         withContext(Dispatchers.IO) {
-            val core = Background.core(context)
             core.submitAll(actions)
             if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(context)
         }

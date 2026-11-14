@@ -1,5 +1,7 @@
 package ovh.kweb.mail.ui.delivery
 
+import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -146,7 +148,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.sign_out)) },
+                            text = { Text(stringResource(if (AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) R.string.accounts_remove else R.string.sign_out)) },
                             enabled = !state.signingOut,
                             onClick = { menuOpen = false; vm.askSignOut() },
                         )
@@ -159,6 +161,16 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     ) { padding ->
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             if (state.signingOut) LinearProgressIndicator(Modifier.fillMaxWidth())
+            // The checks and the three switches belong to the account that is shown; with several, the screen says which.
+            val accounts = LocalAccountsUi.current.rows
+            accounts.firstOrNull { it.active }?.takeIf { AccountRows.showsAccountNames(accounts.size) }?.let {
+                Text(
+                    stringResource(R.string.accounts_delivery_for, it.label),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Verdict(items)
             items.forEach { CheckRow(it) }
             SectionTitle(stringResource(R.string.delivery_what_to_show))
@@ -184,7 +196,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
         }
     }
 
-    signOutPrompt?.let { SignOutDialog(it, onConfirm = vm::signOut, onDismiss = vm::dismissSignOutPrompt) }
+    signOutPrompt?.let { SignOutDialog(it, onConfirm = vm::signOut, onDismiss = vm::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) }
 }
 
 /** What a tap on a failed row does. */
@@ -484,7 +496,7 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 
 /** The question before signing out, shared with the Settings screen. */
 @Composable
-internal fun SignOutDialog(unsent: Unsent, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun SignOutDialog(unsent: Unsent, onConfirm: () -> Unit, onDismiss: () -> Unit, several: Boolean = false) {
     val lost = if (unsent.any) {
         val parts = buildList {
             if (unsent.messages > 0) add(pluralStringResource(R.plurals.sign_out_lost_messages, unsent.messages, unsent.messages))
@@ -492,15 +504,15 @@ internal fun SignOutDialog(unsent: Unsent, onConfirm: () -> Unit, onDismiss: () 
         }
         stringResource(R.string.sign_out_lost, parts.joinToString(stringResource(R.string.sign_out_lost_and)))
     } else {
-        stringResource(R.string.sign_out_text)
+        stringResource(if (several) R.string.accounts_remove_text else R.string.sign_out_text)
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.sign_out_title)) },
+        title = { Text(stringResource(if (several) R.string.accounts_remove else R.string.sign_out_title)) },
         text = { Text(lost) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                val label = if (unsent.any) R.string.sign_out_anyway else R.string.sign_out
+                val label = if (unsent.any) (if (several) R.string.accounts_remove_anyway else R.string.sign_out_anyway) else if (several) R.string.accounts_remove else R.string.sign_out
                 Text(stringResource(label), color = if (unsent.any) MaterialTheme.colorScheme.error else Color.Unspecified)
             }
         },

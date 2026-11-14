@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.compose.foundation.lazy.LazyListState
@@ -39,17 +40,17 @@ import uniffi.kweb_core.SharedMailbox
  * controllers, which the tests drive with a fake backend.
  */
 
-private fun backendOf(app: Application): SharedBackend = CoreSharedBackend { Background.core(app) }
+private fun backendOf(session: AccountSession): SharedBackend = CoreSharedBackend { session.core }
 
-private fun writeBackendOf(app: Application): SharedWriteBackend = CoreSharedWriteBackend { Background.core(app) }
+private fun writeBackendOf(session: AccountSession): SharedWriteBackend = CoreSharedWriteBackend { session.core }
 
 /** Signing out under an open screen leaves nothing to show. */
 private fun CoroutineScope.onSignedOut(reset: () -> Unit) {
     launch { SessionState.signedIn.collect { if (it == false) reset() } }
 }
 
-class SharedAccountsViewModel(app: Application) : AndroidViewModel(app) {
-    private val backend = backendOf(app)
+class SharedAccountsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
     val controller = LoadController<List<SharedAccount>>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) {
         SharedRules.listed(backend.accounts())
     }
@@ -60,8 +61,8 @@ class SharedAccountsViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-class SharedMailboxesViewModel(app: Application, account: String) : AndroidViewModel(app) {
-    private val backend = backendOf(app)
+class SharedMailboxesViewModel(app: Application, private val session: AccountSession, account: String) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
     val controller = LoadController<List<SharedMailbox>>(viewModelScope, Dispatchers.IO, goneOnInvalid = true) { backend.mailboxes(account) }
     val listState = LazyListState()
 
@@ -70,8 +71,8 @@ class SharedMailboxesViewModel(app: Application, account: String) : AndroidViewM
     }
 }
 
-class SharedFolderViewModel(app: Application, account: String, mailboxId: String) : AndroidViewModel(app) {
-    val controller = FolderController(viewModelScope, Dispatchers.IO, backendOf(app), account, mailboxId)
+class SharedFolderViewModel(app: Application, private val session: AccountSession, account: String, mailboxId: String) : AndroidViewModel(app) {
+    val controller = FolderController(viewModelScope, Dispatchers.IO, backendOf(session), account, mailboxId)
 
     /** Kept here so that the place in the list survives a visit to a message and back, and a rotation. */
     val listState = LazyListState()
@@ -81,22 +82,22 @@ class SharedFolderViewModel(app: Application, account: String, mailboxId: String
     }
 }
 
-class SharedMessageViewModel(app: Application, account: String, mailboxId: String, messageId: String) : AndroidViewModel(app) {
-    val controller = SharedMessageController(viewModelScope, Dispatchers.IO, backendOf(app), account, mailboxId, messageId)
+class SharedMessageViewModel(app: Application, private val session: AccountSession, account: String, mailboxId: String, messageId: String) : AndroidViewModel(app) {
+    val controller = SharedMessageController(viewModelScope, Dispatchers.IO, backendOf(session), account, mailboxId, messageId)
 
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
 
     /** Starts the user's own reply, reply to all or forward of this message. */
-    val drafts = SharedDraftStarter(viewModelScope, Dispatchers.IO, writeBackendOf(app), account)
+    val drafts = SharedDraftStarter(viewModelScope, Dispatchers.IO, writeBackendOf(session), account)
 
     init {
         viewModelScope.onSignedOut(controller::reset)
     }
 }
 
-class SharedAgendaViewModel(app: Application, account: String) : AndroidViewModel(app) {
-    val controller = SharedAgendaController(viewModelScope, Dispatchers.IO, backendOf(app), account)
+class SharedAgendaViewModel(app: Application, private val session: AccountSession, account: String) : AndroidViewModel(app) {
+    val controller = SharedAgendaController(viewModelScope, Dispatchers.IO, backendOf(session), account)
     val listState = LazyListState()
 
     init {
@@ -104,15 +105,15 @@ class SharedAgendaViewModel(app: Application, account: String) : AndroidViewMode
     }
 }
 
-class SharedEventViewModel(app: Application, account: String, eventId: String, recurrenceId: String?) : AndroidViewModel(app) {
-    private val backend = backendOf(app)
+class SharedEventViewModel(app: Application, private val session: AccountSession, account: String, eventId: String, recurrenceId: String?) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
     val controller = LoadController<SharedEventData>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) {
         readSharedEvent(backend, account, eventId, recurrenceId)
     }
 
     /** Deletes the event (or one occurrence of it) where the calendar may be written to. */
     val deleter = SharedDeleter<DeleteScope>(viewModelScope, Dispatchers.IO, R.string.cal_delete_failed) { scope ->
-        writeBackendOf(app).deleteEvent(account, eventId, recurrenceId.takeIf { scope == DeleteScope.THIS_ONE })
+        writeBackendOf(session).deleteEvent(account, eventId, recurrenceId.takeIf { scope == DeleteScope.THIS_ONE })
     }
 
     init {
@@ -121,13 +122,13 @@ class SharedEventViewModel(app: Application, account: String, eventId: String, r
     }
 }
 
-class SharedContactsViewModel(app: Application, account: String) : AndroidViewModel(app) {
-    val controller = SharedContactsController(viewModelScope, Dispatchers.IO, backendOf(app), account)
+class SharedContactsViewModel(app: Application, private val session: AccountSession, account: String) : AndroidViewModel(app) {
+    val controller = SharedContactsController(viewModelScope, Dispatchers.IO, backendOf(session), account)
     val listState = LazyListState()
 
     /** The address books the account shares, for knowing whether a new contact can be added. */
     val books = LoadController<List<AddressBook>>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) {
-        writeBackendOf(app).addressBooks(account)
+        writeBackendOf(session).addressBooks(account)
     }
 
     init {
@@ -139,13 +140,13 @@ class SharedContactsViewModel(app: Application, account: String) : AndroidViewMo
 /** A blank draft the core made for a message to [to]; the compose screen puts the recipient in. */
 data class StartedSharedDraft(val draftId: String, val to: Address)
 
-class SharedContactViewModel(app: Application, account: String, contactId: String) : AndroidViewModel(app) {
-    private val backend = backendOf(app)
+class SharedContactViewModel(app: Application, private val session: AccountSession, account: String, contactId: String) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
     val controller = LoadController<ContactDetail>(viewModelScope, Dispatchers.IO, goneOnInvalid = false) { backend.contact(account, contactId) }
 
     /** Deletes the contact where its address book may be written to. */
     val deleter = SharedDeleter<Unit>(viewModelScope, Dispatchers.IO, R.string.contact_delete_failed) {
-        writeBackendOf(app).deleteContact(account, contactId)
+        writeBackendOf(session).deleteContact(account, contactId)
     }
     private val draftChannel = Channel<StartedSharedDraft>(Channel.BUFFERED)
     private val problems = MutableStateFlow<UiMessage?>(null)
@@ -175,7 +176,7 @@ class SharedContactViewModel(app: Application, account: String, contactId: Strin
             var draftId: String? = null
             var handedOver = false
             try {
-                draftId = withContext(NonCancellable) { DraftLauncher.create(getApplication(), DraftKind.New) }
+                draftId = withContext(NonCancellable) { DraftLauncher.create(session.core, DraftKind.New) }
                 ensureActive()
                 draftChannel.send(StartedSharedDraft(draftId, Address(name = name, email = email)))
                 handedOver = true
@@ -186,7 +187,7 @@ class SharedContactViewModel(app: Application, account: String, contactId: Strin
                 problems.update { UiMessage.Res(R.string.compose_start_failed) }
             } finally {
                 val orphan = draftId
-                if (orphan != null && !handedOver) withContext(NonCancellable) { DraftLauncher.discard(getApplication(), orphan) }
+                if (orphan != null && !handedOver) withContext(NonCancellable) { DraftLauncher.discard(session.core, orphan) }
                 startingDraft = false
             }
         }

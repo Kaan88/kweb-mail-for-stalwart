@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,7 +71,8 @@ fun SharedCalendarScreen(
     onAddEvent: (startHint: String) -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: SharedAgendaViewModel = viewModel(factory = viewModelFactory { initializer { SharedAgendaViewModel(app, route.account) } })
+    val accountSession = LocalAccountSession.current
+    val vm: SharedAgendaViewModel = viewModel(factory = viewModelFactory { initializer { SharedAgendaViewModel(app, accountSession, route.account) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -166,8 +168,9 @@ private fun rowKey(account: String, row: AgendaRules.Row): String = when (row) {
 @Composable
 fun SharedEventScreen(route: Route.SharedEventView, onBack: () -> Unit, onEdit: (eventId: String) -> Unit) {
     val app = LocalContext.current.applicationContext as Application
+    val accountSession = LocalAccountSession.current
     val vm: SharedEventViewModel = viewModel(
-        factory = viewModelFactory { initializer { SharedEventViewModel(app, route.account, route.eventId, route.recurrenceId) } },
+        factory = viewModelFactory { initializer { SharedEventViewModel(app, accountSession, route.account, route.eventId, route.recurrenceId) } },
     )
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()

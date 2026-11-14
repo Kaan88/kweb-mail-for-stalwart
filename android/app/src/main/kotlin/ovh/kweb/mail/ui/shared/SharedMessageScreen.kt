@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -88,8 +89,9 @@ import uniffi.kweb_core.SharedAction
 fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: (draftId: String) -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
+    val accountSession = LocalAccountSession.current
     val vm: SharedMessageViewModel = viewModel(
-        factory = viewModelFactory { initializer { SharedMessageViewModel(app, route.account, route.mailboxId, route.messageId) } },
+        factory = viewModelFactory { initializer { SharedMessageViewModel(app, accountSession, route.account, route.mailboxId, route.messageId) } },
     )
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
@@ -124,12 +126,12 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: 
     val activity = LocalActivity.current
     DisposableEffect(vm) { onDispose { if (activity?.isChangingConfigurations != true) c.reset() } }
 
-    val files = remember { BlobFiles(context.applicationContext) }
+    val files = remember { BlobFiles(context.applicationContext, accountSession.record.id) }
 
     /** The file of an attachment, downloaded from the owner's account if it is not there. */
     suspend fun fetch(attachment: Attachment) = withContext(Dispatchers.IO) {
         files.ensure(
-            Background.core(context),
+            accountSession.core,
             attachment.blobId,
             files.attachmentFile(attachment.blobId, attachment.name, route.account),
             route.account,

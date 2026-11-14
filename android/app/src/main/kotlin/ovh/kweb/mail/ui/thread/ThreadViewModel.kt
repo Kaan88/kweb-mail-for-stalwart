@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.thread
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -96,7 +97,7 @@ sealed interface ThreadEvent {
  * must not lose the open cards), but it only works between [start] and [reset]: everything that
  * watches the cache or the server lives in a scope that [reset] cancels. A closed thread does nothing.
  */
-class ThreadViewModel(app: Application, private val route: Route.Thread) : AndroidViewModel(app) {
+class ThreadViewModel(app: Application, private val acct: AccountSession, private val route: Route.Thread) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(ThreadState())
     private val reloads = Channel<Unit>(Channel.CONFLATED)
     private val eventChannel = Channel<ThreadEvent>(Channel.BUFFERED)
@@ -108,7 +109,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private var startingDraft = false
     private var blocking = false
 
-    private val extras = CoreMailExtrasBackend { Background.core(app) }
+    private val extras = CoreMailExtrasBackend { acct.core }
 
     /** The labels of the thread's messages and the user's list. */
     val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
@@ -132,7 +133,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         val scope = CoroutineScope(viewModelScope.coroutineContext + SupervisorJob(viewModelScope.coroutineContext[Job]))
         session = scope
         scope.launch { reloads.receiveAsFlow().collect { load() } }
-        scope.launch { Background.cacheChanges.collect { reload() } }
+        scope.launch { acct.cacheChanges.collect { reload() } }
         // Signing out under an open thread leaves nothing to show.
         scope.launch { SessionState.signedIn.collect { if (it == false) reset() } }
         scope.launch { refreshFromServer() }
@@ -190,7 +191,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         startingDraft = true
         viewModelScope.launch {
             try {
-                eventChannel.send(ThreadEvent.OpenDraft(DraftLauncher.create(getApplication(), kind)))
+                eventChannel.send(ThreadEvent.OpenDraft(DraftLauncher.create(acct.core, kind)))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -221,7 +222,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         val isSpam = !SpamRules.threadIsNotSpam(s.messages, ids, route.mailboxId, s.mailboxes)
         viewModelScope.launch {
             try {
-                MailActions.reportSpam(getApplication(), ids, isSpam)
+                MailActions.reportSpam(getApplication(), acct.core, ids, isSpam)
                 reload()
                 close()
             } catch (e: CancellationException) {
@@ -245,7 +246,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = acct.core
                     core.blockSender(messageId)
                     // The delete waits in the outbox; without a live connection nothing else would send it soon.
                     if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
@@ -294,7 +295,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private fun submit(actions: List<Action>, onDone: suspend () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                MailActions.submit(getApplication(), actions)
+                MailActions.submit(getApplication(), acct.core, actions)
                 reload()
                 onDone()
             } catch (e: CancellationException) {
@@ -312,7 +313,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
 
     private suspend fun refreshFromServer() {
         try {
-            withContext(Dispatchers.IO) { Background.core(getApplication()).refreshThread(route.threadId) }
+            withContext(Dispatchers.IO) { acct.core.refreshThread(route.threadId) }
             stateFlow.update { it.copy(refreshed = true, offline = false) }
         } catch (e: CancellationException) {
             throw e
@@ -329,7 +330,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private suspend fun load() {
         try {
             val read = withContext(Dispatchers.IO) {
-                val core = Background.core(getApplication())
+                val core = acct.core
                 Triple(core.threadMessages(route.threadId), core.mailboxes(), core.account()?.username)
             }
             val (messages, mailboxes, me) = read
@@ -381,7 +382,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         if (ids.isEmpty()) return
         viewModelScope.launch {
             try {
-                MailActions.submit(getApplication(), MailActions.markRead(ids))
+                MailActions.submit(getApplication(), acct.core, MailActions.markRead(ids))
                 reload()
             } catch (e: CancellationException) {
                 throw e
@@ -400,7 +401,7 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         missing.forEach { id ->
             scope.launch {
                 val result = try {
-                    BodyState.Loaded(withContext(Dispatchers.IO) { Background.core(getApplication()).messageBody(id) })
+                    BodyState.Loaded(withContext(Dispatchers.IO) { acct.core.messageBody(id) })
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

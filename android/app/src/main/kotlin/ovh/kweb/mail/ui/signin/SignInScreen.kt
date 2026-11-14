@@ -43,12 +43,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.WardMark
 
 /**
- * The sign-in screen. [suggestedAddress] fills the field when signing in again to a known server;
+ * The sign-in screen. [target] says whether it adds an account or signs in again to one. [suggestedAddress] fills the field when signing in again to a known server;
  * [onBack] is given only then (the first sign-in has nowhere to go back to); [onCompleted] is called
  * when a sign-in finishes while this screen is still the one on display.
  */
@@ -58,7 +61,8 @@ fun SignInScreen(
     suggestedAddress: String? = null,
     onBack: (() -> Unit)? = null,
     onCompleted: () -> Unit = {},
-    vm: SignInViewModel = viewModel(),
+    target: SignInTarget = SignInTarget.New,
+    vm: SignInViewModel = signInViewModel(target),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -103,6 +107,15 @@ fun SignInScreen(
         }
     }
 }
+
+/** The view model of one sign-in, kept apart from another target's by its key. */
+@Composable
+private fun signInViewModel(target: SignInTarget): SignInViewModel = viewModel(
+    key = target.key,
+    factory = viewModelFactory {
+        initializer { SignInViewModel(checkNotNull(this[APPLICATION_KEY]), target) }
+    },
+)
 
 @Composable
 private fun Header() {
@@ -174,6 +187,8 @@ private fun SignInError.messageRes(): Int = when (this) {
     SignInError.NoBrowserAnswer -> R.string.signin_error_no_answer
     SignInError.Refused -> R.string.signin_error_refused
     SignInError.NoBrowser -> R.string.signin_error_no_browser
+    SignInError.AlreadyAdded -> R.string.signin_error_already_added
+    SignInError.Interrupted -> R.string.signin_error_interrupted
     is SignInError.Other -> R.string.signin_error_other
 }
 

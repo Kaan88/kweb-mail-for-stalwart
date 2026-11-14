@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import ovh.kweb.mail.background.Background
+import uniffi.kweb_core.Core
 import ovh.kweb.mail.ui.compose.PickedFile
 import uniffi.kweb_core.Draft
 import uniffi.kweb_core.DraftKind
@@ -26,13 +27,13 @@ interface ShareFiles {
     fun copy(uri: String): PickedFile
 }
 
-class CoreShareBackend(private val context: Context) : ShareBackend {
-    override fun newDraft() = Background.core(context).newDraft(DraftKind.New)
-    override fun saveDraft(draft: Draft) = Background.core(context).saveDraft(draft)
+class CoreShareBackend(private val core: Core) : ShareBackend {
+    override fun newDraft() = core.newDraft(DraftKind.New)
+    override fun saveDraft(draft: Draft) = core.saveDraft(draft)
     override fun addAttachment(draftId: String, path: String, name: String, mimeType: String) =
-        Background.core(context).addAttachment(draftId, path, name, mimeType)
+        core.addAttachment(draftId, path, name, mimeType)
 
-    override fun discardDraft(draftId: String) = Background.core(context).discardDraft(draftId)
+    override fun discardDraft(draftId: String) = core.discardDraft(draftId)
 }
 
 /** The same path an attached file takes: the cache's "outgoing" folder, one folder per copy, removed once the core has it. */

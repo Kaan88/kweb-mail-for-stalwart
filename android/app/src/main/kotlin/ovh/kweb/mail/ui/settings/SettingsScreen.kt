@@ -1,5 +1,7 @@
 package ovh.kweb.mail.ui.settings
 
+import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
@@ -82,6 +85,7 @@ fun SettingsScreen(
     onOpenAssistant: () -> Unit,
     onOpenScheduled: () -> Unit,
     onOpenSenders: () -> Unit,
+    onAddAccount: (() -> Unit)? = null,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
 ) {
@@ -116,10 +120,26 @@ fun SettingsScreen(
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-            SectionTitle(stringResource(R.string.settings_account))
+            // Everything on this screen but the app group belongs to one account; with several, the title says which.
+            val accounts = LocalAccountsUi.current.rows
+            val shown = accounts.firstOrNull { it.active }
+            val several = AccountRows.showsAccountNames(accounts.size)
+            SectionTitle(
+                if (several && shown != null) stringResource(R.string.accounts_settings_account) + " · " + shown.label else stringResource(R.string.settings_account),
+            )
+            val canAdd = onAddAccount != null
+            val accountRows = if (canAdd) 3 else 2
             Group {
-                SettingsRow(Groups.shape(0, 2), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
-                SettingsRow(Groups.shape(1, 2), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
+                SettingsRow(Groups.shape(0, accountRows), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
+                SettingsRow(Groups.shape(1, accountRows), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
+                if (canAdd) {
+                    SettingsRow(
+                        Groups.shape(2, accountRows),
+                        stringResource(R.string.accounts_add),
+                        icon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                        onClick = onAddAccount,
+                    )
+                }
             }
 
             SectionTitle(stringResource(R.string.settings_storage))
@@ -184,7 +204,7 @@ fun SettingsScreen(
             Group(Modifier.padding(top = 16.dp)) {
                 SettingsRow(
                     Groups.shape(0, 1),
-                    stringResource(R.string.sign_out),
+                    stringResource(if (several) R.string.accounts_remove else R.string.sign_out),
                     if (deliveryState.signingOut) stringResource(R.string.settings_signing_out) else null,
                     icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
                     titleColor = MaterialTheme.colorScheme.error,
@@ -195,7 +215,9 @@ fun SettingsScreen(
     }
 
     if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
-    signOutPrompt?.let { SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt) }
+    signOutPrompt?.let {
+        SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size))
+    }
 }
 
 /** The quiet line of the away message row: "Off", "On", "On until 21 Nov"; nothing while it is read or when it cannot be. */

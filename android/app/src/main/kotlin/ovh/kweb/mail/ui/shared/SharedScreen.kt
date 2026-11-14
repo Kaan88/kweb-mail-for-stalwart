@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -105,7 +106,8 @@ fun SharedScreen(
 @Composable
 fun SharedFoldersScreen(route: Route.SharedFolders, onBack: () -> Unit, onGone: () -> Unit, onOpenFolder: (mailboxId: String) -> Unit) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: SharedMailboxesViewModel = viewModel(factory = viewModelFactory { initializer { SharedMailboxesViewModel(app, route.account) } })
+    val accountSession = LocalAccountSession.current
+    val vm: SharedMailboxesViewModel = viewModel(factory = viewModelFactory { initializer { SharedMailboxesViewModel(app, accountSession, route.account) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }

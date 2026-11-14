@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.compose
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -119,9 +120,10 @@ import uniffi.kweb_core.RewriteStyle
  */
 @Composable
 fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onSent: () -> Unit) {
+    val accountSession = LocalAccountSession.current
     val vm: ComposeViewModel = viewModel(
         key = "compose:$draftId",
-        factory = viewModelFactory { initializer { ComposeViewModel(this[APPLICATION_KEY] as Application, draftId, prefillTo) } },
+        factory = viewModelFactory { initializer { ComposeViewModel(this[APPLICATION_KEY] as Application, accountSession, draftId, prefillTo) } },
     )
     val s = vm.state
     val context = LocalContext.current

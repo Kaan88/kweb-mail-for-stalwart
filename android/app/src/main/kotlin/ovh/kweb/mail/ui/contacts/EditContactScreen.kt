@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.contacts
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -81,7 +82,8 @@ import ovh.kweb.mail.ui.list.Groups
 fun EditContactScreen(contactId: String?, onBack: () -> Unit, onSaved: () -> Unit, account: String? = null) {
     // The view model belongs to this visit (the store of its route, see ScreenStores): it survives a rotation and goes with the screen.
     val app = LocalContext.current.applicationContext as Application
-    val vm: EditContactViewModel = viewModel(factory = viewModelFactory { initializer { EditContactViewModel(app, contactId, account) } })
+    val accountSession = LocalAccountSession.current
+    val vm: EditContactViewModel = viewModel(factory = viewModelFactory { initializer { EditContactViewModel(app, accountSession, contactId, account) } })
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     val form = state.form

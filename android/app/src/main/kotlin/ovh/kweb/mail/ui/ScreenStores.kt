@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewmodel.MutableCreationExtras
+import ovh.kweb.mail.accounts.AccountSession
+import ovh.kweb.mail.ui.accounts.AccountViewModelFactory
 
 /**
  * One [ViewModelStore] per route on the back stack, for screens whose state must live exactly as
@@ -21,13 +23,16 @@ import androidx.lifecycle.viewmodel.MutableCreationExtras
 class ScreenStores(private val app: Application) {
     private val stores = HashMap<Route, ViewModelStore>()
 
+    /** The account whose screens these are; a plain `viewModel()` under an owner builds view models for it. */
+    var session: AccountSession? = null
+
     /** The store owner of [route]; the same one for as long as the route is on the stack. */
     fun owner(route: Route): ViewModelStoreOwner {
         val store = stores.getOrPut(route) { ViewModelStore() }
         return object : ViewModelStoreOwner, HasDefaultViewModelProviderFactory {
             override val viewModelStore: ViewModelStore get() = store
             override val defaultViewModelProviderFactory: ViewModelProvider.Factory
-                get() = ViewModelProvider.AndroidViewModelFactory.getInstance(app)
+                get() = session?.let { AccountViewModelFactory(app, it) } ?: ViewModelProvider.AndroidViewModelFactory.getInstance(app)
             override val defaultViewModelCreationExtras: CreationExtras
                 get() = MutableCreationExtras().apply { set(ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY, app) }
         }

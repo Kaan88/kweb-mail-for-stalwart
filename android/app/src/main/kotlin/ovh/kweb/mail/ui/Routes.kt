@@ -109,6 +109,9 @@ sealed interface Route {
 
     /** Signing in again to the same account (the token was refused). */
     data object SignInAgain : Route
+
+    /** Adding another account (step A: reached from a row in Settings that only debug builds show). */
+    data object AddAccount : Route
 }
 
 /** The back stack as plain list operations. It never gets empty: the first entry is the root. */
@@ -165,6 +168,9 @@ object BackStack {
     fun afterContactSaved(stack: List<Route>): List<Route> = stack.dropLastWhile { it is Route.EditContact }.ifEmpty { initial }
 
     /** What the Reply button of a notification shows: the new message over the list. */
+    /** Another account is shown: its screens start at the list, whatever the old account had open. */
+    fun afterAccountSwitch(): List<Route> = initial
+
     fun forCompose(draftId: String): List<Route> = initial + Route.Compose(draftId)
 
     /**

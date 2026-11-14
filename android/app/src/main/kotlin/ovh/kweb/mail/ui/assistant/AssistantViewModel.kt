@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.assistant
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -88,7 +89,7 @@ sealed interface AssistantEvent {
  * activity's store and the screens only show the session that is theirs. A rotation keeps it; a screen that is left
  * for good calls [release]. The key never comes here: it is typed on the settings screen and goes straight to the core.
  */
-class AssistantViewModel(app: Application) : AndroidViewModel(app) {
+class AssistantViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(AssistantState())
     private val eventChannel = Channel<AssistantEvent>(Channel.BUFFERED)
 
@@ -115,7 +116,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshSettings() {
         viewModelScope.launch {
             val read = try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).aiSettings() }
+                withContext(Dispatchers.IO) { session.core.aiSettings() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -169,7 +170,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val task = sessionOf(id)?.task ?: return@launch
                 val (settings, preview) = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     val read = core.aiSettings()
                     read to if (ConsentRules.isNeeded(read)) core.aiPreview(task) else null
                 }
@@ -196,7 +197,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         updateSession(s.id) { it.copy(phase = AssistPhase.Checking) }
         viewModelScope.launch {
             try {
-                val stored = withContext(Dispatchers.IO) { Background.core(getApplication()).setAiSettings(ConsentRules.granted(phase.settings), null) }
+                val stored = withContext(Dispatchers.IO) { session.core.setAiSettings(ConsentRules.granted(phase.settings), null) }
                 stateFlow.update { it.copy(settings = stored) }
                 if (sessionOf(s.id) == null) return@launch
                 run(s.id, s.task, stored.model)
@@ -223,7 +224,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 // Superseded or stopped while it waited for the last task to end.
                 if (sessionOf(id)?.phase != AssistPhase.Running) return
                 val runId = sessionOf(id)?.runId ?: return
-                withContext(Dispatchers.IO) { Background.core(getApplication()).aiRun(task, runId, Pieces(id)) }
+                withContext(Dispatchers.IO) { session.core.aiRun(task, runId, Pieces(id)) }
             }
         } catch (e: CancellationException) {
             throw e
@@ -277,7 +278,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private fun cancelCore(runId: String?) {
         if (runId == null) return
         try {
-            Background.core(getApplication()).aiCancel(runId)
+            session.core.aiCancel(runId)
         } catch (e: Exception) {
             Log.w(Background.TAG, "cancelling the assistant failed: ${e.javaClass.simpleName}")
         }
@@ -303,10 +304,10 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             var draftId: String? = null
             try {
-                val id = DraftLauncher.create(getApplication(), DraftKind.Reply(task.messageId))
+                val id = DraftLauncher.create(session.core, DraftKind.Reply(task.messageId))
                 draftId = id
                 withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     val draft = checkNotNull(core.draft(id)) { "the new draft is gone" }
                     core.saveDraft(draft.copy(body = DraftText.withAnswer(draft.body, s.text)))
                 }
@@ -320,7 +321,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 throw e
             } catch (e: Exception) {
                 Log.w(Background.TAG, "starting a reply from the assistant failed: ${e.javaClass.simpleName}")
-                draftId?.let { DraftLauncher.discard(getApplication(), it) }
+                draftId?.let { DraftLauncher.discard(session.core, it) }
                 updateSession(s.id) { it.copy(busy = false, notice = UiMessage.Res(R.string.assistant_draft_failed)) }
             }
         }

@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.sending
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,11 +10,11 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
 
 /** The senders screens' state. It lives as long as the route (see ScreenStores), so a rotation keeps the open form. */
-class SendersViewModel(app: Application) : AndroidViewModel(app) {
+class SendersViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     val controller = SendersController(
         scope = viewModelScope,
         io = Dispatchers.IO,
-        backend = CoreSendersBackend { Background.core(app) },
+        backend = CoreSendersBackend { session.core },
     )
 
     init {

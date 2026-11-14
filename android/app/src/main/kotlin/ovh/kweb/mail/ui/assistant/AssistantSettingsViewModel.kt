@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.assistant
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.compose.runtime.getValue
@@ -63,7 +64,7 @@ data class AssistantSettingsState(
  * until it is saved (or the screen is left), never in a data class that could be printed, never in saved state;
  * after the core has it, it is blanked.
  */
-class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
+class AssistantSettingsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(AssistantSettingsState())
     private val doneChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null
@@ -95,7 +96,7 @@ class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
         stateFlow.update { it.copy(phase = AssistantPhase.LOADING) }
         loadJob = viewModelScope.launch {
             try {
-                val read = withContext(Dispatchers.IO) { Background.core(getApplication()).aiSettings() }
+                val read = withContext(Dispatchers.IO) { session.core.aiSettings() }
                 take(read)
             } catch (e: CancellationException) {
                 throw e
@@ -140,7 +141,7 @@ class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
         stateFlow.update { it.copy(form = form.copy(provider = provider), switching = true, models = null, error = null) }
         switchJob = viewModelScope.launch {
             try {
-                val service = withContext(Dispatchers.IO) { Background.core(getApplication()).aiService(provider) }
+                val service = withContext(Dispatchers.IO) { session.core.aiService(provider) }
                 stored = service
                 keyText = "" // dropped only now: a failed read keeps the form of the service left, key included
                 stateFlow.update { cur ->
@@ -180,7 +181,7 @@ class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
         val key = AssistantRules.keyToSend(keyText, form.removeKey)
         modelsJob = viewModelScope.launch {
             try {
-                val list = withContext(Dispatchers.IO) { Background.core(getApplication()).aiModels(form.toSettings(base), key) }
+                val list = withContext(Dispatchers.IO) { session.core.aiModels(form.toSettings(base), key) }
                 stateFlow.update { cur -> cur.copy(models = ModelsState.Loaded(list), modelList = list) }
                 edit { it } // the effort may not be offered by the model any more
             } catch (e: CancellationException) {
@@ -217,7 +218,7 @@ class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
         val key = AssistantRules.keyToSend(keyText, form.removeKey)
         viewModelScope.launch {
             try {
-                val after = withContext(Dispatchers.IO) { Background.core(getApplication()).setAiSettings(form.toSettings(base), key) }
+                val after = withContext(Dispatchers.IO) { session.core.setAiSettings(form.toSettings(base), key) }
                 keyText = ""
                 stored = after
                 val shown = AssistantRules.formOf(after)
@@ -250,7 +251,7 @@ class AssistantSettingsViewModel(app: Application) : AndroidViewModel(app) {
         stateFlow.update { it.copy(consent = ask.copy(busy = true)) }
         viewModelScope.launch {
             try {
-                val after = withContext(Dispatchers.IO) { Background.core(getApplication()).setAiSettings(change(base), null) }
+                val after = withContext(Dispatchers.IO) { session.core.setAiSettings(change(base), null) }
                 stored = after
                 doneChannel.send(Unit)
             } catch (e: CancellationException) {

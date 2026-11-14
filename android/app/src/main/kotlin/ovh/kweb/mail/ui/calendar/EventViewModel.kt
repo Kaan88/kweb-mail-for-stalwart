@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.calendar
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -35,7 +36,7 @@ data class EventState(
 enum class DeleteScope { ALL, THIS_ONE }
 
 /** One event or task for its own screen: reads it, answers an invitation, deletes it. */
-class EventViewModel(app: Application, private val eventId: String, val recurrenceId: String?) : AndroidViewModel(app) {
+class EventViewModel(app: Application, private val session: AccountSession, private val eventId: String, val recurrenceId: String?) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(EventState())
     private val leaveChannel = Channel<Unit>(Channel.BUFFERED)
     private var loadJob: Job? = null
@@ -51,7 +52,7 @@ class EventViewModel(app: Application, private val eventId: String, val recurren
         loadJob = viewModelScope.launch {
             try {
                 val (detail, name) = withContext(Dispatchers.IO) {
-                    val core = Background.core(getApplication())
+                    val core = session.core
                     val detail = core.event(eventId, recurrenceId)
                     val name = try {
                         core.calendars().firstOrNull { it.id == detail.input.calendarId }?.name
@@ -86,7 +87,7 @@ class EventViewModel(app: Application, private val eventId: String, val recurren
         stateFlow.update { it.copy(busy = true, message = null) }
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).respondToEvent(eventId, status) }
+                withContext(Dispatchers.IO) { session.core.respondToEvent(eventId, status) }
                 stateFlow.update { it.copy(busy = false) }
                 load()
             } catch (e: CancellationException) {
@@ -105,7 +106,7 @@ class EventViewModel(app: Application, private val eventId: String, val recurren
         viewModelScope.launch {
             try {
                 val occurrence = recurrenceId.takeIf { scope == DeleteScope.THIS_ONE }
-                withContext(Dispatchers.IO) { Background.core(getApplication()).deleteEvent(eventId, occurrence) }
+                withContext(Dispatchers.IO) { session.core.deleteEvent(eventId, occurrence) }
                 leaveChannel.send(Unit)
             } catch (e: CancellationException) {
                 throw e

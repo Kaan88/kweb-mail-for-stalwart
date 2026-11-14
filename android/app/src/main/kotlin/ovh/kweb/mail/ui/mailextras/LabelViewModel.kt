@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.mailextras
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -25,12 +26,12 @@ sealed interface LabelResults {
 }
 
 /** The mail that carries one label. It lives as long as its route (see ScreenStores), so a rotation keeps the list. */
-class LabelViewModel(app: Application) : AndroidViewModel(app) {
+class LabelViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow<LabelResults>(LabelResults.Loading)
     private val ticket = AtomicLong()
     private var labelId: String? = null
     private var job: Job? = null
-    private val extras = CoreMailExtrasBackend { Background.core(app) }
+    private val extras = CoreMailExtrasBackend { session.core }
 
     val state: StateFlow<LabelResults> get() = stateFlow
 
@@ -38,7 +39,7 @@ class LabelViewModel(app: Application) : AndroidViewModel(app) {
     val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = {})
 
     init {
-        viewModelScope.launch { Background.cacheChanges.collect { refreshShown() } }
+        viewModelScope.launch { session.cacheChanges.collect { refreshShown() } }
         viewModelScope.launch { SessionState.signedIn.collect { if (it == false) labels.reset() } }
     }
 
@@ -85,7 +86,7 @@ class LabelViewModel(app: Application) : AndroidViewModel(app) {
         val mine = ticket.get()
         try {
             val (fresh, index) = withContext(Dispatchers.IO) {
-                val core = Background.core(getApplication())
+                val core = session.core
                 val rows = shown.messages.mapNotNull { core.message(it.id) }
                 rows to LabelRules.index(rows.map { it.id }, extras.messageLabels(rows.map { it.id }))
             }

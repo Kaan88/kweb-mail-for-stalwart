@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import ovh.kweb.mail.MainActivity
+import ovh.kweb.mail.accounts.AccountRecord
 import uniffi.kweb_core.Reminder
 
 /**
@@ -13,17 +14,19 @@ import uniffi.kweb_core.Reminder
  *
  * Two PendingIntents are the same object to Android when their intents match without looking at
  * extras. Every intent here therefore gets its own `data` URI (kind plus message or reminder
- * id), and the request code is the notification id as well, so extras of one message never
- * overwrite those of another.
+ * id, and for every account but the migrated one the account's id too, see [NotificationKeys.uriSegments]),
+ * and the request code is the notification id as well, so extras of one message never overwrite those
+ * of another. Every intent also carries [Notifier.EXTRA_ACCOUNT].
  */
 internal object NotificationIntents {
     private const val SCHEME = "kwebmail"
     private const val FLAGS = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
     /** Opens [MainActivity] with one string extra, reusing the running activity (see its onNewIntent). */
-    fun openApp(context: Context, requestCode: Int, kind: String, id: String, extraName: String): PendingIntent {
+    fun openApp(context: Context, record: AccountRecord, requestCode: Int, kind: String, id: String, extraName: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
-            .setData(uri(kind, id))
+            .setData(uri(record, kind, id))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
             .putExtra(extraName, id)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(context, requestCode, intent, FLAGS)
@@ -33,9 +36,10 @@ internal object NotificationIntents {
      * Opens [MainActivity] on a reminder: its event, the occurrence it is for (when it repeats) and the
      * Android id of the notification, so that opening it takes the notification away.
      */
-    fun openReminder(context: Context, notificationId: Int, reminder: Reminder): PendingIntent {
+    fun openReminder(context: Context, record: AccountRecord, notificationId: Int, reminder: Reminder): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
-            .setData(uri("reminder", "${reminder.eventId}/${reminder.alertId}/${reminder.recurrenceId.orEmpty()}"))
+            .setData(uri(record, "reminder", "${reminder.eventId}/${reminder.alertId}/${reminder.recurrenceId.orEmpty()}"))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
             .putExtra(Notifier.EXTRA_EVENT_ID, reminder.eventId)
             .putExtra(Notifier.EXTRA_REMINDER_ANDROID_ID, notificationId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -48,16 +52,26 @@ internal object NotificationIntents {
      * notification's id too, because an action button does not always remove its notification and
      * the activity then has to.
      */
-    fun reply(context: Context, androidId: Int, messageId: String): PendingIntent {
+    fun reply(context: Context, record: AccountRecord, androidId: Int, messageId: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
-            .setData(uri("reply", messageId))
+            .setData(uri(record, "reply", messageId))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
             .putExtra(Notifier.EXTRA_REPLY_MESSAGE_ID, messageId)
             .putExtra(Notifier.EXTRA_REPLY_ANDROID_ID, androidId)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(context, androidId, intent, FLAGS)
     }
 
-    /** Opens [MainActivity] without extras (the group summary and the "Connected" entry). */
+    /** Opens [MainActivity] for [record] without a message (the group summary of its mail). */
+    fun openAccount(context: Context, record: AccountRecord, requestCode: Int): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setData(uri(record, "summary", "open"))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(context, requestCode, intent, FLAGS)
+    }
+
+    /** Opens [MainActivity] without extras (the "Connected" entry and the test notification). */
     fun openAppPlain(context: Context, requestCode: Int): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -65,16 +79,18 @@ internal object NotificationIntents {
     }
 
     /** A broadcast to [ActionReceiver] for a button or a swipe of a mail notification. */
-    fun forMessage(context: Context, action: String, androidId: Int, messageId: String): PendingIntent {
-        val intent = receiverIntent(context, action, uri(action, messageId))
+    fun forMessage(context: Context, record: AccountRecord, action: String, androidId: Int, messageId: String): PendingIntent {
+        val intent = receiverIntent(context, action, uri(record, action, messageId))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
             .putExtra(ActionReceiver.EXTRA_MESSAGE_ID, messageId)
             .putExtra(ActionReceiver.EXTRA_ANDROID_ID, androidId)
         return PendingIntent.getBroadcast(context, androidId, intent, FLAGS)
     }
 
     /** A broadcast to [ActionReceiver] that carries a whole reminder (snooze button and the alarm). */
-    fun forReminder(context: Context, action: String, notificationId: Int, reminder: Reminder): PendingIntent {
-        val intent = receiverIntent(context, action, uri(action, "${reminder.eventId}/${reminder.alertId}"))
+    fun forReminder(context: Context, record: AccountRecord, action: String, notificationId: Int, reminder: Reminder): PendingIntent {
+        val intent = receiverIntent(context, action, uri(record, action, "${reminder.eventId}/${reminder.alertId}"))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
         ReminderExtras.put(intent, reminder)
         return PendingIntent.getBroadcast(context, notificationId, intent, FLAGS)
     }
@@ -82,8 +98,10 @@ internal object NotificationIntents {
     private fun receiverIntent(context: Context, action: String, data: Uri) =
         Intent(context, ActionReceiver::class.java).setAction(action).setData(data)
 
-    private fun uri(kind: String, id: String): Uri =
-        Uri.Builder().scheme(SCHEME).authority("notification").appendPath(kind).appendPath(id).build()
+    private fun uri(record: AccountRecord, kind: String, id: String): Uri =
+        Uri.Builder().scheme(SCHEME).authority("notification").apply {
+            NotificationKeys.uriSegments(record, kind, id).forEach { appendPath(it) }
+        }.build()
 }
 
 /** A [Reminder] carried in an intent, because a snoozed one is shown again by an alarm later. */

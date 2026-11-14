@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.sharing
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -147,14 +148,14 @@ private data class Picked(val items: List<Pair<String, String>>? = null, val err
 
 @Composable
 private fun SharePickerDialog(kind: PickKind, onPick: OpenShare, onDismiss: () -> Unit) {
-    val app = LocalContext.current.applicationContext as Application
+    val session = LocalAccountSession.current
     var picked by remember { mutableStateOf(Picked()) }
     var attempt by remember { mutableIntStateOf(0) }
     LaunchedEffect(kind, attempt) {
         picked = Picked()
         picked = try {
             val items = withContext(Dispatchers.IO) {
-                val backend = CoreSharingBackend { Background.core(app) }
+                val backend = CoreSharingBackend { session.core }
                 if (kind == PickKind.CALENDAR) backend.calendars().map { it.id to it.name } else backend.addressBooks().map { it.id to it.name }
             }
             Picked(items = items)

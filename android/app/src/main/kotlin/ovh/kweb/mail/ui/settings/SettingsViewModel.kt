@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.settings
 
+import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -64,7 +65,7 @@ data class SettingsState(
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
-class SettingsViewModel(app: Application) : AndroidViewModel(app) {
+class SettingsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val stateFlow = MutableStateFlow(SettingsState())
 
     val state: StateFlow<SettingsState> get() = stateFlow
@@ -88,7 +89,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun load() {
         val asked = generation
         viewModelScope.launch {
-            val account = withContext(Dispatchers.IO) { Background.core(getApplication()).account() }
+            val account = withContext(Dispatchers.IO) { session.core.account() }
             if (asked != generation) return@launch
             stateFlow.update {
                 it.copy(name = account?.username.orEmpty(), server = DeliveryViewModel.hostOf(account?.serverUrl).orEmpty())
@@ -96,7 +97,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val result = try {
-                StorageState.Loaded(withContext(Dispatchers.IO) { Background.core(getApplication()).quota() })
+                StorageState.Loaded(withContext(Dispatchers.IO) { session.core.quota() })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -109,7 +110,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val result = try {
-                val message = withContext(Dispatchers.IO) { Background.core(getApplication()).awayMessage() }
+                val message = withContext(Dispatchers.IO) { session.core.awayMessage() }
                 AwayRowState.Known(AwayRules.line(message, System.currentTimeMillis() / 1000, ZoneId.systemDefault()))
             } catch (e: CancellationException) {
                 throw e
@@ -123,7 +124,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val result = try {
-                val filters = withContext(Dispatchers.IO) { Background.core(getApplication()).filters() }
+                val filters = withContext(Dispatchers.IO) { session.core.filters() }
                 if (filters.isActive) FiltersRowState.On else FiltersRowState.Off
             } catch (e: CancellationException) {
                 throw e
@@ -136,7 +137,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val count = try {
-                withContext(Dispatchers.IO) { Background.core(getApplication()).scheduledSends().size }
+                withContext(Dispatchers.IO) { session.core.scheduledSends().size }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -149,7 +150,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val result = try {
-                val settings = withContext(Dispatchers.IO) { Background.core(getApplication()).aiSettings() }
+                val settings = withContext(Dispatchers.IO) { session.core.aiSettings() }
                 AssistantRules.stateLine(settings)?.let { AssistantRowState.Known(it) } ?: AssistantRowState.Unknown
             } catch (e: CancellationException) {
                 throw e

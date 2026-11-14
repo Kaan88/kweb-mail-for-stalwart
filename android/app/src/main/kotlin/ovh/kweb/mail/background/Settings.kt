@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import ovh.kweb.mail.accounts.AccountPaths
+import ovh.kweb.mail.accounts.AccountRecord
 
 /** The result of the last background check. [error] is null when it went well. */
 data class CheckRecord(val atMillis: Long, val error: String?)
@@ -44,9 +46,10 @@ class PrefsKeyValues(private val prefs: SharedPreferences) : KeyValues {
 }
 
 /**
- * What the user chose to show, and what the Delivery check screen reports.
+ * What the user chose to show for one account, and what the Delivery check screen reports about it.
  *
- * Get it with [Settings.of]. Reads are cheap and work from any thread. [changes] ticks after
+ * Get it with [Settings.of]. Each account has its own (the three switches and the last check); what belongs
+ * to the device (why the service could not start) is in [ServiceLog]. Reads are cheap and work from any thread. [changes] ticks after
  * every write (also from the service and the workers), so a screen can reload when it moves.
  */
 class Settings(private val values: KeyValues) {
@@ -76,17 +79,15 @@ class Settings(private val values: KeyValues) {
 
     fun recordCheck(atMillis: Long, error: String?) = write { putLongAndString(CHECK_AT, atMillis, CHECK_ERROR, error) }
 
-    /** The last time the service could not be started; null once it has started since. */
-    val lastStartFailure: StartFailure?
-        get() = values.getLong(FAILURE_AT, 0L).takeIf { it > 0 }
-            ?.let { at -> values.getString(FAILURE_TEXT)?.let { StartFailure(at, it) } }
+    /** Takes the three switches of [old] (the settings an older, single-account install left behind). */
+    fun takeSwitchesFrom(old: Settings) {
+        mailEnabled = old.mailEnabled
+        remindersEnabled = old.remindersEnabled
+        removeWhenReadElsewhere = old.removeWhenReadElsewhere
+    }
 
-    fun recordStartFailure(atMillis: Long, text: String) = write { putLongAndString(FAILURE_AT, atMillis, FAILURE_TEXT, text) }
-
-    fun clearStartFailure() = write { remove(FAILURE_AT, FAILURE_TEXT) }
-
-    /** Forgets the bookkeeping (not the switches). Used when the user signs out. */
-    fun clearBookkeeping() = write { remove(CHECK_AT, CHECK_ERROR, FAILURE_AT, FAILURE_TEXT) }
+    /** Forgets the bookkeeping (not the switches). Used when the user removes the account. */
+    fun clearBookkeeping() = write { remove(CHECK_AT, CHECK_ERROR) }
 
     private fun write(block: KeyValues.() -> Unit) {
         values.block()
@@ -94,20 +95,66 @@ class Settings(private val values: KeyValues) {
     }
 
     companion object {
-        private const val FILE = "settings"
         private const val MAIL = "show_mail"
         private const val REMINDERS = "show_reminders"
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
         private const val CHECK_AT = "check_at"
         private const val CHECK_ERROR = "check_error"
+
+        private val instances = HashMap<String, Settings>()
+
+        /** The one [Settings] of [record] in this process. The migrated account keeps the file `settings`. */
+        fun of(context: Context, record: AccountRecord): Settings = synchronized(instances) {
+            instances.getOrPut(record.id) {
+                val file = AccountPaths.settingsPrefs(record.id, record.legacy)
+                Settings(PrefsKeyValues(context.applicationContext.getSharedPreferences(file, Context.MODE_PRIVATE)))
+            }
+        }
+
+        /** The file the single-account app used (`settings`), read to carry its switches to the first account added after a sign-out. */
+        fun legacy(context: Context): Settings =
+            Settings(PrefsKeyValues(context.applicationContext.getSharedPreferences(AccountPaths.settingsPrefs("", true), Context.MODE_PRIVATE)))
+
+        /** Drops the instance of a removed account (its file is deleted with the rest of its storage). */
+        fun forget(record: AccountRecord) {
+            synchronized(instances) { instances.remove(record.id) }
+        }
+    }
+}
+
+/**
+ * What belongs to the device, not to an account: why the foreground service could not be started the last
+ * time. Its own prefs file (`service`). Get it with [ServiceLog.of]; [changes] ticks after every write.
+ */
+class ServiceLog(private val values: KeyValues) {
+    private val ticks = MutableStateFlow(0L)
+
+    val changes: StateFlow<Long> get() = ticks
+
+    /** The last time the service could not be started; null once it has started since. */
+    val lastStartFailure: StartFailure?
+        get() = values.getLong(FAILURE_AT, 0L).takeIf { it > 0 }
+            ?.let { at -> values.getString(FAILURE_TEXT)?.let { StartFailure(at, it) } }
+
+    fun recordStartFailure(atMillis: Long, text: String) {
+        values.putLongAndString(FAILURE_AT, atMillis, FAILURE_TEXT, text)
+        ticks.value = ticks.value + 1
+    }
+
+    fun clearStartFailure() {
+        values.remove(FAILURE_AT, FAILURE_TEXT)
+        ticks.value = ticks.value + 1
+    }
+
+    companion object {
+        private const val FILE = "service"
         private const val FAILURE_AT = "start_failure_at"
         private const val FAILURE_TEXT = "start_failure_text"
 
-        @Volatile private var instance: Settings? = null
+        @Volatile private var instance: ServiceLog? = null
 
-        /** The one [Settings] of the process. */
-        fun of(context: Context): Settings = instance ?: synchronized(this) {
-            instance ?: Settings(
+        fun of(context: Context): ServiceLog = instance ?: synchronized(this) {
+            instance ?: ServiceLog(
                 PrefsKeyValues(context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)),
             ).also { instance = it }
         }

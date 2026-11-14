@@ -1,5 +1,7 @@
 package ovh.kweb.mail.ui.thread
 
+import ovh.kweb.mail.accounts.AccountSession
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -359,7 +361,8 @@ private fun LoadedBody(
             }
         }
         val context = LocalContext.current
-        val inline = remember(body, account) { inlineLookup(context.applicationContext, body, account) }
+        val session = LocalAccountSession.current
+        val inline = remember(body, account, session) { inlineLookup(context.applicationContext, session, body, account) }
         MailWebView(
             html = html,
             allowRemote = remoteAllowed,
@@ -447,14 +450,14 @@ private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardAc
  * when it is not in the cache directory. Called on a WebView thread, so it may block. Only
  * pictures: the view must not be handed a document or a script through a Content-ID.
  */
-private fun inlineLookup(context: android.content.Context, body: MessageBody, account: String?): (String) -> Pair<String, java.io.InputStream>? {
-    val files = BlobFiles(context)
+private fun inlineLookup(context: android.content.Context, session: AccountSession, body: MessageBody, account: String?): (String) -> Pair<String, java.io.InputStream>? {
+    val files = BlobFiles(context, session.record.id)
     return lookup@{ contentId ->
         val attachment = body.attachments.firstOrNull {
             it.contentId == contentId && it.mimeType.startsWith("image/", ignoreCase = true)
         } ?: return@lookup null
         try {
-            val file = files.ensure(Background.core(context), attachment.blobId, files.inlineFile(attachment.blobId, account), account)
+            val file = files.ensure(session.core, attachment.blobId, files.inlineFile(attachment.blobId, account), account)
             attachment.mimeType to FileInputStream(file)
         } catch (e: Exception) {
             // The class only: the message of a failed download may name the blob.

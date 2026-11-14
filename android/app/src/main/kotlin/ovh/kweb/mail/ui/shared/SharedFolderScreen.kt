@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -66,7 +67,8 @@ internal fun sharedRowContent(m: MessageHeader): RowContent {
 @Composable
 fun SharedFolderScreen(route: Route.SharedFolder, onBack: () -> Unit, onGone: () -> Unit, onOpenMessage: (messageId: String) -> Unit) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: SharedFolderViewModel = viewModel(factory = viewModelFactory { initializer { SharedFolderViewModel(app, route.account, route.mailboxId) } })
+    val accountSession = LocalAccountSession.current
+    val vm: SharedFolderViewModel = viewModel(factory = viewModelFactory { initializer { SharedFolderViewModel(app, accountSession, route.account, route.mailboxId) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }

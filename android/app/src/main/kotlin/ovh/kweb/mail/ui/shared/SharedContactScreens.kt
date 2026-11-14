@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.shared
 
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.content.Intent
 import androidx.compose.foundation.background
@@ -64,7 +65,8 @@ fun SharedContactsScreen(
     onAddContact: () -> Unit,
 ) {
     val app = LocalContext.current.applicationContext as Application
-    val vm: SharedContactsViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactsViewModel(app, route.account) } })
+    val accountSession = LocalAccountSession.current
+    val vm: SharedContactsViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactsViewModel(app, accountSession, route.account) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -143,7 +145,8 @@ fun SharedContactScreen(
 ) {
     val context = LocalContext.current
     val app = context.applicationContext as Application
-    val vm: SharedContactViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactViewModel(app, route.account, route.contactId) } })
+    val accountSession = LocalAccountSession.current
+    val vm: SharedContactViewModel = viewModel(factory = viewModelFactory { initializer { SharedContactViewModel(app, accountSession, route.account, route.contactId) } })
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val problem by vm.problem.collectAsStateWithLifecycle()
