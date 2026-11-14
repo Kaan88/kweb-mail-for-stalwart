@@ -112,9 +112,25 @@ sign-in. Not tried yet.
 Each step is usable on its own. Step 1 can be built and tested on the local server except masked
 email itself, which the local server refuses until the release that opens it.
 
+## Seen on a licensed server (2026-11-14)
+
+Read-only requests on the owner's server with an administrator's API key
+(`dev/notes/stalwart-enterprise-observed.md` has the shapes, no values):
+
+- The key works as the design assumes: edition `enterprise`, all 662 permissions, the admin
+  objects and the mail API reachable.
+- Masked email answers (an empty list). The object itself is still unseen: creating one is a
+  write, which was not done.
+- Metrics (stored rows and the live stream), delivery traces with their events, AI models (keys
+  masked), tenants, alerts, the queue and the cluster node are all readable in the shapes the
+  documentation gives. The live stream is plain server-sent events, one frame per interval.
+- Deleted-item recovery is switched off on that server (`archiveDeletedItemsFor` is null), so
+  the recovery screens can only be tested after it is switched on somewhere.
+- The licence does not show in the `x:Enterprise` object there; the edition in `/api/account`
+  is the only sign of it, so that is what the app goes by.
+- The server's logo is served at `/logo` without sign-in, so the sign-in screen can show it.
+
 ## What is not known yet
 
-Only a licensed server can answer, all by read-only requests (`dev/notes/stalwart-admin-critic.md`,
-section C, lists each one): the real shape of masked email, metrics, traces and archived items, the
-live metrics frames, and how the licence state shows. The owner's server is the only licensed one;
-nothing is run there without the owner saying so.
+A masked address as the server stores it (needs one to be created on a licensed server), an
+archived item (needs recovery switched on), a fired alert, and a build with edition `oss`.
