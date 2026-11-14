@@ -6,6 +6,9 @@
 #   dev/emulator.sh window     start with a window on the desktop
 #   dev/emulator.sh stop
 #
+# It gets 2 GB of memory and 2 processor cores, to leave the machine to the builds; KWEB_EMU_MEM
+# (megabytes) and KWEB_EMU_CORES change that.
+#
 # KWEB_EMU_ACCEL=off starts it without KVM (slow: several minutes to boot), for a machine where
 # KVM cannot be used. It runs beside the owner's VirtualBox VMs with KVM (owner, 2026-11-14).
 set -euo pipefail
@@ -23,9 +26,11 @@ case "${1:-start}" in
 esac
 
 if ! adb devices | grep -q "^emulator-.*device$"; then
-  flags=(-no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 3072)
+  flags=(-no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect
+         -memory "${KWEB_EMU_MEM:-2048}" -cores "${KWEB_EMU_CORES:-2}")
   if [ "${KWEB_EMU_ACCEL:-}" = off ]; then
-    flags+=(-accel off -cores 6)
+    flags+=(-accel off)
+    [ -n "${KWEB_EMU_CORES:-}" ] || flags+=(-cores 6)   # without KVM it needs the cores to boot at all
   fi
   [ "${1:-start}" = window ] || flags+=(-no-window)
   setsid nohup emulator -avd kweb35 "${flags[@]}" >"$LOG" 2>&1 </dev/null &
