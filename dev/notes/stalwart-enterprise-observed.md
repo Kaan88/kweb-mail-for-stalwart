@@ -2,7 +2,7 @@
 
 Read-only requests against the owner's licensed server, with an API key of an administrator
 account (inherited permissions). Only shapes are recorded here: no addresses, names or values.
-Nothing was written on that server.
+One write was made, with the owner's permission: a test masked address was created, switched off and on, renamed and deleted again (none is left).
 
 - `GET /api/account`: `{"edition": "enterprise", "locale": ..., "permissions": [662 names]}`. The
   administrator holds `sysMaskedEmail*`, `sysArchivedItem*`, `sysMetric*`, `sysTrace*`,
@@ -41,4 +41,15 @@ Nothing was written on that server.
   "logo", "id"}`. So the licence does not show in this object on this server; the edition in
   `/api/account` is the only sign of it.
 
-Still not seen anywhere: a masked address object, an archived item, a fired alert.
+- **Masked address, the full round trip** (as the administrator, own account):
+  - Create: `x:MaskedEmail/set {"create": {"n": {"description": "...", "forDomain": "https://example.com", "emailPrefix": "kwebtest"}}}`
+    gives `{"created": {"n": {"id": "<12 chars>", "email": "<the new address>"}}}`. The address is
+    the prefix followed by generated characters (33 characters before the @ for an 8 character prefix).
+  - Get: `{"id", "accountId", "email", "enable": true, "description", "forDomain", "url": null,
+    "createdBy": null, "createdAt": "<time>", "expiresAt": null}`. The on/off property is `enable`.
+  - Switch off and on: `{"update": {id: {"enable": false}}}` gives `{"updated": {id: null}}`; a get
+    then shows `enable: false`. Changing `description` the same way works.
+  - Delete: `{"destroy": [id]}` gives `{"destroyed": [id]}`; the query is empty again.
+  - The limit: `maxMaskedAddresses` on the `x:Email` singleton, 500 on this server.
+
+Still not seen anywhere: an archived item, a fired alert.

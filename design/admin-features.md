@@ -119,8 +119,10 @@ Read-only requests on the owner's server with an administrator's API key
 
 - The key works as the design assumes: edition `enterprise`, all 662 permissions, the admin
   objects and the mail API reachable.
-- Masked email answers (an empty list). The object itself is still unseen: creating one is a
-  write, which was not done.
+- Masked email works end to end: a test address was created, switched off and on, renamed and
+  deleted with the owner's permission. An address has a note, the site it is for, an on/off
+  switch, an optional expiry, and when it was made; the server makes the address from a prefix
+  the user may give. The limit on that server is 500.
 - Metrics (stored rows and the live stream), delivery traces with their events, AI models (keys
   masked), tenants, alerts, the queue and the cluster node are all readable in the shapes the
   documentation gives. The live stream is plain server-sent events, one frame per interval.
@@ -132,5 +134,4 @@ Read-only requests on the owner's server with an administrator's API key
 
 ## What is not known yet
 
-A masked address as the server stores it (needs one to be created on a licensed server), an
-archived item (needs recovery switched on), a fired alert, and a build with edition `oss`.
+An archived item (needs recovery switched on), a fired alert, and a build with edition `oss`.
