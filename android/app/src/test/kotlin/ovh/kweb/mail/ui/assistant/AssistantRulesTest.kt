@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import ovh.kweb.mail.ui.assistant.AssistantRules.Kind
+import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiSettings
 
@@ -18,7 +19,7 @@ class AssistantRulesTest {
         summaries: Boolean = true,
         drafts: Boolean = true,
         rewrites: Boolean = true,
-    ) = AiSettings(enabled, provider, baseUrl, model, hasKey = false, consented = false, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites)
+    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = false, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites)
 
     // ---- which entries show ----
 
@@ -127,6 +128,41 @@ class AssistantRulesTest {
         assertEquals("sk-1", AssistantRules.keyToSend(" sk-1 ", remove = false))
         assertEquals("sk-1", AssistantRules.keyToSend("sk-1", remove = true))
         assertEquals("", AssistantRules.keyToSend("", remove = true))
+        assertEquals("", AssistantRules.keyToSend("  ", remove = true)) // the model list is asked without the key being removed
         assertNull(AssistantRules.keyToSend("  ", remove = false))
+    }
+
+    // ---- switching the service ----
+
+    @Test fun switchingTakesTheOtherServicesOwnValues() {
+        val form = AssistantRules.formOf(settings(model = "gpt-x")).copy(model = "typed", removeKey = true)
+        val other = settings(provider = AiProvider.ANTHROPIC, baseUrl = "https://api.anthropic.com/v1", model = "claude-x").copy(effort = AiEffort.HIGH)
+        val after = form.switchedTo(other)
+        assertEquals(AiProvider.ANTHROPIC, after.provider)
+        assertEquals("claude-x", after.model)
+        assertEquals(AiEffort.HIGH, after.effort)
+        assertEquals("https://api.anthropic.com/v1", after.baseUrl)
+        assertFalse(after.removeKey)
+    }
+
+    @Test fun switchingKeepsTheSwitchesThatBelongToNoService() {
+        val form = AssistantRules.formOf(settings(enabled = false, summaries = false)).copy(enabled = true, allowDrafts = false)
+        val other = settings(provider = AiProvider.ANTHROPIC, enabled = false, summaries = true, drafts = true, rewrites = true)
+        val after = form.switchedTo(other)
+        assertTrue(after.enabled)
+        assertFalse(after.allowSummaries)
+        assertFalse(after.allowDrafts)
+    }
+
+    @Test fun aServiceNeverSetUpGetsItsDefaultAddress() {
+        val other = settings(provider = AiProvider.ANTHROPIC, baseUrl = "", model = "")
+        assertEquals(AssistantRules.ANTHROPIC_ADDRESS, AssistantRules.formOf(settings()).switchedTo(other).baseUrl)
+    }
+
+    @Test fun theFormCarriesTheEffortToTheSettings() {
+        val stored = settings(provider = AiProvider.ANTHROPIC)
+        val form = AssistantRules.formOf(stored).copy(effort = AiEffort.MAX)
+        assertEquals(AiEffort.MAX, form.toSettings(stored).effort)
+        assertTrue(AssistantRules.isChanged(form, AssistantRules.formOf(stored), keyTyped = false))
     }
 }

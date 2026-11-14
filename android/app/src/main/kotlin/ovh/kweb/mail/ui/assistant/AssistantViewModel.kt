@@ -57,6 +57,8 @@ sealed interface AssistPhase {
  */
 data class AssistSession(
     val id: Long,
+    /** The name this task's run goes by in the core (a UUID, new for every start); a Stop names it. */
+    val runId: String,
     val owner: String,
     val kind: Kind,
     val task: AiTask,
@@ -102,7 +104,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             SessionState.signedIn.collect { signedIn ->
                 if (signedIn == false) {
-                    cancelCore()
+                    cancelCore(stateFlow.value.session?.runId)
                     stateFlow.value = AssistantState()
                 }
             }
@@ -137,7 +139,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         stopRunning()
         val id = ++counter
         val phase = if (kind == Kind.DRAFT) AssistPhase.Input else AssistPhase.Checking
-        val session = AssistSession(id, owner, kind, task, model = settings?.model.orEmpty(), phase = phase, rewrite = rewrite)
+        val session = AssistSession(id, RunRules.newRunId(), owner, kind, task, model = settings?.model.orEmpty(), phase = phase, rewrite = rewrite)
         stateFlow.update { it.copy(session = session) }
         if (phase == AssistPhase.Checking) check(id)
     }
@@ -150,7 +152,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         // A new id: whatever the stopped or failed run still delivers belongs to the old one and is dropped.
         val id = ++counter
         stateFlow.update { state ->
-            if (state.session?.id != s.id) state else state.copy(session = s.copy(id = id, task = task, phase = AssistPhase.Checking, text = "", notice = null))
+            if (state.session?.id != s.id) state else state.copy(session = s.copy(id = id, runId = RunRules.newRunId(), task = task, phase = AssistPhase.Checking, text = "", notice = null))
         }
         check(id)
     }
@@ -220,7 +222,8 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             runLock.withLock {
                 // Superseded or stopped while it waited for the last task to end.
                 if (sessionOf(id)?.phase != AssistPhase.Running) return
-                withContext(Dispatchers.IO) { Background.core(getApplication()).aiRun(task, Pieces(id)) }
+                val runId = sessionOf(id)?.runId ?: return
+                withContext(Dispatchers.IO) { Background.core(getApplication()).aiRun(task, runId, Pieces(id)) }
             }
         } catch (e: CancellationException) {
             throw e
@@ -251,7 +254,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         val s = stateFlow.value.session ?: return
         if (s.phase != AssistPhase.Running) return
         updateSession(s.id) { it.copy(phase = AssistPhase.Stopped) }
-        cancelCore()
+        cancelCore(s.runId)
     }
 
     /** The sheet was left or dismissed: a running task is cancelled and the session is gone. */
@@ -266,14 +269,15 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun stopRunning() {
-        val phase = stateFlow.value.session?.phase
-        if (phase == AssistPhase.Running || phase == AssistPhase.Checking) cancelCore()
+        val session = stateFlow.value.session
+        if (RunRules.cancelsWhenClosed(session?.phase)) cancelCore(session?.runId)
     }
 
     /** The core's cancel does not block, so it is called here and now: a launched coroutine could be cancelled before it ran. */
-    private fun cancelCore() {
+    private fun cancelCore(runId: String?) {
+        if (runId == null) return
         try {
-            Background.core(getApplication()).aiCancel()
+            Background.core(getApplication()).aiCancel(runId)
         } catch (e: Exception) {
             Log.w(Background.TAG, "cancelling the assistant failed: ${e.javaClass.simpleName}")
         }
@@ -281,8 +285,8 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         // The activity is gone for good: a request still out must not keep the core's one slot.
-        val phase = stateFlow.value.session?.phase
-        if (phase == AssistPhase.Running || phase == AssistPhase.Checking) cancelCore()
+        val session = stateFlow.value.session
+        if (RunRules.cancelsWhenClosed(session?.phase)) cancelCore(session?.runId)
     }
 
     // ---- using the answer ----

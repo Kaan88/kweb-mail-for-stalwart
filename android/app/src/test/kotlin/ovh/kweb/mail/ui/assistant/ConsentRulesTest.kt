@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiPreview
 import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiSettings
@@ -20,7 +21,7 @@ class ConsentRulesTest {
 
     private fun preview(messages: UInt, characters: UInt, cut: Boolean = false) = AiPreview("api.openai.com", "gpt-x", messages, characters, cut)
 
-    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", false, consented, true, true, true)
+    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true)
 
     @Test fun theFirstTaskAsksAndLaterOnesDoNot() {
         assertTrue(ConsentRules.isNeeded(settings(consented = false)))
@@ -54,4 +55,37 @@ class ConsentRulesTest {
     @Test fun aRewriteSendsOnlyTheText() = assertEquals("about 400 characters of your text", ConsentRules.scope(preview(0u, 398u), Words, Locale.US))
 
     @Test fun numbersFollowTheLocale() = assertEquals("12 messages, about 31.000 characters", ConsentRules.scope(preview(12u, 31020u), Words, Locale.GERMANY))
+
+    // ---- after a save ----
+
+    @Test fun theDialogShowsForAServiceThatIsOnAndNotAgreedTo() {
+        assertTrue(ConsentRules.isNeededAfterSave(settings(consented = false)))
+    }
+
+    @Test fun aServiceAgreedToBeforeNeedsNoNewDialog() {
+        // Switching back to it with its values unchanged: the core returns it consented.
+        assertFalse(ConsentRules.isNeededAfterSave(settings(consented = true)))
+    }
+
+    @Test fun nothingIsAskedWhileTheAssistantIsOff() {
+        assertFalse(ConsentRules.isNeededAfterSave(settings(consented = false).copy(enabled = false)))
+    }
+
+    @Test fun decliningSavesTheSameValuesSwitchedOff() {
+        val returned = settings(consented = false)
+        val declined = ConsentRules.declined(returned)
+        assertFalse(declined.enabled)
+        assertEquals(returned.copy(enabled = false), declined)
+    }
+
+    @Test fun agreeingSavesTheSameValuesAgain() {
+        val returned = settings(consented = false)
+        assertEquals(returned.copy(consented = true), ConsentRules.granted(returned))
+    }
+
+    @Test fun theHostIsNamedWithItsPortButWithoutSchemeAndPath() {
+        assertEquals("api.anthropic.com", ConsentRules.hostOf("https://api.anthropic.com/v1"))
+        assertEquals("192.168.1.20:11434", ConsentRules.hostOf(" http://192.168.1.20:11434/v1 "))
+        assertEquals("not a url", ConsentRules.hostOf("not a url"))
+    }
 }

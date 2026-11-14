@@ -25,6 +25,28 @@ object ConsentRules {
     /** The first task for this service and model asks; later ones do not. */
     fun isNeeded(settings: AiSettings): Boolean = !settings.consented
 
+    /**
+     * After a save: the core clears consent itself when address or model changed, and keeps it for a service agreed to
+     * before whose values did not change. The dialog shows only for a service that is on and not agreed to.
+     */
+    fun isNeededAfterSave(returned: AiSettings): Boolean = returned.enabled && !returned.consented
+
+    /** What "Decline" stores after a save: the values as returned, switched off. */
+    fun declined(returned: AiSettings): AiSettings = returned.copy(enabled = false)
+
+    /** The host (with its port, if any) of [baseUrl] as the dialog names it (the core's own label is not known before a preview); the text when it has no host. */
+    fun hostOf(baseUrl: String): String {
+        val text = baseUrl.trim()
+        val uri = try {
+            java.net.URI(text)
+        } catch (_: java.net.URISyntaxException) {
+            null
+        }
+        val host = uri?.host?.takeIf { it.isNotBlank() } ?: return text
+        // As the core's label: host:port when the address has a port.
+        return if (uri.port >= 0) "$host:${uri.port}" else host
+    }
+
     /** What "Send" stores: the same provider, address and model, consent given. */
     fun granted(settings: AiSettings): AiSettings = settings.copy(consented = true)
 

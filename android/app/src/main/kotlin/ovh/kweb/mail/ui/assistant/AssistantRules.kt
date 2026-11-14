@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.assistant
 
+import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiSettings
 
@@ -62,6 +63,7 @@ object AssistantRules {
         val provider: AiProvider,
         val baseUrl: String,
         val model: String,
+        val effort: AiEffort = AiEffort.DEFAULT,
         val allowSummaries: Boolean,
         val allowDrafts: Boolean,
         val allowRewrites: Boolean,
@@ -79,6 +81,7 @@ object AssistantRules {
                 provider = provider,
                 baseUrl = baseUrl.trim(),
                 model = model.trim(),
+                effort = effort,
                 consented = stored.consented && sameService,
                 allowSummaries = allowSummaries,
                 allowDrafts = allowDrafts,
@@ -87,6 +90,20 @@ object AssistantRules {
         }
 
         fun withProvider(to: AiProvider): Form = copy(provider = to, baseUrl = addressAfterChoosing(baseUrl, provider, to))
+
+        /**
+         * The form after the user picked another service and the core gave that service's stored settings ([service]):
+         * address, model and effort are the service's own (unsaved input for the other one is dropped, the typed key is
+         * dropped by the caller); the switches that belong to no service (on or off, what it may do) stay as shown, and
+         * a pending key removal does not carry over.
+         */
+        fun switchedTo(service: AiSettings): Form = formOf(service).copy(
+            enabled = enabled,
+            allowSummaries = allowSummaries,
+            allowDrafts = allowDrafts,
+            allowRewrites = allowRewrites,
+            removeKey = false,
+        )
     }
 
     /**
@@ -97,6 +114,7 @@ object AssistantRules {
         provider = stored.provider,
         baseUrl = stored.baseUrl.ifBlank { defaultAddress(stored.provider) },
         model = stored.model,
+        effort = stored.effort,
         allowSummaries = stored.allowSummaries,
         allowDrafts = stored.allowDrafts,
         allowRewrites = stored.allowRewrites,
