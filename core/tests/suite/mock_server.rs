@@ -1,10 +1,9 @@
 //! Self-test of the mock JMAP server in `support`. It uses jmap-client and reqwest directly,
 //! so a failure here is a problem with the mock, not with kweb-core.
 
-mod support;
-
 use std::time::Duration;
 
+use crate::support::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use futures_util::StreamExt;
 use jmap_client::{
@@ -19,7 +18,6 @@ use jmap_client::{
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use support::*;
 
 const T: Duration = Duration::from_secs(5);
 

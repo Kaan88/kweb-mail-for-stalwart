@@ -2,13 +2,12 @@
 //! The scenarios mirror the M2 table in PLAN.md. Timings are shortened so each runs in a
 //! second or two; waiting is always polling with a deadline, never a blind sleep.
 
-mod support;
-
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use crate::support::MockServer;
 use kweb_core::{
     actions, auth,
     model::{Account, Action, ConnectionStatus, Reminder},
@@ -18,7 +17,6 @@ use kweb_core::{
     store::Store,
 };
 use serde_json::json;
-use support::MockServer;
 
 const DEADLINE: Duration = Duration::from_secs(5);
 

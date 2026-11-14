@@ -6,13 +6,12 @@
 //! one of the project: a message is never sent twice and never lost, whatever fails between the
 //! steps.
 
-mod support;
-
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::support::{MockServer, Refusal, USERNAME};
 use kweb_core::{
     compose::rules::iso_utc,
     ffi::{Core, Shade},
@@ -21,7 +20,6 @@ use kweb_core::{
     store::Store,
     Error,
 };
-use support::{MockServer, Refusal, USERNAME};
 use tokio::runtime::Runtime;
 
 const E1: &str = "e1";

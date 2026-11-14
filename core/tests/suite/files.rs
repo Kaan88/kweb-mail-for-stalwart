@@ -3,8 +3,6 @@
 //! space another account shares. The mock behaves like Stalwart 1.1.0 where it matters (see
 //! `support/files.rs`).
 
-mod support;
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -12,13 +10,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::support::{MockServer, ACCOUNT_ID, EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 use kweb_core::{
     ffi::Core,
     model::{FileEntry, FileKind},
     secrets::MemorySecrets,
     Error,
 };
-use support::{MockServer, ACCOUNT_ID, EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 use tokio::runtime::Runtime;
 
 struct Rig {

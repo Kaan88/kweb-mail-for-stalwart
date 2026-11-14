@@ -4,10 +4,11 @@
 //! answering and forwarding mail; `support/sharing.rs`). The mock is written from
 //! `dev/notes/stalwart-sharing.md`; its ids repeat the user's own on purpose.
 
-mod support;
-
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+use crate::support::{
+    MockServer, ACCOUNT_ID, ALL_MAIL_RIGHTS, ARCHIVE_ID, DRAFTS_ID, INBOX_ID, SHARED_ACCOUNT, TRASH_ID,
+};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Contact, DraftKind, EventInput, Person, Share, ShareKind, ShareLevel},
@@ -15,7 +16,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::{MockServer, ACCOUNT_ID, ALL_MAIL_RIGHTS, ARCHIVE_ID, DRAFTS_ID, INBOX_ID, SHARED_ACCOUNT, TRASH_ID};
 use tokio::runtime::Runtime;
 
 const OWNER: &str = SHARED_ACCOUNT;

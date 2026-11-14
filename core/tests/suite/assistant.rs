@@ -1,8 +1,6 @@
 //! M7 stage 1 against the mock mail server and the mock AI service: the settings, what leaves
 //! the device, both protocols, the refusals, the errors and cancelling.
 
-mod support;
-
 use std::{
     fs,
     sync::{
@@ -12,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::support::*;
 use kweb_core::{
     assistant::provider::{self, Endpoint, Timeouts},
     ffi::{AiListener, Core, Shade},
@@ -20,7 +19,6 @@ use kweb_core::{
     store::Store,
     Error,
 };
-use support::*;
 use tokio::runtime::Runtime;
 
 const KEY: &str = "sk-test-KEY-0123456789";
@@ -1434,7 +1432,7 @@ fn a_stop_names_the_run_it_means_while_another_runs() {
 }
 
 /// Against a real model, by hand: start `python3 dev/claude_bridge.py`, then
-/// `cargo test -p kweb-core --test assistant a_real_model -- --ignored --nocapture`.
+/// `cargo test -p kweb-core --test main assistant::a_real_model -- --ignored --nocapture`.
 /// `KWEB_AI_REAL_URL` and `KWEB_AI_REAL_MODEL` choose another OpenAI-compatible service.
 #[test]
 #[ignore = "needs a real model behind an OpenAI-compatible address (dev/claude_bridge.py)"]

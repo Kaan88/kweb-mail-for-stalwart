@@ -4,10 +4,9 @@
 //! The mock behaves like Stalwart 1.1.0 where it matters (see `support/account.rs`): it validates
 //! almost nothing on write, so the core has to.
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::MockServer;
 use kweb_core::{
     ffi::Core,
     model::{AwayMessage, Contact, ContactRow, Labeled},
@@ -15,7 +14,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::{json, Value};
-use support::MockServer;
 use tokio::runtime::Runtime;
 
 struct Rig {

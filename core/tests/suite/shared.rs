@@ -4,10 +4,9 @@
 //! user's own on purpose (message `e1`, folder `mb1`, calendar `cal1`, event `ev1`, card `c1`),
 //! so a call that forgets the account gives a wrong answer.
 
-mod support;
-
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+use crate::support::{MockServer, ACCOUNT_ID, ALL_MAIL_RIGHTS, EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 use kweb_core::{
     ffi::Core,
     model::{SharedAccount, SharedAction},
@@ -15,7 +14,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::{MockServer, ACCOUNT_ID, ALL_MAIL_RIGHTS, EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 use tokio::runtime::Runtime;
 
 const OWNER: &str = SHARED_ACCOUNT;

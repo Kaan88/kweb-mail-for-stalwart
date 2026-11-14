@@ -1,8 +1,7 @@
 //! Actions against the mock JMAP server: optimistic cache, queue, flush, and the interplay
 //! with sync.
 
-mod support;
-
+use crate::support::*;
 use kweb_core::{
     actions,
     jmap::{self, Connection},
@@ -10,7 +9,6 @@ use kweb_core::{
     store::Store,
     sync, Error,
 };
-use support::*;
 
 const ACCOUNT: &str = ACCOUNT_ID;
 /// Seeded: Maria's unread mail in the Inbox, and the unread Build Bot mail.

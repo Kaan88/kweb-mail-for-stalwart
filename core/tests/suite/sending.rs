@@ -5,14 +5,13 @@
 //! `#[test]` that keeps a separate runtime alive just for the mock. A pass is `check_once`
 //! unless the test is about the live connection.
 
-mod support;
-
 use std::{
     fs,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use crate::support::{MockServer, Refusal, ACCOUNT_ID, USERNAME};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Address, ConnectionStatus, Draft, DraftKind, Reminder},
@@ -23,7 +22,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::{MockServer, Refusal, ACCOUNT_ID, USERNAME};
 use tokio::runtime::Runtime;
 
 const DEADLINE: Duration = Duration::from_secs(8);

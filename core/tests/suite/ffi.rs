@@ -4,13 +4,12 @@
 //! The mock is async (axum), `Core` blocks and owns its own runtime, so every test is a plain
 //! `#[test]` that keeps a separate multi-thread runtime alive just for the mock.
 
-mod support;
-
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use crate::support::{MockServer, ACCOUNT_ID, INBOX_ID, USERNAME};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Account, Action, ConnectionStatus, Reminder},
@@ -19,7 +18,6 @@ use kweb_core::{
     secrets::{MemorySecrets, SecretStore},
     Error,
 };
-use support::{MockServer, ACCOUNT_ID, INBOX_ID, USERNAME};
 use tokio::runtime::Runtime;
 
 const DEADLINE: Duration = Duration::from_secs(8);

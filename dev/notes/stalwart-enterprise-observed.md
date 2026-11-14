@@ -53,3 +53,19 @@ One write was made, with the owner's permission: a test masked address was creat
   - The limit: `maxMaskedAddresses` on the `x:Email` singleton, 500 on this server.
 
 Still not seen anywhere: an archived item, a fired alert.
+
+## The app's own code against the licensed server (2026-11-14, read-only)
+
+The ignored test `enterprise::enterprise_reads_on_a_real_server` (run line in its doc comment) ran the
+core's Enterprise read functions against the server with an administrator's key: only `/get`, `/query`,
+`GET /api/account` and the live stream. Result, counts only:
+
+- History: 24 hourly buckets and 7 daily ones, with non-zero received and delivered buckets and a
+  delivery time in both ranges.
+- Delivery history: a first page of 50 with a total (843), every one with a known status; one
+  delivery's detail had 6 steps, none fell back to a raw event name; a search by a domain found it.
+- Recovery reads as off (as known); 0 alerts and 0 tenants are configured, so their rows are
+  still unseen with data.
+- Live figures: two frames within seconds, with queue, connections, users and memory all present;
+  the stream ended when the test stopped it.
+

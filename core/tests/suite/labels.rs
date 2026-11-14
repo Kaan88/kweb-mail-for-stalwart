@@ -4,10 +4,9 @@
 //! (`dev/notes/stalwart-mail-features.md`, section 3), and answers `SearchSnippet/get` with
 //! escaped text and `<mark>` tags (section 4).
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::MockServer;
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Label, MarkRange, Marked, MessageLabels},
@@ -15,7 +14,6 @@ use kweb_core::{
     store::Store,
     Error,
 };
-use support::MockServer;
 use tokio::runtime::Runtime;
 
 /// Seeded: Maria's mail, unread, in the Inbox.

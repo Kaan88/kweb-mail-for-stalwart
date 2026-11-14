@@ -12,6 +12,8 @@ pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
     ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
 };
+#[doc(hidden)]
+pub use enterprise::probe;
 pub use enterprise::{
     ChartPoint, DashboardHistory, DeletedItem, DeletedKind, DeletedPage, Delivery, DeliveryDetail, DeliveryPage,
     DeliveryStatus, DeliveryStep, LiveFigures, LiveListener, RecoveryState, ServerAlert, Tenant,

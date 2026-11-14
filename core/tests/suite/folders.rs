@@ -3,13 +3,12 @@
 //! (`dev/notes/stalwart-mail-features.md`): it lets role folders be renamed and Drafts be
 //! destroyed, so what the app refuses it refuses itself.
 
-mod support;
-
 use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
+use crate::support::{MockServer, ARCHIVE_ID, DRAFTS_ID, INBOX_ID, JUNK_ID, SENT_ID, TRASH_ID, USERNAME};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Action, ConnectionStatus, Mailbox, Reminder},
@@ -19,7 +18,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::{MockServer, ARCHIVE_ID, DRAFTS_ID, INBOX_ID, JUNK_ID, SENT_ID, TRASH_ID, USERNAME};
 use tokio::runtime::Runtime;
 
 const DEADLINE: Duration = Duration::from_secs(8);

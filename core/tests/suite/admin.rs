@@ -4,20 +4,18 @@
 //! doc comments in `core/src/ffi/admin.rs`. The mock behaves like Stalwart 1.1.0 where it
 //! matters (see `support/admin_mock.rs`).
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::{
+    admin_mock::{BOB_ID, DOMAIN_ID, GROUP_ID, OTHER_DOMAIN_ID},
+    MockServer, ACCOUNT_ID, USERNAME,
+};
 use kweb_core::{
     ffi::{Core, Maintenance, ServerAccountKind},
     secrets::{MemorySecrets, SecretStore},
     Error,
 };
 use serde_json::json;
-use support::{
-    admin_mock::{BOB_ID, DOMAIN_ID, GROUP_ID, OTHER_DOMAIN_ID},
-    MockServer, ACCOUNT_ID, USERNAME,
-};
 use tokio::runtime::Runtime;
 
 /// The name the core keeps the admin key under in the secret store.

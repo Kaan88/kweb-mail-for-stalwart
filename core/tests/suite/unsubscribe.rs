@@ -7,17 +7,15 @@
 //! a test double on this machine: its rules (the request, the address checks) are unit tests in
 //! `unsubscribe.rs`. Here the choice between the ways, the refusals and the mail are tested.
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::{MockServer, USERNAME};
 use kweb_core::{
     ffi::{Core, Shade},
     model::Unsubscribe,
     secrets::MemorySecrets,
     Error,
 };
-use support::{MockServer, USERNAME};
 use tokio::runtime::Runtime;
 
 const E1: &str = "e1";

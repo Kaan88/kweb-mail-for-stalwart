@@ -1,17 +1,15 @@
 //! Sync against the mock JMAP server: first fill, incremental changes, full resync, outages
 //! and expired tokens.
 
-mod support;
-
 use std::collections::BTreeSet;
 
+use crate::support::*;
 use kweb_core::{
     jmap::{self, Connection},
     model::Account,
     store::Store,
     sync::{self, INBOX_WINDOW, OTHER_WINDOW},
 };
-use support::*;
 
 const ACCOUNT: &str = ACCOUNT_ID;
 

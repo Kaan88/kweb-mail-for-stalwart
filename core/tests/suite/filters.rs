@@ -4,10 +4,9 @@
 //! active at a time, the away message is a script too, a script is made from an uploaded blob,
 //! and nothing checks that a folder exists.
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::MockServer;
 use kweb_core::{
     ffi::{Core, Shade},
     model::{FilterCondition, FilterField, FilterMatch, FilterRule, Filters},
@@ -15,7 +14,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::MockServer;
 use tokio::runtime::Runtime;
 
 const SCRIPT: &str = "kweb-filters";

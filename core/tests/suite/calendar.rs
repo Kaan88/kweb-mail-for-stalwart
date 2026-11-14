@@ -5,10 +5,9 @@
 //! expand repeating events and it validates almost nothing, so the core has to. All the times
 //! here are fixed dates in a week of November 2026 and the zone Europe/Istanbul (UTC+3).
 
-mod support;
-
 use std::sync::Arc;
 
+use crate::support::{MockServer, USERNAME};
 use kweb_core::{
     ffi::Core,
     model::{Agenda, EventInput, Frequency, RepeatRule},
@@ -16,7 +15,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::{json, Value};
-use support::{MockServer, USERNAME};
 use tokio::runtime::Runtime;
 
 const ZONE: &str = "Europe/Istanbul";

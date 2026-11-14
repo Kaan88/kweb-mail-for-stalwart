@@ -6,10 +6,9 @@
 //! The last test is not run with the others: it is the real thing against a server that offers
 //! masked addresses (none of the test servers does).
 
-mod support;
-
 use std::{path::PathBuf, sync::Arc};
 
+use crate::support::{Edition, MockServer, ACCOUNT_PASSWORD, OTP_CODE};
 use kweb_core::{
     ffi::Core,
     jmap::Connection,
@@ -18,7 +17,6 @@ use kweb_core::{
     Error,
 };
 use serde_json::json;
-use support::{Edition, MockServer, ACCOUNT_PASSWORD, OTP_CODE};
 use tokio::runtime::Runtime;
 
 struct Rig {
@@ -687,7 +685,7 @@ fn kind_of(e: &Error) -> &'static str {
 /// Against the server named by KWEB_REAL_URL, with the API key in the file KWEB_REAL_KEY_FILE as
 /// the bearer token. Makes one masked address, switches it off and on, deletes it, and deletes
 /// it also when something fails. Prints counts, booleans and the kind of an error, never an address, the key or an error's text. An address whose creation was not answered is found by its note and deleted too.
-/// Run: `KWEB_REAL_URL=... KWEB_REAL_KEY_FILE=... cargo test -p kweb-core --test manage -- --ignored --nocapture`
+/// Run: `KWEB_REAL_URL=... KWEB_REAL_KEY_FILE=... cargo test -p kweb-core --test main manage::masked_addresses_on_a_real_server -- --ignored --nocapture`
 #[test]
 #[ignore = "needs a real server that offers masked addresses"]
 fn masked_addresses_on_a_real_server() {

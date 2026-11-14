@@ -134,6 +134,16 @@ pub fn detail_from(trace: &Value) -> Option<DeliveryDetail> {
 
 /// The title of an event. An event not in this table shows its name made readable.
 fn title(event: &str) -> String {
+    if let Some(known) = known_title(event) {
+        return known.to_string();
+    }
+    let words = event.replace(['.', '-', '_'], " ");
+    let mut chars = words.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+/// The wording the app has for an event; `None` for one it does not know.
+pub fn known_title(event: &str) -> Option<&'static str> {
     let known = match event {
         "delivery.attempt-start" => "Delivery attempt started",
         "delivery.attempt-end" => "Delivery attempt ended",
@@ -181,14 +191,9 @@ fn title(event: &str) -> String {
         "queue.dsn-queued" => "Delivery report put in the queue",
         "queue.rescheduled" => "Scheduled for another try",
         "smtp.connection-start" => "A server connected",
-        _ => "",
+        _ => return None,
     };
-    if !known.is_empty() {
-        return known.to_string();
-    }
-    let words = event.replace(['.', '-', '_'], " ");
-    let mut chars = words.chars();
-    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+    Some(known)
 }
 
 /// A time span the server gave in milliseconds, in words.

@@ -1,10 +1,9 @@
 //! M3 against the mock server: bodies, threads, older mail, search, downloads and the actions
 //! the list offers. The first half drives the sync layer, the second the `Core` object.
 
-mod support;
-
 use std::{fs, path::Path, sync::Arc};
 
+use crate::support::*;
 use kweb_core::{
     ffi::{Core, Shade},
     jmap::{self, Connection},
@@ -13,7 +12,6 @@ use kweb_core::{
     store::Store,
     sync, Error,
 };
-use support::*;
 use tokio::runtime::Runtime;
 
 const ACCOUNT: &str = ACCOUNT_ID;

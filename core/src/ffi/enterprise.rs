@@ -174,12 +174,9 @@ impl Core {
         let Some(run) = live::begin(&run_id)? else { return Ok(()) };
         // The stop is heard from the start, while connecting and checking the licence too.
         let cancel = run.cancel.clone();
-        self.admin_until(&cancel, |conn| async move {
-            conn.require_enterprise(&["liveMetrics"], "follow the live figures").await?;
-            live::follow(&conn, listener.as_ref()).await
-        })
-        .map(|_| ())
-        .map_err(tidy)
+        self.admin_until(&cancel, |conn| async move { probe::live(&conn, listener.as_ref()).await })
+            .map(|_| ())
+            .map_err(tidy)
     }
 
     /// Stops a run of [`Core::admin_live`], also one that has not started yet. Does not block.
@@ -192,14 +189,7 @@ impl Core {
     pub fn admin_history(&self, hours: u32) -> Result<DashboardHistory> {
         let now = now();
         let span = history::span(hours, now)?;
-        self.admin(|conn| async move {
-            conn.require_enterprise(&["sysMetricQuery", "sysMetricGet"], "read the server's history").await?;
-            let mut names = vec![history::RECEIVED, history::DELIVERY_TIME];
-            names.extend(history::SENT);
-            let rows = conn.metric_rows(span.start, now, &names).await?;
-            Ok(history::history(&rows, span))
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::history(&conn, span, now).await }).map_err(tidy)
     }
 
     /// Messages the server handled that have `text` (blank: all), since `since` (Unix seconds;
@@ -208,38 +198,16 @@ impl Core {
     /// nothing), or a queue id (digits only).
     pub fn admin_deliveries(&self, text: String, since: Option<i64>, offset: u32, limit: u32) -> Result<DeliveryPage> {
         let limit = limit.clamp(1, MAX_PAGE) as usize;
-        self.admin(|conn| async move {
-            conn.require_enterprise(&["sysTraceQuery", "sysTraceGet"], "read the delivery history").await?;
-            let (traces, total) = conn.delivery_traces(&text, since, offset as usize, limit).await?;
-            let deliveries = traces.iter().filter_map(deliveries::delivery_from).collect();
-            Ok(DeliveryPage { deliveries, total: total.min(u64::from(u32::MAX)) as u32 })
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::deliveries(&conn, &text, since, offset as usize, limit).await })
+            .map_err(tidy)
     }
 
     pub fn admin_delivery(&self, id: String) -> Result<DeliveryDetail> {
-        self.admin(|conn| async move {
-            conn.require_enterprise(&["sysTraceGet"], "read the delivery history").await?;
-            let trace = conn.delivery_trace(&id).await?;
-            trace
-                .as_ref()
-                .and_then(deliveries::detail_from)
-                .ok_or_else(|| Error::invalid("the server no longer keeps that delivery"))
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::delivery(&conn, &id).await }).map_err(tidy)
     }
 
     pub fn admin_recovery_state(&self) -> Result<RecoveryState> {
-        self.admin(|conn| async move {
-            let held = conn.require_enterprise(&[], "read the deleted-item settings").await?;
-            // A key that may list deleted items but not read the setting still gets the list:
-            // the state is then "on, for how long not said".
-            if !held.is_empty() && !held.contains("sysDataRetentionGet") {
-                return Ok(RecoveryState { is_on: true, keeps_days: None });
-            }
-            Ok(recovery::state_from(&conn.retention_setting().await?))
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::recovery_state(&conn).await }).map_err(tidy)
     }
 
     /// Deleted items the server still keeps, newest first. `account_id`: `None` is the account
@@ -269,11 +237,7 @@ impl Core {
     }
 
     pub fn admin_alerts(&self) -> Result<Vec<ServerAlert>> {
-        self.admin(|conn| async move {
-            conn.require_enterprise(&["sysAlertGet"], "read the alerts").await?;
-            Ok(conn.alert_objects().await?.iter().filter_map(alerts::alert_from).collect())
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::alerts(&conn).await }).map_err(tidy)
     }
 
     pub fn admin_set_alert_enabled(&self, id: String, enabled: bool) -> Result<()> {
@@ -285,11 +249,7 @@ impl Core {
     }
 
     pub fn admin_tenants(&self) -> Result<Vec<Tenant>> {
-        self.admin(|conn| async move {
-            conn.require_enterprise(&["sysTenantGet"], "read the tenants").await?;
-            Ok(conn.tenant_objects().await?.iter().filter_map(alerts::tenant_from).collect())
-        })
-        .map_err(tidy)
+        self.admin(|conn| async move { probe::tenants(&conn).await }).map_err(tidy)
     }
 }
 
@@ -304,5 +264,87 @@ async fn deleted_account(conn: &crate::jmap::Connection, account_id: Option<Stri
         None => Ok(own),
         Some(other) if held.is_empty() || held.contains("impersonate") => Ok(other),
         Some(_) => Err(Error::invalid("this key may not look at another account's deleted items")),
+    }
+}
+
+/// The read calls of this file on a ready [`crate::jmap::Connection`], so that a test (or a tool)
+/// that has a key but no signed-in account runs the very code the app runs. The `Core` functions
+/// above only add the stored key and the error tidy-up.
+#[doc(hidden)]
+pub mod probe {
+    use crate::jmap::Connection;
+    use crate::Error;
+    use crate::Result;
+
+    use super::{
+        alerts, deliveries, history, live, recovery, DashboardHistory, DeliveryDetail, DeliveryPage, LiveListener,
+        RecoveryState, ServerAlert, Tenant,
+    };
+
+    /// The wording the app has for a delivery event, `None` when a step shows a made-up title.
+    pub fn known_title(event: &str) -> Option<&'static str> {
+        deliveries::known_title(event)
+    }
+
+    pub(super) async fn history(conn: &Connection, span: history::Span, now: i64) -> Result<DashboardHistory> {
+        conn.require_enterprise(&["sysMetricQuery", "sysMetricGet"], "read the server's history").await?;
+        let mut names = vec![history::RECEIVED, history::DELIVERY_TIME];
+        names.extend(history::SENT);
+        let rows = conn.metric_rows(span.start, now, &names).await?;
+        Ok(history::history(&rows, span))
+    }
+
+    /// The history for the last `hours` (24, 168 or 720), as `Core::admin_history`.
+    pub async fn history_hours(conn: &Connection, hours: u32) -> Result<DashboardHistory> {
+        let now = super::now();
+        history(conn, history::span(hours, now)?, now).await
+    }
+
+    pub async fn deliveries(
+        conn: &Connection,
+        text: &str,
+        since: Option<i64>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<DeliveryPage> {
+        conn.require_enterprise(&["sysTraceQuery", "sysTraceGet"], "read the delivery history").await?;
+        let (traces, total) = conn.delivery_traces(text, since, offset, limit).await?;
+        let deliveries = traces.iter().filter_map(deliveries::delivery_from).collect();
+        Ok(DeliveryPage { deliveries, total: total.min(u64::from(u32::MAX)) as u32 })
+    }
+
+    pub async fn delivery(conn: &Connection, id: &str) -> Result<DeliveryDetail> {
+        conn.require_enterprise(&["sysTraceGet"], "read the delivery history").await?;
+        let trace = conn.delivery_trace(id).await?;
+        trace
+            .as_ref()
+            .and_then(deliveries::detail_from)
+            .ok_or_else(|| Error::invalid("the server no longer keeps that delivery"))
+    }
+
+    pub async fn recovery_state(conn: &Connection) -> Result<RecoveryState> {
+        let held = conn.require_enterprise(&[], "read the deleted-item settings").await?;
+        // A key that may list deleted items but not read the setting still gets the list:
+        // the state is then "on, for how long not said".
+        if !held.is_empty() && !held.contains("sysDataRetentionGet") {
+            return Ok(RecoveryState { is_on: true, keeps_days: None });
+        }
+        Ok(recovery::state_from(&conn.retention_setting().await?))
+    }
+
+    pub async fn alerts(conn: &Connection) -> Result<Vec<ServerAlert>> {
+        conn.require_enterprise(&["sysAlertGet"], "read the alerts").await?;
+        Ok(conn.alert_objects().await?.iter().filter_map(alerts::alert_from).collect())
+    }
+
+    pub async fn tenants(conn: &Connection) -> Result<Vec<Tenant>> {
+        conn.require_enterprise(&["sysTenantGet"], "read the tenants").await?;
+        Ok(conn.tenant_objects().await?.iter().filter_map(alerts::tenant_from).collect())
+    }
+
+    /// Follows the live figures until the stream ends (never `Ok`); the caller drops the future.
+    pub async fn live(conn: &Connection, listener: &dyn LiveListener) -> Result<()> {
+        conn.require_enterprise(&["liveMetrics"], "follow the live figures").await?;
+        live::follow(conn, listener).await
     }
 }

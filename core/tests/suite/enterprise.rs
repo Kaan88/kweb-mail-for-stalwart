@@ -3,22 +3,20 @@
 //! shapes come from). The admin key is put straight into the secret store: `admin_connect`
 //! belongs to another part of the admin work.
 
-mod support;
-
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::support::{iso, LiveEnd, MockServer, ADMIN_KEY};
 use kweb_core::{
     ffi::{Core, DeletedKind, DeliveryStatus, LiveFigures, LiveListener},
     secrets::{MemorySecrets, SecretStore},
     Error,
 };
 use serde_json::json;
-use support::{iso, LiveEnd, MockServer, ADMIN_KEY};
 use tokio::runtime::Runtime;
 
 /// The id of the account the mock signs in as.
-const ME: &str = support::ACCOUNT_ID;
+const ME: &str = crate::support::ACCOUNT_ID;
 const LICENCE: &str = "this needs an Enterprise licence on the server";
 
 struct Rig {
@@ -51,12 +49,13 @@ impl Rig {
         server.enterprise().accept_key(ADMIN_KEY);
         secrets.set("admin_key".into(), ADMIN_KEY.into()).unwrap();
         // What the core keeps beside a key: the server and the account it was accepted for.
-        let binding = format!("{}\n{}\n{}", server.url().trim_end_matches('/').to_lowercase(), ME, support::USERNAME);
+        let binding =
+            format!("{}\n{}\n{}", server.url().trim_end_matches('/').to_lowercase(), ME, crate::support::USERNAME);
         secrets.set("admin_key_for".into(), binding).unwrap();
         Rig { core, server, secrets, _dir: dir, _rt: rt }
     }
 
-    fn ent(&self) -> support::Enterprise {
+    fn ent(&self) -> crate::support::Enterprise {
         self.server.enterprise()
     }
 }
@@ -833,4 +832,161 @@ fn nothing_secret_reaches_an_error() {
     for text in errors.iter().chain([&refused]) {
         assert!(!text.contains("API_"), "{text}");
     }
+}
+
+// ---- the real thing ----
+
+/// Only the kind of an error: its text may hold the server's address or words of the server.
+fn kind_of(e: &Error) -> &'static str {
+    match e {
+        Error::SignInNeeded { .. } => "sign-in needed",
+        Error::Temporary { .. } => "temporary",
+        Error::Store { .. } => "store",
+        Error::Invalid { .. } => "invalid",
+    }
+}
+
+#[derive(Default)]
+struct Frames {
+    seen: Mutex<Vec<LiveFigures>>,
+    two: tokio::sync::Notify,
+}
+
+impl LiveListener for Frames {
+    fn figures(&self, figures: LiveFigures) {
+        let mut seen = self.seen.lock().unwrap();
+        seen.push(figures);
+        if seen.len() >= 2 {
+            self.two.notify_one();
+        }
+    }
+}
+
+fn event_name(raw: &str) -> &str {
+    raw.split_whitespace().next().unwrap_or_default()
+}
+
+/// The Enterprise read code of the app, run against a licensed server named by KWEB_REAL_URL with
+/// an administrator's API key from the file KWEB_REAL_KEY_FILE. Reads only (`/get`, `/query`,
+/// `GET /api/account`, the live stream for at most 15 seconds). Prints counts, booleans, field
+/// and event names, never an address, a subject, a host name, the key or an error's text.
+/// Run: `KWEB_REAL_URL=... KWEB_REAL_KEY_FILE=... cargo test -p kweb-core --test main enterprise::enterprise_reads_on_a_real_server -- --ignored --nocapture`
+#[test]
+#[ignore = "needs a real licensed server and an administrator's key"]
+fn enterprise_reads_on_a_real_server() {
+    use kweb_core::{
+        ffi::{probe, ChartPoint},
+        jmap::Connection,
+    };
+    let (Ok(url), Ok(key_file)) = (std::env::var("KWEB_REAL_URL"), std::env::var("KWEB_REAL_KEY_FILE")) else {
+        panic!("set KWEB_REAL_URL and KWEB_REAL_KEY_FILE");
+    };
+    let key = std::fs::read_to_string(key_file).expect("the key file cannot be read");
+    let key = key.trim().to_string();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    let conn =
+        rt.block_on(Connection::connect(&url, &key)).unwrap_or_else(|e| panic!("connecting failed: {}", kind_of(&e)));
+    let conn = &conn;
+
+    for hours in [24u32, 168] {
+        let h = rt
+            .block_on(probe::history_hours(conn, hours))
+            .unwrap_or_else(|e| panic!("history {hours} failed: {}", kind_of(&e)));
+        let nonzero = |p: &[ChartPoint]| p.iter().filter(|p| p.value > 0.0).count();
+        println!(
+            "history {hours}h: buckets received={} delivered={} time={}; non-zero received={} delivered={}; delivery time present={}",
+            h.received.len(),
+            h.delivered.len(),
+            h.delivery_seconds.len(),
+            nonzero(&h.received),
+            nonzero(&h.delivered),
+            nonzero(&h.delivery_seconds) > 0
+        );
+    }
+
+    let page = rt
+        .block_on(probe::deliveries(conn, "", None, 0, 50))
+        .unwrap_or_else(|e| panic!("deliveries failed: {}", kind_of(&e)));
+    let count = |s: DeliveryStatus| page.deliveries.iter().filter(|d| d.status == s).count();
+    println!(
+        "deliveries: first page={} total={} delivered={} retrying={} failed={} unknown={}",
+        page.deliveries.len(),
+        page.total,
+        count(DeliveryStatus::Delivered),
+        count(DeliveryStatus::Retrying),
+        count(DeliveryStatus::Failed),
+        count(DeliveryStatus::Unknown)
+    );
+
+    if let Some(first) = page.deliveries.first() {
+        let detail = rt
+            .block_on(probe::delivery(conn, &first.id))
+            .unwrap_or_else(|e| panic!("delivery detail failed: {}", kind_of(&e)));
+        let mut fallen: Vec<String> = Vec::new();
+        let mut fell = 0;
+        for step in &detail.steps {
+            let name = event_name(&step.raw);
+            if probe::known_title(name).is_none() {
+                fell += 1;
+                if !fallen.iter().any(|n| n == name) {
+                    fallen.push(name.to_string());
+                }
+            }
+        }
+        println!(
+            "delivery detail: steps={} status_matches_list={} titles fallen back to a raw name={fell} {fallen:?}",
+            detail.steps.len(),
+            detail.delivery.status == first.status
+        );
+        let domain = first
+            .to
+            .iter()
+            .chain(std::iter::once(&first.from))
+            .find_map(|a| a.split_once('@').map(|(_, d)| d.to_string()));
+        match domain {
+            Some(domain) => {
+                let found = rt
+                    .block_on(probe::deliveries(conn, &domain, None, 0, 10))
+                    .unwrap_or_else(|e| panic!("search failed: {}", kind_of(&e)));
+                println!(
+                    "search by a domain of the first delivery: found at least one={}",
+                    !found.deliveries.is_empty()
+                );
+            }
+            None => println!("search by a domain: the first delivery has no address with a domain"),
+        }
+    } else {
+        println!("no deliveries: detail and search not tried");
+    }
+
+    let recovery =
+        rt.block_on(probe::recovery_state(conn)).unwrap_or_else(|e| panic!("recovery failed: {}", kind_of(&e)));
+    println!("recovery: on={} keeps_days_known={}", recovery.is_on, recovery.keeps_days.is_some());
+    let alerts = rt.block_on(probe::alerts(conn)).unwrap_or_else(|e| panic!("alerts failed: {}", kind_of(&e)));
+    println!("alerts: {}", alerts.len());
+    let tenants = rt.block_on(probe::tenants(conn)).unwrap_or_else(|e| panic!("tenants failed: {}", kind_of(&e)));
+    println!("tenants: {}", tenants.len());
+
+    // The live figures: start, wait for two frames or 15 seconds, stop (drop the stream's future).
+    let frames = Arc::new(Frames::default());
+    let ended_by = rt.block_on(async {
+        let listener = frames.clone();
+        let mut run = Box::pin(async move { probe::live(conn, listener.as_ref()).await });
+        let outcome = tokio::select! {
+            r = &mut run => Some(r),
+            _ = frames.two.notified() => None,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => None,
+        };
+        drop(run);
+        outcome.map(|r| r.map_err(|e| kind_of(&e)))
+    });
+    let seen = frames.seen.lock().unwrap();
+    println!(
+        "live: frames={} queue={} connections={} users={} memory={} ended on its own={ended_by:?}; stopped by the test",
+        seen.len(),
+        seen.iter().any(|f| f.queue.is_some()),
+        seen.iter().any(|f| f.connections.is_some()),
+        seen.iter().any(|f| f.users.is_some()),
+        seen.iter().any(|f| f.memory_bytes.is_some()),
+    );
 }
