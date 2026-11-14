@@ -26,7 +26,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val stackFlow = MutableStateFlow(BackStack.initial)
 
     /** The state of the screens that live as long as their route is on the stack. */
-    val stores = ScreenStores()
+    val stores = ScreenStores(app)
 
     private val serverUrlFlow = MutableStateFlow<String?>(null)
 
