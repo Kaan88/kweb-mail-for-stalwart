@@ -126,3 +126,4 @@ Two things to know: after switching between `-PskipNative` and a full build, Kot
 ## The CLI against the test server
 
 `KWEB_HOME=~/.cache/kweb-mail/cli-home $CARGO_TARGET_DIR/debug/kweb sign-in http://127.0.0.1:18080` prints an address; open it in a browser on this machine and sign in as the tester. After that `kweb files`, `kweb inbox` and the rest run against the real local server, which is the quickest real check of a core change.
+A second home, `KWEB_HOME=~/.cache/kweb-mail/cli-home-second`, is signed in as `second@kweb.test`, the user the tester shares with: `kweb shared` there shows the shared area for real.
