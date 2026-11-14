@@ -117,6 +117,18 @@ impl Calendar {
         }));
     }
 
+    /// Drops the calendars, for a shared account that starts with only what the test adds.
+    pub fn clear_calendars(&mut self) {
+        self.calendars.clear();
+    }
+
+    /// Sets a property of a calendar, as the server would answer it.
+    pub fn patch_calendar(&mut self, id: &str, property: &str, value: Value) {
+        if let Some(calendar) = self.calendars.iter_mut().find(|c| c["id"] == id) {
+            calendar[property] = value;
+        }
+    }
+
     pub fn set_addresses(&mut self, addresses: &[&str]) {
         self.addresses = addresses.iter().map(|a| format!("mailto:{a}")).collect();
     }

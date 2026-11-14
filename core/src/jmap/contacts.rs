@@ -16,7 +16,7 @@ use crate::{
     Error, Result,
 };
 
-const CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";
+pub(super) const CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";
 const NO_SUCH_CONTACT: &str = "the contact no longer exists on the server";
 /// Where a listing is given up, for a server that never ends a listing.
 const MAX_CARDS: usize = 50_000;
@@ -42,10 +42,15 @@ impl Connection {
     /// The user's address books, in the server's order (by `sortOrder`). A server without
     /// contacts has none.
     pub async fn address_books(&self) -> Result<Vec<AddressBook>> {
+        self.address_books_in(&self.contacts_account_id()).await
+    }
+
+    /// The address books of the account `account`: the user's own or another user's.
+    pub(super) async fn address_books_in(&self, account: &str) -> Result<Vec<AddressBook>> {
         if !self.has_capability(CONTACTS_CAPABILITY) {
             return Ok(Vec::new());
         }
-        let args = json!({ "accountId": self.contacts_account_id() });
+        let args = json!({ "accountId": account });
         let responses = self.contacts_call(&[("AddressBook/get", args)]).await?;
         Ok(jscontact::address_books_from(response(&responses, "AddressBook/get")?))
     }
@@ -55,10 +60,15 @@ impl Connection {
     /// gave, not after the limit asked for (a server may give fewer), and the listing ends at an
     /// empty page or at the total the server counted. A server without contacts has none.
     pub async fn contact_cards(&self) -> Result<Vec<Entry>> {
+        self.contact_cards_in(&self.contacts_account_id()).await
+    }
+
+    /// Like [`Connection::contact_cards`], for the account `account`.
+    pub(super) async fn contact_cards_in(&self, account: &str) -> Result<Vec<Entry>> {
         if !self.has_capability(CONTACTS_CAPABILITY) {
             return Ok(Vec::new());
         }
-        let (account, limit) = (self.contacts_account_id(), self.get_batch());
+        let limit = self.get_batch();
         let (mut out, mut position) = (Vec::new(), 0_usize);
         while position < MAX_CARDS {
             let query = json!({
@@ -85,7 +95,11 @@ impl Connection {
     /// One card with the state of the cards it was read at. One the server does not have is
     /// `Error::Invalid`.
     async fn card_get(&self, id: &str) -> Result<(Value, Option<String>)> {
-        let args = json!({ "accountId": self.contacts_account_id(), "ids": [id] });
+        self.card_get_in(&self.contacts_account_id(), id).await
+    }
+
+    async fn card_get_in(&self, account: &str, id: &str) -> Result<(Value, Option<String>)> {
+        let args = json!({ "accountId": account, "ids": [id] });
         let responses = self.contacts_call(&[("ContactCard/get", args)]).await?;
         let answer = response(&responses, "ContactCard/get")?;
         let card = answer["list"].get(0).cloned().ok_or_else(|| Error::invalid(NO_SUCH_CONTACT))?;
@@ -94,7 +108,12 @@ impl Connection {
 
     /// One contact, as the server has it now. One it does not have is `Error::Invalid`.
     pub async fn contact_card(&self, id: &str) -> Result<Entry> {
-        let (card, _) = self.card_get(id).await?;
+        self.contact_card_in(&self.contacts_account_id(), id).await
+    }
+
+    /// Like [`Connection::contact_card`], for a card of the account `account`.
+    pub(super) async fn contact_card_in(&self, account: &str, id: &str) -> Result<Entry> {
+        let (card, _) = self.card_get_in(account, id).await?;
         entry_from(&card).ok_or_else(|| Error::invalid(NO_SUCH_CONTACT))
     }
 

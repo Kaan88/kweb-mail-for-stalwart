@@ -11,6 +11,7 @@ mod ai;
 mod calendar;
 mod files;
 mod oauth;
+mod sharing;
 mod state;
 
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ use account::Account;
 use calendar::Calendar;
 use files::Files;
 use oauth::Oauth;
+use sharing::Sharing;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 // Only the assistant tests use the mock AI service.
@@ -41,6 +43,8 @@ use state::{resolve_refs, Attachment, Mail, StreamMsg};
 pub use ai::{MockAi, ModelSpec, Models, Script};
 #[allow(unused_imports)]
 pub use files::{EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
+#[allow(unused_imports)]
+pub use sharing::ALL_MAIL_RIGHTS;
 pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
 
 /// The file storage capability.
@@ -65,6 +69,8 @@ struct Shared {
     oauth: Mutex<Oauth>,
     /// File storage: the user's own and the spaces other accounts share.
     files: Mutex<Files>,
+    /// What other users share: mail folders, calendars and address books of `sh1` to `sh3`.
+    sharing: Mutex<Sharing>,
     /// Identities, address book and quotas.
     account: Mutex<Account>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
@@ -116,6 +122,7 @@ impl MockServer {
             calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
             files: Mutex::new(Files::default()),
+            sharing: Mutex::new(Sharing::default()),
             account: Mutex::new(Account::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
@@ -507,6 +514,16 @@ impl MockServer {
     pub fn set_file_limits(&self, get_max: usize, query_max: usize) {
         let mut files = self.shared.files.lock().unwrap();
         (files.get_max, files.query_max) = (get_max, query_max);
+    }
+
+    // ---- sharing: what other users share with the user ------------------------------------
+
+    /// Runs `f` on what the mock holds of other users' shares (the accounts `sh1` to `sh3`; the
+    /// ones that share something are in the session). Do it before a client connects, or
+    /// between two of its calls to change the share.
+    pub fn sharing<T>(&self, f: impl FnOnce(&mut Sharing) -> T) -> T {
+        self.shared.redirect_session.store(true, Ordering::SeqCst);
+        f(&mut self.shared.sharing.lock().unwrap())
     }
 
     /// Adds a JSContact card to the address book and returns its id.
@@ -929,6 +946,17 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
             }
         }
     }
+    for (id, account) in s.sharing.lock().unwrap().session_accounts() {
+        // An account that also shares files is one account: its capabilities add up.
+        match accounts.get_mut(&id) {
+            Some(known) => {
+                for (urn, caps) in account["accountCapabilities"].as_object().into_iter().flatten() {
+                    known["accountCapabilities"][urn] = caps.clone();
+                }
+            }
+            None => accounts[&id] = account,
+        }
+    }
     json_response(
         StatusCode::OK,
         json!({
@@ -962,7 +990,9 @@ async fn download(
         let from_files = files.blob(&blob);
         drop(files);
         if known {
-            from_files.or_else(|| s.mail().blob(&blob))
+            // A message of a shared account has its files in that account only.
+            let shared = s.sharing.lock().unwrap().blob(&account, &blob);
+            from_files.or(shared).or_else(|| s.mail().blob(&blob))
         } else {
             None
         }
@@ -1063,6 +1093,12 @@ async fn jmap(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> 
 /// everything else from the mail. A method may answer with more than one response.
 fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value)>, state::MethodError> {
     let one = |value: Value| vec![(name.to_string(), value)];
+    // A method that names another account is about what that account shares with the user.
+    if !name.starts_with("FileNode/") {
+        if let Some(account) = args["accountId"].as_str().filter(|a| *a != ACCOUNT_ID) {
+            return s.sharing.lock().unwrap().call(account, name, args).map(one);
+        }
+    }
     match name {
         "Calendar/get"
         | "ParticipantIdentity/get"

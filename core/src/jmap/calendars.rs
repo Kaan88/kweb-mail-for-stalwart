@@ -38,7 +38,7 @@ use crate::{
     Error, Result,
 };
 
-const CALENDARS_CAPABILITY: &str = "urn:ietf:params:jmap:calendars";
+pub(super) const CALENDARS_CAPABILITY: &str = "urn:ietf:params:jmap:calendars";
 /// The span an agenda may cover when the server does not say.
 const FALLBACK_SPAN_SECS: u64 = 366 * 86_400;
 const NO_SUCH_EVENT: &str = "the event no longer exists on the server";
@@ -54,12 +54,25 @@ impl Connection {
 
     /// The user's calendars, in the server's order (by `sortOrder`).
     pub async fn calendars(&self) -> Result<Vec<Calendar>> {
+        self.calendars_in(&self.calendar_account_id()).await
+    }
+
+    /// The calendars of the account `account`: the user's own or another user's. Of another
+    /// user's, every calendar the server gives is the user's to see: `isSubscribed` is a choice
+    /// of the viewer's that starts out false, and nothing here sets it, so it is not read.
+    pub(super) async fn calendars_in(&self, account: &str) -> Result<Vec<Calendar>> {
         let args = json!({
-            "accountId": self.calendar_account_id(),
+            "accountId": account,
             "properties": ["name", "color", "sortOrder", "isDefault", "isSubscribed", "isVisible", "myRights"],
         });
         let responses = self.calendar_call(&[("Calendar/get", args)]).await?;
-        Ok(calendars_from(response(&responses, "Calendar/get")?))
+        let mut get = response(&responses, "Calendar/get")?.clone();
+        if account != self.calendar_account_id() {
+            for calendar in get["list"].as_array_mut().into_iter().flatten() {
+                calendar["isSubscribed"] = json!(true);
+            }
+        }
+        Ok(calendars_from(&get))
     }
 
     /// The addresses that are the user: those of the participant identities, and the sign-in
@@ -78,14 +91,26 @@ impl Connection {
     /// The agenda of `[from, to)`: the calendars as the server has them now, and the entries of
     /// the visible ones. A span longer than the server expands is `Error::Invalid`.
     pub async fn agenda(&self, from: i64, to: i64, zone: Tz) -> Result<(Vec<Calendar>, Vec<Occurrence>)> {
+        self.agenda_in(&self.calendar_account_id(), from, to, zone).await
+    }
+
+    /// Like [`Connection::agenda`], for the calendars of the account `account`. The user's own
+    /// addresses mark the answers that are theirs, also in another user's calendar.
+    pub(super) async fn agenda_in(
+        &self,
+        account: &str,
+        from: i64,
+        to: i64,
+        zone: Tz,
+    ) -> Result<(Vec<Calendar>, Vec<Occurrence>)> {
         let span = self.calendar_span.get_or_try_init(|| self.read_span()).await.copied().unwrap_or(FALLBACK_SPAN_SECS);
         if to - from > span as i64 {
             return Err(Error::invalid(format!("the server shows at most {} days at a time", span / 86_400)));
         }
-        let calendars = self.calendars().await?;
+        let calendars = self.calendars_in(account).await?;
         let visible: BTreeSet<String> = calendars.iter().filter(|c| c.is_visible).map(|c| c.id.clone()).collect();
         let me = self.my_addresses().await?;
-        let events = self.events_in(&visible).await?;
+        let events = self.events_in(account, &visible).await?;
         let view = jscal::View { zone, visible: &visible, me: &me };
         let mut entries: Vec<Occurrence> = events.iter().flat_map(|e| jscal::occurrences(e, from, to, &view)).collect();
         jscal::sort(&mut entries, zone);
@@ -94,8 +119,8 @@ impl Connection {
 
     /// Every event and task of these calendars, whole. Each page is one request: the ids and,
     /// by reference, the events.
-    async fn events_in(&self, calendars: &BTreeSet<String>) -> Result<Vec<Value>> {
-        let (account, limit) = (self.calendar_account_id(), self.get_batch());
+    async fn events_in(&self, account: &str, calendars: &BTreeSet<String>) -> Result<Vec<Value>> {
+        let limit = self.get_batch();
         let (mut out, mut seen) = (Vec::new(), BTreeSet::new());
         for calendar in calendars {
             let mut position = 0;
@@ -128,7 +153,11 @@ impl Connection {
     /// One event or task, whole, with the state of the calendar events it was read at. One the
     /// server does not have is `Error::Invalid`.
     async fn event_get(&self, id: &str) -> Result<(Value, Option<String>)> {
-        let args = json!({ "accountId": self.calendar_account_id(), "ids": [id] });
+        self.event_get_in(&self.calendar_account_id(), id).await
+    }
+
+    async fn event_get_in(&self, account: &str, id: &str) -> Result<(Value, Option<String>)> {
+        let args = json!({ "accountId": account, "ids": [id] });
         let responses = self.calendar_call(&[("CalendarEvent/get", args)]).await?;
         let answer = response(&responses, "CalendarEvent/get")?;
         let event = answer["list"].get(0).cloned().ok_or_else(|| Error::invalid(NO_SUCH_EVENT))?;
@@ -137,8 +166,18 @@ impl Connection {
 
     /// An event or task in full, for its own screen; with `recurrence_id` one occurrence of it.
     pub async fn event_detail(&self, id: &str, recurrence_id: Option<&str>) -> Result<EventDetail> {
-        let (event, _) = self.event_get(id).await?;
-        let (calendars, me) = (self.calendars().await?, self.my_addresses().await?);
+        self.event_detail_in(&self.calendar_account_id(), id, recurrence_id).await
+    }
+
+    /// Like [`Connection::event_detail`], for an event of the account `account`.
+    pub(super) async fn event_detail_in(
+        &self,
+        account: &str,
+        id: &str,
+        recurrence_id: Option<&str>,
+    ) -> Result<EventDetail> {
+        let (event, _) = self.event_get_in(account, id).await?;
+        let (calendars, me) = (self.calendars_in(account).await?, self.my_addresses().await?);
         jscal::detail_at(&event, &calendars, &me, recurrence_id)
     }
 

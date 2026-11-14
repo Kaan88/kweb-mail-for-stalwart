@@ -136,6 +136,11 @@ impl Account {
         self.address_books.push(address_book(id, name, false, may_write));
     }
 
+    /// Drops the address books, for a shared account that starts with only what the test adds.
+    pub fn clear_address_books(&mut self) {
+        self.address_books.clear();
+    }
+
     /// Sets a property of a card, as another client would.
     pub fn set_card_property(&mut self, id: &str, property: &str, value: Value) {
         if let Some(card) = self.contacts.get_mut(id).and_then(Value::as_object_mut) {

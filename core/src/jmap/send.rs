@@ -321,6 +321,7 @@ fn method_error(what: &str, args: &Value) -> Error {
     match kind {
         "forbidden" | "invalidArguments" | "requestTooLarge" => Error::invalid(format!("{what}: {detail}")),
         "stateMismatch" => super::errors::state_mismatch(format!("{what}: {detail}")),
+        "accountNotFound" | "accountNotSupportedByMethod" => super::errors::no_account(format!("{what}: {detail}")),
         _ => Error::temporary(format!("{what} failed: {detail}")),
     }
 }

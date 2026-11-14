@@ -18,6 +18,7 @@ mod jscal;
 mod jscontact;
 mod recur;
 mod send;
+mod shared;
 mod vacation;
 
 use std::{io::Write, pin::Pin, time::Duration};
@@ -226,13 +227,19 @@ impl Connection {
     /// between batches, the next `email_changes` from it reports that mail again rather than
     /// losing it. Ids the server does not know are left out.
     pub async fn messages(&self, ids: &[String]) -> Result<(Vec<MessageHeader>, String)> {
+        self.messages_in(&self.account_id, ids).await
+    }
+
+    /// Like [`Connection::messages`], in the account `account` (another user's, when a folder of
+    /// it is shared). Ids are only unique within one account.
+    pub(super) async fn messages_in(&self, account: &str, ids: &[String]) -> Result<(Vec<MessageHeader>, String)> {
         let mut state = None;
         let mut out = Vec::with_capacity(ids.len());
         // An empty list still asks once: the caller wants the current state.
         let chunks: Vec<&[String]> = if ids.is_empty() { vec![ids] } else { ids.chunks(self.get_batch()).collect() };
         for chunk in chunks {
             let mut req = self.client.build();
-            req.get_email().ids(chunk.iter().cloned()).properties(header_properties());
+            req.get_email().account_id(account).ids(chunk.iter().cloned()).properties(header_properties());
             let mut resp = req.send_single::<EmailGetResponse>().await.map_err(from_jmap)?;
             out.extend(resp.take_list().iter().filter_map(to_header));
             state.get_or_insert_with(|| resp.take_state());
@@ -286,10 +293,15 @@ impl Connection {
     /// The bodies of these messages (recipients, text, HTML, files), batched like `messages`, in
     /// the order asked. Ids the server does not know are left out.
     pub async fn bodies(&self, ids: &[String]) -> Result<Vec<MessageBody>> {
+        self.bodies_in(&self.account_id, ids).await
+    }
+
+    /// Like [`Connection::bodies`], in the account `account`.
+    pub(super) async fn bodies_in(&self, account: &str, ids: &[String]) -> Result<Vec<MessageBody>> {
         let mut out = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(self.get_batch()) {
             let mut req = self.client.build();
-            let get = req.get_email().ids(chunk.iter().cloned()).properties(body_properties());
+            let get = req.get_email().account_id(account).ids(chunk.iter().cloned()).properties(body_properties());
             get.arguments()
                 .body_properties(body_part_properties())
                 .fetch_text_body_values(true)

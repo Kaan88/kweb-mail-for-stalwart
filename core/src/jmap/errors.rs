@@ -15,6 +15,18 @@ use crate::Error;
 const UNAUTHORIZED_PREFIX: &str = "unauthorized: ";
 const CANNOT_CALCULATE_PREFIX: &str = "cannot calculate changes: ";
 const STATE_MISMATCH_PREFIX: &str = "state mismatch: ";
+const NO_ACCOUNT_PREFIX: &str = "no such account: ";
+
+/// A method the server answered with `accountNotFound`, `accountNotSupportedByMethod` or
+/// `accountReadOnly`: the account named in the request is not there for this user (any more),
+/// or does not hold this kind of data. Only calls into another user's account can see this.
+pub(super) fn no_account(detail: impl std::fmt::Display) -> Error {
+    Error::temporary(format!("{NO_ACCOUNT_PREFIX}{detail}"))
+}
+
+pub(super) fn is_no_account(e: &Error) -> bool {
+    matches!(e, Error::Temporary { msg } if msg.starts_with(NO_ACCOUNT_PREFIX))
+}
 
 /// A `/set` the server refused because `ifInState` no longer matched: the object was changed
 /// meanwhile. The caller reads it again and rebuilds the change.
@@ -51,6 +63,7 @@ enum Kind {
     /// The server refused the change and will refuse it again (a mailbox that is gone, no right
     /// to do it).
     Refused,
+    NoAccount,
     Other,
 }
 
@@ -71,6 +84,11 @@ fn kind(e: &JmapError) -> Kind {
         JmapError::Server(s) if s.split_whitespace().next() == Some("401") => Kind::Unauthorized,
         JmapError::Transport(t) if t.status().is_some_and(|s| s.as_u16() == 401) => Kind::Unauthorized,
         JmapError::Method(m) if *m.error() == MethodErrorType::CannotCalculateChanges => Kind::CannotCalculateChanges,
+        JmapError::Method(m)
+            if matches!(m.error(), MethodErrorType::AccountNotFound | MethodErrorType::AccountNotSupportedByMethod) =>
+        {
+            Kind::NoAccount
+        }
         JmapError::Set(s) if *s.error() == SetErrorType::NotFound => Kind::NotFound,
         JmapError::Set(s) if is_permanent(s.error()) => Kind::Refused,
         _ => Kind::Other,
@@ -81,6 +99,7 @@ pub(super) fn from_jmap(e: JmapError) -> Error {
     match kind(&e) {
         Kind::Unauthorized => Error::temporary(format!("{UNAUTHORIZED_PREFIX}{e}")),
         Kind::CannotCalculateChanges => Error::temporary(format!("{CANNOT_CALCULATE_PREFIX}{e}")),
+        Kind::NoAccount => no_account(e),
         Kind::NotFound => Error::invalid(format!("not found on the server: {e}")),
         Kind::Refused => Error::invalid(format!("refused by the server: {e}")),
         Kind::Other => Error::temporary(e.to_string()),

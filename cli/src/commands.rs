@@ -15,7 +15,7 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files},
+    args::{Away, Command, Files, Shared},
     timefmt,
 };
 
@@ -40,6 +40,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Quota => quota(core),
         Command::Contacts { query } => contacts(core, query),
         Command::Files { space, what } => files(core, space, what),
+        Command::Shared(what) => shared(core, what),
         Command::Away(what) => away(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
@@ -399,6 +400,94 @@ fn contact_line(r: &ContactRow) -> String {
         format!("  {}", one_line(&r.organization))
     };
     format!("{}{address}{organization}  [{}]", one_line(&r.name), one_line(&r.id))
+}
+
+/// How many messages `kweb shared mail <account> <mailbox-id>` lists.
+const SHARED_MAIL_LIMIT: u32 = 20;
+
+fn shared(core: &Core, what: Shared) -> Result<(), String> {
+    let fail = |e: kweb_core::Error| e.to_string();
+    match what {
+        Shared::Accounts => {
+            let accounts = core.shared_accounts().map_err(fail)?;
+            if accounts.is_empty() {
+                println!("Nobody shares mail, calendars or contacts with you.");
+            }
+            for a in &accounts {
+                let kinds: Vec<&str> =
+                    [(a.has_mail, "mail"), (a.has_calendars, "calendars"), (a.has_contacts, "contacts")]
+                        .iter()
+                        .filter(|(has, _)| *has)
+                        .map(|(_, name)| *name)
+                        .collect();
+                println!("{}  {}  [{}]", one_line(&a.name), kinds.join(", "), one_line(&a.account_id));
+            }
+        }
+        Shared::Mail { account, mailbox: None } => {
+            let folders = core.shared_mailboxes(account).map_err(fail)?;
+            if folders.is_empty() {
+                println!("No folders are shared.");
+            }
+            for f in &folders {
+                let mut may = Vec::new();
+                if f.may_mark {
+                    may.push("mark");
+                }
+                if f.may_add {
+                    may.push("add");
+                }
+                if f.may_remove {
+                    may.push("remove");
+                }
+                let rights = if may.is_empty() { "read only".to_string() } else { may.join(", ") };
+                println!("{:<24} {:>6} {:>7}  {}  [{}]", one_line(&f.name), f.total, f.unread, rights, one_line(&f.id));
+            }
+        }
+        Shared::Mail { account, mailbox: Some(mailbox) } => {
+            let page = core.shared_messages(account, mailbox, 0, SHARED_MAIL_LIMIT).map_err(fail)?;
+            if page.messages.is_empty() {
+                println!("The folder is empty.");
+            }
+            for message in &page.messages {
+                println!("{}", message_line(message));
+            }
+            if page.total as usize > page.messages.len() {
+                println!("({} of {} shown)", page.messages.len(), page.total);
+            }
+        }
+        Shared::Show { account, id } => {
+            let message = core.shared_message(account, id).map_err(fail)?;
+            print!("{}", message_text(Some(&message.header), &message.body));
+        }
+        Shared::Agenda { account, days } => {
+            let zone = timefmt::zone_from_env(std::env::var("TZ").ok().as_deref());
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+            let (from, to) = timefmt::span(now.as_secs() as i64, days, zone);
+            let agenda = core.shared_agenda(account, from, to, zone.name().to_string()).map_err(fail)?;
+            if agenda.entries.is_empty() {
+                println!("Nothing in the next {days} days.");
+            }
+            let mut last_day = String::new();
+            for entry in &agenda.entries {
+                let day = timefmt::day(entry.starts_at, zone);
+                if day != last_day {
+                    println!("{day}");
+                    last_day = day;
+                }
+                println!("  {}", agenda_line(entry, zone));
+            }
+        }
+        Shared::Contacts { account, query } => {
+            let rows = core.shared_contacts(account, query).map_err(fail)?;
+            if rows.is_empty() {
+                println!("No contacts.");
+            }
+            for row in &rows {
+                println!("{}", contact_line(row));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn files(core: &Core, space: Option<String>, what: Files) -> Result<(), String> {

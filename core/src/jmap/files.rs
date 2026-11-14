@@ -445,9 +445,20 @@ impl Connection {
     }
 
     /// The account whose blobs `account`'s space takes into its nodes, and downloads from. A
-    /// download URL names the space's own account.
-    pub fn file_download_account(&self, account: Option<&str>) -> Result<String> {
-        Ok(self.files_space(account)?.id)
+    /// download URL names the space's own account. An account that shares mail and has no file
+    /// storage is good for the attachments of its messages (see `shared.rs`).
+    pub async fn file_download_account(&self, account: Option<&str>) -> Result<String> {
+        match (self.files_space(account), account) {
+            (Ok(space), _) => Ok(space.id),
+            (Err(e), Some(id)) => match self.shared_check(id).await {
+                Ok(()) => Ok(id.to_string()),
+                // Not shared: the space error says it best. Anything else (401, offline) must
+                // reach the caller as it is, so the token is renewed and the call retried.
+                Err(Error::Invalid { .. }) => Err(e),
+                Err(other) => Err(other),
+            },
+            (Err(e), None) => Err(e),
+        }
     }
 
     /// The node of this name in the folder, if there is one.

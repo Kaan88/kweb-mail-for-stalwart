@@ -37,6 +37,18 @@ Usage:
   kweb files rm <id>          delete a file, or a folder with everything in it, for good
                               every files command takes --space <account-id> to work in a
                               shared space (see files spaces) instead of your own
+  kweb shared                 list the accounts of other users that share mail, calendars
+                              or contacts with you, and which of the three each shares
+  kweb shared mail <account> [mailbox-id]
+                              list the folders an account shares, or the newest 20 messages
+                              of one of them (<account> is the id that kweb shared shows)
+  kweb shared show <account> <message-id>
+                              show a shared message (it is not marked read)
+  kweb shared agenda <account> [days]
+                              show the events in the calendars an account shares (default 7)
+  kweb shared contacts <account> [query]
+                              list the contacts an account shares, or those matching the query
+                              everything shared is read from the server each time, never kept
   kweb away                   show the away message
   kweb away on <text>         switch it on from now until switched off, with this text
   kweb away off               switch it off
@@ -88,6 +100,7 @@ pub enum Command {
     Quota,
     Contacts { query: String },
     Files { space: Option<String>, what: Files },
+    Shared(Shared),
     Away(Away),
     Send { to: String, subject: String, text: String },
     Ai(Ai),
@@ -125,6 +138,16 @@ pub enum Files {
     Rm { id: String },
 }
 
+/// What `kweb shared` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Shared {
+    Accounts,
+    Mail { account: String, mailbox: Option<String> },
+    Show { account: String, id: String },
+    Agenda { account: String, days: u32 },
+    Contacts { account: String, query: String },
+}
+
 /// What `kweb away` does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Away {
@@ -150,6 +173,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "quota" => no_args(rest, Command::Quota),
         "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
         "files" => files(rest),
+        "shared" => shared(rest).map(Command::Shared),
         "away" => away(rest),
         "send" => send(rest),
         "ai" => ai(rest).map(Command::Ai),
@@ -242,6 +266,40 @@ fn files(rest: &[String]) -> Result<Command, String> {
         return Err("--replace only goes with files put".into());
     }
     Ok(Command::Files { space, what })
+}
+
+fn shared(rest: &[String]) -> Result<Shared, String> {
+    let too_many = |extra: &String| Err(format!("unexpected argument '{extra}'"));
+    match rest {
+        [] => Ok(Shared::Accounts),
+        [word, tail @ ..] if word == "mail" => match tail {
+            [] => Err("shared mail needs an <account>".into()),
+            [account] => Ok(Shared::Mail { account: account.clone(), mailbox: None }),
+            [account, mailbox] => Ok(Shared::Mail { account: account.clone(), mailbox: Some(mailbox.clone()) }),
+            [_, _, extra, ..] => too_many(extra),
+        },
+        [word, tail @ ..] if word == "show" => match tail {
+            [account, id] => Ok(Shared::Show { account: account.clone(), id: id.clone() }),
+            [_, _, extra, ..] => too_many(extra),
+            _ => Err("shared show needs an <account> and a <message-id>".into()),
+        },
+        [word, tail @ ..] if word == "agenda" => match tail {
+            [] => Err("shared agenda needs an <account>".into()),
+            [account] => Ok(Shared::Agenda { account: account.clone(), days: DEFAULT_AGENDA_DAYS }),
+            [account, n] => match n.parse::<u32>() {
+                Ok(days) if (1..=MAX_AGENDA_DAYS).contains(&days) => {
+                    Ok(Shared::Agenda { account: account.clone(), days })
+                }
+                _ => Err(format!("shared agenda needs a number of days from 1 to {MAX_AGENDA_DAYS}, not '{n}'")),
+            },
+            [_, _, extra, ..] => too_many(extra),
+        },
+        [word, tail @ ..] if word == "contacts" => match tail {
+            [] => Err("shared contacts needs an <account>".into()),
+            [account, words @ ..] => Ok(Shared::Contacts { account: account.clone(), query: words.join(" ") }),
+        },
+        [other, ..] => Err(format!("shared takes mail, show, agenda, contacts, or nothing, not '{other}'")),
+    }
 }
 
 fn away(rest: &[String]) -> Result<Command, String> {
@@ -517,6 +575,30 @@ mod tests {
         assert_eq!(p(&["contacts"]), Ok(Command::Contacts { query: String::new() }));
         assert_eq!(p(&["contacts", "ann"]), Ok(Command::Contacts { query: "ann".into() }));
         assert_eq!(p(&["contacts", "ann", "lee"]), Ok(Command::Contacts { query: "ann lee".into() }));
+    }
+
+    #[test]
+    fn shared_commands() {
+        let s = |what| Ok(Command::Shared(what));
+        let a = || "sh1".to_string();
+        assert_eq!(p(&["shared"]), s(Shared::Accounts));
+        assert_eq!(p(&["shared", "mail", "sh1"]), s(Shared::Mail { account: a(), mailbox: None }));
+        assert_eq!(p(&["shared", "mail", "sh1", "m9"]), s(Shared::Mail { account: a(), mailbox: Some("m9".into()) }));
+        assert!(p(&["shared", "mail"]).is_err());
+        assert!(p(&["shared", "mail", "a", "b", "c"]).is_err());
+        assert_eq!(p(&["shared", "show", "sh1", "e1"]), s(Shared::Show { account: a(), id: "e1".into() }));
+        assert!(p(&["shared", "show", "sh1"]).is_err());
+        assert_eq!(p(&["shared", "agenda", "sh1"]), s(Shared::Agenda { account: a(), days: 7 }));
+        assert_eq!(p(&["shared", "agenda", "sh1", "30"]), s(Shared::Agenda { account: a(), days: 30 }));
+        assert!(p(&["shared", "agenda", "sh1", "0"]).is_err());
+        assert!(p(&["shared", "agenda"]).is_err());
+        assert_eq!(p(&["shared", "contacts", "sh1"]), s(Shared::Contacts { account: a(), query: String::new() }));
+        assert_eq!(
+            p(&["shared", "contacts", "sh1", "ann", "lee"]),
+            s(Shared::Contacts { account: a(), query: "ann lee".into() })
+        );
+        assert!(p(&["shared", "contacts"]).is_err());
+        assert!(p(&["shared", "files"]).is_err());
     }
 
     #[test]

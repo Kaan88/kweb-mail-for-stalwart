@@ -25,9 +25,10 @@ use crate::{
     jmap::{self, is_unauthorized, Connection},
     model::{
         Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
-        Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, Draft, DraftKind,
-        EventDetail, EventInput, FileEntry, FileListing, FileSpace, Identity, ListFilter, Mailbox, MessageBody,
-        MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
+        Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, ContactRow, Draft,
+        DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, Identity, ListFilter, Mailbox,
+        MessageBody, MessageHeader, PendingSend, Quota, Reminder, SearchResult, SharedAccount, SharedAction,
+        SharedMailbox, SharedMessage, SharedMessages, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -410,7 +411,7 @@ impl Core {
             .with_connection(|conn| async move {
                 let url_account = match space {
                     None => conn.account_id(),
-                    Some(account) => conn.file_download_account(account)?,
+                    Some(account) => conn.file_download_account(account).await?,
                 };
                 let mut file =
                     fs::File::create(part_path).map_err(|e| Error::store(format!("saving the file: {e}")))?;
@@ -1317,5 +1318,94 @@ impl Core {
     /// [`Core::download_blob`] does (a stream to a part file beside it, renamed when complete).
     pub fn file_download(&self, account: Option<String>, blob_id: String, dest_path: String) -> Result<()> {
         self.download_to_path(Some(account.as_deref()), &blob_id, &dest_path)
+    }
+}
+
+// ---- M7: shared with me ----
+
+#[uniffi::export]
+impl Core {
+    /// The accounts of other users from which a mail folder, calendar or address book is shared
+    /// with the signed-in user, by name. Accounts that share only files are left out (they are
+    /// in [`Core::file_spaces`]). Asks the server: a fresh session, then each account for each
+    /// kind. Empty when nothing is shared.
+    pub fn shared_accounts(&self) -> Result<Vec<SharedAccount>> {
+        self.with_connection(|conn| async move { conn.shared_accounts().await })
+    }
+
+    /// The mail folders shared from `account`, by name. An account the session does not list
+    /// is `Error::Invalid` (the share may have been taken back).
+    pub fn shared_mailboxes(&self, account: String) -> Result<Vec<SharedMailbox>> {
+        let account = account.as_str();
+        self.with_connection(|conn| async move { conn.shared_mailboxes(account).await })
+    }
+
+    /// Messages of a shared folder, newest first: `limit` of them (at most 100) from `offset`.
+    pub fn shared_messages(
+        &self,
+        account: String,
+        mailbox_id: String,
+        offset: u32,
+        limit: u32,
+    ) -> Result<SharedMessages> {
+        let (account, mailbox_id) = (account.as_str(), mailbox_id.as_str());
+        self.with_connection(|conn| async move { conn.shared_messages(account, mailbox_id, offset, limit).await })
+    }
+
+    /// A shared message with its body, as [`Core::message_body`] gives one of the user's own
+    /// (same sanitising, same attachment list). Does not mark it read. Its attachments are
+    /// downloaded with [`Core::file_download`] and the same `account`.
+    pub fn shared_message(&self, account: String, message_id: String) -> Result<SharedMessage> {
+        let (account, message_id) = (account.as_str(), message_id.as_str());
+        self.with_connection(|conn| async move { conn.shared_message(account, message_id).await })
+    }
+
+    /// Does `action` to a shared message, now. What the user may not do there is
+    /// `Error::Invalid` with words for the user; a message that is gone is not an error for
+    /// Delete and is `Error::Invalid` otherwise.
+    pub fn shared_act(&self, account: String, message_id: String, action: SharedAction) -> Result<()> {
+        let (account, message_id, action) = (account.as_str(), message_id.as_str(), &action);
+        self.with_connection(|conn| async move { conn.shared_act(account, message_id, action).await })
+    }
+
+    /// The calendars shared from `account`, as [`Core::calendars`] gives the user's own
+    /// (`may_write` from the rights the user has there).
+    pub fn shared_calendars(&self, account: String) -> Result<Vec<Calendar>> {
+        let account = account.as_str();
+        self.with_connection(|conn| async move { conn.shared_calendars(account).await })
+    }
+
+    /// The events of the calendars shared from `account` in the span, as [`Core::agenda`]
+    /// gives the user's own (repeating events expanded the same way). Not cached: without a
+    /// connection this is an error, never an old list.
+    pub fn shared_agenda(&self, account: String, from: i64, to: i64, time_zone: String) -> Result<Agenda> {
+        let zone = jmap::check_span(from, to, &time_zone)?;
+        let account = account.as_str();
+        self.with_connection(|conn| async move { conn.shared_agenda(account, from, to, zone).await })
+    }
+
+    /// One event of a shared calendar, as [`Core::event`]. Shown only: this stage has no way
+    /// to change a shared event.
+    pub fn shared_event(
+        &self,
+        account: String,
+        event_id: String,
+        recurrence_id: Option<String>,
+    ) -> Result<EventDetail> {
+        let (account, id, recurrence) = (account.as_str(), event_id.as_str(), recurrence_id.as_deref());
+        self.with_connection(|conn| async move { conn.shared_event(account, id, recurrence).await })
+    }
+
+    /// The contacts of the address books shared from `account`, by name; `query` narrows them
+    /// as in [`Core::contacts`] (blank: all). Not cached and never used for suggestions.
+    pub fn shared_contacts(&self, account: String, query: String) -> Result<Vec<ContactRow>> {
+        let (account, query) = (account.as_str(), query.as_str());
+        self.with_connection(|conn| async move { conn.shared_contacts(account, query).await })
+    }
+
+    /// One shared contact, as [`Core::contact`]. Shown only.
+    pub fn shared_contact(&self, account: String, contact_id: String) -> Result<ContactDetail> {
+        let (account, id) = (account.as_str(), contact_id.as_str());
+        self.with_connection(|conn| async move { conn.shared_contact(account, id).await })
     }
 }

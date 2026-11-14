@@ -571,6 +571,73 @@ pub struct AiPreview {
     pub is_cut: bool,
 }
 
+/// Another user's account from which something is shared with the signed-in user. Everything
+/// in it is read live from the server, never cached, and never notifies. Ids of mail, folders,
+/// events and contacts are only unique within one account, so every `shared_` function takes
+/// the account.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SharedAccount {
+    /// The JMAP account id of the owner; passed back as `account`.
+    pub account_id: String,
+    /// The owner's address.
+    pub name: String,
+    /// At least one mail folder, calendar or address book is shared. The session does not say
+    /// which, so the core asks for each.
+    pub has_mail: bool,
+    pub has_calendars: bool,
+    pub has_contacts: bool,
+}
+
+/// A mail folder another user shared.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SharedMailbox {
+    pub id: String,
+    pub name: String,
+    /// The parent's id when the parent is shared too; `None` otherwise (also when the server
+    /// names a parent the user cannot see).
+    pub parent_id: Option<String>,
+    pub total: u32,
+    pub unread: u32,
+    /// Messages may be marked read or unread, and flagged (the server gives both or neither).
+    /// The marks are the owner's too: there is no reading state of one's own.
+    pub may_mark: bool,
+    /// Messages may be moved into this folder.
+    pub may_add: bool,
+    /// Messages may be moved out of this folder or deleted.
+    pub may_remove: bool,
+}
+
+/// One page of a shared folder, newest first.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SharedMessages {
+    pub messages: Vec<MessageHeader>,
+    /// How many messages the folder has in all.
+    pub total: u32,
+}
+
+/// A message of a shared folder, ready to show.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SharedMessage {
+    pub header: MessageHeader,
+    pub body: MessageBody,
+}
+
+/// What can be done to a message in a shared folder. Sent at once; there is no queue, so
+/// without a connection it fails.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SharedAction {
+    MarkRead,
+    MarkUnread,
+    Flag,
+    Unflag,
+    /// Into another folder of the same account.
+    Move {
+        mailbox_id: String,
+    },
+    /// For good: a shared account has no bin of the user's.
+    Delete,
+}
+
 /// A place that holds files: the user's own file storage, or the folders another user shared.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileSpace {

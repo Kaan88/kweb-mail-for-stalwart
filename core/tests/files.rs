@@ -611,3 +611,15 @@ fn a_failed_download_leaves_no_file_and_no_part_file() {
     assert!(names.iter().all(|n| !n.starts_with("never")), "{names:?}");
     assert!(rig.core.file_download(s("nobody"), "x".into(), dest.to_string_lossy().into_owned()).is_err());
 }
+
+#[test]
+fn a_download_for_an_unknown_account_while_the_server_is_down_is_temporary_not_invalid() {
+    let rig = Rig::new();
+    let dest = rig.dir.path().join("x.bin");
+    // The account is not in the connection's session, so the session is read again: that read
+    // failing must show as itself, not as "no such file space".
+    rig.server.set_down(true);
+    let e = rig.core.file_download(s("nobody"), "x".into(), dest.to_string_lossy().into_owned()).unwrap_err();
+    rig.server.set_down(false);
+    assert!(matches!(e, kweb_core::Error::Temporary { .. }), "{e:?}");
+}
