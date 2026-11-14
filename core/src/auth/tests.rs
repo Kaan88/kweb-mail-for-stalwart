@@ -144,6 +144,8 @@ struct Srv {
     reject: bool,
     expires_in: u64,
     token_endpoint_override: Option<String>,
+    /// What the metadata lists as `scopes_supported`; `None` leaves the field out.
+    scopes_supported: Option<Vec<String>>,
     last_code_form: Vec<(String, String)>,
 }
 
@@ -151,12 +153,16 @@ type Shared = Arc<Mutex<Srv>>;
 
 async fn metadata(State(s): State<Shared>) -> Json<Value> {
     let s = s.lock().unwrap();
-    Json(json!({
+    let mut meta = json!({
         "authorization_endpoint": format!("{}/authorize", s.base),
         "token_endpoint": s.token_endpoint_override.clone().unwrap_or(format!("{}/token", s.base)),
         "registration_endpoint": format!("{}/register", s.base),
         "revocation_endpoint": format!("{}/revoke", s.base),
-    }))
+    });
+    if let Some(scopes) = &s.scopes_supported {
+        meta["scopes_supported"] = json!(scopes);
+    }
+    Json(meta)
 }
 
 async fn registration(State(s): State<Shared>, Json(body): Json<Value>) -> (StatusCode, Json<Value>) {
@@ -230,6 +236,7 @@ async fn start_server() -> (String, Shared) {
         reject: false,
         expires_in: 3600,
         token_endpoint_override: None,
+        scopes_supported: None,
         last_code_form: vec![],
     }));
     let app = Router::new()
@@ -285,6 +292,7 @@ fn client_for(base: &str) -> OAuthClient {
         client_id: "client-1".into(),
         token_endpoint: format!("{base}/token"),
         revocation_endpoint: format!("{base}/revoke"),
+        scope: SCOPES.into(),
     }
 }
 
@@ -370,6 +378,37 @@ async fn previous_client_is_reused_only_while_the_server_is_unchanged() {
     other.token_endpoint = "https://elsewhere.example/token".into();
     let fresh = begin_sign_in(&base, REDIRECT, Some(&other)).await.unwrap();
     assert_eq!(fresh.client.client_id, "client-2");
+}
+
+#[tokio::test]
+async fn file_storage_is_asked_for_only_where_the_server_offers_it() {
+    let (base, shared) = start_server().await;
+    let scope_of = |p: &PendingSignIn| {
+        let url = Url::parse(&p.authorize_url).unwrap();
+        let found = url.query_pairs().find(|(n, _)| n == "scope").map(|(_, v)| v.into_owned());
+        found.unwrap()
+    };
+    // A server that does not list the scope (or lists none) is not asked for it.
+    let plain = begin_sign_in(&base, REDIRECT, None).await.unwrap();
+    assert_eq!(scope_of(&plain), SCOPES);
+    assert_eq!(shared.lock().unwrap().registrations[0]["scope"], SCOPES);
+
+    // One that offers it is asked, and a client registered without it registers again: this
+    // is also what a client stored by an older version (no scope recorded) goes through.
+    shared.lock().unwrap().scopes_supported = Some(vec!["openid".into(), FILES_SCOPE.into()]);
+    let with_files = begin_sign_in(&base, REDIRECT, Some(&plain.client)).await.unwrap();
+    assert!(scope_of(&with_files).ends_with(FILES_SCOPE));
+    assert_eq!(with_files.client.client_id, "client-2");
+    assert_eq!(shared.lock().unwrap().registrations[1]["scope"], scope_of(&with_files));
+    let old: OAuthClient = serde_json::from_value(json!({
+        "server_url": base, "client_id": "client-2", "token_endpoint": format!("{base}/token"),
+        "revocation_endpoint": "",
+    }))
+    .unwrap();
+    assert_eq!(begin_sign_in(&base, REDIRECT, Some(&old)).await.unwrap().client.client_id, "client-3");
+    // Unchanged, it is reused.
+    let again = begin_sign_in(&base, REDIRECT, Some(&with_files.client)).await.unwrap();
+    assert_eq!(again.client.client_id, "client-2");
 }
 
 #[tokio::test]

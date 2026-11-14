@@ -6,8 +6,8 @@ use std::{process, sync::Arc, thread};
 use kweb_core::{
     ffi::{Core, Shade},
     model::{
-        Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, Identity,
-        MessageBody, MessageHeader, Occurrence, Quota, Reminder,
+        Account, Action, Address, AwayMessage, Calendar, ConnectionStatus, ContactRow, DraftKind, FileEntry, FileKind,
+        Identity, MessageBody, MessageHeader, Occurrence, Quota, Reminder,
     },
     notify::Plan,
     push::Listener,
@@ -15,7 +15,7 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command},
+    args::{Away, Command, Files},
     timefmt,
 };
 
@@ -39,6 +39,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Identities => identities(core),
         Command::Quota => quota(core),
         Command::Contacts { query } => contacts(core, query),
+        Command::Files { space, what } => files(core, space, what),
         Command::Away(what) => away(core, what),
         Command::Send { to, subject, text } => send(core, to, subject, text),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
@@ -398,6 +399,80 @@ fn contact_line(r: &ContactRow) -> String {
         format!("  {}", one_line(&r.organization))
     };
     format!("{}{address}{organization}  [{}]", one_line(&r.name), one_line(&r.id))
+}
+
+fn files(core: &Core, space: Option<String>, what: Files) -> Result<(), String> {
+    let fail = |e: kweb_core::Error| e.to_string();
+    match what {
+        Files::Spaces => {
+            for s in core.file_spaces().map_err(fail)? {
+                let name = if s.account_id.is_none() { "your own".to_string() } else { one_line(&s.name) };
+                let id = s.account_id.as_deref().map_or(String::new(), |id| format!("  --space {}", one_line(id)));
+                println!("{name}{id}  (upload up to {})", size_text(s.max_upload));
+            }
+        }
+        Files::List { folder } => {
+            let listing = core.files(space, folder).map_err(fail)?;
+            let path: Vec<String> = listing.path.iter().map(|f| one_line(&f.name)).collect();
+            println!("/{}{}", path.join("/"), if listing.may_add { "" } else { "  (read only)" });
+            if listing.entries.is_empty() {
+                println!("Empty.");
+            }
+            for entry in &listing.entries {
+                println!("{}", file_line(entry));
+            }
+        }
+        Files::Put { path, folder, replace } => {
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .ok_or("that path has no file name")?;
+            let entry = core.file_upload(space, folder, name, String::new(), path, replace).map_err(fail)?;
+            println!("uploaded: {}", file_line(&entry));
+        }
+        Files::Get { id, path } => {
+            let entry = find_file(core, &space, &id)?;
+            let blob = entry.blob_id.ok_or("that is not a file")?;
+            core.file_download(space, blob, path.clone()).map_err(fail)?;
+            println!("saved {} to {path}", size_text(entry.size));
+        }
+        Files::Mkdir { name, folder } => {
+            let entry = core.file_create_folder(space, folder, name).map_err(fail)?;
+            println!("made: {}", file_line(&entry));
+        }
+        Files::Rm { id } => {
+            core.file_delete(space, id).map_err(fail)?;
+            println!("deleted");
+        }
+    }
+    Ok(())
+}
+
+/// `name/  [id]` for a folder, `name  size  [id]` for a file. The server has no "get one by
+/// id" for the app's use, so a file is looked for folder by folder from the top.
+fn file_line(e: &FileEntry) -> String {
+    let name = one_line(&e.name);
+    match e.kind {
+        FileKind::Folder => format!("{name}/  [{}]", one_line(&e.id)),
+        FileKind::File => format!("{name}  {}  [{}]", size_text(e.size), one_line(&e.id)),
+        FileKind::Other => format!("{name}  (link)  [{}]", one_line(&e.id)),
+    }
+}
+
+fn find_file(core: &Core, space: &Option<String>, id: &str) -> Result<FileEntry, String> {
+    let mut todo: Vec<Option<String>> = vec![None];
+    while let Some(folder) = todo.pop() {
+        let listing = core.files(space.clone(), folder).map_err(|e| e.to_string())?;
+        for entry in listing.entries {
+            if entry.id == id {
+                return Ok(entry);
+            }
+            if entry.kind == FileKind::Folder {
+                todo.push(Some(entry.id));
+            }
+        }
+    }
+    Err(format!("no file with the id {id}"))
 }
 
 /// Shows the away message, or switches it on (from now on, with the given text; the subject

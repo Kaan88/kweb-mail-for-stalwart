@@ -37,6 +37,19 @@ const CLIENT_NAME: &str = "kweb mail";
 /// Mail, calendars and contacts for JMAP; offline_access for the refresh token. Nothing administrative.
 const SCOPES: &str = "openid offline_access urn:ietf:params:oauth:scope:mail \
                       urn:ietf:params:oauth:scope:calendars urn:ietf:params:oauth:scope:contacts";
+/// File storage. Asked for only where the server offers it: without it the session of a
+/// Stalwart server lists no file storage at all, and a server that does not know the scope
+/// must not be asked for it.
+const FILES_SCOPE: &str = "urn:ietf:params:oauth:scope:files";
+
+/// The scopes to ask this server for.
+fn scopes_for(meta: &Metadata) -> String {
+    if meta.scopes_supported.iter().any(|s| s == FILES_SCOPE) {
+        format!("{SCOPES} {FILES_SCOPE}")
+    } else {
+        SCOPES.to_string()
+    }
+}
 /// How long a host should wait for the browser to come back before giving up.
 pub const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -48,6 +61,10 @@ pub struct OAuthClient {
     pub token_endpoint: String,
     /// Empty when the server has none.
     pub revocation_endpoint: String,
+    /// The scopes the client was registered with. Empty in what an older version stored, which
+    /// then registers again at the next sign-in.
+    #[serde(default)]
+    pub scope: String,
 }
 
 /// A sign-in that has been started in the browser and not finished yet.
@@ -89,6 +106,8 @@ struct Metadata {
     token_endpoint: String,
     registration_endpoint: Option<String>,
     revocation_endpoint: Option<String>,
+    #[serde(default)]
+    scopes_supported: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -191,7 +210,7 @@ fn registered_redirect(redirect: &Url) -> String {
     }
 }
 
-async fn register(meta: &Metadata, redirect: &str) -> Result<String> {
+async fn register(meta: &Metadata, redirect: &str, scope: &str) -> Result<String> {
     let endpoint = meta
         .registration_endpoint
         .as_deref()
@@ -202,7 +221,7 @@ async fn register(meta: &Metadata, redirect: &str) -> Result<String> {
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
-        "scope": SCOPES,
+        "scope": scope,
     });
     let resp = http()?
         .post(endpoint)
@@ -283,17 +302,23 @@ pub async fn begin_sign_in(
     let meta = discover(server_url).await?;
     check_endpoints(&meta)?;
 
-    let reusable = previous
-        .filter(|p| p.server_url == server_url && p.token_endpoint == meta.token_endpoint && !p.client_id.is_empty());
+    let scope = scopes_for(&meta);
+    let reusable = previous.filter(|p| {
+        p.server_url == server_url
+            && p.token_endpoint == meta.token_endpoint
+            && !p.client_id.is_empty()
+            && p.scope == scope
+    });
     let client_id = match reusable {
         Some(p) => p.client_id.clone(),
-        None => register(&meta, &registered_redirect(&redirect)).await?,
+        None => register(&meta, &registered_redirect(&redirect), &scope).await?,
     };
     let client = OAuthClient {
         server_url: server_url.to_string(),
         client_id,
         token_endpoint: meta.token_endpoint.clone(),
         revocation_endpoint: meta.revocation_endpoint.clone().unwrap_or_default(),
+        scope: scope.clone(),
     };
 
     let verifier = random_url_safe(32)?;
@@ -306,7 +331,7 @@ pub async fn begin_sign_in(
         .append_pair("response_type", "code")
         .append_pair("client_id", &client.client_id)
         .append_pair("redirect_uri", redirect.as_str())
-        .append_pair("scope", SCOPES)
+        .append_pair("scope", &scope)
         .append_pair("state", &state)
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256");

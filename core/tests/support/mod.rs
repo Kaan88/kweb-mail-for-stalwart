@@ -9,6 +9,7 @@
 mod account;
 mod ai;
 mod calendar;
+mod files;
 mod oauth;
 mod state;
 
@@ -31,13 +32,19 @@ use tokio::task::JoinHandle;
 
 use account::Account;
 use calendar::Calendar;
+use files::Files;
 use oauth::Oauth;
 use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 // Only the assistant tests use the mock AI service.
 #[allow(unused_imports)]
 pub use ai::{MockAi, ModelSpec, Models, Script};
+#[allow(unused_imports)]
+pub use files::{EMPTY_SHARE_ACCOUNT, MAIL_ONLY_ACCOUNT, SHARED_ACCOUNT};
 pub use state::{MailView, Refusal, Submission, ACCOUNT_ID, USERNAME};
+
+/// The file storage capability.
+const FILES_URN: &str = "urn:ietf:params:jmap:filenode";
 
 /// Ids of the seeded mailboxes.
 pub const INBOX_ID: &str = "mb1";
@@ -56,12 +63,16 @@ struct Shared {
     /// See [`MockServer::set_calendar_refused`].
     calendar_refused: AtomicBool,
     oauth: Mutex<Oauth>,
+    /// File storage: the user's own and the spaces other accounts share.
+    files: Mutex<Files>,
     /// Identities, address book and quotas.
     account: Mutex<Account>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
     upload_limit: AtomicU64,
     /// See [`MockServer::lose_next_submission_answer`].
     lose_submission_answer: AtomicBool,
+    /// The well-known URL answers with a redirect to the session, as Stalwart does.
+    redirect_session: AtomicBool,
     down: AtomicBool,
     /// Requests by path ("/jmap") and, for JMAP calls, by method name ("Email/get").
     counts: Mutex<HashMap<String, usize>>,
@@ -104,9 +115,11 @@ impl MockServer {
             calendar_delay_ms: AtomicU64::new(0),
             calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
+            files: Mutex::new(Files::default()),
             account: Mutex::new(Account::default()),
             upload_limit: AtomicU64::new(50_000_000),
             lose_submission_answer: AtomicBool::new(false),
+            redirect_session: AtomicBool::new(false),
             down: AtomicBool::new(false),
             counts: Mutex::new(HashMap::new()),
             open_streams: AtomicUsize::new(0),
@@ -118,9 +131,10 @@ impl MockServer {
             .route("/authorize", get(authorize_http))
             .route("/token", post(token))
             .route("/revoke", post(revoke))
-            .route("/.well-known/jmap", get(session))
+            .route("/.well-known/jmap", get(well_known))
+            .route("/jmap/session", get(session))
             .route("/jmap", post(jmap))
-            .route("/jmap/upload/{account}", post(upload))
+            .route("/jmap/upload/{account}", post(upload).layer(axum::extract::DefaultBodyLimit::disable()))
             .route("/jmap/download/{account}/{blob}/{name}", get(download))
             .route("/eventsource", get(eventsource))
             .layer(middleware::from_fn_with_state(shared.clone(), gate))
@@ -409,6 +423,90 @@ impl MockServer {
     /// endpoint answers 413 above it). Set it before a client connects.
     pub fn set_upload_limit(&self, bytes: u64) {
         self.shared.upload_limit.store(bytes, Ordering::SeqCst);
+    }
+
+    // ---- file storage ----------------------------------------------------------------
+
+    /// Turns on the file storage: the user's own space (empty) and the accounts of
+    /// [`SHARED_ACCOUNT`] (shares the folder `Shared`, id 1, with `ReadOnly` 2 and `hello.txt`
+    /// 3), [`EMPTY_SHARE_ACCOUNT`] and [`MAIL_ONLY_ACCOUNT`]. Do it before a client connects.
+    pub fn enable_files(&self) {
+        self.shared.files.lock().unwrap().enable();
+        self.shared.redirect_session.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the user may make things at the top level of their own space (the session says).
+    pub fn set_files_top_level_allowed(&self, allowed: bool) {
+        self.shared.files.lock().unwrap().set_own_may_top(allowed);
+    }
+
+    /// A folder. `rights` of `None`: all (own space) or read, add and change content (shared).
+    pub fn add_folder(
+        &self,
+        account: &str,
+        parent: Option<&str>,
+        name: &str,
+        rights: Option<&[&'static str]>,
+    ) -> String {
+        self.shared.files.lock().unwrap().add_folder(account, parent, name, rights)
+    }
+
+    /// A file with this content.
+    pub fn add_file(&self, account: &str, parent: Option<&str>, name: &str, bytes: &[u8], media_type: &str) -> String {
+        self.shared.files.lock().unwrap().add_file(account, parent, name, bytes, media_type)
+    }
+
+    /// The rights of a folder, by their JMAP names (`mayRead`, `mayAddChildren`, ...).
+    pub fn set_folder_rights(&self, account: &str, id: &str, rights: &[&'static str]) {
+        self.shared.files.lock().unwrap().set_rights(account, id, rights);
+    }
+
+    /// Sets the `modified` time of a node, as an RFC 3339 UTC string.
+    pub fn set_file_modified(&self, account: &str, id: &str, at: &str) {
+        self.shared.files.lock().unwrap().set_modified(account, id, at);
+    }
+
+    /// Removes a node and what is under it, as another client would.
+    pub fn remove_file_node(&self, account: &str, id: &str) {
+        self.shared.files.lock().unwrap().remove(account, id);
+    }
+
+    /// Every node of the account (`id`, `@type`, `parentId`, `name`, and for a file `size`,
+    /// `blobId`, `mediaType`; for a folder `myRights`).
+    pub fn file_nodes(&self, account: &str) -> Vec<Value> {
+        self.shared.files.lock().unwrap().dump(account)
+    }
+
+    /// The content of a file as the server holds it.
+    pub fn file_content(&self, account: &str, id: &str) -> Option<Vec<u8>> {
+        self.shared.files.lock().unwrap().content(account, id)
+    }
+
+    /// `(account named in the URL, bytes)` of every upload the server received.
+    pub fn file_uploads(&self) -> Vec<(String, usize)> {
+        self.shared.files.lock().unwrap().uploads.clone()
+    }
+
+    /// The account named in the URL of every download the server received.
+    pub fn file_downloads(&self) -> Vec<String> {
+        self.shared.files.lock().unwrap().downloads.clone()
+    }
+
+    /// The next upload is refused with HTTP 429 and this `Retry-After` (seconds).
+    pub fn refuse_next_upload_with_429(&self, retry_after_secs: u64) {
+        self.shared.files.lock().unwrap().upload_429 = Some(retry_after_secs);
+    }
+
+    /// The next create, update or destroy of a node fails with this set error.
+    pub fn fail_next_file_set(&self, kind: &'static str, description: &str) {
+        self.shared.files.lock().unwrap().next_set_error = Some((kind, description.to_string()));
+    }
+
+    /// The most ids a `FileNode/get` takes (the session says it) and a `FileNode/query` gives.
+    /// Set it before a client connects.
+    pub fn set_file_limits(&self, get_max: usize, query_max: usize) {
+        let mut files = self.shared.files.lock().unwrap();
+        (files.get_max, files.query_max) = (get_max, query_max);
     }
 
     /// Adds a JSContact card to the address book and returns its id.
@@ -749,6 +847,18 @@ async fn revoke(State(s): State<Arc<Shared>>, body: Bytes) -> Response {
     StatusCode::OK.into_response()
 }
 
+/// The session, or (once file storage is enabled) a redirect to its path, as Stalwart does.
+async fn well_known(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    if !s.redirect_session.load(Ordering::SeqCst) {
+        return session(State(s), headers).await;
+    }
+    Response::builder()
+        .status(StatusCode::TEMPORARY_REDIRECT)
+        .header(axum::http::header::LOCATION, "/jmap/session")
+        .body(Body::empty())
+        .unwrap()
+}
+
 async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if let Err(r) = check_bearer(&s, &headers) {
         return r;
@@ -795,18 +905,35 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
         }
     }
     capabilities[core]["maxSizeUpload"] = json!(upload_limit);
+    let mut accounts = json!({
+        ACCOUNT_ID: {
+            "name": USERNAME,
+            "isPersonal": true,
+            "isReadOnly": false,
+            "accountCapabilities": account_capabilities,
+        }
+    });
+    {
+        let files = s.files.lock().unwrap();
+        if files.enabled {
+            capabilities[FILES_URN] = json!({});
+            capabilities[core]["maxObjectsInGet"] = json!(files.get_max);
+            // Like the real server: the limits are in the account's capability.
+            accounts[ACCOUNT_ID]["accountCapabilities"][FILES_URN] = json!({
+                "maxFileNodeDepth": 64, "maxSizeFileNodeName": 255, "forbiddenNameChars": "/<>:\"\\|?*",
+                "mayCreateTopLevelFileNode": files.own_may_top(), "caseInsensitiveNames": false,
+            });
+            primary[FILES_URN] = json!(ACCOUNT_ID);
+            for (id, account) in files.session_accounts() {
+                accounts[id] = account;
+            }
+        }
+    }
     json_response(
         StatusCode::OK,
         json!({
             "capabilities": capabilities,
-            "accounts": {
-                ACCOUNT_ID: {
-                    "name": USERNAME,
-                    "isPersonal": true,
-                    "isReadOnly": false,
-                    "accountCapabilities": account_capabilities,
-                }
-            },
+            "accounts": accounts,
             "primaryAccounts": primary,
             "username": USERNAME,
             "apiUrl": format!("{b}/jmap"),
@@ -827,7 +954,19 @@ async fn download(
     if let Err(r) = check_bearer(&s, &headers) {
         return r;
     }
-    let found = if account == ACCOUNT_ID { s.mail().blob(&blob) } else { None };
+    // A blob id does not name its account, and the server takes any account of the session.
+    let found = {
+        let mut files = s.files.lock().unwrap();
+        files.downloads.push(account.clone());
+        let known = account == ACCOUNT_ID || files.knows(&account);
+        let from_files = files.blob(&blob);
+        drop(files);
+        if known {
+            from_files.or_else(|| s.mail().blob(&blob))
+        } else {
+            None
+        }
+    };
     match found {
         Some((mime_type, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, mime_type)], bytes).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
@@ -844,8 +983,22 @@ async fn upload(
     if let Err(r) = check_bearer(&s, &headers) {
         return r;
     }
+    s.files.lock().unwrap().uploads.push((account.clone(), body.len()));
     if account != ACCOUNT_ID {
-        return StatusCode::NOT_FOUND.into_response();
+        // As the real server: only the user's own account takes an upload.
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "invalidParameters",
+            "One or multiple parameters could not be parsed.",
+        );
+    }
+    if let Some(retry_after) = s.files.lock().unwrap().upload_429.take() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after.to_string())],
+            "You have exceeded the blob upload quota.",
+        )
+            .into_response();
     }
     if body.len() as u64 > s.upload_limit.load(Ordering::SeqCst) {
         return problem(StatusCode::PAYLOAD_TOO_LARGE, "limit", "the upload is larger than maxSizeUpload");
@@ -924,6 +1077,10 @@ fn call_method(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Valu
         | "VacationResponse/get"
         | "VacationResponse/set"
         | "Quota/get" => s.account.lock().unwrap().call(name, args).map(one),
+        "FileNode/get" | "FileNode/query" | "FileNode/set" => {
+            let mail_blob = |id: &str| s.mail().blob(id);
+            s.files.lock().unwrap().call(name, args, &mail_blob).map(one)
+        }
         "EmailSubmission/query" => {
             let wanted: Vec<&str> =
                 args["filter"]["emailIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();

@@ -26,8 +26,8 @@ use crate::{
     model::{
         Account, Action, Address, AddressBook, Agenda, AiModelList, AiPreview, AiProvider, AiSettings, AiTask,
         Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList, Draft, DraftKind,
-        EventDetail, EventInput, Identity, ListFilter, Mailbox, MessageBody, MessageHeader, PendingSend, Quota,
-        Reminder, SearchResult, ThreadRow,
+        EventDetail, EventInput, FileEntry, FileListing, FileSpace, Identity, ListFilter, Mailbox, MessageBody,
+        MessageHeader, PendingSend, Quota, Reminder, SearchResult, ThreadRow,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -393,18 +393,30 @@ impl Core {
     /// appears only when complete: it is written next to it under a name of its own and
     /// renamed, so two downloads of the same file at once do not disturb each other.
     pub fn download_blob(&self, blob_id: String, dest_path: String) -> Result<()> {
+        self.download_to_path(None, &blob_id, &dest_path)
+    }
+}
+
+impl Core {
+    /// Streams a blob to `dest_path` through a part file. `space` is `None` for mail and
+    /// `Some(account)` for a file space (`Some(None)`: the user's own). The part file is made
+    /// anew for each try, so a retry after a 401 starts from an empty file.
+    fn download_to_path(&self, space: Option<Option<&str>>, blob_id: &str, dest_path: &str) -> Result<()> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         self.account_id()?;
         let part = format!("{dest_path}.{}-{}.part", std::process::id(), SERIAL.fetch_add(1, Ordering::Relaxed));
-        let (blob_id, part_path) = (&blob_id, &part);
+        let part_path = &part;
         let done = self
             .with_connection(|conn| async move {
-                // Made anew for each try, so a retry after a 401 starts from an empty file.
+                let url_account = match space {
+                    None => conn.account_id(),
+                    Some(account) => conn.file_download_account(account)?,
+                };
                 let mut file =
                     fs::File::create(part_path).map_err(|e| Error::store(format!("saving the file: {e}")))?;
-                conn.download_to(blob_id, &mut file).await
+                conn.download_from(&url_account, blob_id, &mut file).await
             })
-            .and_then(|()| fs::rename(&part, &dest_path).map_err(|e| Error::store(format!("saving the file: {e}"))));
+            .and_then(|()| fs::rename(&part, dest_path).map_err(|e| Error::store(format!("saving the file: {e}"))));
         if done.is_err() {
             let _ = fs::remove_file(&part);
         }
@@ -1209,5 +1221,101 @@ mod tests {
         assert!(matches!(core.check_once(Shade::Unknown), Err(Error::SignInNeeded { .. })));
         assert!(matches!(core.finish_sign_in(), Err(Error::Invalid { .. })));
         core.sign_out().unwrap();
+    }
+}
+
+// ---- M7: files ----
+
+#[uniffi::export]
+impl Core {
+    /// The places that hold files: the user's own storage first, then one for every other user
+    /// who shared a folder. Empty when the server has no file storage. Asks the server.
+    pub fn file_spaces(&self) -> Result<Vec<FileSpace>> {
+        self.with_connection(|conn| async move { conn.file_spaces().await })
+    }
+
+    /// What is in the folder `folder_id` of the space `account` (`None`: the user's own);
+    /// `folder_id` `None` is the top level. Always from the server: files are not cached.
+    /// A folder that is gone is `Error::Invalid`.
+    pub fn files(&self, account: Option<String>, folder_id: Option<String>) -> Result<FileListing> {
+        let (account, folder_id) = (account.as_deref(), folder_id.as_deref());
+        self.with_connection(|conn| async move { conn.file_list(account, folder_id).await })
+    }
+
+    /// Files and folders of the space whose name or content has `text`, at most 200, best
+    /// match first as the server orders them. A blank text is an empty list.
+    pub fn file_search(&self, account: Option<String>, text: String) -> Result<Vec<FileEntry>> {
+        let (account, text) = (account.as_deref(), text.as_str());
+        self.with_connection(|conn| async move { conn.file_search(account, text).await })
+    }
+
+    /// Makes a folder named `name` in `parent_id` (`None`: the top level). A name the server
+    /// does not take, a name that is already there, or a place the user may not add to is
+    /// `Error::Invalid` with words for the user.
+    pub fn file_create_folder(
+        &self,
+        account: Option<String>,
+        parent_id: Option<String>,
+        name: String,
+    ) -> Result<FileEntry> {
+        let (account, parent_id, name) = (account.as_deref(), parent_id.as_deref(), name.as_str());
+        let done = std::sync::Mutex::new(None);
+        let done = &done;
+        self.with_connection(|conn| async move { conn.file_create_folder(account, parent_id, name, done).await })
+    }
+
+    /// Uploads the file at `source_path` (read as a stream, never whole into memory) and puts
+    /// it into `parent_id` as `name` with `media_type` (empty: `application/octet-stream`).
+    /// When a file of that name is already there: with `replace` its content is replaced (and
+    /// its changed-time set to now), without it this is `Error::Invalid` and nothing is
+    /// changed; a folder of that name is always `Error::Invalid`. A file larger than the server
+    /// takes is `Error::Invalid` before anything is sent; a full quota is `Error::Invalid`;
+    /// "no more uploads for now" (the server's upload budget) is `Error::Temporary` and says
+    /// for how long. The source file is left as it is.
+    pub fn file_upload(
+        &self,
+        account: Option<String>,
+        parent_id: Option<String>,
+        name: String,
+        media_type: String,
+        source_path: String,
+        replace: bool,
+    ) -> Result<FileEntry> {
+        let (account, parent_id) = (account.as_deref(), parent_id.as_deref());
+        let (name, media_type, path) = (name.as_str(), media_type.as_str(), std::path::Path::new(&source_path));
+        // The blob made by a first run is kept, so a retry after a 401 does not send the file again.
+        // What a first run uploaded or made is kept for the run after a 401.
+        let resume = std::sync::Mutex::new(crate::jmap::UploadResume::default());
+        let resume = &resume;
+        self.with_connection(|conn| async move {
+            conn.file_upload(account, parent_id, (name, media_type), path, replace, resume).await
+        })
+    }
+
+    /// Gives the file or folder `id` the name `name`. Errors as [`Core::file_create_folder`].
+    pub fn file_rename(&self, account: Option<String>, id: String, name: String) -> Result<()> {
+        let (account, id, name) = (account.as_deref(), id.as_str(), name.as_str());
+        self.with_connection(|conn| async move { conn.file_rename(account, id, name).await })
+    }
+
+    /// Moves the file or folder `id` into `parent_id` (`None`: the top level) of the same
+    /// space. Into itself or a folder inside itself, or onto a name that is already there, is
+    /// `Error::Invalid`.
+    pub fn file_move(&self, account: Option<String>, id: String, parent_id: Option<String>) -> Result<()> {
+        let (account, id, parent_id) = (account.as_deref(), id.as_str(), parent_id.as_deref());
+        self.with_connection(|conn| async move { conn.file_move(account, id, parent_id).await })
+    }
+
+    /// Deletes the file, or the folder with everything in it. For good: the server has no
+    /// bin. Something that is already gone is not an error.
+    pub fn file_delete(&self, account: Option<String>, id: String) -> Result<()> {
+        let (account, id) = (account.as_deref(), id.as_str());
+        self.with_connection(|conn| async move { conn.file_delete(account, id).await })
+    }
+
+    /// Downloads the content `blob_id` of a file in the space `account` to `dest_path`, as
+    /// [`Core::download_blob`] does (a stream to a part file beside it, renamed when complete).
+    pub fn file_download(&self, account: Option<String>, blob_id: String, dest_path: String) -> Result<()> {
+        self.download_to_path(Some(account.as_deref()), &blob_id, &dest_path)
     }
 }

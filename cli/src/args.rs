@@ -25,6 +25,18 @@ Usage:
   kweb identities             list the addresses you can send as
   kweb quota                  show storage use and limits
   kweb contacts [query]       list contacts, or those matching the words of the query
+  kweb files [ls] [folder-id] list the files and folders in a folder (default: the top level)
+  kweb files spaces           list the places that hold files: your own and shared ones
+  kweb files put <local-path> [folder-id] [--replace]
+                              upload a file; --replace gives an existing file of that name
+                              new content (otherwise that is an error)
+  kweb files get <file-id> <local-path>
+                              download a file
+  kweb files mkdir <name> [folder-id]
+                              make a folder
+  kweb files rm <id>          delete a file, or a folder with everything in it, for good
+                              every files command takes --space <account-id> to work in a
+                              shared space (see files spaces) instead of your own
   kweb away                   show the away message
   kweb away on <text>         switch it on from now until switched off, with this text
   kweb away off               switch it off
@@ -75,6 +87,7 @@ pub enum Command {
     Identities,
     Quota,
     Contacts { query: String },
+    Files { space: Option<String>, what: Files },
     Away(Away),
     Send { to: String, subject: String, text: String },
     Ai(Ai),
@@ -101,6 +114,17 @@ pub enum Ai {
     },
 }
 
+/// What `kweb files` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Files {
+    List { folder: Option<String> },
+    Spaces,
+    Put { path: String, folder: Option<String>, replace: bool },
+    Get { id: String, path: String },
+    Mkdir { name: String, folder: Option<String> },
+    Rm { id: String },
+}
+
 /// What `kweb away` does.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Away {
@@ -125,6 +149,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
         "contacts" => Ok(Command::Contacts { query: rest.join(" ") }),
+        "files" => files(rest),
         "away" => away(rest),
         "send" => send(rest),
         "ai" => ai(rest).map(Command::Ai),
@@ -163,6 +188,60 @@ fn search(rest: &[String]) -> Result<Command, String> {
         return Err("search needs a <query>".into());
     }
     Ok(Command::Search { query })
+}
+
+/// `--space <account-id>` and `--replace` may stand anywhere; the rest are the words of the
+/// command. A first word that is not a command name is the folder to list.
+fn files(rest: &[String]) -> Result<Command, String> {
+    let (mut space, mut replace) = (None, false);
+    let mut words: Vec<&str> = Vec::new();
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--space" {
+            space = Some(args.next().ok_or("--space needs an account id")?.clone());
+        } else if let Some(value) = arg.strip_prefix("--space=") {
+            space = Some(value.to_string());
+        } else if arg == "--replace" {
+            replace = true;
+        } else if arg.starts_with("--") {
+            return Err(format!("unknown option '{arg}'"));
+        } else {
+            words.push(arg);
+        }
+    }
+    if space.as_deref().is_some_and(str::is_empty) {
+        return Err("--space needs an account id".into());
+    }
+    let too_many = |extra: &str| Err(format!("unexpected argument '{extra}'"));
+    let what = match words.as_slice() {
+        [] => Files::List { folder: None },
+        // The explicit form, for a folder whose id is also a command word.
+        ["ls"] => Files::List { folder: None },
+        ["ls", folder] => Files::List { folder: Some(folder.to_string()) },
+        ["ls", _, extra, ..] => return too_many(extra),
+        ["spaces"] => Files::Spaces,
+        ["spaces", extra, ..] => return too_many(extra),
+        ["put"] => return Err("files put needs a <local-path>".into()),
+        ["put", path] => Files::Put { path: path.to_string(), folder: None, replace },
+        ["put", path, folder] => Files::Put { path: path.to_string(), folder: Some(folder.to_string()), replace },
+        ["put", _, _, extra, ..] => return too_many(extra),
+        ["get", id, path] => Files::Get { id: id.to_string(), path: path.to_string() },
+        ["get", _, _, extra, ..] => return too_many(extra),
+        ["get", ..] => return Err("files get needs a <file-id> and a <local-path>".into()),
+        ["mkdir"] => return Err("files mkdir needs a <name>".into()),
+        ["mkdir", name] => Files::Mkdir { name: name.to_string(), folder: None },
+        ["mkdir", name, folder] => Files::Mkdir { name: name.to_string(), folder: Some(folder.to_string()) },
+        ["mkdir", _, _, extra, ..] => return too_many(extra),
+        ["rm", id] => Files::Rm { id: id.to_string() },
+        ["rm"] => return Err("files rm needs an <id>".into()),
+        ["rm", _, extra, ..] => return too_many(extra),
+        [folder] => Files::List { folder: Some(folder.to_string()) },
+        [_, extra, ..] => return too_many(extra),
+    };
+    if replace && !matches!(what, Files::Put { .. }) {
+        return Err("--replace only goes with files put".into());
+    }
+    Ok(Command::Files { space, what })
 }
 
 fn away(rest: &[String]) -> Result<Command, String> {
@@ -438,6 +517,30 @@ mod tests {
         assert_eq!(p(&["contacts"]), Ok(Command::Contacts { query: String::new() }));
         assert_eq!(p(&["contacts", "ann"]), Ok(Command::Contacts { query: "ann".into() }));
         assert_eq!(p(&["contacts", "ann", "lee"]), Ok(Command::Contacts { query: "ann lee".into() }));
+    }
+
+    #[test]
+    fn files_commands() {
+        let f = |space: Option<&str>, what| Ok(Command::Files { space: space.map(str::to_string), what });
+        assert_eq!(p(&["files"]), f(None, Files::List { folder: None }));
+        assert_eq!(p(&["files", "d1"]), f(None, Files::List { folder: Some("d1".into()) }));
+        assert_eq!(p(&["files", "spaces"]), f(None, Files::Spaces));
+        // A folder whose id is a command word is listed with `ls`.
+        assert_eq!(p(&["files", "ls", "rm"]), f(None, Files::List { folder: Some("rm".into()) }));
+        assert_eq!(p(&["files", "ls", "get"]), f(None, Files::List { folder: Some("get".into()) }));
+        assert_eq!(p(&["files", "ls"]), f(None, Files::List { folder: None }));
+        assert!(p(&["files", "ls", "a", "b"]).is_err());
+        assert_eq!(p(&["files", "--space", "x", "d1"]), f(Some("x"), Files::List { folder: Some("d1".into()) }));
+        assert_eq!(
+            p(&["files", "put", "a.txt", "d1", "--replace", "--space=x"]),
+            f(Some("x"), Files::Put { path: "a.txt".into(), folder: Some("d1".into()), replace: true })
+        );
+        assert_eq!(p(&["files", "get", "f1", "out"]), f(None, Files::Get { id: "f1".into(), path: "out".into() }));
+        assert_eq!(p(&["files", "mkdir", "N"]), f(None, Files::Mkdir { name: "N".into(), folder: None }));
+        assert_eq!(p(&["files", "rm", "f1"]), f(None, Files::Rm { id: "f1".into() }));
+        assert!(p(&["files", "put"]).is_err() && p(&["files", "rm"]).is_err() && p(&["files", "get", "f1"]).is_err());
+        assert!(p(&["files", "--space"]).is_err() && p(&["files", "--bogus"]).is_err());
+        assert!(p(&["files", "rm", "f1", "--replace"]).is_err());
     }
 
     #[test]

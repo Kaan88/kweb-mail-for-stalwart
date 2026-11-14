@@ -571,6 +571,69 @@ pub struct AiPreview {
     pub is_cut: bool,
 }
 
+/// A place that holds files: the user's own file storage, or the folders another user shared.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FileSpace {
+    /// `None` is the user's own storage; otherwise the JMAP account id of the owner. Passed
+    /// back as `account` to every `file_` function. Ids of files are only unique within one space.
+    pub account_id: Option<String>,
+    /// The owner's address for a shared space; empty for the user's own.
+    pub name: String,
+    /// A file or folder may be created at the top level (never in a shared space).
+    pub may_add_at_top: bool,
+    /// The largest file the server takes in one upload, in bytes.
+    pub max_upload: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FileKind {
+    Folder,
+    File,
+    /// Something the app cannot open (a link). Shown, with nothing to do on it but delete.
+    Other,
+}
+
+/// A file or a folder on the server.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FileEntry {
+    /// The space it is in, as in [`FileSpace::account_id`].
+    pub account_id: Option<String>,
+    pub id: String,
+    /// `None` at the top level.
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub kind: FileKind,
+    /// Bytes; 0 for a folder.
+    pub size: u64,
+    /// As the server stores it; empty for a folder.
+    pub media_type: String,
+    /// What to download; `None` for a folder.
+    pub blob_id: Option<String>,
+    /// When the content last changed, Unix seconds; `None` when the server does not say.
+    pub modified: Option<i64>,
+    /// A folder: files and folders may be created in it. A file: false.
+    pub may_add: bool,
+    /// May be renamed or moved. A file takes this from its folder.
+    pub may_rename: bool,
+    pub may_delete: bool,
+    /// A file: its content may be replaced. A folder: false.
+    pub may_replace: bool,
+}
+
+/// What is in a folder.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FileListing {
+    /// The folder itself; `None` for the top level of the space.
+    pub folder: Option<FileEntry>,
+    /// The folders from the top level down to `folder`, for the path the user sees and for
+    /// going up. Empty at the top level.
+    pub path: Vec<FileEntry>,
+    /// Folders first, then files, each by name without regard to case.
+    pub entries: Vec<FileEntry>,
+    /// A file or folder may be created here.
+    pub may_add: bool,
+}
+
 /// A calendar or task reminder the server fired. Times stay as the server gives them: the
 /// host has the time zone database and the user's locale, so it does the formatting.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

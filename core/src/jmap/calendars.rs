@@ -221,7 +221,7 @@ impl Connection {
 
     /// The session as JSON. Stalwart answers the well-known URL with a redirect, which is
     /// followed only within the same server, so the token goes nowhere else.
-    async fn session_json(&self) -> Result<Value> {
+    pub(super) async fn session_json(&self) -> Result<Value> {
         let failed = |e: &dyn std::fmt::Display| Error::temporary(format!("session: {e}"));
         let mut url = url::Url::parse(self.client.session_url()).map_err(|e| failed(&e))?;
         for _ in 0..4 {

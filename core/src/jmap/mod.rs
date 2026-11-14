@@ -13,6 +13,7 @@ mod clock;
 mod contacts;
 mod convert;
 mod errors;
+mod files;
 mod jscal;
 mod jscontact;
 mod recur;
@@ -45,6 +46,7 @@ use convert::{
 };
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_unauthorized};
+pub use files::UploadResume;
 pub use jscal::{check_span, sort as sort_agenda};
 pub use send::{CopyState, HeaderIds, Uploaded};
 
@@ -108,6 +110,8 @@ pub struct Connection {
     account_id: String,
     /// The longest span the server expands, in seconds; read from the session when first needed.
     calendar_span: tokio::sync::OnceCell<u64>,
+    /// The raw session, read once for the limits of the file storage.
+    files_session: tokio::sync::OnceCell<serde_json::Value>,
 }
 
 impl Connection {
@@ -132,7 +136,14 @@ impl Connection {
         let http = plain_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
         let downloads =
             download_http().map_err(|e| Error::temporary(format!("the HTTP client could not be built: {e}")))?;
-        Ok(Connection { client, http, downloads, account_id, calendar_span: tokio::sync::OnceCell::new() })
+        Ok(Connection {
+            client,
+            http,
+            downloads,
+            account_id,
+            calendar_span: tokio::sync::OnceCell::new(),
+            files_session: tokio::sync::OnceCell::new(),
+        })
     }
 
     /// The primary mail account.
@@ -303,11 +314,22 @@ impl Connection {
     /// transfer, only on a silence in it. On an error `file` is left as far as it got: the
     /// caller owns it.
     pub async fn download_to(&self, blob_id: &str, file: &mut dyn Write) -> Result<()> {
+        self.download_from(&self.account_id, blob_id, file).await
+    }
+
+    /// Like [`Connection::download_to`], for a blob of the account `account` (the one the URL
+    /// names: a file in a shared space).
+    pub async fn download_from(&self, account: &str, blob_id: &str, file: &mut dyn Write) -> Result<()> {
         let failed = |e: &dyn std::fmt::Display| Error::temporary(format!("download: {e}"));
         let mut headers = self.client.headers().clone();
         headers.remove(reqwest::header::CONTENT_TYPE);
-        let mut response =
-            self.downloads.get(self.download_url(blob_id)).headers(headers).send().await.map_err(|e| failed(&e))?;
+        let mut response = self
+            .downloads
+            .get(self.download_url(account, blob_id))
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| failed(&e))?;
         match response.status().as_u16() {
             200..=299 => {}
             401 => return Err(errors::unauthorized("download")),
@@ -321,13 +343,13 @@ impl Connection {
     }
 
     /// The session's download URL with its placeholders filled in, as jmap-client does it.
-    fn download_url(&self, blob_id: &str) -> String {
+    fn download_url(&self, account: &str, blob_id: &str) -> String {
         use jmap_client::{blob::URLParameter, core::session::URLPart};
         let mut url = String::new();
         for part in self.client.download_url() {
             match part {
                 URLPart::Value(text) => url.push_str(text),
-                URLPart::Parameter(URLParameter::AccountId) => url.push_str(&self.account_id),
+                URLPart::Parameter(URLParameter::AccountId) => url.push_str(account),
                 URLPart::Parameter(URLParameter::BlobId) => url.push_str(blob_id),
                 URLPart::Parameter(URLParameter::Name) => url.push_str("none"),
                 URLPart::Parameter(URLParameter::Type) => url.push_str("application/octet-stream"),

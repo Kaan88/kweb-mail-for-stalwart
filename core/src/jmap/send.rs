@@ -70,6 +70,25 @@ impl Connection {
     /// a method such as `EmailSubmission/set` may add responses of its own (`Email/set`). A
     /// method that failed as a whole is an error here.
     pub(super) async fn call(&self, capabilities: &[&str], calls: &[(&str, Value)]) -> Result<Vec<(String, Value)>> {
+        self.send_calls(capabilities, calls, false).await
+    }
+
+    /// Like [`Connection::call`], but a method that failed is not an error here: its answer is
+    /// among the responses, under the name `error`, for a caller that has a use for the kind.
+    pub(super) async fn call_keeping_errors(
+        &self,
+        capabilities: &[&str],
+        calls: &[(&str, Value)],
+    ) -> Result<Vec<(String, Value)>> {
+        self.send_calls(capabilities, calls, true).await
+    }
+
+    async fn send_calls(
+        &self,
+        capabilities: &[&str],
+        calls: &[(&str, Value)],
+        keep_errors: bool,
+    ) -> Result<Vec<(String, Value)>> {
         let what = calls.first().map_or("request", |(name, _)| name);
         let mut using = vec![CORE_CAPABILITY];
         using.extend_from_slice(capabilities);
@@ -86,7 +105,7 @@ impl Connection {
             .map_err(|e| Error::temporary(format!("{what}: {e}")))?;
         let status = response.status().as_u16();
         let bytes = response.bytes().await.map_err(|e| Error::temporary(format!("{what}: {e}")))?;
-        read_responses(what, status, &bytes)
+        read_responses(what, status, &bytes, keep_errors)
     }
 
     /// The sender identities, in the server's order.
@@ -137,12 +156,17 @@ impl Connection {
 
     /// The session's upload URL with the account filled in.
     fn upload_url(&self) -> String {
+        self.upload_url_for(&self.account_id)
+    }
+
+    /// The session's upload URL for the account `account`.
+    pub(super) fn upload_url_for(&self, account: &str) -> String {
         use jmap_client::{blob::URLParameter, core::session::URLPart};
         let mut url = String::new();
         for part in self.client.upload_url() {
             match part {
                 URLPart::Value(text) => url.push_str(text),
-                URLPart::Parameter(URLParameter::AccountId) => url.push_str(&self.account_id),
+                URLPart::Parameter(URLParameter::AccountId) => url.push_str(account),
                 URLPart::Parameter(_) => {}
             }
         }
@@ -270,7 +294,7 @@ impl Connection {
 // ---- reading answers ----
 
 /// The responses of a request, or the reason it failed.
-fn read_responses(what: &str, status: u16, body: &[u8]) -> Result<Vec<(String, Value)>> {
+fn read_responses(what: &str, status: u16, body: &[u8], keep_errors: bool) -> Result<Vec<(String, Value)>> {
     if status == 401 {
         return Err(unauthorized(format!("{what}: HTTP {status}")));
     }
@@ -282,7 +306,7 @@ fn read_responses(what: &str, status: u16, body: &[u8]) -> Result<Vec<(String, V
     let mut out = Vec::new();
     for call in value["methodResponses"].as_array().into_iter().flatten() {
         let (name, args) = (call[0].as_str().unwrap_or_default(), &call[1]);
-        if name == "error" {
+        if name == "error" && !keep_errors {
             return Err(method_error(what, args));
         }
         out.push((name.to_string(), args.clone()));
@@ -601,15 +625,18 @@ mod tests {
     #[test]
     fn answers_keep_their_kind_of_failure() {
         use super::super::is_unauthorized;
-        assert!(is_unauthorized(&read_responses("x", 401, b"").unwrap_err()));
-        let e = read_responses("x", 503, b"").unwrap_err();
+        assert!(is_unauthorized(&read_responses("x", 401, b"", false).unwrap_err()));
+        let e = read_responses("x", 503, b"", false).unwrap_err();
         assert!(matches!(e, Error::Temporary { .. }) && !is_unauthorized(&e));
-        assert!(matches!(read_responses("x", 200, b"<html>"), Err(Error::Temporary { .. })));
+        assert!(matches!(read_responses("x", 200, b"<html>", false), Err(Error::Temporary { .. })));
         let method = |kind: &str| json!({ "methodResponses": [["error", { "type": kind }, "c0"]] }).to_string();
-        assert!(matches!(read_responses("x", 200, method("forbidden").as_bytes()), Err(Error::Invalid { .. })));
-        assert!(matches!(read_responses("x", 200, method("serverFail").as_bytes()), Err(Error::Temporary { .. })));
+        assert!(matches!(read_responses("x", 200, method("forbidden").as_bytes(), false), Err(Error::Invalid { .. })));
+        assert!(matches!(
+            read_responses("x", 200, method("serverFail").as_bytes(), false),
+            Err(Error::Temporary { .. })
+        ));
         let two = json!({ "methodResponses": [["A/set", { "n": 1 }, "c0"], ["B/set", { "n": 2 }, "c0"]] });
-        let got = read_responses("x", 200, two.to_string().as_bytes()).unwrap();
+        let got = read_responses("x", 200, two.to_string().as_bytes(), false).unwrap();
         assert_eq!(response(&got, "B/set").unwrap()["n"], 2);
         assert!(response(&got, "C/set").is_err());
     }
