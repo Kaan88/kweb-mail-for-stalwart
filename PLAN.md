@@ -264,6 +264,16 @@ Asked for by the owner after M8, to be built as fast as possible, in this order 
 - Decided without asking: a level is a fixed set of rights per kind and never includes sharing onward, renaming or deleting the thing itself; Drafts, Trash and Junk cannot be shared; where the server forbids lookups (the default), only existing shares can be changed; answering an invitation stays unavailable in a shared calendar.
 - Checked: with the CLI on the local server as both test users (people search, lists of shares for folders, calendars and address books, a level changed and put back, a share given and taken back and seen by the other user). On the emulator: the Share screen opens from a folder. Not checked: sharing from the calendar, contacts and files screens on a device, reply and forward from a shared message on a device, editing a shared event or contact on a device.
 
+**Built 2026-11-14, items 4 to 9.**
+- Unsubscribe: a chip on a message from a list. One-click requests are posted from the core (https only, no redirects, nothing of the user's sent along, never to a private address); otherwise a mail is sent from the default address, or the list's page opens.
+- Labels: a label is a keyword on the server. A plain lower-case name is the keyword itself, any other name is `kweb-` plus its bytes in hex, because the server takes ASCII only and folds case. The list of labels is kept on the device and completed from mail the app has seen (the server cannot list keywords). The cache now stores each message's keywords (migration 7, one full fetch after the update).
+- Search highlights: the server's snippets, drawn in the result rows.
+- Send later: the server holds the message until its time (at most seven days), "Scheduled" in Settings lists and cancels. The 10 second Undo is now real when the server can be reached at the moment of sending: the message is handed over at once and held, and Undo cancels it there; without a connection the old local hold stays. Decided without asking: undoing a held message needs the server (offline it says so and the message leaves); a reply's signature now sits above the quoted text.
+- Senders and signatures in Settings: name, reply-to, plain-text signature, default sender (the default is kept on the device).
+- Share into the app: text, links and files from other apps open a new message.
+- Checked: 1035 core tests, 987 Android unit tests. Send later and identities with the CLI on the local server (a held message cancelled and back as a draft, another released and arrived exactly once; a signature set and cleared). On the emulator: a text shared from outside opens a filled message, the Send later choices, the Scheduled and Senders rows, and search with the found word marked.
+- Not checked: a real one-click unsubscribe (no list to test against), labels on a device, attachments shared into the app, the server-side Undo on a device, cancelling a scheduled message on a device.
+
 For later consideration: adding an invitation or contact from an attachment (`.ics`, `.vcf`), Turkish, app lock.
 
 Maybe: home screen widgets, delivery status on sent mail, quiet hours and VIP senders, print or save a message as PDF or `.eml`, tablet and landscape layout, read receipts.
