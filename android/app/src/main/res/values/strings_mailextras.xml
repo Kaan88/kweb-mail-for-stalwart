@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Unsubscribe -->
+    <string name="unsub_chip">Unsubscribe</string>
+    <string name="unsub_working">Unsubscribing…</string>
+    <string name="unsub_requested">Unsubscribe requested</string>
+    <string name="unsub_title">Unsubscribe from %1$s?</string>
+    <string name="unsub_confirm_request">A request to leave the list will be sent to %1$s now.</string>
+    <string name="unsub_confirm_mail">A mail asking to leave the list will be sent to %1$s from your address.</string>
+    <string name="unsub_confirm_browser">The page of %1$s for leaving the list will open in your browser. You finish there.</string>
+    <string name="unsub_confirm_button">Unsubscribe</string>
+    <string name="unsub_open_page">Open page</string>
+    <string name="unsub_failed">Could not unsubscribe. Try again later.</string>
+
+    <!-- Labels -->
+    <string name="labels_menu">Labels</string>
+    <string name="labels_title">Labels</string>
+    <string name="labels_drawer">Labels</string>
+    <string name="labels_reading">Reading the labels…</string>
+    <string name="labels_none">You have no labels yet.</string>
+    <string name="labels_new">New label</string>
+    <string name="labels_name">Name</string>
+    <string name="labels_create">Create</string>
+    <string name="labels_name_blank">The name cannot be empty.</string>
+    <string name="labels_name_long">At most 60 characters.</string>
+    <string name="labels_name_lines">The name must be one line.</string>
+    <string name="labels_more">+%1$d</string>
+    <string name="labels_change_failed">The label could not be changed.</string>
+    <string name="labels_create_failed">The label could not be made.</string>
+    <string name="labels_delete_failed">The label could not be deleted.</string>
+    <string name="labels_delete_title">Delete the label %1$s?</string>
+    <string name="labels_delete_text">The label leaves your list. Messages that carry it keep it on the server.</string>
+    <string name="labels_read_failed">The mail with this label could not be read.</string>
+    <string name="labels_list_empty">No mail carries this label.</string>
+</resources>

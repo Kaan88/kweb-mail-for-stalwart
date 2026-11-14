@@ -27,6 +27,9 @@ import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.UiMessage
 import ovh.kweb.mail.ui.folders.SpamRules
+import ovh.kweb.mail.ui.mailextras.CoreMailExtrasBackend
+import ovh.kweb.mail.ui.mailextras.LabelStore
+import ovh.kweb.mail.ui.mailextras.UnsubscribeController
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.ConnectionStatus
@@ -105,6 +108,14 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     private var startingDraft = false
     private var blocking = false
 
+    private val extras = CoreMailExtrasBackend { Background.core(app) }
+
+    /** The labels of the thread's messages and the user's list. */
+    val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
+
+    /** The Unsubscribe chips of the opened messages. */
+    val unsubscribe = UnsubscribeController(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
+
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
 
@@ -135,6 +146,8 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
         markedRead = false
         closeSent = false
         pendingSave = null
+        labels.reset()
+        unsubscribe.reset()
         stateFlow.value = ThreadState()
         // Nothing queued for the last visit may reach the next one.
         while (reloads.tryReceive().isSuccess) { }
@@ -148,6 +161,18 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
     fun toggle(messageId: String) {
         stateFlow.update { it.copy(expanded = if (messageId in it.expanded) it.expanded - messageId else it.expanded + messageId) }
         fetchMissingBodies()
+        askUnsubscribe()
+    }
+
+    /** An opened message of someone else's may come from a list: ask, once, whether it can be left. A failure shows nothing. */
+    private fun askUnsubscribe() {
+        if (session == null) return
+        val s = stateFlow.value
+        for (id in s.expanded) {
+            val header = s.messages.firstOrNull { it.id == id } ?: continue
+            if (s.myAddress != null && header.fromEmail.equals(s.myAddress, ignoreCase = true)) continue
+            unsubscribe.check(id)
+        }
     }
 
     fun retryBody(messageId: String) {
@@ -329,6 +354,9 @@ class ThreadViewModel(app: Application, private val route: Route.Thread) : Andro
             if (messages.isNotEmpty()) markInitialRead(messages)
             if (arrived.isNotEmpty()) markRead(arrived.map { it.id })
             fetchMissingBodies()
+            askUnsubscribe()
+            labels.refreshLabels()
+            labels.load(messages.map { it.id })
             val s = stateFlow.value
             if (ThreadRules.isGone(s.loaded, s.refreshed, messages.size)) close()
         } catch (e: CancellationException) {

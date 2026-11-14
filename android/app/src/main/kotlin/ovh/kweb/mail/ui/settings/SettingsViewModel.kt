@@ -59,6 +59,8 @@ data class SettingsState(
     val away: AwayRowState = AwayRowState.Loading,
     val assistant: AssistantRowState = AssistantRowState.Loading,
     val filters: FiltersRowState = FiltersRowState.Loading,
+    /** How many messages are held back to be sent later; null until read or when it could not be. */
+    val scheduled: Int? = null,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -131,6 +133,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (asked != generation) return@launch
             stateFlow.update { if (result == FiltersRowState.Unknown && (it.filters == FiltersRowState.On || it.filters == FiltersRowState.Off)) it else it.copy(filters = result) }
+        }
+        viewModelScope.launch {
+            val count = try {
+                withContext(Dispatchers.IO) { Background.core(getApplication()).scheduledSends().size }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the held messages failed: ${e.javaClass.simpleName}")
+                null
+            }
+            if (asked != generation) return@launch
+            // A failed read does not replace a number that was read earlier.
+            stateFlow.update { if (count == null) it else it.copy(scheduled = count) }
         }
         viewModelScope.launch {
             val result = try {

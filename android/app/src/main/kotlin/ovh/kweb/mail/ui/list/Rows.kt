@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -41,6 +42,8 @@ import androidx.compose.ui.unit.sp
 import java.time.ZoneId
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.mailextras.Highlight
+import ovh.kweb.mail.ui.mailextras.RowLabelChips
 import uniffi.kweb_core.Mailbox
 
 /** What a row of a mail list draws. Conversations and search results both become one. */
@@ -53,6 +56,12 @@ data class RowContent(
     val unread: Boolean,
     val flagged: Boolean,
     val hasAttachment: Boolean,
+    /** The names of the labels the mail carries (see [RowLabelChips]). */
+    val labels: List<String> = emptyList(),
+    /** The subject with the search hit marked; used instead of [subject] when there is one. */
+    val subjectHighlight: Highlight? = null,
+    /** The text around the search hit, marked; used instead of [preview] when there is one. */
+    val previewHighlight: Highlight? = null,
 )
 
 /**
@@ -117,6 +126,8 @@ private fun RowText(row: RowContent, modifier: Modifier) {
     val weight = if (row.unread) FontWeight.Bold else FontWeight.Normal
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val time = rowTimeText(row.receivedAt)
+    // What was found is drawn in the primary colour and bold, in the subject and in the text.
+    val found = SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
     Column(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -137,14 +148,26 @@ private fun RowText(row: RowContent, modifier: Modifier) {
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                row.subject.ifEmpty { stringResource(R.string.list_no_subject) },
-                modifier = Modifier.weight(1f),
-                fontWeight = weight,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            val subjectHighlight = row.subjectHighlight
+            if (subjectHighlight != null) {
+                Text(
+                    subjectHighlight.annotated(found),
+                    modifier = Modifier.weight(1f),
+                    fontWeight = weight,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Text(
+                    row.subject.ifEmpty { stringResource(R.string.list_no_subject) },
+                    modifier = Modifier.weight(1f),
+                    fontWeight = weight,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             if (row.hasAttachment) {
                 Spacer(Modifier.width(6.dp))
                 Icon(
@@ -164,7 +187,16 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 )
             }
         }
-        if (row.preview.isNotEmpty()) {
+        val previewHighlight = row.previewHighlight
+        if (previewHighlight != null) {
+            Text(
+                previewHighlight.annotated(found),
+                color = muted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        } else if (row.preview.isNotEmpty()) {
             Text(
                 row.preview,
                 color = muted,
@@ -173,6 +205,7 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
+        RowLabelChips(row.labels)
     }
 }
 

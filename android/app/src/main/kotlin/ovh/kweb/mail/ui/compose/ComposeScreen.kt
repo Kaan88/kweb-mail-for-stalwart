@@ -105,6 +105,7 @@ import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
 import ovh.kweb.mail.ui.assistant.DraftText
 import ovh.kweb.mail.ui.assistant.RewriteTarget
+import ovh.kweb.mail.ui.sending.SendLaterMenu
 import ovh.kweb.mail.ui.thread.FileNames
 import ovh.kweb.mail.ui.thread.SizeFormat
 import ovh.kweb.mail.ui.thread.ThreadRules
@@ -232,6 +233,7 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
                 onClose = { if (s.ready) vm.leave() else onLeave() },
                 onAttach = { picker.launch("*/*") },
                 onSend = vm::send,
+                onSendLater = vm::scheduleSend,
                 canAssist = s.ready && !s.sending && AssistantRules.Kind.REWRITE in offered,
                 onAssist = ::rewrite,
                 onAskLanguage = { askingLanguage = true },
@@ -313,6 +315,7 @@ private fun TopBar(
     onClose: () -> Unit,
     onAttach: () -> Unit,
     onSend: () -> Unit,
+    onSendLater: (Long) -> Unit,
     canAssist: Boolean,
     onAssist: (RewriteStyle) -> Unit,
     onAskLanguage: () -> Unit,
@@ -348,6 +351,7 @@ private fun TopBar(
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.compose_send), style = MaterialTheme.typography.labelLarge)
         }
+        SendLaterMenu(enabled = canSend, onChoose = onSendLater)
     }
 }
 

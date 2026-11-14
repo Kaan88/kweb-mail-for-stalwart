@@ -20,6 +20,12 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.NotificationTarget
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.ui.compose.DraftLauncher
+import ovh.kweb.mail.ui.sending.IncomingShareLauncher
+import ovh.kweb.mail.ui.sending.RawShare
+import ovh.kweb.mail.ui.sending.ScheduledNotices
+import ovh.kweb.mail.ui.sending.SendLaterWords
+import java.time.ZoneId
+import java.util.Locale
 import uniffi.kweb_core.DraftKind
 
 /** Navigation. The back stack never gets empty. */
@@ -33,7 +39,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
 
+    private val noticeChannel = Channel<UiMessage>(Channel.BUFFERED)
+
     val stack: StateFlow<List<Route>> get() = stackFlow
+
+    /** Texts for a snackbar that are not one of the app's fixed ones: a time, a count, the core's words. */
+    val notices: Flow<UiMessage> get() = noticeChannel.receiveAsFlow()
 
     /** Short texts for a snackbar, as string resource ids. */
     val messages: Flow<Int> get() = messageChannel.receiveAsFlow()
@@ -44,6 +55,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { SessionState.load(app) }
         viewModelScope.launch { stackFlow.collect { stores.retain(it) } }
+        // A message was handed over to be sent later: say when, on whichever screen is up.
+        viewModelScope.launch {
+            ScheduledNotices.scheduled.collect { at ->
+                val text = SendLaterWords.confirmation(app.resources, at, System.currentTimeMillis() / 1000, ZoneId.systemDefault(), Locale.getDefault())
+                noticeChannel.trySend(UiMessage.Text(text))
+            }
+        }
         viewModelScope.launch {
             var wasOut = false
             SessionState.signedIn.collect { signedIn ->
@@ -96,6 +114,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun sharedGone() {
         stackFlow.update { BackStack.backToShared(it) }
         messageChannel.trySend(R.string.shared_gone)
+    }
+
+    /**
+     * Another app shared something into this one: a new message is started from it and shown over whatever is up
+     * (a message being written stays under it, saved as usual). Nobody signed in: it says so and drops the share.
+     */
+    fun share(raw: RawShare) {
+        IncomingShareLauncher.handle(
+            getApplication(), viewModelScope, raw,
+            open = { draftId -> stackFlow.update { BackStack.showOver(it, BackStack.forCompose(draftId)) } },
+            notify = { noticeChannel.trySend(it) },
+        )
     }
 
     /** A message was handed over for sending: back to the list. */

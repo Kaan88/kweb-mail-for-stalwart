@@ -26,6 +26,8 @@ import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.compose.Outbox
 import ovh.kweb.mail.ui.compose.SendRules
+import ovh.kweb.mail.ui.mailextras.CoreMailExtrasBackend
+import ovh.kweb.mail.ui.mailextras.LabelStore
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.DraftKind
@@ -100,6 +102,14 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
 
     val events: Flow<ListEvent> get() = eventChannel.receiveAsFlow()
 
+    /** The user's labels (for the drawer) and the labels of the rows on screen. */
+    val labels = LabelStore(
+        viewModelScope,
+        Dispatchers.IO,
+        CoreMailExtrasBackend { Background.core(app) },
+        onError = { eventChannel.trySend(ListEvent.Text(it)) },
+    )
+
     /** Kept here so that the place in the list survives a visit to the calendar or to a thread. */
     val listState = androidx.compose.foundation.lazy.LazyListState()
 
@@ -114,6 +124,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
                     true -> reload()
                     false -> {
                         holdJob?.cancel()
+                        labels.reset()
                         stateFlow.value = MailListState()
                         listState.requestScrollToItem(0)
                     }
@@ -210,6 +221,7 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
             if (!current.sameQuestion(asked)) return@launch
             val added = (read?.rows?.size ?: asked.rows.size) - asked.rows.size
             val empty = if (added > 0) 0 else current.emptyPages + 1
+            read?.let { labels.load(it.rows.flatMap { row -> row.messageIds }) }
             stateFlow.update {
                 it.withRead(read).copy(
                     loadingOlder = false,
@@ -396,6 +408,9 @@ class MailListViewModel(app: Application) : AndroidViewModel(app) {
         readOutbox()
         try {
             val read = withContext(Dispatchers.IO) { read(asked) }
+            // The labels of the rows of this page, in one call; the drawer's list with them.
+            labels.refreshLabels()
+            if (stateFlow.value.sameQuestion(asked)) labels.load(read.rows.flatMap { it.messageIds })
             // A newer choice is already queued to be read; this answer is about an older one.
             stateFlow.update { if (it.sameQuestion(asked)) it.withRead(read) else it.copy(mailboxes = read.mailboxes, username = read.username) }
         } catch (e: CancellationException) {

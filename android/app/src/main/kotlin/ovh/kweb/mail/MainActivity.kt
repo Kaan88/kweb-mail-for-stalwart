@@ -14,6 +14,7 @@ import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.ui.AppContent
 import ovh.kweb.mail.ui.AppViewModel
 import ovh.kweb.mail.ui.list.MailListViewModel
+import ovh.kweb.mail.ui.sending.IntentShare
 import ovh.kweb.mail.ui.theme.KwebTheme
 import ovh.kweb.mail.ui.theme.ThemeState
 
@@ -76,8 +77,20 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
+    /**
+     * Another app shared text or files into this one (ACTION_SEND, ACTION_SEND_MULTIPLE). The action is taken off
+     * the intent so that a recreation does not start the message a second time.
+     */
+    private fun handleShareIntent(intent: Intent): Boolean {
+        val raw = IntentShare.read(intent) ?: return false
+        intent.action = null
+        app.share(raw)
+        return true
+    }
+
     /** A tap on a mail notification names its message: it opens over the Inbox. */
     private fun handleNotificationIntent(intent: Intent) {
+        if (handleShareIntent(intent)) return
         if (handleReplyIntent(intent) || handleReminderIntent(intent)) return
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID) ?: return
         intent.removeExtra(Notifier.EXTRA_MESSAGE_ID)

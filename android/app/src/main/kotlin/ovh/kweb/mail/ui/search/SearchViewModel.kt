@@ -15,6 +15,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.mailextras.CoreMailExtrasBackend
+import ovh.kweb.mail.ui.mailextras.LabelStore
+import ovh.kweb.mail.ui.mailextras.SnippetController
 import uniffi.kweb_core.MessageHeader
 
 /** What the results area shows. */
@@ -38,6 +41,14 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     val state: StateFlow<SearchState> get() = stateFlow
 
+    private val extras = CoreMailExtrasBackend { Background.core(app) }
+
+    /** Where the words were found, for the rows on screen. It never holds the list back: it arrives after it, or not at all. */
+    val snippets = SnippetController(viewModelScope, Dispatchers.IO, extras)
+
+    /** The labels of the rows on screen. */
+    val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = {})
+
     init {
         viewModelScope.launch { SessionState.signedIn.collect { if (it == false) onQueryChange("") } }
         viewModelScope.launch { Background.cacheChanges.collect { refreshShown() } }
@@ -54,6 +65,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                 val core = Background.core(getApplication())
                 shown.messages.mapNotNull { core.message(it.id) }
             }
+            labels.load(fresh.map { it.id })
             if (fresh == shown.messages) return
             // A new search may have replaced these results meanwhile.
             stateFlow.update { if (it.results === shown) it.copy(results = shown.copy(messages = fresh)) else it }
@@ -66,9 +78,11 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onQueryChange(query: String) {
         job?.cancel()
+        snippets.clear()
         if (!SearchRules.isSearchable(query)) {
             job = null
             stateFlow.value = SearchState(query)
+            if (query.isEmpty()) labels.reset()
             return
         }
         stateFlow.value = SearchState(query, SearchResults.Searching)
@@ -87,7 +101,18 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                 Log.w(Background.TAG, "search failed", e)
                 SearchResults.Failed
             }
-            stateFlow.update { if (it.query == query) it.copy(results = results) else it }
+            var shown = false
+            stateFlow.update {
+                shown = it.query == query
+                if (shown) it.copy(results = results) else it
+            }
+            if (shown && results is SearchResults.Found && results.messages.isNotEmpty()) {
+                val ids = results.messages.map { it.id }
+                labels.refreshLabels()
+                labels.load(ids)
+                // After the list is up, and only for the words that were searched.
+                snippets.request(query.trim(), ids)
+            }
         }
     }
 }

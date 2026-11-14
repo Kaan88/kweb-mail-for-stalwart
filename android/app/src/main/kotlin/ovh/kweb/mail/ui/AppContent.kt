@@ -37,8 +37,11 @@ import ovh.kweb.mail.ui.filters.FiltersScreen
 import ovh.kweb.mail.ui.folders.FoldersScreen
 import ovh.kweb.mail.ui.list.MailListScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
+import ovh.kweb.mail.ui.mailextras.LabelScreen
 import ovh.kweb.mail.ui.search.SearchScreen
 import ovh.kweb.mail.ui.search.SearchViewModel
+import ovh.kweb.mail.ui.sending.ScheduledScreen
+import ovh.kweb.mail.ui.sending.SendersScreen
 import ovh.kweb.mail.ui.settings.SettingsScreen
 import ovh.kweb.mail.ui.shared.SharedCalendarScreen
 import ovh.kweb.mail.ui.shared.SharedContactScreen
@@ -76,6 +79,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
             LaunchedEffect(app) {
                 app.messages.collect { snackbar.showSnackbar(resources.getString(it)) }
             }
+            LaunchedEffect(app) { app.notices.collect { snackbar.showSnackbar(it.resolve(resources)) } }
             // The Inbox's unread count, the badge on Mail; read from the list's own state, so both sides agree.
             val mailList: MailListViewModel = viewModel()
             val unread by remember(mailList) {
@@ -93,6 +97,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onCompose = { app.open(Route.Compose(it)) },
                     onOpenShared = { app.open(Route.Shared) },
                     onOpenFolders = { folderId, action -> app.open(Route.Folders(folderId, action)) },
+                    onOpenLabel = { id, name -> app.open(Route.Label(id, name)) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
@@ -225,6 +230,17 @@ fun AppContent(app: AppViewModel = viewModel()) {
                         FoldersScreen(route, onBack = app::back)
                     }
                 }
+                is Route.Label -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        LabelScreen(route, onBack = app::back, onOpen = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) })
+                    }
+                }
+                Route.Scheduled -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    ScheduledScreen(onBack = app::back, onOpenDraft = { app.open(Route.Compose(it)) })
+                }
+                Route.Senders -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    SendersScreen(onBack = app::back)
+                }
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AssistantScreen(onBack = app::back)
                 }
@@ -245,6 +261,8 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     onOpenAway = { app.open(Route.Away) },
                     onOpenFilters = { app.open(Route.Filters()) },
                     onOpenAssistant = { app.open(Route.Assistant) },
+                    onOpenScheduled = { app.open(Route.Scheduled) },
+                    onOpenSenders = { app.open(Route.Senders) },
                 )
                 Route.Search -> SearchScreen(
                     onBack = app::back,

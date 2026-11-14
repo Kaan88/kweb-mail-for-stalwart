@@ -79,6 +79,13 @@ import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.MoveDialog
+import ovh.kweb.mail.ui.list.Sender
+import ovh.kweb.mail.ui.mailextras.LabelRules
+import ovh.kweb.mail.ui.mailextras.LabelSheet
+import ovh.kweb.mail.ui.mailextras.NewLabelDialog
+import ovh.kweb.mail.ui.mailextras.UnsubEntry
+import ovh.kweb.mail.ui.mailextras.UnsubscribeDialog
+import ovh.kweb.mail.ui.mailextras.UnsubscribeRules
 import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.DraftKind
@@ -102,6 +109,14 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     // The message whose sender is asked about; saved, so a rotation keeps the question.
     var blockingId by rememberSaveable { mutableStateOf<String?>(null) }
     var busyBlobId by remember { mutableStateOf<String?>(null) }
+    // Saved, so a rotation keeps the sheet and the questions: the message whose labels are edited ("*": the whole thread),
+    // whether the new-label dialog is open, and the message whose unsubscribing is asked about.
+    var labelsTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var newLabel by rememberSaveable { mutableStateOf(false) }
+    var creatingLabel by remember { mutableStateOf(false) }
+    var unsubscribeId by rememberSaveable { mutableStateOf<String?>(null) }
+    val labelsState by vm.labels.state.collectAsStateWithLifecycle()
+    val unsubscribes by vm.unsubscribe.state.collectAsStateWithLifecycle()
 
     fun say(textRes: Int) {
         scope.launch { snackbar.showSnackbar(resources.getString(textRes)) }
@@ -293,6 +308,12 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                 )
                             }
                             DropdownMenuItem(
+                                text = { Text(stringResource(R.string.labels_menu)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
+                                enabled = hasMessages,
+                                onClick = { menuOpen = false; labelsTarget = LABELS_THREAD },
+                            )
+                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.action_move)) },
                                 enabled = canAct,
                                 onClick = { menuOpen = false; moving = true },
@@ -337,7 +358,11 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                         remoteAllowed = header.id in state.remoteAllowed,
                         myAddress = state.myAddress,
                         busyBlobId = busyBlobId,
+                        labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
+                        unsubscribe = unsubscribes[header.id],
                         actions = CardActions(
+                            onLabels = { labelsTarget = header.id },
+                            onUnsubscribe = { unsubscribeId = header.id },
                             onToggle = { vm.toggle(header.id) },
                             onRetryBody = { vm.retryBody(header.id) },
                             onAllowRemote = { vm.allowRemote(header.id) },
@@ -397,6 +422,60 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             onDismiss = { moving = false },
         )
     }
+    labelsTarget?.let { target ->
+        val ids = if (target == LABELS_THREAD) state.messages.map { it.id } else listOf(target).filter { id -> state.messages.any { it.id == id } }
+        if (ids.isEmpty()) {
+            labelsTarget = null
+        } else {
+            // Opening the sheet asks again, so a read that failed or has not come yet is not the last word.
+            LaunchedEffect(target) {
+                vm.labels.refreshLabels()
+                vm.labels.load(ids)
+            }
+            LabelSheet(
+                labels = labelsState.labels,
+                messageIds = ids,
+                byMessage = labelsState.byMessage,
+                ready = labelsState.labelsRead && LabelRules.known(ids, labelsState.byMessage),
+                error = if (newLabel) null else labelsState.error?.resolve(resources),
+                onToggle = { labelId, on -> vm.labels.set(ids, labelId, on) },
+                onNewLabel = { newLabel = true },
+                onDismiss = { labelsTarget = null; newLabel = false; vm.labels.clearError() },
+            )
+            if (newLabel) {
+                NewLabelDialog(
+                    onCreate = { name ->
+                        creatingLabel = true
+                        vm.labels.create(name, ids) { made ->
+                            creatingLabel = false
+                            if (made) newLabel = false
+                        }
+                    },
+                    onDismiss = { newLabel = false; vm.labels.clearError() },
+                    error = labelsState.error?.resolve(resources),
+                    busy = creatingLabel,
+                    onEdit = vm.labels::clearError,
+                )
+            }
+        }
+    }
+    unsubscribeId?.let { id ->
+        val header = state.messages.firstOrNull { it.id == id }
+        val entry = unsubscribes[id] as? UnsubEntry.Available
+        if (header == null || entry == null) {
+            unsubscribeId = null
+        } else {
+            UnsubscribeDialog(
+                list = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender),
+                way = entry.way,
+                onConfirm = {
+                    unsubscribeId = null
+                    if (entry.way == UnsubscribeRules.Way.BROWSER) entry.webUrl?.let(::openLink) else vm.unsubscribe.confirm(id)
+                },
+                onDismiss = { unsubscribeId = null },
+            )
+        }
+    }
     blockingId?.let { id ->
         val address = state.messages.firstOrNull { it.id == id }?.fromEmail
         if (address == null) {
@@ -425,6 +504,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         )
     }
 }
+
+/** The labels sheet is for the whole thread, not for one message. */
+private const val LABELS_THREAD = "*"
 
 @Composable
 private fun CenteredNote(text: String) {

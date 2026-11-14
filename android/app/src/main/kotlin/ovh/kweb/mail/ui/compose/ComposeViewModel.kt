@@ -24,6 +24,8 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.sending.ScheduledNotices
+import ovh.kweb.mail.ui.sending.SendLaterRules
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.Draft
@@ -455,7 +457,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
             uploads.toList().joinAll()
             if (mine != epoch) return@launch
             val draft = assemble() ?: return@launch
-            val discard = opened?.let { ComposeRules.discardsOnLeave(it, draft, prefillTo) } == true
+            val discard = opened?.let { StartedFromShare.discards(draftId, it, draft, prefillTo) } == true
             val ok = if (discard) discard() else write(draft)
             // The screen was closed meanwhile: [close] has taken over the draft.
             if (mine != epoch) return@launch
@@ -524,6 +526,78 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
     }
 
     /**
+     * "Send later": hands the message to the core to be sent at [sendAt] (Unix seconds). The same checks as
+     * [send]; the core's refusal is shown and the draft stays open. Once the core has it the confirmation goes
+     * out through [ScheduledNotices], whatever has become of the screen, and the screen closes.
+     */
+    fun scheduleSend(sendAt: Long) {
+        val s = state
+        if (!s.canSend || done) return
+        val context = getApplication<Application>()
+        when (SendLaterRules.check(sendAt, System.currentTimeMillis() / 1000)) {
+            SendLaterRules.Check.Ok -> Unit
+            SendLaterRules.Check.TooSoon -> return update { it.copy(error = context.getString(R.string.send_later_too_soon)) }
+            SendLaterRules.Check.TooFar -> return update { it.copy(error = context.getString(R.string.send_later_too_far)) }
+        }
+        saveJob?.cancel()
+        if (!commitAll()) {
+            update { it.copy(error = context.getString(R.string.compose_error_bad_address)) }
+            return
+        }
+        if (assemble() == null) return
+        update { it.copy(sending = true, error = null, canLeaveAnyway = false) }
+        val mine = epoch
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    lock.withLock {
+                        val draft = withBookkeeping(checkNotNull(assemble()))
+                        Background.core(context).scheduleSend(draft, sendAt)
+                    }
+                }
+                // The message is with the core whatever became of the screen: the confirmation must still be shown.
+                ScheduledNotices.announce(sendAt)
+                if (mine != epoch) return@launch
+                done = true
+                eventChannel.send(ComposeEvent.Leave)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: CoreException.Invalid) {
+                updateIn(mine) { it.copy(sending = false, error = e.msg.ifBlank { context.getString(R.string.send_later_failed) }) }
+            } catch (e: CoreException.Temporary) {
+                Log.w(Background.TAG, "scheduling failed: no answer")
+                afterUnsureSchedule(mine, R.string.send_later_offline)
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "scheduling failed", e)
+                afterUnsureSchedule(mine, R.string.send_later_unsure)
+            }
+        }
+    }
+
+    /**
+     * The core did not say that the message is scheduled. "Temporary" covers a request that never went out and one
+     * whose answer was lost, so the exception does not tell which: the core is asked whether the draft is an
+     * ordinary draft again. Only then is it said to be still a draft and Send offered. Otherwise the server may
+     * already hold the message: Send stays off (it would look sent and do nothing) and the user is pointed to
+     * Scheduled; leaving is still possible.
+     */
+    private suspend fun afterUnsureSchedule(mine: Int, stillDraftText: Int) {
+        val context = getApplication<Application>()
+        val ordinary = try {
+            withContext(Dispatchers.IO) { Background.core(context).drafts().any { it.id == draftId } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        if (ordinary) {
+            updateIn(mine) { it.copy(sending = false, error = context.getString(stillDraftText)) }
+        } else {
+            updateIn(mine) { it.copy(sending = true, error = context.getString(R.string.send_later_unsure), canLeaveAnyway = true) }
+        }
+    }
+
+    /**
      * Finishes the addresses still being typed in the three fields. False when something is left in
      * one of them that is not an address: it is marked and the message must not go.
      */
@@ -582,7 +656,7 @@ class ComposeViewModel(app: Application, private val draftId: String, private va
                         if (stored == null) it else it.copy(serverId = stored.serverId, updatedAt = stored.updatedAt, sendError = stored.sendError)
                     }
                     when {
-                        opened != null && ComposeRules.discardsOnLeave(opened, last, prefillTo) -> core.discardDraft(draftId)
+                        opened != null && StartedFromShare.discards(draftId, opened, last, prefillTo) -> core.discardDraft(draftId)
                         saved != null && ComposeRules.sameContent(saved, last) -> Unit
                         else -> core.saveDraft(last)
                     }

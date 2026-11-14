@@ -70,6 +70,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -102,8 +103,11 @@ import ovh.kweb.mail.ui.folders.FolderRules
 import ovh.kweb.mail.ui.folders.FolderMenuItem
 import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.folders.longPressMenu
+import ovh.kweb.mail.ui.mailextras.DeleteLabelDialog
+import ovh.kweb.mail.ui.mailextras.LabelRules
 import ovh.kweb.mail.ui.sharing.LocalOpenShare
 import ovh.kweb.mail.ui.sharing.ShareRules
+import uniffi.kweb_core.Label
 import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.ListFilter
@@ -124,6 +128,7 @@ fun MailListScreen(
     onCompose: (draftId: String) -> Unit,
     onOpenShared: () -> Unit,
     onOpenFolders: (folderId: String?, action: FolderAction?) -> Unit,
+    onOpenLabel: (labelId: String, name: String) -> Unit = { _, _ -> },
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
@@ -136,6 +141,9 @@ fun MailListScreen(
     val resources = LocalResources.current
     var moving by remember { mutableStateOf<ThreadRow?>(null) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
+    // The label whose Delete was asked for; saved, so a rotation keeps the question.
+    var deletingLabelId by rememberSaveable { mutableStateOf<String?>(null) }
+    val labels by vm.labels.state.collectAsStateWithLifecycle()
 
     // Coming back from a thread does not resume the activity, so ask for a fresh read here.
     LaunchedEffect(vm) { vm.reload() }
@@ -226,6 +234,12 @@ fun MailListScreen(
                     scope.launch { drawerState.close() }
                     onOpenFolders(null, null)
                 },
+                labels = labels.labels,
+                onLabel = {
+                    scope.launch { drawerState.close() }
+                    onOpenLabel(it.id, it.name)
+                },
+                onDeleteLabel = { deletingLabelId = it.id },
                 onShared = {
                     scope.launch { drawerState.close() }
                     onOpenShared()
@@ -298,6 +312,7 @@ fun MailListScreen(
                                     row = row,
                                     shape = Groups.shape(index, state.rows.size),
                                     role = current?.role,
+                                    labelNames = LabelRules.namesOfAny(row.messageIds, labels.byMessage, labels.labels),
                                     spamOffered = SpamRules.offered(current?.role, junk != null),
                                     onOpen = {
                                         current?.let {
@@ -347,6 +362,21 @@ fun MailListScreen(
             },
             onDismiss = { moving = null },
         )
+    }
+    deletingLabelId?.let { id ->
+        val label = labels.labels.firstOrNull { it.id == id }
+        if (label == null) {
+            deletingLabelId = null
+        } else {
+            DeleteLabelDialog(
+                name = label.name,
+                onConfirm = {
+                    deletingLabelId = null
+                    vm.labels.delete(id)
+                },
+                onDismiss = { deletingLabelId = null },
+            )
+        }
     }
     deleting?.let { row ->
         DeleteForeverDialog(
@@ -491,6 +521,9 @@ private fun DrawerContent(
     onFolder: (String) -> Unit,
     onFolderMenu: (Mailbox, FolderMenuItem) -> Unit,
     onManageFolders: () -> Unit,
+    labels: List<Label>,
+    onLabel: (Label) -> Unit,
+    onDeleteLabel: (Label) -> Unit,
     onShared: () -> Unit,
     onDeliveryCheck: () -> Unit,
     onSettings: () -> Unit,
@@ -570,6 +603,7 @@ private fun DrawerContent(
                 selected = false,
                 onClick = onManageFolders,
             )
+            DrawerLabels(labels, onLabel, onDeleteLabel)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.shared_title)) },
@@ -589,6 +623,36 @@ private fun DrawerContent(
                 selected = false,
                 onClick = onSettings,
             )
+        }
+    }
+}
+
+/** The user's labels under the folders; a tap lists the mail with the label, a long press offers Delete. Nothing when there are none. */
+@Composable
+private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete: (Label) -> Unit) {
+    if (labels.isEmpty()) return
+    Text(
+        stringResource(R.string.labels_drawer),
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.titleSmall,
+    )
+    labels.forEach { label ->
+        var menuOpen by remember(label.id) { mutableStateOf(false) }
+        Box {
+            NavigationDrawerItem(
+                label = { Text(label.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                icon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
+                selected = false,
+                onClick = { onLabel(label) },
+                modifier = Modifier.longPressMenu(stringResource(R.string.folders_options_for, label.name)) { menuOpen = true },
+            )
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.action_delete)) },
+                    onClick = { menuOpen = false; onDelete(label) },
+                )
+            }
         }
     }
 }
@@ -643,6 +707,7 @@ private fun ConversationItem(
     row: ThreadRow,
     shape: Shape,
     role: String?,
+    labelNames: List<String>,
     spamOffered: Boolean,
     onOpen: () -> Unit,
     onArchive: () -> Unit,
@@ -699,7 +764,7 @@ private fun ConversationItem(
         },
     ) {
         Box {
-            MailRow(rowContent(row, role), onClick = onOpen, shape = shape, onLongClick = { menuOpen = true })
+            MailRow(rowContent(row, role, labelNames), onClick = onOpen, shape = shape, onLongClick = { menuOpen = true })
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 MenuItem(if (row.unreadCount > 0u) R.string.action_mark_read else R.string.action_mark_unread) {
                     menuOpen = false
@@ -741,7 +806,7 @@ private fun MenuItem(textRes: Int, onClick: () -> Unit) {
 
 /** A conversation as a row. Sent and Drafts show who it went to instead of who sent it. */
 @Composable
-private fun rowContent(row: ThreadRow, role: String?): RowContent {
+private fun rowContent(row: ThreadRow, role: String?, labelNames: List<String>): RowContent {
     val newest = row.newest
     val toYou = role == "sent" || role == "drafts"
     val unknown = stringResource(R.string.list_unknown_sender)
@@ -766,6 +831,7 @@ private fun rowContent(row: ThreadRow, role: String?): RowContent {
         unread = row.unreadCount > 0u,
         flagged = row.isFlagged,
         hasAttachment = row.hasAttachment,
+        labels = labelNames,
     )
 }
 

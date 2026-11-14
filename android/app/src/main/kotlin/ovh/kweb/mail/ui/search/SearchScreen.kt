@@ -45,10 +45,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.MailRow
-import ovh.kweb.mail.ui.list.Preview
-import ovh.kweb.mail.ui.list.RowContent
-import ovh.kweb.mail.ui.list.Sender
-import uniffi.kweb_core.MessageHeader
+import ovh.kweb.mail.ui.mailextras.LabelRules
+import ovh.kweb.mail.ui.mailextras.messageRowContent
 
 /** Search over all mail. Results are single messages; a tap opens the message in its thread. */
 @Composable
@@ -94,13 +92,15 @@ fun SearchScreen(onBack: () -> Unit, onOpen: (threadId: String, messageId: Strin
                 CircularProgressIndicator()
             }
             SearchResults.Failed -> Note(stringResource(R.string.search_failed))
-            is SearchResults.Found -> Found(results, onOpen)
+            is SearchResults.Found -> Found(results, vm, onOpen)
         }
     }
 }
 
 @Composable
-private fun Found(results: SearchResults.Found, onOpen: (String, String) -> Unit) {
+private fun Found(results: SearchResults.Found, vm: SearchViewModel, onOpen: (String, String) -> Unit) {
+    val snippets by vm.snippets.state.collectAsStateWithLifecycle()
+    val labels by vm.labels.state.collectAsStateWithLifecycle()
     Column(Modifier.fillMaxSize()) {
         if (results.fromCache) {
             Surface(
@@ -126,7 +126,11 @@ private fun Found(results: SearchResults.Found, onOpen: (String, String) -> Unit
             ) {
                 itemsIndexed(results.messages, key = { _, message -> message.id }) { index, message ->
                     MailRow(
-                        rowContent(message),
+                        messageRowContent(
+                            message,
+                            LabelRules.namesOf(labels.byMessage[message.id], labels.labels),
+                            snippets.byMessage[message.id],
+                        ),
                         onClick = { onOpen(message.threadId, message.id) },
                         shape = Groups.shape(index, results.messages.size),
                     )
@@ -142,15 +146,3 @@ private fun Note(text: String) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
     }
 }
-
-@Composable
-private fun rowContent(m: MessageHeader): RowContent = RowContent(
-    sender = Sender.label(m.fromName, m.fromEmail) ?: stringResource(R.string.list_unknown_sender),
-    initial = Sender.initial(m.fromName, m.fromEmail),
-    subject = m.subject.trim(),
-    preview = Preview.oneLine(m.preview),
-    receivedAt = m.receivedAt,
-    unread = m.isUnread,
-    flagged = m.isFlagged,
-    hasAttachment = m.hasAttachment,
-)

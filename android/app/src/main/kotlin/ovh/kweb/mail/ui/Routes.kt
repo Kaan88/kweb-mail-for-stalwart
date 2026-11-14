@@ -82,6 +82,15 @@ sealed interface Route {
      */
     data class Folders(val folderId: String? = null, val action: FolderAction? = null) : Route
 
+    /** The mail that carries one label ([labelId], called [name]), opened from the folder drawer. */
+    data class Label(val labelId: String, val name: String) : Route
+
+    /** The messages held back to be sent later, reached from Settings. */
+    data object Scheduled : Route
+
+    /** The addresses the user sends as, with their names and signatures, reached from Settings. */
+    data object Senders : Route
+
     /** The settings of the AI assistant, reached from Settings. */
     data object Assistant : Route
 
@@ -140,7 +149,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Assistant || top is Route.Filters
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top is Route.Filters
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

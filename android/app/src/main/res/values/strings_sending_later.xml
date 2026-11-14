@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Send later (compose screen) -->
+    <string name="send_later_menu">Send later</string>
+    <string name="send_later_title">Send later</string>
+    <string name="send_later_in_one_hour">In 1 hour</string>
+    <string name="send_later_this_evening">This evening</string>
+    <string name="send_later_tomorrow_morning">Tomorrow morning</string>
+    <string name="send_later_pick">Pick date and time</string>
+    <string name="send_later_limit">Up to 7 days ahead</string>
+    <string name="send_later_next">Next</string>
+    <string name="send_later_schedule">Schedule</string>
+    <string name="send_later_too_soon">Pick a time at least a minute from now.</string>
+    <string name="send_later_too_far">Pick a time no more than 7 days from now.</string>
+    <string name="send_later_failed">The message could not be scheduled. Try again.</string>
+    <string name="send_later_offline">The server could not be reached, so the message was not scheduled. It is still a draft.</string>
+    <string name="send_later_unsure">The message may not have been scheduled. Look under Scheduled in Settings before trying again.</string>
+    <string name="send_later_confirmation">Scheduled for %1$s</string>
+
+    <!-- Times: in a list (capital first) and inside a sentence -->
+    <string name="send_later_today">Today, %1$s</string>
+    <string name="send_later_tomorrow">Tomorrow, %1$s</string>
+    <string name="send_later_other">%1$s, %2$s</string>
+    <string name="send_later_today_sentence">today at %1$s</string>
+    <string name="send_later_tomorrow_sentence">tomorrow at %1$s</string>
+    <string name="send_later_other_sentence">%1$s at %2$s</string>
+
+    <!-- Scheduled messages -->
+    <string name="scheduled_title">Scheduled</string>
+    <plurals name="scheduled_count">
+        <item quantity="one">%d message waiting</item>
+        <item quantity="other">%d messages waiting</item>
+    </plurals>
+    <string name="scheduled_hint">The server sends these at the time shown, even when this phone is off.</string>
+    <string name="scheduled_empty">No messages are waiting to be sent.</string>
+    <string name="scheduled_no_subject">(no subject)</string>
+    <string name="scheduled_no_recipients">No recipients</string>
+    <string name="scheduled_recipients_more">%1$s and %2$d more</string>
+    <string name="scheduled_cancel">Cancel sending</string>
+    <string name="scheduled_keep">Keep</string>
+    <string name="scheduled_cancel_title">Cancel sending?</string>
+    <string name="scheduled_cancel_text">\"%1$s\" will not be sent. It becomes a draft again and opens so you can change it.</string>
+    <string name="scheduled_load_failed">The scheduled messages could not be read. You may be offline.</string>
+    <string name="scheduled_cancel_failed">The message could not be taken back. Try again.</string>
+
+    <!-- Senders and signatures -->
+    <string name="senders_title">Senders and signatures</string>
+    <string name="senders_hint">The addresses you send as. Tap one to change its name, reply-to address and signature.</string>
+    <string name="senders_add">Add a sender</string>
+    <string name="senders_edit">Sender</string>
+    <string name="senders_default_mark">New messages</string>
+    <string name="senders_name">Name</string>
+    <string name="senders_email">Address</string>
+    <string name="senders_email_hint">One of the addresses of this account</string>
+    <string name="senders_email_needed">Enter the address to send as</string>
+    <string name="senders_email_bad">This is not a valid address</string>
+    <string name="senders_email_fixed">The address cannot be changed. Add a new sender to use another one.</string>
+    <string name="senders_reply_to">Reply-to address</string>
+    <string name="senders_reply_to_hint">Where answers go, when not to this address</string>
+    <string name="senders_signature">Signature</string>
+    <string name="senders_count">%1$d / %2$d</string>
+    <string name="senders_use_for_new">Use for new messages</string>
+    <string name="senders_use_for_new_already">New messages start with this sender already</string>
+    <string name="senders_save">Save</string>
+    <string name="senders_delete">Delete</string>
+    <string name="senders_delete_title">Delete this sender?</string>
+    <string name="senders_delete_text">%1$s will no longer be offered as a sender.</string>
+    <string name="senders_discard_title">Discard changes?</string>
+    <string name="senders_discard_text">What you changed is not saved.</string>
+    <string name="senders_discard">Discard</string>
+    <string name="senders_keep_editing">Keep editing</string>
+    <string name="senders_saved">Saved</string>
+    <string name="senders_deleted">Sender deleted</string>
+    <string name="senders_load_failed">The senders could not be read. You may be offline.</string>
+    <string name="senders_save_failed">The sender could not be saved. Try again.</string>
+    <string name="senders_delete_failed">The sender could not be deleted. Try again.</string>
+    <string name="senders_default_failed">Saved, but it could not be made the sender for new messages. Open it and try again.</string>
+    <string name="senders_stale">Saved, but the list could not be read again.</string>
+
+    <!-- Sharing into the app -->
+    <string name="incoming_share_sign_in_first">Sign in to kweb mail first, then share again.</string>
+    <string name="incoming_share_nothing">There was nothing in that to put in a message.</string>
+    <string name="incoming_share_failed">The message could not be started. Try again.</string>
+    <plurals name="incoming_share_files_left">
+        <item quantity="one">%d file could not be attached.</item>
+        <item quantity="other">%d files could not be attached.</item>
+    </plurals>
+</resources>

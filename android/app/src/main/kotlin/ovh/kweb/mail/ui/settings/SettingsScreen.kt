@@ -16,7 +16,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -42,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +80,8 @@ fun SettingsScreen(
     onOpenAway: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenAssistant: () -> Unit,
+    onOpenScheduled: () -> Unit,
+    onOpenSenders: () -> Unit,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
 ) {
@@ -123,21 +128,34 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 3),
+                    Groups.shape(0, 5),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
                     icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                     onClick = onOpenAway,
                 )
                 SettingsRow(
-                    Groups.shape(1, 3),
+                    Groups.shape(1, 5),
                     stringResource(R.string.filters_title),
                     filtersLine(state.filters),
                     icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                     onClick = onOpenFilters,
                 )
                 SettingsRow(
-                    Groups.shape(2, 3),
+                    Groups.shape(2, 5),
+                    stringResource(R.string.scheduled_title),
+                    state.scheduled?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.scheduled_count, it, it) },
+                    icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
+                    onClick = onOpenScheduled,
+                )
+                SettingsRow(
+                    Groups.shape(3, 5),
+                    stringResource(R.string.senders_title),
+                    icon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                    onClick = onOpenSenders,
+                )
+                SettingsRow(
+                    Groups.shape(4, 5),
                     stringResource(R.string.assistant_title),
                     assistantLine(state.assistant),
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },

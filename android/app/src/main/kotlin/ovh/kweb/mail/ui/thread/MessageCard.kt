@@ -58,6 +58,8 @@ import ovh.kweb.mail.ui.list.Preview
 import ovh.kweb.mail.ui.list.RowTime
 import ovh.kweb.mail.ui.list.Sender
 import ovh.kweb.mail.ui.list.rowTimeText
+import ovh.kweb.mail.ui.mailextras.MessageChips
+import ovh.kweb.mail.ui.mailextras.UnsubEntry
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.MessageBody
@@ -82,6 +84,10 @@ class CardActions(
     val onFilterLike: (() -> Unit)? = null,
     /** "Block sender" in the message's menu; null where it does not apply (a shared folder, or a message the user sent). */
     val onBlockSender: (() -> Unit)? = null,
+    /** "Labels" in the message's menu, and what a tap on a label chip does; null where labels do not apply. */
+    val onLabels: (() -> Unit)? = null,
+    /** A tap on the Unsubscribe chip (it asks first). */
+    val onUnsubscribe: () -> Unit = {},
     /** False for a message that may not be answered (one of a shared folder): the card has no menu. */
     val showMenu: Boolean = true,
 )
@@ -102,6 +108,10 @@ fun MessageCard(
     actions: CardActions,
     /** The owner's account id when the message is in a shared account (its pictures and files come from there); null for the user's own. */
     account: String? = null,
+    /** The names of the message's labels. */
+    labelNames: List<String> = emptyList(),
+    /** The Unsubscribe chip; null for none. */
+    unsubscribe: UnsubEntry? = null,
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
@@ -137,7 +147,7 @@ fun MessageCard(
                 )
             }
         } else {
-            ExpandedHeader(header, sender, initial, body, myAddress, actions)
+            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                 BodyView(header, body, remoteAllowed, busyBlobId, actions, account)
             }
@@ -153,6 +163,8 @@ private fun ExpandedHeader(
     body: BodyState?,
     myAddress: String?,
     actions: CardActions,
+    labelNames: List<String>,
+    unsubscribe: UnsubEntry?,
 ) {
     var showDetails by remember(header.id) { mutableStateOf(false) }
     val loaded = (body as? BodyState.Loaded)?.body
@@ -185,6 +197,14 @@ private fun ExpandedHeader(
             Text(time, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             if (actions.showMenu) MessageMenu(actions) else Spacer(Modifier.width(12.dp))
         }
+        // Under the sender line, level with its text (past the avatar).
+        MessageChips(
+            labelNames = labelNames,
+            unsubscribe = unsubscribe,
+            onLabels = actions.onLabels,
+            onUnsubscribe = actions.onUnsubscribe,
+            modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
+        )
         if (showDetails) {
             SelectionContainer {
                 Column(Modifier.padding(top = 8.dp)) {
@@ -238,6 +258,13 @@ private fun MessageMenu(actions: CardActions) {
                     text = { Text(stringResource(R.string.block_sender)) },
                     leadingIcon = { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) },
                     onClick = { open = false; block() },
+                )
+            }
+            actions.onLabels?.let { labels ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.labels_menu)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
+                    onClick = { open = false; labels() },
                 )
             }
             actions.onSummarize?.let { summarize ->
