@@ -86,6 +86,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** An entry was saved: back to the agenda. It reads again when it comes up. */
     fun eventSaved() = stackFlow.update { BackStack.afterEventSaved(it) }
 
+    /** A contact was saved: the form is gone; a changed contact shows again, a new one leaves the list. */
+    fun contactSaved() = stackFlow.update { BackStack.afterContactSaved(it) }
+
     fun back() = stackFlow.update { BackStack.pop(it) }
 
     /** A message was handed over for sending: back to the list. */

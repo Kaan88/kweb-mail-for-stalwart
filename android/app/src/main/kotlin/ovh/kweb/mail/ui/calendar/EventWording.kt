@@ -23,6 +23,8 @@ data class Span(
     val allDay: Boolean,
     val isTask: Boolean,
     val zoneNote: String? = null,
+    /** The start as the clock shows it in the entry's own zone, when that zone is named ([zoneNote]). */
+    val zoneStart: LocalDateTime? = null,
 ) {
     /** The last day of an entry, for an all-day entry the day before [end]. */
     val lastDate: LocalDate
@@ -44,7 +46,8 @@ data class Span(
 
         /**
          * An event in full, as the core gives it (for an occurrence its own start). [deviceZone] is the
-         * phone's: a different zone of the event is named.
+         * phone's. A timed entry in another zone is shown at the phone's time, as the agenda shows
+         * it, and its own zone and start are kept beside it so the screen can name them.
          */
         fun ofInput(input: EventInput, deviceZone: ZoneId): Span {
             val start = LocalDateTime.parse(input.start)
@@ -54,8 +57,9 @@ data class Span(
             } else {
                 EventForms.addExact(start, zone, input.durationSecs.toLong())
             }
-            val note = input.timeZone?.takeIf { !input.allDay && !input.isTask && zone != null && zone != deviceZone }
-            return Span(start, end, input.allDay, input.isTask, note)
+            if (input.allDay || zone == null || zone == deviceZone) return Span(start, end, input.allDay, input.isTask)
+            val here = { value: LocalDateTime -> value.atZone(zone).withZoneSameInstant(deviceZone).toLocalDateTime() }
+            return Span(here(start), here(end), allDay = false, isTask = input.isTask, zoneNote = input.timeZone, zoneStart = start)
         }
     }
 }
@@ -117,7 +121,9 @@ object EventWording {
             // Over midnight the date line already has both days, so the clock times alone are enough.
             else -> "${time(span.start, locale)} – ${time(span.end, locale)}"
         }
-        return When(date, span.zoneNote?.let { words.withZone(time, it) } ?: time)
+        // "12:00 – 12:15 (09:00 Etc/UTC)": the phone's time first, then where the entry itself puts it.
+        val there = span.zoneNote?.let { zone -> span.zoneStart?.let { "${time(it, locale)} $zone" } ?: zone }
+        return When(date, there?.let { words.withZone(time, it) } ?: time)
     }
 
     /** "Every week on Mon, Wed, until 31 Dec 2026". [start] is the date of the first occurrence. */

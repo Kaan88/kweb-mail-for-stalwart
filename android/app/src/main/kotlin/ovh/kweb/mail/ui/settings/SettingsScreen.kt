@@ -53,6 +53,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Locale
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.away.AwayLine
+import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
 import ovh.kweb.mail.ui.delivery.SignOutDialog
 import ovh.kweb.mail.ui.list.Groups
@@ -71,6 +73,7 @@ import uniffi.kweb_core.Quota
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
+    onOpenAway: () -> Unit,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
 ) {
@@ -114,6 +117,17 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_storage))
             StorageGroup(state.storage)
 
+            SectionTitle(stringResource(R.string.settings_mail))
+            Group {
+                SettingsRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.away_title),
+                    awayLine(state.away),
+                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    onClick = onOpenAway,
+                )
+            }
+
             SectionTitle(stringResource(R.string.settings_app))
             Group {
                 SettingsRow(
@@ -147,6 +161,22 @@ fun SettingsScreen(
 
     if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
     signOutPrompt?.let { SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt) }
+}
+
+/** The quiet line of the away message row: "Off", "On", "On until 21 Nov"; nothing while it is read or when it cannot be. */
+@Composable
+private fun awayLine(state: AwayRowState): String? {
+    val line = (state as? AwayRowState.Known)?.line ?: return null
+    val locale = remember { Locale.getDefault() }
+    return when (line) {
+        AwayLine.Off -> stringResource(R.string.away_state_off)
+        AwayLine.On -> stringResource(R.string.away_state_on)
+        is AwayLine.Ended -> stringResource(R.string.away_state_ended, AwayRules.shortDate(line.until, locale))
+        is AwayLine.OnUntil -> stringResource(R.string.away_state_on_until, AwayRules.shortDate(line.until, locale))
+        is AwayLine.OnFrom -> stringResource(R.string.away_state_on_from, AwayRules.shortDate(line.from, locale))
+        is AwayLine.OnFromUntil ->
+            stringResource(R.string.away_state_on_from_until, AwayRules.shortDate(line.from, locale), AwayRules.shortDate(line.until, locale))
+    }
 }
 
 @Composable

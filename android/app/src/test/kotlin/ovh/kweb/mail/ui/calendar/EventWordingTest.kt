@@ -119,9 +119,15 @@ class EventWordingTest {
         assertEquals(LocalDate.of(2026, 11, 14), span.lastDate)
     }
 
-    @Test fun aZoneThatIsNotThePhonesIsNamed() {
+    @Test fun aZoneThatIsNotThePhonesIsNamedAndTheTimeIsThePhones() {
         val span = Span.ofInput(input(zone = "America/New_York"), berlin)
         assertEquals("America/New_York", span.zoneNote)
+        // 10:00 in New York is 16:00 in Berlin in November; the screen agrees with the agenda.
+        assertEquals(LocalDateTime.of(2026, 11, 12, 16, 0), span.start)
+        assertEquals(LocalDateTime.of(2026, 11, 12, 16, 45), span.end)
+        assertEquals(LocalDateTime.of(2026, 11, 12, 10, 0), span.zoneStart)
+        val lines = EventWording.whenOf(span, uk, words)
+        assertTrue(lines.time, lines.time!!.startsWith("16:00 – 16:45") && lines.time!!.contains("10:00 America/New_York"))
     }
 
     @Test fun anAllDayEntryNeverNamesAZone() = assertNull(Span.ofInput(input(zone = "America/New_York", allDay = true, duration = 86_400), berlin).zoneNote)

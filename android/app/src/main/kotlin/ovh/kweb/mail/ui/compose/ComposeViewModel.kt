@@ -110,7 +110,7 @@ sealed interface ComposeEvent {
  * is saved to the core 2 s after the last change, when the screen goes to the background and when
  * it is left. [start] loads it, [close] saves what is left and lets go of it.
  */
-class ComposeViewModel(app: Application, private val draftId: String) : AndroidViewModel(app) {
+class ComposeViewModel(app: Application, private val draftId: String, private val prefillTo: Address? = null) : AndroidViewModel(app) {
     private val eventChannel = Channel<ComposeEvent>(Channel.BUFFERED)
 
     /** Keeps saves, uploads and the send from running into each other on the same draft. */
@@ -199,12 +199,14 @@ class ComposeViewModel(app: Application, private val draftId: String) : AndroidV
             base = draft
             opened = draft
             saved = draft
+            // A recipient handed in by the caller goes into a blank new message only; it is not saved until something is.
+            val to = if (prefillTo != null && ComposeRules.isBlankNew(draft) && prefillTo !in draft.to) draft.to + prefillTo else draft.to
             state = ComposeState(
                 phase = Phase.Ready,
                 kind = ComposeRules.kind(draft),
                 identities = identities,
                 identityId = draft.identityId,
-                to = draft.to,
+                to = to,
                 cc = draft.cc,
                 bcc = draft.bcc,
                 ccBccOpen = draft.cc.isNotEmpty() || draft.bcc.isNotEmpty(),
@@ -453,7 +455,7 @@ class ComposeViewModel(app: Application, private val draftId: String) : AndroidV
             uploads.toList().joinAll()
             if (mine != epoch) return@launch
             val draft = assemble() ?: return@launch
-            val discard = opened?.let { ComposeRules.discardsOnLeave(it, draft) } == true
+            val discard = opened?.let { ComposeRules.discardsOnLeave(it, draft, prefillTo) } == true
             val ok = if (discard) discard() else write(draft)
             // The screen was closed meanwhile: [close] has taken over the draft.
             if (mine != epoch) return@launch
@@ -580,7 +582,7 @@ class ComposeViewModel(app: Application, private val draftId: String) : AndroidV
                         if (stored == null) it else it.copy(serverId = stored.serverId, updatedAt = stored.updatedAt, sendError = stored.sendError)
                     }
                     when {
-                        opened != null && ComposeRules.discardsOnLeave(opened, last) -> core.discardDraft(draftId)
+                        opened != null && ComposeRules.discardsOnLeave(opened, last, prefillTo) -> core.discardDraft(draftId)
                         saved != null && ComposeRules.sameContent(saved, last) -> Unit
                         else -> core.saveDraft(last)
                     }

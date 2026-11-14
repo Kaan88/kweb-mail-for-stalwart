@@ -112,7 +112,8 @@ fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, on
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { onSaved() } }
 
-    val leave = { if (state.dirty && !state.saving) confirmDiscard = true else onBack() }
+    // While a save runs back does nothing: leaving would cancel the coroutine that reports a failure.
+    val leave = { if (state.saving) Unit else if (state.dirty) confirmDiscard = true else onBack() }
     BackHandler(onBack = leave)
 
     Scaffold(
@@ -122,7 +123,7 @@ fun EditEventScreen(eventId: String?, startHint: String?, onBack: () -> Unit, on
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                IconButton(onClick = leave) {
+                IconButton(onClick = leave, enabled = !state.saving) {
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cal_close))
                 }
                 Text(

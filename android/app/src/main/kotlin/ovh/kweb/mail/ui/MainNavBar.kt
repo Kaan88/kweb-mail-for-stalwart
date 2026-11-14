@@ -21,11 +21,12 @@ import ovh.kweb.mail.R
 /** One entry of the bottom bar: the root screen it leads to. */
 data class MainTab(val route: Route, @StringRes val label: Int, @DrawableRes val icon: Int)
 
-/** The entries of the bottom bar, in order. Contacts will be one more line here. */
+/** The entries of the bottom bar, in order. */
 object MainTabs {
     val all = listOf(
         MainTab(Route.MailList, R.string.tab_mail, R.drawable.ic_mail),
         MainTab(Route.Calendar, R.string.tab_calendar, R.drawable.ic_calendar),
+        MainTab(Route.Contacts, R.string.tab_contacts, R.drawable.ic_person),
     )
 }
 

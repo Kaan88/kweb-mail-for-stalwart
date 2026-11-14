@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bottom bar -->
+    <string name="tab_contacts">Contacts</string>
+
+    <!-- The list -->
+    <string name="contacts_search">Search contacts</string>
+    <string name="contacts_clear_search">Clear search</string>
+    <string name="contacts_add">New contact</string>
+    <string name="contacts_offline">Offline: showing the contacts on this phone</string>
+    <string name="contacts_update_failed">The contacts could not be updated.</string>
+    <string name="contacts_load_failed">The contacts could not be loaded.</string>
+    <string name="contacts_empty">No contacts yet</string>
+    <string name="contacts_nothing_found">Nothing found</string>
+    <string name="contacts_dismiss">Dismiss</string>
+
+    <!-- One contact -->
+    <string name="contact_edit">Edit contact</string>
+    <string name="contact_delete">Delete contact</string>
+    <string name="contact_delete_title">Delete %1$s?</string>
+    <string name="contact_delete_text">The contact is removed from its address book on the server.</string>
+    <string name="contact_delete_failed">The contact could not be deleted.</string>
+    <string name="contact_load_failed">The contact could not be loaded.</string>
+    <string name="contact_missing">This contact is gone.</string>
+    <string name="contact_notes">Notes</string>
+    <string name="contact_recent_mail">Recent mail</string>
+    <string name="contact_no_dialler">No app to make a call was found.</string>
+    <string name="contact_no_map">No map app was found.</string>
+    <string name="contact_label_work">Work</string>
+    <string name="contact_label_private">Private</string>
+    <string name="contact_label_other">Other</string>
+
+    <!-- The form -->
+    <string name="contact_new">New contact</string>
+    <string name="contact_edit_title">Edit contact</string>
+    <string name="contact_close">Close</string>
+    <string name="contact_save">Save</string>
+    <string name="contact_save_failed">The contact could not be saved.</string>
+    <string name="contact_read_only">This contact cannot be changed.</string>
+    <string name="contact_no_book">There is no address book you can add contacts to.</string>
+    <string name="contact_given_name">First name</string>
+    <string name="contact_family_name">Last name</string>
+    <string name="contact_organization">Organization</string>
+    <string name="contact_address_book">Address book</string>
+    <string name="contact_emails">Email</string>
+    <string name="contact_phones">Phone</string>
+    <string name="contact_addresses">Address</string>
+    <string name="contact_email_address">Email address</string>
+    <string name="contact_phone_number">Phone number</string>
+    <string name="contact_postal_address">Postal address</string>
+    <string name="contact_add_email">Add email address</string>
+    <string name="contact_add_phone">Add phone number</string>
+    <string name="contact_add_address">Add postal address</string>
+    <string name="contact_remove">Remove</string>
+    <string name="contact_discard_title">Discard changes?</string>
+    <string name="contact_discard_text">What you changed on this contact is not saved.</string>
+    <string name="contact_discard">Discard</string>
+    <string name="contact_keep_editing">Keep editing</string>
+
+    <!-- The away message -->
+    <string name="settings_mail">Mail</string>
+    <string name="away_title">Away message</string>
+    <string name="away_state_off">Off</string>
+    <string name="away_state_on">On</string>
+    <string name="away_state_ended">Ended %1$s</string>
+    <string name="away_state_on_until">On until %1$s</string>
+    <string name="away_state_on_from">On from %1$s</string>
+    <string name="away_state_on_from_until">On from %1$s until %2$s</string>
+    <string name="away_switch">Reply automatically</string>
+    <string name="away_switch_detail">Answers mail that arrives while you are away</string>
+    <string name="away_from">From</string>
+    <string name="away_until">Until</string>
+    <string name="away_from_unset">Right away</string>
+    <string name="away_until_unset">Until I switch it off</string>
+    <string name="away_clear_date">Clear %1$s</string>
+    <string name="away_subject">Subject</string>
+    <string name="away_text">Message</string>
+    <string name="away_save">Save</string>
+    <string name="away_ok">OK</string>
+    <string name="away_load_failed">The away message could not be loaded.</string>
+    <string name="away_save_failed">The away message could not be saved.</string>
+    <string name="away_discard_title">Discard changes?</string>
+    <string name="away_discard_text">What you changed is not saved.</string>
+    <string name="away_discard">Discard</string>
+    <string name="away_keep_editing">Keep editing</string>
+</resources>

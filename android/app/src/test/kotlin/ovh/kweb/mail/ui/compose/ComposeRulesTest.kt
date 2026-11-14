@@ -91,4 +91,12 @@ class ComposeRulesTest {
 
     @Test fun aClockThatIsOffDoesNotKeepTheSnackbarForMinutes() =
         assertEquals(10_000L, SendRules.remainingMillis(sendAtSeconds = 100 + 600, nowMillis = 100_000))
+
+    @Test fun aPrefilledRecipientAloneIsStillAnUntouchedMessage() {
+        val opened = draft()
+        assertTrue(ComposeRules.discardsOnLeave(opened, draft(to = listOf(someone)), someone))
+        assertFalse(ComposeRules.discardsOnLeave(opened, draft(to = listOf(someone)), null))
+        assertFalse(ComposeRules.discardsOnLeave(opened, draft(to = listOf(someone), subject = "Hi"), someone))
+        assertFalse(ComposeRules.discardsOnLeave(opened, draft(to = listOf(someone, Address("", "x@y.z"))), someone))
+    }
 }

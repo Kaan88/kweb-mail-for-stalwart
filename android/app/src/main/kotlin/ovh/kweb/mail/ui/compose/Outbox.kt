@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
+import uniffi.kweb_core.Address
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.PendingSend
 
@@ -43,4 +44,9 @@ object DraftLauncher {
     /** Asks the core for a draft of [kind] (it is stored at once) and returns its id. Throws what the core throws. */
     suspend fun create(context: Context, kind: DraftKind): String =
         withContext(Dispatchers.IO) { Background.core(context).newDraft(kind).id }
+
+    /** Throws the draft [id] away again; a failure is not worth more than a log line, so none is raised. */
+    suspend fun discard(context: Context, id: String) {
+        withContext(Dispatchers.IO) { runCatching { Background.core(context).discardDraft(id) } }
+    }
 }

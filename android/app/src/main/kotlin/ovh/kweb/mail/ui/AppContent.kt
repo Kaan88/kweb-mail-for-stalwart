@@ -22,10 +22,14 @@ import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.lifecycle.viewmodel.compose.viewModel
+import ovh.kweb.mail.ui.away.AwayScreen
 import ovh.kweb.mail.ui.calendar.CalendarScreen
 import ovh.kweb.mail.ui.calendar.EditEventScreen
 import ovh.kweb.mail.ui.calendar.EventScreen
 import ovh.kweb.mail.ui.compose.ComposeScreen
+import ovh.kweb.mail.ui.contacts.ContactScreen
+import ovh.kweb.mail.ui.contacts.ContactsScreen
+import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
 import ovh.kweb.mail.ui.list.MailListScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
@@ -80,7 +84,13 @@ fun AppContent(app: AppViewModel = viewModel()) {
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
-                // These two keep their state in a store of their own that goes when the route does (see ScreenStores).
+                Route.Contacts -> ContactsScreen(
+                    onOpenContact = { app.open(Route.Contact(it)) },
+                    onAddContact = { app.open(Route.EditContact(null)) },
+                    bottomBar = bottomBar,
+                    appSnackbar = snackbar,
+                )
+                // These keep their state in a store of their own that goes when the route does (see ScreenStores).
                 is Route.Event -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                         EventScreen(route.eventId, route.recurrenceId, onBack = app::back, onEdit = { app.open(Route.EditEvent(it, null)) })
@@ -91,14 +101,34 @@ fun AppContent(app: AppViewModel = viewModel()) {
                         EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved)
                     }
                 }
+                is Route.Contact -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        ContactScreen(
+                            route.contactId,
+                            onBack = app::back,
+                            onEdit = { app.open(Route.EditContact(it)) },
+                            onWrite = { id, to -> app.open(Route.Compose(id, to)) },
+                            onOpenMail = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                        )
+                    }
+                }
+                is Route.EditContact -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        EditContactScreen(route.contactId, onBack = app::back, onSaved = app::contactSaved)
+                    }
+                }
+                Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    AwayScreen(onBack = app::back)
+                }
                 // One thread replacing another (a notification tap) must not inherit the first one's state.
                 is Route.Thread -> key(route) {
                     ThreadScreen(route, onBack = app::back, onCompose = { app.open(Route.Compose(it)) })
                 }
-                is Route.Compose -> key(route) { ComposeScreen(route.draftId, onLeave = app::back, onSent = app::sent) }
+                is Route.Compose -> key(route) { ComposeScreen(route.draftId, route.prefillTo, onLeave = app::back, onSent = app::sent) }
                 Route.Settings -> SettingsScreen(
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
+                    onOpenAway = { app.open(Route.Away) },
                 )
                 Route.Search -> SearchScreen(
                     onBack = app::back,
@@ -110,8 +140,8 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 )
                 Route.SignInAgain -> SignInAgain(app)
             }
-            // The two root screens put it above their bottom bar themselves.
-            if (stack.last() != Route.MailList && stack.last() != Route.Calendar) {
+            // The root screens put it above their bottom bar themselves.
+            if (!BackStack.isRoot(stack.last())) {
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
             }
         }

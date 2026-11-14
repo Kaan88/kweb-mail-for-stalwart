@@ -10,9 +10,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.time.ZoneId
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.away.AwayLine
+import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
 import uniffi.kweb_core.Quota
 
@@ -26,11 +29,21 @@ sealed interface StorageState {
     data object Unavailable : StorageState
 }
 
+/** The state line of the away message row: not read yet, read, or not readable (the row then says nothing). */
+sealed interface AwayRowState {
+    data object Loading : AwayRowState
+
+    data class Known(val line: AwayLine) : AwayRowState
+
+    data object Unknown : AwayRowState
+}
+
 data class SettingsState(
     val name: String = "",
     /** The server's host, empty until the account is read. */
     val server: String = "",
     val storage: StorageState = StorageState.Loading,
+    val away: AwayRowState = AwayRowState.Loading,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -76,6 +89,20 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (asked != generation) return@launch
             // An answer that is only a failure does not replace numbers that were read earlier.
             stateFlow.update { if (result is StorageState.Unavailable && it.storage is StorageState.Loaded) it else it.copy(storage = result) }
+        }
+        viewModelScope.launch {
+            val result = try {
+                val message = withContext(Dispatchers.IO) { Background.core(getApplication()).awayMessage() }
+                AwayRowState.Known(AwayRules.line(message, System.currentTimeMillis() / 1000, ZoneId.systemDefault()))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the away message failed: ${e.javaClass.simpleName}")
+                AwayRowState.Unknown
+            }
+            if (asked != generation) return@launch
+            // An answer that is only a failure does not replace a state that was read earlier.
+            stateFlow.update { if (result is AwayRowState.Unknown && it.away is AwayRowState.Known) it else it.copy(away = result) }
         }
     }
 }

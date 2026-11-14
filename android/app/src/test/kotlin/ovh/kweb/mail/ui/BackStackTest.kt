@@ -123,4 +123,56 @@ class BackStackTest {
 
     @Test fun savingANewEntryGoesBackToWhereItWasStarted() =
         assertEquals(BackStack.switchTo(Route.Calendar), BackStack.afterEventSaved(BackStack.switchTo(Route.Calendar) + Route.EditEvent(null, "2026-11-12")))
+
+    @Test fun theContactsSitOnTheMailList() =
+        assertEquals(listOf(Route.MailList, Route.Contacts), BackStack.switchTo(Route.Contacts))
+
+    @Test fun backFromTheContactsGoesToTheMailList() =
+        assertEquals(BackStack.initial, BackStack.pop(BackStack.switchTo(Route.Contacts)))
+
+    @Test fun switchingBetweenTheRootsReplacesTheStack() {
+        assertEquals(listOf(Route.MailList, Route.Calendar), BackStack.switchTo(Route.Calendar))
+        assertEquals(BackStack.initial, BackStack.switchTo(Route.MailList))
+    }
+
+    @Test fun onlyTheThreeRootsShowTheBottomBar() {
+        assertEquals(
+            listOf(true, true, true),
+            listOf(Route.MailList, Route.Calendar, Route.Contacts).map(BackStack::isRoot),
+        )
+        assertEquals(
+            listOf(false, false, false, false),
+            listOf(Route.Contact("c1"), Route.EditContact(null), Route.Away, Route.Settings).map(BackStack::isRoot),
+        )
+    }
+
+    @Test fun theFormOverAContactGoesBackToTheContact() {
+        val contact = Route.Contact("c1")
+        val stack = BackStack.push(BackStack.push(BackStack.switchTo(Route.Contacts), contact), Route.EditContact("c1"))
+        assertEquals(contact, BackStack.pop(stack).last())
+    }
+
+    @Test fun aTargetGoesOverAContactForm() {
+        val stack = listOf(Route.MailList, Route.Contacts, Route.EditContact(null))
+        val shown = BackStack.showOver(stack, BackStack.forReminder("e7", null))
+        assertEquals(stack + Route.Event("e7", null), shown)
+    }
+
+    @Test fun savingAChangedContactShowsTheContactAgain() {
+        val stack = listOf(Route.MailList, Route.Contacts, Route.Contact("c1"), Route.EditContact("c1"))
+        assertEquals(listOf(Route.MailList, Route.Contacts, Route.Contact("c1")), BackStack.afterContactSaved(stack))
+    }
+
+    @Test fun savingANewContactLeavesTheList() =
+        assertEquals(BackStack.switchTo(Route.Contacts), BackStack.afterContactSaved(BackStack.switchTo(Route.Contacts) + Route.EditContact(null)))
+
+    @Test fun theAwayMessageIsAScreenOverSettings() =
+        assertEquals(listOf(Route.MailList, Route.Settings, Route.Away), BackStack.push(BackStack.push(BackStack.initial, Route.Settings), Route.Away))
+
+    @Test fun aTargetGoesOverTheAwayMessage() {
+        val stack = listOf(Route.MailList, Route.Settings, Route.Away)
+        val shown = BackStack.showOver(stack, BackStack.forNotification("t", null, "m"))
+        assertEquals(stack + Route.Thread("t", null, "m"), shown)
+        assertEquals(stack, BackStack.pop(shown))
+    }
 }

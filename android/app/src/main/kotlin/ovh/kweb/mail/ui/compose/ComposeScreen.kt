@@ -94,10 +94,10 @@ import uniffi.kweb_core.Address
  * to the mail list, where the core's hold-back is shown with Undo.
  */
 @Composable
-fun ComposeScreen(draftId: String, onLeave: () -> Unit, onSent: () -> Unit) {
+fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onSent: () -> Unit) {
     val vm: ComposeViewModel = viewModel(
         key = "compose:$draftId",
-        factory = viewModelFactory { initializer { ComposeViewModel(this[APPLICATION_KEY] as Application, draftId) } },
+        factory = viewModelFactory { initializer { ComposeViewModel(this[APPLICATION_KEY] as Application, draftId, prefillTo) } },
     )
     val s = vm.state
     val activity = LocalActivity.current

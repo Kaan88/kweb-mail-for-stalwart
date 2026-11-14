@@ -1,5 +1,7 @@
 package ovh.kweb.mail.ui
 
+import uniffi.kweb_core.Address
+
 /** The screens of the app. The sign-in screen for a signed-out app is not a route. */
 sealed interface Route {
     /** The root. Which folder it shows is the state of its view model. */
@@ -24,14 +26,30 @@ sealed interface Route {
      */
     data class EditEvent(val eventId: String?, val startHint: String?) : Route
 
+    /** The contacts: the third root beside the mail list and the agenda. */
+    data object Contacts : Route
+
+    /** One contact. */
+    data class Contact(val contactId: String) : Route
+
+    /** The form for a new contact ([contactId] null) or for changing one. */
+    data class EditContact(val contactId: String?) : Route
+
+    /** The away message, reached from Settings. */
+    data object Away : Route
+
     data object Search : Route
 
     data object DeliveryCheck : Route
 
     data object Settings : Route
 
-    /** A message being written: the draft the core made, by id. */
-    data class Compose(val draftId: String) : Route
+    /**
+     * A message being written: the draft the core made, by id. [prefillTo] is a recipient the screen puts
+     * in To when it opens a blank new draft (a tap on a contact's address); leaving with nothing else
+     * changed throws the draft away.
+     */
+    data class Compose(val draftId: String, val prefillTo: Address? = null) : Route
 
     /** Signing in again to the same account (the token was refused). */
     data object SignInAgain : Route
@@ -45,10 +63,13 @@ object BackStack {
     fun push(stack: List<Route>, route: Route): List<Route> = if (stack.last() == route) stack else stack + route
 
     /**
-     * A tap on an entry of the bottom bar: the mail list is the bottom of the stack, the agenda sits
-     * on it, so system back from the agenda goes to the mail list and then out.
+     * A tap on an entry of the bottom bar: the mail list is the bottom of the stack, the agenda and the
+     * contacts sit on it, so system back from either goes to the mail list and then out.
      */
     fun switchTo(root: Route): List<Route> = if (root == Route.MailList) initial else initial + root
+
+    /** The three screens the bottom bar leads to; only they show it. */
+    fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Calendar || route == Route.Contacts
 
     fun pop(stack: List<Route>): List<Route> = if (stack.size > 1) stack.dropLast(1) else stack
 
@@ -66,13 +87,20 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        if (top !is Route.EditEvent && top !is Route.Compose) return target
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away
+        if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }
 
     /** After an entry was saved: the form and the event screens that showed the old values are gone, the agenda is on top. */
     fun afterEventSaved(stack: List<Route>): List<Route> =
         stack.dropLastWhile { it is Route.EditEvent || it is Route.Event }.ifEmpty { initial }
+
+    /**
+     * After a contact was saved: the form is gone. A changed contact shows again (it reads again when it comes
+     * up), a new one leaves the list on top.
+     */
+    fun afterContactSaved(stack: List<Route>): List<Route> = stack.dropLastWhile { it is Route.EditContact }.ifEmpty { initial }
 
     /** What the Reply button of a notification shows: the new message over the list. */
     fun forCompose(draftId: String): List<Route> = initial + Route.Compose(draftId)

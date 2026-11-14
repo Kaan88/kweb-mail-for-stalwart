@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.compose
 
+import uniffi.kweb_core.Address
 import uniffi.kweb_core.Draft
 
 /** The rules of the compose screen that need no Android. */
@@ -29,11 +30,14 @@ object ComposeRules {
     /**
      * Leaving throws the draft away instead of saving it: it was a blank new message when the
      * screen opened (no recipients, subject or attachments, not an answer, never on the server;
-     * the text may be a signature) and nothing has been changed since.
+     * the text may be a signature) and nothing has been changed since. A [prefill] recipient the screen
+     * added itself is not a change: the message is still untouched when it is the only addition.
      */
-    fun discardsOnLeave(opened: Draft, now: Draft): Boolean = isBlankNew(opened) && sameContent(opened, now)
+    fun discardsOnLeave(opened: Draft, now: Draft, prefill: Address? = null): Boolean =
+        isBlankNew(opened) && (sameContent(opened, now) || (prefill != null && sameContent(opened.copy(to = listOf(prefill)), now)))
 
-    private fun isBlankNew(draft: Draft): Boolean = draft.sourceMessageId == null && draft.serverId == null &&
+    /** A draft nobody has written in yet. */
+    fun isBlankNew(draft: Draft): Boolean = draft.sourceMessageId == null && draft.serverId == null &&
         draft.sendError == null && draft.to.isEmpty() && draft.cc.isEmpty() && draft.bcc.isEmpty() &&
         draft.subject.isBlank() && draft.attachments.isEmpty()
 }
