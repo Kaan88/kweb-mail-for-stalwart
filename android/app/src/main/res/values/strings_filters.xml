@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="filters_title">Mail filters</string>
+    <string name="filters_state_on">On</string>
+    <string name="filters_state_off">Off</string>
+    <string name="filters_switch">Use these filters</string>
+    <string name="filters_switch_detail">Rules are tried in order for mail that arrives</string>
+    <string name="filters_none">This server has no mail filters.</string>
+    <string name="filters_load_failed">The mail filters could not be loaded.</string>
+    <string name="filters_save_failed">The mail filters could not be saved.</string>
+    <string name="filters_from_message_failed">A rule could not be made from this message.</string>
+    <string name="filters_changed_elsewhere">The filters were changed elsewhere. The list was read again.</string>
+    <string name="filters_empty">No rules yet. A rule moves, marks or stars mail that arrives.</string>
+    <string name="filters_add">Add a rule</string>
+    <string name="filters_rule_unnamed">Rule %1$d</string>
+    <string name="filters_rule_switch">Rule %1$s on or off</string>
+    <string name="filters_off_hint">The filters are off, so these rules do not run yet. Use the switch above.</string>
+    <string name="filters_edited_no_add">The script was changed outside the app. A rule can be added after you start over with rules here.</string>
+    <string name="filters_sum_arrow">→</string>
+    <string name="filters_sum_separator">", "</string>
+    <string name="filters_move_up">Move %1$s up</string>
+    <string name="filters_move_down">Move %1$s down</string>
+    <string name="filters_folder_missing">The folder for this rule is gone. Open the rule and choose another.</string>
+    <string name="filters_inbox_note">Mail that a rule moves out of the Inbox does not notify, because notifications are for the Inbox.</string>
+
+    <string name="filters_banner_away">The away message is on, so the filters are paused. Switching them on will switch the away message off.</string>
+    <string name="filters_banner_other">Another filter script, %1$s, is on. Switching these filters on will switch it off.</string>
+    <string name="filters_banner_stale">The script on the server is out of date.</string>
+    <string name="filters_banner_edited">The script was changed outside the app, so its rules cannot be shown.</string>
+    <string name="filters_show">Show</string>
+    <string name="filters_update">Update</string>
+    <string name="filters_start_over">Start over with rules here</string>
+
+    <string name="filters_script_title">Script text</string>
+    <string name="filters_script_title_named">Script %1$s</string>
+    <string name="filters_close">Close</string>
+
+    <string name="filters_switch_on_title">Switch filters on?</string>
+    <string name="filters_switch_on_away">This switches the away message off.</string>
+    <string name="filters_switch_on_other">This switches the filter script %1$s off.</string>
+    <string name="filters_switch_on">Switch on</string>
+    <string name="filters_start_over_title">Start over?</string>
+    <string name="filters_start_over_text">The script on the server is replaced by an empty list of rules. What was changed outside the app is lost.</string>
+    <string name="filters_start_over_confirm">Start over</string>
+
+    <string name="filters_editor_new">New rule</string>
+    <string name="filters_editor_edit">Edit rule</string>
+    <string name="filters_name">Name</string>
+    <string name="filters_match_all">All of these</string>
+    <string name="filters_match_any">Any of these</string>
+    <string name="filters_conditions">When the mail</string>
+    <string name="filters_field_from">From</string>
+    <string name="filters_field_to">To or Cc</string>
+    <string name="filters_field_subject">Subject</string>
+    <string name="filters_field_header">Other header</string>
+    <string name="filters_header_name">Header name</string>
+    <string name="filters_how_contains">contains</string>
+    <string name="filters_how_is">is</string>
+    <string name="filters_how_begins">begins with</string>
+    <string name="filters_how_ends">ends with</string>
+    <string name="filters_value">Text</string>
+    <string name="filters_remove_condition">Remove condition</string>
+    <string name="filters_add_condition">Add a condition</string>
+    <string name="filters_actions">Then</string>
+    <string name="filters_move_to">Move to a folder</string>
+    <string name="filters_move_to_none">No folder chosen</string>
+    <string name="filters_choose_folder">Choose a folder</string>
+    <string name="filters_mark_read">Mark as read</string>
+    <string name="filters_star">Star</string>
+    <string name="filters_delete">Delete</string>
+    <string name="filters_delete_detail">The mail goes to the Trash.</string>
+    <string name="filters_stop">Stop here</string>
+    <string name="filters_stop_detail">Later rules are not tried</string>
+    <string name="filters_save">Save rule</string>
+    <string name="filters_delete_rule">Delete rule</string>
+    <string name="filters_delete_rule_title">Delete this rule?</string>
+    <string name="filters_delete_rule_text">The rule is removed from the filters.</string>
+    <string name="filters_discard_title">Discard changes?</string>
+    <string name="filters_discard_text">The changes to this rule have not been saved.</string>
+    <string name="filters_discard">Discard</string>
+    <string name="filters_keep_editing">Keep editing</string>
+
+    <string name="filters_problem_no_condition">Add a condition</string>
+    <string name="filters_problem_blank">Condition %1$d needs text</string>
+    <string name="filters_problem_lines">Condition %1$d must be one line</string>
+    <string name="filters_problem_header">Condition %1$d needs a header name (letters, digits and hyphens)</string>
+    <string name="filters_problem_delete_move">Delete and move cannot go together</string>
+    <string name="filters_problem_no_action">Choose what to do with the mail</string>
+    <string name="filters_problem_folder">Choose a folder that exists</string>
+    <string name="filters_problem_too_many">There can be at most 200 rules</string>
+
+    <string name="filters_menu_item">Filter mail like this</string>
+    <string name="filters_away_line">Switching the away message on pauses your mail filters.</string>
+
+    <string name="filters_sum_from">From</string>
+    <string name="filters_sum_to">To or Cc</string>
+    <string name="filters_sum_subject">Subject</string>
+    <string name="filters_sum_header">%1$s header</string>
+    <string name="filters_sum_contains">contains</string>
+    <string name="filters_sum_is">is</string>
+    <string name="filters_sum_begins">begins with</string>
+    <string name="filters_sum_ends">ends with</string>
+    <string name="filters_sum_and">" and "</string>
+    <string name="filters_sum_or">" or "</string>
+    <string name="filters_sum_move_to">Move to %1$s</string>
+    <string name="filters_sum_move_unknown">Move to a missing folder</string>
+    <string name="filters_sum_mark_read">mark read</string>
+    <string name="filters_sum_star">star</string>
+    <string name="filters_sum_trash">Move to Trash</string>
+    <string name="filters_sum_stop">stop</string>
+    <string name="filters_sum_no_conditions">Any mail</string>
+    <string name="filters_sum_no_actions">does nothing</string>
+</resources>

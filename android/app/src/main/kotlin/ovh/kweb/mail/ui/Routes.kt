@@ -69,6 +69,9 @@ sealed interface Route {
     /** The away message, reached from Settings. */
     data object Away : Route
 
+    /** The mail filters, reached from Settings; [fromMessageId] opens the rule editor for a new rule made from that message. */
+    data class Filters(val fromMessageId: String? = null) : Route
+
     /** The settings of the AI assistant, reached from Settings. */
     data object Assistant : Route
 
@@ -127,7 +130,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Assistant
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Assistant || top is Route.Filters
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

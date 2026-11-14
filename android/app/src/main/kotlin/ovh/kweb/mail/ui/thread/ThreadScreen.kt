@@ -80,7 +80,7 @@ import uniffi.kweb_core.DraftKind
 /** One conversation: its messages oldest first as cards, and what can be done with the thread. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit) {
+fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}) {
     val context = LocalContext.current
     val vm: ThreadViewModel = viewModel(
         key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
@@ -330,6 +330,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             onReply = { vm.startDraft(DraftKind.Reply(header.id)) },
                             onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
                             onForward = { vm.startDraft(DraftKind.Forward(header.id)) },
+                            onFilterLike = { onFilterLike(header.id) },
                             onSummarize = if (AssistantRules.Kind.SUMMARY in offered) {
                                 { assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeMessage(header.id)) }
                             } else {

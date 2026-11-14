@@ -78,6 +78,8 @@ class CardActions(
     val onSummarize: (() -> Unit)? = null,
     /** "Draft a reply" in the message's menu; null when the assistant does not offer it. */
     val onDraftReply: (() -> Unit)? = null,
+    /** "Filter mail like this" in the message's menu; null where it does not apply (a shared folder). */
+    val onFilterLike: (() -> Unit)? = null,
     /** False for a message that may not be answered (one of a shared folder): the card has no menu. */
     val showMenu: Boolean = true,
 )
@@ -222,6 +224,13 @@ private fun MessageMenu(actions: CardActions) {
                 leadingIcon = { Icon(painterResource(R.drawable.ic_forward), contentDescription = null) },
                 onClick = { open = false; actions.onForward() },
             )
+            actions.onFilterLike?.let { filter ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.filters_menu_item)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    onClick = { open = false; filter() },
+                )
+            }
             actions.onSummarize?.let { summarize ->
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.assistant_summarize)) },

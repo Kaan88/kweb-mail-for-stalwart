@@ -13,12 +13,14 @@ class UrlPolicyTest {
 
     @Test fun remoteContentIsRefusedAndReportedByDefault() {
         assertEquals(blockedRemote, UrlPolicy.fetch("https://tracker.example/p.gif", allowRemote = false))
-        assertEquals(blockedRemote, UrlPolicy.fetch("http://tracker.example/p.gif", allowRemote = false))
+        // Plain http can never be loaded, so it is neither loaded nor offered.
+        assertEquals(Fetch.Empty(remote = false), UrlPolicy.fetch("http://tracker.example/p.gif", allowRemote = false))
+        assertEquals(Fetch.Empty(remote = false), UrlPolicy.fetch("http://tracker.example/p.gif", allowRemote = true))
     }
 
     @Test fun remoteContentLoadsWhenAllowed() {
         assertEquals(Fetch.Load, UrlPolicy.fetch("https://x.example/a.png", allowRemote = true))
-        assertEquals(Fetch.Load, UrlPolicy.fetch("HTTP://x.example/a.png", allowRemote = true))
+        assertEquals(Fetch.Load, UrlPolicy.fetch("HTTPS://x.example/a.png", allowRemote = true))
     }
 
     @Test fun cidNamesAnInlinePicture() {

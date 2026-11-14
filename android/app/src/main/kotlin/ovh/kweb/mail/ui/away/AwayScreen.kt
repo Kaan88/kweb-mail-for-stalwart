@@ -163,6 +163,14 @@ private fun Form(state: AwayState, vm: AwayViewModel) {
                 Switch(checked = form.enabled, onCheckedChange = null)
             }
         }
+        if (state.filtersOn) {
+            Text(
+                stringResource(R.string.filters_away_line),
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
         GroupColumn(Modifier.padding(top = 16.dp)) {
             DateRow(Groups.shape(0, 2), stringResource(R.string.away_from), form.from, stringResource(R.string.away_from_unset), dateFormat, { picking = Picking.FROM }) {
                 vm.setFrom(null)

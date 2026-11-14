@@ -75,6 +75,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
     onOpenAway: () -> Unit,
+    onOpenFilters: () -> Unit,
     onOpenAssistant: () -> Unit,
     vm: SettingsViewModel = viewModel(),
     delivery: DeliveryViewModel = viewModel(),
@@ -122,14 +123,21 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 2),
+                    Groups.shape(0, 3),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
                     icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                     onClick = onOpenAway,
                 )
                 SettingsRow(
-                    Groups.shape(1, 2),
+                    Groups.shape(1, 3),
+                    stringResource(R.string.filters_title),
+                    filtersLine(state.filters),
+                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    onClick = onOpenFilters,
+                )
+                SettingsRow(
+                    Groups.shape(2, 3),
                     stringResource(R.string.assistant_title),
                     assistantLine(state.assistant),
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
@@ -186,6 +194,14 @@ private fun awayLine(state: AwayRowState): String? {
         is AwayLine.OnFromUntil ->
             stringResource(R.string.away_state_on_from_until, AwayRules.shortDate(line.from, locale), AwayRules.shortDate(line.until, locale))
     }
+}
+
+/** The quiet line of the filters row: "On" or "Off"; nothing while it is read or when it cannot be. */
+@Composable
+private fun filtersLine(state: FiltersRowState): String? = when (state) {
+    FiltersRowState.On -> stringResource(R.string.filters_state_on)
+    FiltersRowState.Off -> stringResource(R.string.filters_state_off)
+    else -> null
 }
 
 /** The quiet line of the assistant row: "Off", "On", or the model's name; nothing while it is read or when it cannot be. */

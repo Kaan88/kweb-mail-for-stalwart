@@ -27,7 +27,10 @@ object UrlPolicy {
     /** A sub-resource of the page (picture, style sheet, frame, font…). */
     fun fetch(url: String, allowRemote: Boolean): Fetch = when (scheme(url)) {
         "cid" -> Fetch.Inline(percentDecode(url.substring("cid:".length)).trim().removeSurrounding("<", ">"))
-        "http", "https" -> if (allowRemote) Fetch.Load else Fetch.Empty(remote = true)
+        "https" -> if (allowRemote) Fetch.Load else Fetch.Empty(remote = true)
+        // Plain http is never loaded (the app allows no cleartext traffic), so it is not
+        // counted as something "Show pictures" could bring: the offer would do nothing.
+        "http" -> Fetch.Empty(remote = false)
         else -> Fetch.Empty(remote = false)
     }
 

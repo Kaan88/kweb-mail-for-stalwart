@@ -30,6 +30,8 @@ data class AwayState(
     val initial: AwayForm = AwayForm(),
     val zone: ZoneId = ZoneId.systemDefault(),
     val saving: Boolean = false,
+    /** The mail filters are on, so switching the away message on pauses them; false while that is unknown. */
+    val filtersOn: Boolean = false,
     val error: UiMessage? = null,
 ) {
     val dirty: Boolean get() = phase == AwayPhase.READY && AwayRules.isChanged(form, initial, zone)
@@ -50,6 +52,17 @@ class AwayViewModel(app: Application) : AndroidViewModel(app) {
     fun load() {
         if (loadJob?.isActive == true || stateFlow.value.phase == AwayPhase.READY) return
         stateFlow.update { it.copy(phase = AwayPhase.LOADING) }
+        viewModelScope.launch {
+            // Only a hint on the screen: when the filters cannot be read, nothing is shown.
+            try {
+                val filters = withContext(Dispatchers.IO) { Background.core(getApplication()).filters() }
+                stateFlow.update { it.copy(filtersOn = filters.isActive) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the mail filters failed: ${e.javaClass.simpleName}")
+            }
+        }
         loadJob = viewModelScope.launch {
             try {
                 val message = withContext(Dispatchers.IO) { Background.core(getApplication()).awayMessage() }

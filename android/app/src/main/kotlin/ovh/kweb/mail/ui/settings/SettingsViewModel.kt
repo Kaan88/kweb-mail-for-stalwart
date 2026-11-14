@@ -39,6 +39,9 @@ sealed interface AwayRowState {
     data object Unknown : AwayRowState
 }
 
+/** The state line of the filters row: not read yet, on, off, or not readable (the row then says nothing). */
+enum class FiltersRowState { Loading, On, Off, Unknown }
+
 /** The state line of the assistant row: not read yet, read, or not readable (the row then says nothing). */
 sealed interface AssistantRowState {
     data object Loading : AssistantRowState
@@ -55,6 +58,7 @@ data class SettingsState(
     val storage: StorageState = StorageState.Loading,
     val away: AwayRowState = AwayRowState.Loading,
     val assistant: AssistantRowState = AssistantRowState.Loading,
+    val filters: FiltersRowState = FiltersRowState.Loading,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -114,6 +118,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (asked != generation) return@launch
             // An answer that is only a failure does not replace a state that was read earlier.
             stateFlow.update { if (result is AwayRowState.Unknown && it.away is AwayRowState.Known) it else it.copy(away = result) }
+        }
+        viewModelScope.launch {
+            val result = try {
+                val filters = withContext(Dispatchers.IO) { Background.core(getApplication()).filters() }
+                if (filters.isActive) FiltersRowState.On else FiltersRowState.Off
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the mail filters failed: ${e.javaClass.simpleName}")
+                FiltersRowState.Unknown
+            }
+            if (asked != generation) return@launch
+            stateFlow.update { if (result == FiltersRowState.Unknown && (it.filters == FiltersRowState.On || it.filters == FiltersRowState.Off)) it else it.copy(filters = result) }
         }
         viewModelScope.launch {
             val result = try {

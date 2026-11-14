@@ -33,6 +33,7 @@ import ovh.kweb.mail.ui.contacts.ContactsScreen
 import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
 import ovh.kweb.mail.ui.files.FilesScreen
+import ovh.kweb.mail.ui.filters.FiltersScreen
 import ovh.kweb.mail.ui.list.MailListScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.search.SearchScreen
@@ -198,18 +199,27 @@ fun AppContent(app: AppViewModel = viewModel()) {
                 Route.Away -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AwayScreen(onBack = app::back)
                 }
+                is Route.Filters -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    FiltersScreen(route, onBack = app::back)
+                }
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AssistantScreen(onBack = app::back)
                 }
                 // One thread replacing another (a notification tap) must not inherit the first one's state.
                 is Route.Thread -> key(route) {
-                    ThreadScreen(route, onBack = app::back, onCompose = { app.open(Route.Compose(it)) })
+                    ThreadScreen(
+                        route,
+                        onBack = app::back,
+                        onCompose = { app.open(Route.Compose(it)) },
+                        onFilterLike = { app.open(Route.Filters(it)) },
+                    )
                 }
                 is Route.Compose -> key(route) { ComposeScreen(route.draftId, route.prefillTo, onLeave = app::back, onSent = app::sent) }
                 Route.Settings -> SettingsScreen(
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenAway = { app.open(Route.Away) },
+                    onOpenFilters = { app.open(Route.Filters()) },
                     onOpenAssistant = { app.open(Route.Assistant) },
                 )
                 Route.Search -> SearchScreen(
