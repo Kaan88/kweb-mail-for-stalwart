@@ -1,6 +1,6 @@
 # Admin and Enterprise features: design draft
 
-Status: a proposal for the owner (2026-11-14). Nothing here is built. It rests on Stalwart's public
+Status: built on 2026-11-14 (all three steps; PLAN.md, M10, says what was checked). What follows is the design as it was proposed. It rests on Stalwart's public
 docs and source at v1.1.0 and on a read-only probe of the local test server; the reports are in
 `dev/notes/stalwart-admin-features.md`, `stalwart-webui.md`, `stalwart-admin-api-local.md` and
 `stalwart-admin-critic.md`. No call was ever made against a licensed server, so every shape of an
