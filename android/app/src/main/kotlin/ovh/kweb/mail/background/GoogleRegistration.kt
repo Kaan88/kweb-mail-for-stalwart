@@ -29,12 +29,13 @@ sealed interface RegistrationReply {
 }
 
 /**
- * Registration with Play services by the intent the Mastodon app uses: no Firebase project and no Google
- * library. The pure parts (extras, reading the reply) are tested; [request] does the Android part.
+ * Registration with Play services by the intents Google's own library and the Mastodon app use: no Firebase
+ * project and no Google library. The pure parts (extras, reading the reply) are tested; [request] does the Android part.
  */
 object GoogleRegistration {
     const val GMS_PACKAGE = "com.google.android.gms"
     const val ACTION_REGISTER = "com.google.android.c2dm.intent.REGISTER"
+    const val ACTION_TOKEN_REQUEST = "com.google.iid.TOKEN_REQUEST"
     const val ACTION_REGISTRATION = "com.google.android.c2dm.intent.REGISTRATION"
     const val ACTION_RECEIVE = "com.google.android.c2dm.intent.RECEIVE"
     const val PERMISSION_SEND = "com.google.android.c2dm.permission.SEND"
@@ -48,7 +49,7 @@ object GoogleRegistration {
     /** The `message_type` of Google's notice that it discarded pending messages for this app. */
     const val TYPE_DELETED_MESSAGES = "deleted_messages"
 
-    private val replyId = Regex("""^\|ID\|([^|]+)\|:(.*)$""")
+    private val replyId = Regex("""^\|ID\|([^|]+)\|:?(.*)$""")
 
     /** The `kid` that comes back in the reply and names the account. */
     fun kid(accountId: String): String = "|ID|$accountId|"
@@ -156,21 +157,119 @@ object GoogleRegistration {
             RegistrationReply.Unknown -> "nothing usable"
         }
         Log.i(Background.TAG, "Play services answered a registration request $road: $kind")
-        deliver(reply)
+        if (!deliver(reply)) unmatched = unmatchedWord(reply, intent.hasExtra(EXTRA_REGISTRATION_ID))
     }
 
-    /** Called by [onReply]. A reply nobody waits for (the process died meanwhile, or it came twice) is dropped. */
-    fun deliver(reply: RegistrationReply) {
-        if (mayBeStray(reply, unansweredAt?.let { monotonicMs() - it })) return
+    /**
+     * An answer that ended no waiting request, for the Delivery check: without it such an answer looks the same as
+     * silence. Says the kind only, never the token.
+     */
+    fun unmatchedWord(reply: RegistrationReply, hadRegistrationId: Boolean): String = when (reply) {
+        is RegistrationReply.Token, is RegistrationReply.Unregistered -> "an answer for another request"
+        is RegistrationReply.Error -> "error ${reply.error}, not taken"
+        RegistrationReply.Unknown -> if (hadRegistrationId) "an answer in an unknown form" else "an empty answer"
+    }
+
+    /** The last answer during the running request that ended nothing (see [unmatchedWord]), or null. */
+    @Volatile private var unmatched: String? = null
+
+    /** What a road that was sent and not answered did: silence, or an answer that could not be used. */
+    fun unansweredText(unmatched: String?): String = if (unmatched == null) NO_ANSWER else "$NO_ANSWER (got $unmatched)"
+
+    /**
+     * Called by [onReply]. A reply nobody waits for (the process died meanwhile, or it came twice) is dropped.
+     * True when it ended a waiting request.
+     */
+    fun deliver(reply: RegistrationReply): Boolean {
+        if (mayBeStray(reply, unansweredAt?.let { monotonicMs() - it })) return false
+        var taken = false
         for (w in waiters.values) {
             val answer = answerFor(reply, w.accountId, w.delete) ?: continue
-            w.result.complete(answer)
+            if (w.result.complete(answer)) taken = true
         }
+        return taken
+    }
+
+    /** The two ways to hand Play services the request. */
+    enum class Road(val label: String) {
+        /** `sendBroadcast` of `com.google.iid.TOKEN_REQUEST`: what current Play services answers. */
+        Broadcast("broadcast"),
+
+        /** `startService` of `com.google.android.c2dm.intent.REGISTER`: the older road. */
+        Service("service"),
+    }
+
+    /** What happened on one road. [text] is the word shown on the Delivery check: names only, never a token or key. */
+    data class Attempt(val road: Road, val text: String) {
+        val sent: Boolean get() = text == SENT || text.startsWith(NO_ANSWER)
+    }
+
+    const val SENT = "sent"
+    const val NO_ANSWER = "no answer"
+    const val NO_RECEIVER = "no receiver"
+    const val NO_SERVICE = "no service"
+
+    /**
+     * The roads to try, in order, as Google's own library picks them: on Android 8 and later it always takes the
+     * broadcast (the receiver is the default when nothing resolves) and the service road only on older phones.
+     * Here the service road stays as a second try. A road Play services does not offer is left out; when it
+     * offers neither (or the lookup failed), both are tried, the broadcast first.
+     */
+    fun roadsFor(hasReceiver: Boolean, hasService: Boolean): List<Road> = when {
+        hasReceiver && hasService -> listOf(Road.Broadcast, Road.Service)
+        hasReceiver -> listOf(Road.Broadcast)
+        hasService -> listOf(Road.Service)
+        else -> listOf(Road.Broadcast, Road.Service)
+    }
+
+    /** How long road number [index] of [count] waits: an equal share, and the last one gets what is left. */
+    fun shareMs(timeoutMs: Long, index: Int, count: Int): Long =
+        if (index >= count - 1) timeoutMs - (timeoutMs / count) * index else timeoutMs / count
+
+    /** The line for the Delivery check: the Play services version and what each road did. */
+    fun diagnostic(version: Long?, attempts: List<Attempt>): String =
+        (listOf("Play services ${version ?: "unknown"}") + attempts.map { "${it.road.label}: ${it.text}" }).joinToString("; ")
+
+    private fun gmsVersion(app: Context): Long? = try {
+        app.packageManager.getPackageInfo(GMS_PACKAGE, 0).longVersionCode
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun offers(app: Context, road: Road): Boolean = try {
+        val probe = Intent(if (road == Road.Broadcast) ACTION_TOKEN_REQUEST else ACTION_REGISTER).setPackage(GMS_PACKAGE)
+        val found = if (road == Road.Broadcast) app.packageManager.queryBroadcastReceivers(probe, 0) else app.packageManager.queryIntentServices(probe, 0)
+        found.isNotEmpty()
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun intentFor(app: Context, road: Road, accountId: String, sender: String, subtype: String, delete: Boolean): Intent {
+        val intent = Intent(if (road == Road.Broadcast) ACTION_TOKEN_REQUEST else ACTION_REGISTER).setPackage(GMS_PACKAGE)
+        intent.putExtra("app", PendingIntent.getBroadcast(app, 0, Intent(), PendingIntent.FLAG_IMMUTABLE))
+        intent.putExtra(EXTRA_MESSENGER, replyMessenger)
+        extras(accountId, sender, subtype, delete).forEach { (k, v) -> intent.putExtra(k, v) }
+        return intent
+    }
+
+    /** Sends on one road; the outcome is [SENT] or a short word (an exception's class name, "no service"). */
+    private fun send(app: Context, road: Road, intent: Intent): String = try {
+        when (road) {
+            Road.Broadcast -> {
+                app.sendBroadcast(intent)
+                SENT
+            }
+            Road.Service -> if (app.startService(intent) == null) NO_SERVICE else SENT
+        }
+    } catch (e: Exception) {
+        "threw ${e.javaClass.simpleName}"
     }
 
     /**
      * Asks Play services for a token ([delete] false) or to forget the subtype ([delete] true) and waits
-     * [timeoutMs] for the answer. The intent throwing, or no answer in time, is [RegistrationResult.NoPlayServices].
+     * [timeoutMs] for the answer, shared between the roads (see [roadsFor]): a road that gets no answer in its share
+     * is followed by the next. When no road could be sent, or none was answered, the result is
+     * [RegistrationResult.NoPlayServices] whose detail says what each road did ([diagnostic]).
      * An unregister that was answered gives `Token("")`.
      */
     suspend fun request(
@@ -186,18 +285,29 @@ object GoogleRegistration {
         waiters[accountId] = waiter
         var asked = false
         try {
-            val intent = Intent(ACTION_REGISTER).setPackage(GMS_PACKAGE)
-            intent.putExtra("app", PendingIntent.getBroadcast(app, 0, Intent(), PendingIntent.FLAG_IMMUTABLE))
             appPackage = app.packageName
-            intent.putExtra(EXTRA_MESSENGER, replyMessenger)
-            extras(accountId, sender, subtype, delete).forEach { (k, v) -> intent.putExtra(k, v) }
-            try {
-                if (app.startService(intent) == null) return@withLock RegistrationResult.NoPlayServices("no service", absent = true)
-            } catch (e: Exception) {
-                return@withLock RegistrationResult.NoPlayServices(e.javaClass.simpleName, absent = true)
+            unmatched = null
+            val hasReceiver = offers(app, Road.Broadcast)
+            val hasService = offers(app, Road.Service)
+            val roads = roadsFor(hasReceiver, hasService)
+            val attempts = mutableListOf<Attempt>()
+            if (!hasReceiver && hasService) attempts += Attempt(Road.Broadcast, NO_RECEIVER)
+            if (hasReceiver && !hasService) attempts += Attempt(Road.Service, NO_SERVICE)
+            for ((i, road) in roads.withIndex()) {
+                val outcome = send(app, road, intentFor(app, road, accountId, sender, subtype, delete))
+                Log.i(Background.TAG, "Registration request on the ${road.label} road: $outcome")
+                if (outcome != SENT) {
+                    attempts += Attempt(road, outcome)
+                    continue
+                }
+                asked = true
+                val answer = withTimeoutOrNull(shareMs(timeoutMs, i, roads.size)) { waiter.result.await() }
+                if (answer != null) return@withLock answer
+                attempts += Attempt(road, unansweredText(unmatched))
             }
-            asked = true
-            withTimeoutOrNull(timeoutMs) { waiter.result.await() } ?: RegistrationResult.NoPlayServices("no answer")
+            val detail = diagnostic(gmsVersion(app), attempts)
+            Log.i(Background.TAG, "Registration failed: $detail")
+            RegistrationResult.NoPlayServices(detail, absent = attempts.none { it.sent })
         } finally {
             waiters.remove(accountId)
             // Asked, and left without the answer (time ran out, or the request was cancelled): it may still come.

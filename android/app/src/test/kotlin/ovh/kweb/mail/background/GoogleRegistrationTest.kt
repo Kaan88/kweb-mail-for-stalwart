@@ -86,4 +86,66 @@ class GoogleRegistrationTest {
         assertEquals(RegistrationResult.Refused("E"), GoogleRegistration.answerFor(err, "a", delete = false))
         assertNull(GoogleRegistration.answerFor(RegistrationReply.Error("b", "E"), "a", delete = false))
     }
+
+    @Test
+    fun theBroadcastRoadComesFirstWhenPlayServicesHasAReceiver() {
+        assertEquals(listOf(GoogleRegistration.Road.Broadcast, GoogleRegistration.Road.Service), GoogleRegistration.roadsFor(hasReceiver = true, hasService = true))
+        assertEquals(listOf(GoogleRegistration.Road.Broadcast), GoogleRegistration.roadsFor(hasReceiver = true, hasService = false))
+    }
+
+    @Test
+    fun theServiceRoadIsTheOnlyOneWhenThereIsNoReceiver() {
+        assertEquals(listOf(GoogleRegistration.Road.Service), GoogleRegistration.roadsFor(hasReceiver = false, hasService = true))
+    }
+
+    @Test
+    fun whenNothingResolvesBothAreTriedBroadcastFirst() {
+        assertEquals(listOf(GoogleRegistration.Road.Broadcast, GoogleRegistration.Road.Service), GoogleRegistration.roadsFor(hasReceiver = false, hasService = false))
+    }
+
+    @Test
+    fun theWaitIsSharedBetweenTheRoadsAndAddsUp() {
+        assertEquals(30_000L, GoogleRegistration.shareMs(30_000L, 0, 1))
+        assertEquals(15_000L, GoogleRegistration.shareMs(30_000L, 0, 2))
+        assertEquals(15_000L, GoogleRegistration.shareMs(30_000L, 1, 2))
+        assertEquals(5_000L + 5_001L, GoogleRegistration.shareMs(10_001L, 0, 2) + GoogleRegistration.shareMs(10_001L, 1, 2))
+    }
+
+    @Test
+    fun theDiagnosticNamesTheVersionAndEveryRoad() {
+        val text = GoogleRegistration.diagnostic(
+            244735035L,
+            listOf(
+                GoogleRegistration.Attempt(GoogleRegistration.Road.Broadcast, GoogleRegistration.NO_ANSWER),
+                GoogleRegistration.Attempt(GoogleRegistration.Road.Service, "threw SecurityException"),
+            ),
+        )
+        assertEquals("Play services 244735035; broadcast: no answer; service: threw SecurityException", text)
+        assertEquals("Play services unknown; broadcast: no receiver", GoogleRegistration.diagnostic(null, listOf(GoogleRegistration.Attempt(GoogleRegistration.Road.Broadcast, GoogleRegistration.NO_RECEIVER))))
+    }
+
+    @Test
+    fun onlyARoadThatWasSentCountsAsAsked() {
+        assertTrue(GoogleRegistration.Attempt(GoogleRegistration.Road.Broadcast, GoogleRegistration.NO_ANSWER).sent)
+        assertFalse(GoogleRegistration.Attempt(GoogleRegistration.Road.Service, GoogleRegistration.NO_SERVICE).sent)
+        assertFalse(GoogleRegistration.Attempt(GoogleRegistration.Road.Service, "threw IllegalStateException").sent)
+        assertFalse(GoogleRegistration.Attempt(GoogleRegistration.Road.Broadcast, GoogleRegistration.NO_RECEIVER).sent)
+    }
+
+    @Test
+    fun `a reply without the colon after the kid is read as Google's own library reads it`() {
+        assertEquals(RegistrationReply.Token("acct1", "abc"), GoogleRegistration.parseReply("|ID|acct1|abc", null, "p"))
+    }
+
+    @Test
+    fun `an answer that ended nothing shows on the unanswered road, without its content`() {
+        assertEquals("no answer", GoogleRegistration.unansweredText(null))
+        val word = GoogleRegistration.unmatchedWord(RegistrationReply.Token("other", "secret-token"), hadRegistrationId = true)
+        assertEquals("an answer for another request", word)
+        assertEquals("an answer in an unknown form", GoogleRegistration.unmatchedWord(RegistrationReply.Unknown, hadRegistrationId = true))
+        assertEquals("an empty answer", GoogleRegistration.unmatchedWord(RegistrationReply.Unknown, hadRegistrationId = false))
+        val attempt = GoogleRegistration.Attempt(GoogleRegistration.Road.Broadcast, GoogleRegistration.unansweredText(word))
+        assertEquals("no answer (got an answer for another request)", attempt.text)
+        assertTrue(attempt.sent)
+    }
 }

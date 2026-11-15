@@ -15,6 +15,9 @@
     <!-- Play services is asked for a push registration by an intent (package visibility, Android 11+). -->
     <queries>
         <package android:name="com.google.android.gms" />
+        <intent>
+            <action android:name="com.google.iid.TOKEN_REQUEST" />
+        </intent>
     </queries>
 
     <application
