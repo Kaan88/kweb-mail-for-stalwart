@@ -107,7 +107,8 @@ pub fn answer(
 /// `source` passed on, with its files.
 pub fn forward(source: (&MessageHeader, &MessageBody), identities: &[Identity], id: String, now: i64) -> Draft {
     let (header, body) = source;
-    let identity = rules::pick_identity(identities, &body.to);
+    let recipients = [body.to.as_slice(), body.cc.as_slice()].concat();
+    let identity = rules::pick_identity(identities, &recipients);
     let text = rules::forwarded_text(
         &sender(header),
         body.sent_at.unwrap_or(header.received_at),
@@ -286,6 +287,29 @@ mod tests {
         b.reply_to = vec![addr("List", "list@x.org")];
         let d = answer(false, (&header(), &b), &ids(), "d".into(), 5);
         assert_eq!(d.to, vec![addr("List", "list@x.org")]);
+    }
+
+    #[test]
+    fn a_reply_to_all_drops_the_tagged_own_address() {
+        let mut b = body();
+        b.to = vec![addr("Me", "me+shop@x.org"), addr("Bo", "bo@x.org")];
+        let d = answer(true, (&header(), &b), &ids(), "d".into(), 5);
+        assert_eq!(d.to, vec![addr("Ann", "ann@x.org"), addr("Bo", "bo@x.org")]);
+        assert_eq!(d.identity_id, "2", "the tag still finds the identity");
+    }
+
+    #[test]
+    fn a_forward_picks_its_identity_from_to_and_cc_like_a_reply() {
+        let mut b = body();
+        b.to = vec![addr("Bo", "bo@x.org")];
+        b.cc = vec![addr("Me", "me@x.org")];
+        assert_eq!(forward((&header(), &b), &ids(), "d".into(), 5).identity_id, "2");
+        b.cc = vec![addr("Me", "me+x@x.org")];
+        let d = forward((&header(), &b), &ids(), "d".into(), 5);
+        assert_eq!(d.identity_id, "2");
+        assert!(d.body.ends_with("\n\n-- \nMe\nAcme"));
+        b.cc = Vec::new();
+        assert_eq!(forward((&header(), &b), &ids(), "d".into(), 5).identity_id, "1");
     }
 
     #[test]

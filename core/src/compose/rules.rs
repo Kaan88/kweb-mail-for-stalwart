@@ -54,6 +54,30 @@ pub fn own_keys(identities: &[Identity]) -> HashSet<String> {
     identities.iter().map(|i| address_key(&i.email)).collect()
 }
 
+/// The address without its plus tag: `me+shop@x.org` is `me@x.org` (both as keys). An address
+/// without a tag, or with an empty local part before the plus, is returned as it is.
+pub fn untagged_key(email: &str) -> String {
+    let key = address_key(email);
+    match key.split_once('@') {
+        Some((local, domain)) => match local.split_once('+') {
+            Some((base, _)) if !base.is_empty() => format!("{base}@{domain}"),
+            _ => key,
+        },
+        None => key,
+    }
+}
+
+/// Whether `email` is one of the user's own addresses (`own`, see [`own_keys`]): exactly, or as
+/// a plus-tagged form of one.
+pub fn is_own(own: &HashSet<String>, email: &str) -> bool {
+    own.contains(&address_key(email)) || own.contains(&untagged_key(email))
+}
+
+/// `list` without the user's own addresses.
+fn without_own(list: &[Address], own: &HashSet<String>) -> Vec<Address> {
+    list.iter().filter(|a| !is_own(own, &a.email)).cloned().collect()
+}
+
 /// The first of each address (without regard to case) among `list` that is not in `skip`; the
 /// ones taken are added to `skip`, so a later list leaves them out. Entries without an address
 /// are dropped.
@@ -95,18 +119,18 @@ pub fn reply_recipients(
     if !all {
         let mut seen = HashSet::new();
         let targets = take_new(primary, &mut seen);
-        if targets.iter().all(|a| own.contains(&address_key(&a.email))) {
-            let others = take_new(to, &mut own.clone());
+        if targets.iter().all(|a| is_own(own, &a.email)) {
+            let others = take_new(&without_own(to, own), &mut HashSet::new());
             if !others.is_empty() {
                 return Recipients { to: others, cc: Vec::new() };
             }
         }
         return Recipients { to: targets, cc: Vec::new() };
     }
-    let mut seen = own.clone();
-    let main = take_new(primary, &mut seen);
-    let more = take_new(to, &mut seen);
-    let cc = take_new(cc, &mut seen);
+    let mut seen = HashSet::new();
+    let main = take_new(&without_own(primary, own), &mut seen);
+    let more = take_new(&without_own(to, own), &mut seen);
+    let cc = take_new(&without_own(cc, own), &mut seen);
     if main.is_empty() && more.is_empty() && cc.is_empty() {
         // Everyone on it is the user: still better addressed than empty.
         return Recipients { to: take_new(primary, &mut HashSet::new()), cc };
@@ -114,14 +138,22 @@ pub fn reply_recipients(
     Recipients { to: [main, more].concat(), cc }
 }
 
-/// The identity a reply is sent as: the first one the source was sent to (in the order of its
-/// recipients), else the first identity.
+/// The identity a reply or a forward is sent as: the first one the source was sent to (in the
+/// order of its To and Cc recipients), else one whose address the source was sent to with a plus
+/// tag (`me+shop@` for `me@`), else the first identity. The delivery headers are not looked at:
+/// the cache does not hold them.
 pub fn pick_identity<'a>(identities: &'a [Identity], source_recipients: &[Address]) -> Option<&'a Identity> {
-    let sent_to = source_recipients.iter().find_map(|r| {
+    let exact = source_recipients.iter().find_map(|r| {
         let key = address_key(&r.email);
         identities.iter().find(|i| address_key(&i.email) == key)
     });
-    sent_to.or_else(|| identities.first())
+    let tagged = || {
+        source_recipients.iter().find_map(|r| {
+            let key = untagged_key(&r.email);
+            identities.iter().find(|i| address_key(&i.email) == key)
+        })
+    };
+    exact.or_else(tagged).or_else(|| identities.first())
 }
 
 /// `Name <address>`, or the address alone when there is no name. Line breaks cannot get in.
@@ -499,6 +531,37 @@ mod tests {
         assert_eq!(pick_identity(&[], &[addr("", "a@x.org")]), None);
         // The first recipient that is an identity wins, not the first identity.
         assert_eq!(pick(&[addr("", "work@x.org"), addr("", "me@x.org")]), Some("2".into()));
+    }
+
+    #[test]
+    fn plus_tagged_forms_of_ones_own_address_are_dropped_from_a_reply_to_all() {
+        let own = own_keys(&[identity("1", "me@x.org")]);
+        let from = addr("Ann", "ann@x.org");
+        let to = [addr("Me", "Me+shop@x.org"), addr("Bo", "bo@x.org")];
+        let cc = [addr("", "me+other@X.org"), addr("Cy", "cy@x.org")];
+        let got = reply_recipients(true, &[], &from, &to, &cc, &own);
+        assert_eq!(emails(&got.to), ["ann@x.org", "bo@x.org"]);
+        assert_eq!(emails(&got.cc), ["cy@x.org"]);
+        // Not the same person: another domain, or a tag on another name.
+        let got = reply_recipients(true, &[], &from, &[addr("", "me+a@y.org"), addr("", "mee+a@x.org")], &[], &own);
+        assert_eq!(emails(&got.to), ["ann@x.org", "me+a@y.org", "mee+a@x.org"]);
+        // The only recipient stays, tagged or not.
+        let tagged = addr("Me", "me+x@x.org");
+        let got = reply_recipients(true, &[], &tagged, std::slice::from_ref(&tagged), &[], &own);
+        assert_eq!(got.to, vec![tagged.clone()]);
+        // A plain reply to one's own tagged message goes to the others.
+        let got = reply_recipients(false, &[], &tagged, &[addr("Bo", "bo@x.org")], &[], &own);
+        assert_eq!(emails(&got.to), ["bo@x.org"]);
+    }
+
+    #[test]
+    fn a_plus_tagged_address_picks_the_identity_after_the_exact_ones() {
+        let ids = [identity("1", "first@x.org"), identity("2", "me@x.org"), identity("3", "me+tag@x.org")];
+        let pick = |to: &[Address]| pick_identity(&ids, to).map(|i| i.id.clone());
+        assert_eq!(pick(&[addr("", "me+shop@x.org")]), Some("2".into()));
+        // An exact match anywhere beats a tagged one before it.
+        assert_eq!(pick(&[addr("", "me+shop@x.org"), addr("", "me+tag@x.org")]), Some("3".into()));
+        assert_eq!(pick(&[addr("", "you+shop@x.org")]), Some("1".into()));
     }
 
     #[test]
