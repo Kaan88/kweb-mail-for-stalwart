@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import ovh.kweb.mail.ui.admin.AdminScreen
+import ovh.kweb.mail.ui.calendar.EventPrefill
 
 class BackStackTest {
     private val thread = Route.Thread("t1", "inbox", null)
@@ -195,6 +196,28 @@ class BackStackTest {
         val shown = BackStack.showOver(stack, BackStack.forNotification("t", null, "m"))
         assertEquals(stack + Route.Thread("t", null, "m"), shown)
         assertEquals(false, BackStack.isRoot(Route.Assistant))
+    }
+
+    @Test fun theChatIsAScreenOverTheListAndNotARoot() {
+        assertEquals(listOf(Route.MailList, Route.AssistantChat), BackStack.push(BackStack.initial, Route.AssistantChat))
+        assertEquals(false, BackStack.isRoot(Route.AssistantChat))
+        assertEquals(BackStack.initial, BackStack.pop(listOf(Route.MailList, Route.AssistantChat)))
+    }
+
+    @Test fun aTargetGoesOverTheChatSoWhatWasTypedIsKept() {
+        val stack = listOf(Route.MailList, Route.AssistantChat)
+        val shown = BackStack.showOver(stack, BackStack.forNotification("t", null, "m"))
+        assertEquals(stack + Route.Thread("t", null, "m"), shown)
+        assertEquals(stack, BackStack.pop(shown))
+    }
+
+    @Test fun aPrefilledFormIsItsOwnRouteAndGoesWhenTheEntryIsSaved() {
+        val prefill = EventPrefill("Dentist", "2026-11-20T09:30:00", allDay = false, isTask = false)
+        val form = Route.EditEvent(null, "2026-11-20", prefill = prefill)
+        assertEquals(form, Route.EditEvent(null, "2026-11-20", prefill = prefill.copy()))
+        assertNotEquals(form, Route.EditEvent(null, "2026-11-20"))
+        val stack = listOf(Route.MailList, Route.Thread("t", "mb1", null), form)
+        assertEquals(stack.dropLast(1), BackStack.afterEventSaved(stack))
     }
 
     @Test fun aSwitchOfAccountStartsAtTheList() {

@@ -49,6 +49,8 @@ data class AssistantSettingsState(
     /** A key is stored for the shown service (the key itself never comes here). */
     val hasKey: Boolean = false,
     val saving: Boolean = false,
+    /** The reset to the defaults is running (it removes the keys and the consents too). */
+    val resetting: Boolean = false,
     /** The other service's settings are being read: the fields wait. */
     val switching: Boolean = false,
     /** The picker's sheet, when open. */
@@ -56,6 +58,11 @@ data class AssistantSettingsState(
     /** The last list the service gave, for the effort levels of the model; dropped when the service changes. */
     val modelList: AiModelList? = null,
     val consent: ConsentAsk? = null,
+    /**
+     * The second question, after the service itself is agreed to and the chat is on: in the chat the assistant itself
+     * chooses what it reads and sends there.
+     */
+    val chatConsent: ConsentAsk? = null,
     val error: UiMessage? = null,
 )
 
@@ -103,6 +110,31 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
             } catch (e: Exception) {
                 Log.w(Background.TAG, "reading the assistant settings failed: ${e.javaClass.simpleName}")
                 stateFlow.update { it.copy(phase = AssistantPhase.FAILED) }
+            }
+        }
+    }
+
+    /**
+     * "Reset to default": the core puts the settings back to how they were before anything was set, removes both keys
+     * and every consent, and refuses while the assistant is working. The form is then read from what it returns, and
+     * what was typed here is dropped. The screen stays open.
+     */
+    fun reset() {
+        val s = stateFlow.value
+        if (s.resetting || s.saving || s.switching || s.phase != AssistantPhase.READY) return
+        switchJob?.cancel()
+        modelsJob?.cancel()
+        stateFlow.update { it.copy(resetting = true, models = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val after = withContext(Dispatchers.IO) { session.core.aiResetSettings() }
+                keyText = ""
+                take(after)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "resetting the assistant settings failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(resetting = false, error = AssistantMessages.of(e, R.string.assistant_reset_failed)) }
             }
         }
     }
@@ -207,7 +239,8 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
 
     /**
      * Stores the shown service and makes it the one in use. The core clears consent itself when address or model
-     * changed; when the result is on and not agreed to, the screen asks before it closes.
+     * changed; when the result is on and not agreed to, the screen asks before it closes. When the chat is on and its
+     * own agreement is missing, that is asked next. Switching the chat off needs nothing more than the save.
      */
     fun save() {
         val s = stateFlow.value
@@ -222,12 +255,15 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 keyText = ""
                 stored = after
                 val shown = AssistantRules.formOf(after)
-                if (ConsentRules.isNeededAfterSave(after)) {
-                    stateFlow.update {
-                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, consent = ConsentAsk(ConsentRules.hostOf(after.baseUrl), after.model))
+                val ask = ConsentAsk(ConsentRules.hostOf(after.baseUrl), after.model)
+                when {
+                    ConsentRules.isNeededAfterSave(after) -> stateFlow.update {
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, consent = ask)
                     }
-                } else {
-                    doneChannel.send(Unit)
+                    ConsentRules.isChatNeededAfterSave(after) -> stateFlow.update {
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, chatConsent = ask)
+                    }
+                    else -> doneChannel.send(Unit)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -253,7 +289,12 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
             try {
                 val after = withContext(Dispatchers.IO) { session.core.setAiSettings(change(base), null) }
                 stored = after
-                doneChannel.send(Unit)
+                if (ConsentRules.isChatNeededAfterSave(after)) {
+                    // Agreed to the service, and the chat is on: its own question comes next.
+                    stateFlow.update { it.copy(consent = null, chatConsent = ConsentAsk(ConsentRules.hostOf(after.baseUrl), after.model)) }
+                } else {
+                    doneChannel.send(Unit)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -261,6 +302,38 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 stateFlow.update { it.copy(consent = null, error = AssistantMessages.of(e, R.string.assistant_save_failed)) }
             }
         }
+    }
+
+    /**
+     * "Agree" in the chat's dialog: the core stores the yes for the service in use (only this call can; a save never
+     * does). Nothing is sent to the service by it.
+     */
+    fun agreeChatConsent() {
+        val ask = stateFlow.value.chatConsent ?: return
+        if (ask.busy) return
+        stateFlow.update { it.copy(chatConsent = ask.copy(busy = true)) }
+        viewModelScope.launch {
+            try {
+                stored = withContext(Dispatchers.IO) { session.core.aiChatConsent(true) }
+                doneChannel.send(Unit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "storing the chat consent failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(chatConsent = null, error = AssistantMessages.of(e, R.string.assistant_chat_consent_failed)) }
+            }
+        }
+    }
+
+    /**
+     * "Decline" (or leaving the dialog): nothing is stored and nothing changes. The settings are saved already, the
+     * chat stays switched on, and its screen says that it is not agreed to.
+     */
+    fun declineChatConsent() {
+        val ask = stateFlow.value.chatConsent ?: return
+        if (ask.busy) return
+        stateFlow.update { it.copy(chatConsent = null) }
+        doneChannel.trySend(Unit)
     }
 
     override fun onCleared() {

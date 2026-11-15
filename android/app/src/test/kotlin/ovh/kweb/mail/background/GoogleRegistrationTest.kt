@@ -88,6 +88,33 @@ class GoogleRegistrationTest {
     }
 
     @Test
+    fun theBoundRoadComesFirstWhereverPlayServicesHasTheService() {
+        assertEquals(listOf(GoogleRegistration.Road.Bound, GoogleRegistration.Road.Broadcast, GoogleRegistration.Road.Service), GoogleRegistration.allRoads(hasReceiver = true, hasService = true))
+        assertEquals(listOf(GoogleRegistration.Road.Bound, GoogleRegistration.Road.Service), GoogleRegistration.allRoads(hasReceiver = false, hasService = true))
+        assertEquals(listOf(GoogleRegistration.Road.Broadcast), GoogleRegistration.allRoads(hasReceiver = true, hasService = false))
+        assertEquals(listOf(GoogleRegistration.Road.Bound, GoogleRegistration.Road.Broadcast, GoogleRegistration.Road.Service), GoogleRegistration.allRoads(hasReceiver = false, hasService = false))
+    }
+
+    @Test
+    fun aBoundAnswerGivesTheTokenBareOrWithTheKid() {
+        assertEquals(RegistrationResult.Token("tok"), GoogleRegistration.boundAnswer("tok", null, null, "a", delete = false, packageName = "pkg"))
+        assertEquals(RegistrationResult.Token("tok"), GoogleRegistration.boundAnswer("|ID|a|:tok", null, null, "a", delete = false, packageName = "pkg"))
+        // Another account's kid, nothing at all, or the package name where a token was asked for: not usable.
+        assertNull(GoogleRegistration.boundAnswer("|ID|b|:tok", null, null, "a", delete = false, packageName = "pkg"))
+        assertNull(GoogleRegistration.boundAnswer(null, null, null, "a", delete = false, packageName = "pkg"))
+        assertNull(GoogleRegistration.boundAnswer("pkg", null, null, "a", delete = false, packageName = "pkg"))
+    }
+
+    @Test
+    fun aBoundAnswerToAnUnregisterAndAnError() {
+        assertEquals(RegistrationResult.Token(""), GoogleRegistration.boundAnswer(null, "pkg", null, "a", delete = true, packageName = "pkg"))
+        assertEquals(RegistrationResult.Token(""), GoogleRegistration.boundAnswer("pkg", null, null, "a", delete = true, packageName = "pkg"))
+        assertNull(GoogleRegistration.boundAnswer(null, null, null, "a", delete = true, packageName = "pkg"))
+        assertEquals(RegistrationResult.Refused("E"), GoogleRegistration.boundAnswer(null, null, "E", "a", delete = false, packageName = "pkg"))
+        assertEquals(RegistrationResult.Refused("E"), GoogleRegistration.boundAnswer(null, null, "|ID|a|:E", "a", delete = false, packageName = "pkg"))
+    }
+
+    @Test
     fun theBroadcastRoadComesFirstWhenPlayServicesHasAReceiver() {
         assertEquals(listOf(GoogleRegistration.Road.Broadcast, GoogleRegistration.Road.Service), GoogleRegistration.roadsFor(hasReceiver = true, hasService = true))
         assertEquals(listOf(GoogleRegistration.Road.Broadcast), GoogleRegistration.roadsFor(hasReceiver = true, hasService = false))

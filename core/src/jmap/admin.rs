@@ -84,6 +84,7 @@ impl AdminInfo {
             may_recovery: reads(&["sysArchivedItemQuery", "sysArchivedItemGet"]),
             may_alerts: reads(&["sysAlertGet"]),
             may_tenants: reads(&["sysTenantGet"]),
+            acting_as: String::new(),
         }
     }
 

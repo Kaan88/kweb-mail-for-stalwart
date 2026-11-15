@@ -137,4 +137,20 @@ class SettingsTest {
         settings.clearFallback()
         assertNull(settings.pushFallback)
     }
+
+    @Test
+    fun theAdminAnswerIsRememberedPerAccountAndGoneWithTheKey() {
+        val other = Settings(MapValues())
+        assertFalse(settings.adminKeyAccepted)
+        settings.rememberAdminAccess(true, true)
+        assertTrue(settings.adminKeyAccepted)
+        assertTrue(settings.adminMayDashboard)
+        assertFalse("another account does not see it", other.adminKeyAccepted)
+        val ticks = settings.changes.value
+        settings.rememberAdminAccess(true, true)
+        assertEquals("the same answer is not a change", ticks, settings.changes.value)
+        settings.rememberAdminAccess(false, true)
+        assertFalse(settings.adminKeyAccepted)
+        assertFalse("no key, no dashboard", settings.adminMayDashboard)
+    }
 }

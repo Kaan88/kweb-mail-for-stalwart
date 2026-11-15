@@ -50,7 +50,7 @@ use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 // Only the assistant tests use the mock AI service.
 #[allow(unused_imports)]
-pub use ai::{MockAi, ModelSpec, Models, Script};
+pub use ai::{MockAi, MockCall, ModelSpec, Models, Script};
 #[allow(unused_imports)]
 pub use enterprise::{iso, Enterprise, LiveEnd, ADMIN_KEY};
 #[allow(unused_imports)]
@@ -434,6 +434,12 @@ impl MockServer {
             e.to = pairs(to);
             e.cc = pairs(cc);
         });
+    }
+
+    /// The delivery headers the server wrote on a message, as `(header name, address)` in the
+    /// order they stand (newest first), for `Delivered-To`, `X-Original-To` and `Envelope-To`.
+    pub fn set_delivery_headers(&self, id: &str, headers: &[(&str, &str)]) {
+        self.edit(id, |e| e.delivery = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect());
     }
 
     /// Adds a file to a message and returns its blob id. An `inline` file with a `cid` is one

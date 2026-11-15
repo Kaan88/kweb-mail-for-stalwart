@@ -199,7 +199,11 @@ private fun UnlockedCard(c: AccessController, state: AccessState, access: uniffi
             stringResource(R.string.admin_edition),
             trailing = { Pill(editionName(access.edition)) },
         )
-        AdminRow(Groups.shape(1, 2), stringResource(R.string.admin_key_label), detail = stringResource(R.string.admin_key_kept))
+        AdminRow(
+            Groups.shape(1, 2),
+            stringResource(R.string.admin_key_label),
+            detail = if (access.actingAs.isEmpty()) stringResource(R.string.admin_key_kept) else stringResource(R.string.admin_key_kept_acting, access.actingAs),
+        )
     }
     SectionLabel(stringResource(R.string.admin_may_title))
     val rows = AdminRules.mayRows(access)
@@ -241,6 +245,13 @@ private fun AccessDialogs(c: AccessController, state: AccessState) {
         ) {
             Text(dialog.shown, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Start)
         }
+        is AccessDialog.ActAs -> ConfirmDialog(
+            title = stringResource(R.string.admin_act_as_title),
+            text = stringResource(R.string.admin_act_as_text, dialog.account, LocalAccountSession.current.record.username),
+            confirm = stringResource(R.string.admin_act_as_confirm),
+            onConfirm = c::confirmActAs,
+            onDismiss = c::declineKey,
+        )
         AccessDialog.Forget -> ConfirmDialog(
             title = stringResource(R.string.admin_forget_title),
             text = stringResource(R.string.admin_forget_text),

@@ -78,6 +78,7 @@ import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.ui.calendar.GroupColumn
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.list.Groups
+import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiModel
 import uniffi.kweb_core.AiProvider
@@ -91,12 +92,13 @@ import uniffi.kweb_core.AiProvider
 fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { onBack() } }
 
     // While a save runs back does nothing: leaving would cancel the coroutine that reports a failure.
-    val leave = { if (state.saving) Unit else if (vm.isChanged) confirmDiscard = true else onBack() }
+    val leave = { if (state.saving || state.resetting) Unit else if (vm.isChanged) confirmDiscard = true else onBack() }
     BackHandler(onBack = leave)
 
     Scaffold(
@@ -104,7 +106,7 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
             TopAppBar(
                 title = { Text(stringResource(R.string.assistant_title)) },
                 navigationIcon = {
-                    IconButton(onClick = leave, enabled = !state.saving) {
+                    IconButton(onClick = leave, enabled = !state.saving && !state.resetting) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
@@ -119,7 +121,7 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
             }
             val form = state.form
             when {
-                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm)
+                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm) { confirmReset = true }
                 state.phase == AssistantPhase.FAILED -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -143,6 +145,31 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
         )
     }
 
+    state.chatConsent?.let { ask ->
+        AlertDialog(
+            onDismissRequest = vm::declineChatConsent,
+            title = { Text(stringResource(R.string.assistant_chat_consent_title)) },
+            text = { Text(stringResource(R.string.assistant_chat_consent_text, ask.host, ask.model.ifBlank { stringResource(R.string.assistant_model_none) })) },
+            confirmButton = { TextButton(onClick = vm::agreeChatConsent, enabled = !ask.busy) { Text(stringResource(R.string.assistant_consent_agree)) } },
+            dismissButton = { TextButton(onClick = vm::declineChatConsent, enabled = !ask.busy) { Text(stringResource(R.string.assistant_consent_decline)) } },
+        )
+    }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text(stringResource(R.string.assistant_reset_title)) },
+            text = { Text(stringResource(R.string.assistant_reset_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmReset = false
+                    vm.reset()
+                }) { Text(stringResource(R.string.assistant_reset_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmReset = false }) { Text(stringResource(R.string.assistant_keep_editing)) } },
+        )
+    }
+
     state.models?.let { ModelsSheet(it, onPick = vm::pickModel, onRetry = vm::chooseModel, onClose = vm::closeModels) }
 
     if (confirmDiscard) {
@@ -162,7 +189,7 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
 }
 
 @Composable
-private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel) {
+private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel, onReset: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
         GroupColumn {
@@ -207,9 +234,34 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
 
         SectionLabel(stringResource(R.string.assistant_allow))
         GroupColumn {
-            SwitchRow(Groups.shape(0, 3), stringResource(R.string.assistant_allow_summaries), form.allowSummaries) { v -> vm.edit { it.copy(allowSummaries = v) } }
-            SwitchRow(Groups.shape(1, 3), stringResource(R.string.assistant_allow_drafts), form.allowDrafts) { v -> vm.edit { it.copy(allowDrafts = v) } }
-            SwitchRow(Groups.shape(2, 3), stringResource(R.string.assistant_allow_rewrites), form.allowRewrites) { v -> vm.edit { it.copy(allowRewrites = v) } }
+            SwitchRow(Groups.shape(0, 7), stringResource(R.string.assistant_allow_summaries), form.allowSummaries) { v -> vm.edit { it.copy(allowSummaries = v) } }
+            SwitchRow(Groups.shape(1, 7), stringResource(R.string.assistant_allow_drafts), form.allowDrafts) { v -> vm.edit { it.copy(allowDrafts = v) } }
+            SwitchRow(Groups.shape(2, 7), stringResource(R.string.assistant_allow_rewrites), form.allowRewrites) { v -> vm.edit { it.copy(allowRewrites = v) } }
+            SwitchRow(Groups.shape(3, 7), stringResource(R.string.assistant_allow_ideas), form.allowIdeas) { v -> vm.edit { it.copy(allowIdeas = v) } }
+            SwitchRow(Groups.shape(4, 7), stringResource(R.string.assistant_allow_extract), form.allowExtract) { v -> vm.edit { it.copy(allowExtract = v) } }
+            SwitchRow(Groups.shape(5, 7), stringResource(R.string.assistant_allow_explain), form.allowExplain) { v -> vm.edit { it.copy(allowExplain = v) } }
+            SwitchRow(Groups.shape(6, 7), stringResource(R.string.assistant_allow_chat), form.allowChat, stringResource(R.string.assistant_allow_chat_detail)) { v ->
+                vm.edit { it.copy(allowChat = v) }
+            }
+        }
+
+        // What the chat may do about changes. There is no "automatic": a change is only ever suggested and waits for a tap.
+        SectionLabel(stringResource(R.string.assistant_actions))
+        GroupColumn {
+            ChoiceRow(
+                Groups.shape(0, 2),
+                stringResource(R.string.assistant_actions_off),
+                stringResource(R.string.assistant_actions_off_detail),
+                selected = form.actions == AiActionMode.OFF,
+                enabled = form.allowChat,
+            ) { vm.edit { it.copy(actions = AiActionMode.OFF) } }
+            ChoiceRow(
+                Groups.shape(1, 2),
+                stringResource(R.string.assistant_actions_ask),
+                stringResource(R.string.assistant_actions_ask_detail),
+                selected = form.actions == AiActionMode.ASK_FIRST,
+                enabled = form.allowChat,
+            ) { vm.edit { it.copy(actions = AiActionMode.ASK_FIRST) } }
         }
 
         Text(
@@ -230,6 +282,19 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
                 CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = colors.onPrimary)
             } else {
                 Text(stringResource(R.string.assistant_save), style = MaterialTheme.typography.labelLarge)
+            }
+        }
+
+        // Quiet, below the main action: it throws the settings, the keys and the agreements away.
+        TextButton(
+            onClick = onReset,
+            enabled = !state.saving && !state.switching && !state.resetting,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            if (state.resetting) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                Text(stringResource(R.string.assistant_reset), color = colors.error)
             }
         }
     }
@@ -274,16 +339,21 @@ private fun SwitchRow(shape: Shape, title: String, checked: Boolean, detail: Str
     }
 }
 
+/** One choice of a group of which exactly one is selected. A row that is not [enabled] is shown faded and takes no tap. */
 @Composable
-private fun ChoiceRow(shape: Shape, title: String, detail: String?, selected: Boolean, onSelect: () -> Unit) {
-    RowFrame(shape, Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)) {
+private fun ChoiceRow(shape: Shape, title: String, detail: String?, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    // The faded tones Material gives disabled content, taken from the scheme.
+    val titleColor = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f)
+    val detailColor = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.38f)
+    RowFrame(shape, Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(title, color = titleColor, style = MaterialTheme.typography.bodyLarge)
             if (detail != null) {
-                Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                Text(detail, color = detailColor, style = MaterialTheme.typography.bodyMedium)
             }
         }
-        RadioButton(selected = selected, onClick = null)
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
     }
 }
 

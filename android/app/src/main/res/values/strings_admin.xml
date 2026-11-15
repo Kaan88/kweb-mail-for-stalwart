@@ -2,6 +2,7 @@
 <resources>
     <!-- Settings -->
     <string name="admin_title">Server administration</string>
+    <string name="admin_drawer_dashboard">Server dashboard</string>
     <string name="admin_row_locked">Locked · needs a key</string>
     <string name="admin_row_open">Open</string>
     <string name="admin_row_refused">Key not accepted</string>
@@ -21,7 +22,7 @@
     <string name="admin_locked">Locked</string>
     <string name="admin_locked_note">Your sign-in opens your mail only. The server keeps its admin area closed to apps until you bring an administrator\'s key. Only an administrator account can make one, in the server\'s web page, with full rights. A key made inside this app cannot do it, and an ordinary account has nothing to unlock here.</string>
     <string name="admin_step_1">Open the server\'s web page</string>
-    <string name="admin_step_2">Make an API key there, with full rights</string>
+    <string name="admin_step_2">Sign in there as an administrator and make an API key with full rights</string>
     <string name="admin_step_3">Copy the key and come back</string>
     <string name="admin_paste_key">Paste an API key</string>
     <string name="admin_key_storage_note">The key stays in this phone\'s secure storage and is never shown again.</string>
@@ -32,6 +33,10 @@
     <string name="admin_confirm_key_title">Use this key?</string>
     <string name="admin_confirm_key_text">The server checks it, and the phone keeps it in its secure storage for the admin work of this account only.</string>
     <string name="admin_confirm_key_use">Use key</string>
+    <string name="admin_act_as_title">Act as another account?</string>
+    <string name="admin_act_as_text">This key belongs to %1$s, not to %2$s, the account signed in here. Everything you do in Server administration will be done as %1$s. Mail and everything else stay with %2$s.</string>
+    <string name="admin_act_as_confirm">Use key</string>
+    <string name="admin_key_kept_acting">Kept on this phone · acts as %1$s</string>
     <string name="admin_unlocked">Unlocked</string>
     <string name="admin_edition">Server edition</string>
     <string name="admin_edition_enterprise">Enterprise</string>

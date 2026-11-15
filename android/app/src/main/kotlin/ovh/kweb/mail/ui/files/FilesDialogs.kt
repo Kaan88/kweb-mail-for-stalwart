@@ -87,7 +87,7 @@ internal fun FilesDialogHost(state: FilesState, c: FilesController) {
                 val locale = remember { java.util.Locale.getDefault() }
                 Column {
                     // Filled where the size is known, else a bar that only shows that something is going on.
-                    if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+                    if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth(), drawStopIndicator = {})
                     else LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (progress != null && progress.done > 0) {
                         Text(

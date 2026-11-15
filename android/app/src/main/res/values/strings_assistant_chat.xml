@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The chat with the assistant. -->
+<resources>
+    <!-- Entry, top bar, input -->
+    <string name="chat_entry">Ask the assistant</string>
+    <string name="chat_title">Assistant</string>
+    <string name="chat_new">New chat</string>
+    <string name="chat_settings">Assistant settings</string>
+    <string name="chat_input">Message</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_stop">Stop</string>
+
+    <!-- Empty state -->
+    <string name="chat_empty_title">Ask about your mail and calendar</string>
+    <string name="chat_empty_text">The assistant reads what it needs to answer and sends that to %1$s. It never sends or deletes mail.</string>
+    <string name="chat_empty_text_no_host">The assistant reads what it needs to answer and sends that to the service you chose. It never sends or deletes mail.</string>
+
+    <!-- The chat cannot be used -->
+    <string name="chat_gate_off">The assistant is switched off.</string>
+    <string name="chat_gate_chat_off">The chat is switched off in the assistant\'s settings.</string>
+    <string name="chat_gate_not_agreed">You have not yet agreed to let the chat read your mail and calendar.</string>
+    <string name="chat_open_settings">Open settings</string>
+    <string name="chat_settings_failed">The assistant\'s settings could not be read.</string>
+
+    <!-- Notices -->
+    <string name="chat_busy">The assistant is busy with something else.</string>
+    <string name="chat_failed">The assistant could not answer.</string>
+    <string name="chat_new_failed">A new chat could not be started.</string>
+    <string name="chat_stopped">Stopped. This question is not part of the conversation.</string>
+    <plurals name="chat_end_steps">
+        <item quantity="one">Stopped after %1$d step.</item>
+        <item quantity="other">Stopped after %1$d steps.</item>
+    </plurals>
+    <string name="chat_end_size">Stopped: that was too much to read in one go. Ask for less at a time.</string>
+    <string name="chat_tools_off">This model cannot look things up; it answers from the conversation only.</string>
+    <string name="chat_restarted">That conversation was over. This is a new one: send your message again.</string>
+    <string name="chat_no_answer">The assistant gave no answer.</string>
+
+    <!-- What the assistant is doing -->
+    <string name="chat_step_search">Searching mail</string>
+    <string name="chat_step_list">Listing messages</string>
+    <string name="chat_step_read_message">Reading a message</string>
+    <string name="chat_step_read_thread">Reading a conversation</string>
+    <string name="chat_step_folders">Looking at the folders</string>
+    <string name="chat_step_labels">Looking at the labels</string>
+    <string name="chat_step_events">Looking at the calendar</string>
+    <string name="chat_step_event">Reading a calendar entry</string>
+    <string name="chat_step_open">Pointing at a message</string>
+    <string name="chat_step_draft">Writing a reply draft</string>
+    <string name="chat_step_suggest">Preparing a suggestion</string>
+    <string name="chat_step_other">Working</string>
+    <string name="chat_step_with_detail">%1$s: %2$s</string>
+
+    <!-- The approval card: what it would do -->
+    <plurals name="chat_archive_q">
+        <item quantity="one">Archive %1$d message?</item>
+        <item quantity="other">Archive %1$d messages?</item>
+    </plurals>
+    <plurals name="chat_move_q">
+        <item quantity="one">Move %1$d message to %2$s?</item>
+        <item quantity="other">Move %1$d messages to %2$s?</item>
+    </plurals>
+    <plurals name="chat_mark_read_q">
+        <item quantity="one">Mark %1$d message as read?</item>
+        <item quantity="other">Mark %1$d messages as read?</item>
+    </plurals>
+    <plurals name="chat_mark_unread_q">
+        <item quantity="one">Mark %1$d message as unread?</item>
+        <item quantity="other">Mark %1$d messages as unread?</item>
+    </plurals>
+    <plurals name="chat_star_q">
+        <item quantity="one">Star %1$d message?</item>
+        <item quantity="other">Star %1$d messages?</item>
+    </plurals>
+    <plurals name="chat_unstar_q">
+        <item quantity="one">Remove the star from %1$d message?</item>
+        <item quantity="other">Remove the star from %1$d messages?</item>
+    </plurals>
+    <plurals name="chat_tag_q">
+        <item quantity="one">Tag %1$d message with %2$s?</item>
+        <item quantity="other">Tag %1$d messages with %2$s?</item>
+    </plurals>
+    <plurals name="chat_untag_q">
+        <item quantity="one">Remove %2$s from %1$d message?</item>
+        <item quantity="other">Remove %2$s from %1$d messages?</item>
+    </plurals>
+    <string name="chat_add_event_q">Add this event?</string>
+    <string name="chat_add_task_q">Add this task?</string>
+    <plurals name="chat_warning">
+        <item quantity="one">This changes %1$d message at once. Check the list before you approve.</item>
+        <item quantity="other">This changes %1$d messages at once. Check the list before you approve.</item>
+    </plurals>
+    <string name="chat_approve">Approve</string>
+    <string name="chat_decline">Don\'t</string>
+    <string name="chat_try_again">Try again</string>
+
+    <!-- The approval card: what was done -->
+    <plurals name="chat_archived">
+        <item quantity="one">Archived %1$d message</item>
+        <item quantity="other">Archived %1$d messages</item>
+    </plurals>
+    <plurals name="chat_moved">
+        <item quantity="one">Moved %1$d message to %2$s</item>
+        <item quantity="other">Moved %1$d messages to %2$s</item>
+    </plurals>
+    <plurals name="chat_marked_read">
+        <item quantity="one">Marked %1$d message as read</item>
+        <item quantity="other">Marked %1$d messages as read</item>
+    </plurals>
+    <plurals name="chat_marked_unread">
+        <item quantity="one">Marked %1$d message as unread</item>
+        <item quantity="other">Marked %1$d messages as unread</item>
+    </plurals>
+    <plurals name="chat_starred">
+        <item quantity="one">Starred %1$d message</item>
+        <item quantity="other">Starred %1$d messages</item>
+    </plurals>
+    <plurals name="chat_unstarred">
+        <item quantity="one">Removed the star from %1$d message</item>
+        <item quantity="other">Removed the star from %1$d messages</item>
+    </plurals>
+    <plurals name="chat_tagged">
+        <item quantity="one">Tagged %1$d message with %2$s</item>
+        <item quantity="other">Tagged %1$d messages with %2$s</item>
+    </plurals>
+    <plurals name="chat_untagged">
+        <item quantity="one">Removed %2$s from %1$d message</item>
+        <item quantity="other">Removed %2$s from %1$d messages</item>
+    </plurals>
+    <string name="chat_added_event">Added the event</string>
+    <string name="chat_added_task">Added the task</string>
+    <string name="chat_undone">Undone</string>
+    <string name="chat_declined">Not done</string>
+    <string name="chat_apply_failed">That could not be done.</string>
+    <string name="chat_undo_failed">That could not be undone.</string>
+
+    <!-- A message on a card or a chip -->
+    <string name="chat_no_subject">(no subject)</string>
+    <string name="chat_from_folder">%1$s · %2$s</string>
+
+    <!-- The fields of an event on a card -->
+    <string name="chat_event_title">Title</string>
+    <string name="chat_event_when">When</string>
+    <string name="chat_event_due">Due</string>
+    <string name="chat_event_calendar">Calendar</string>
+    <string name="chat_event_place">Place</string>
+    <string name="chat_event_description">Description</string>
+    <string name="chat_event_reminders">Reminders</string>
+    <string name="chat_event_repeats">Repeats</string>
+    <string name="chat_event_repeats_value">Yes</string>
+    <string name="chat_event_all_day">%1$s, all day</string>
+    <string name="chat_event_zone">%1$s (%2$s)</string>
+    <plurals name="chat_event_reminder">
+        <item quantity="one">%1$d minute before</item>
+        <item quantity="other">%1$d minutes before</item>
+    </plurals>
+
+    <!-- Things to open -->
+    <string name="chat_open_message">Open</string>
+    <string name="chat_open_draft">Open draft</string>
+    <string name="chat_reply_to">Reply draft: %1$s</string>
+    <string name="chat_draft_failed">The reply draft could not be made.</string>
+</resources>

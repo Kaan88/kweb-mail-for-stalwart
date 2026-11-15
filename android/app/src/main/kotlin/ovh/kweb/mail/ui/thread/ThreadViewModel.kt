@@ -106,6 +106,15 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     /** Alive while the screen is shown; null when the thread is closed. */
     private var session: CoroutineScope? = null
     private var markedRead = false
+
+    /**
+     * This is the page the user is on. A page that is only loaded because it is next to the one shown must not mark anything
+     * read, nor close the screen: it does neither until [setActive] says it is the shown one.
+     */
+    private var active = false
+
+    /** Unread mail that arrived while the page was not the shown one; marked read when it becomes so. */
+    private val heldBack = HashSet<String>()
     private var closeSent = false
     private var startingDraft = false
     private var blocking = false
@@ -144,12 +153,25 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         reload()
     }
 
+    /** The page is the shown one ([on]) or only next to it. Becoming the shown one reads the thread again, which marks it read. */
+    fun setActive(on: Boolean) {
+        if (active == on) return
+        active = on
+        if (on) {
+            // A close that was held back (the thread went away while it was only a neighbour) is asked again.
+            closeSent = false
+            reload()
+        }
+    }
+
     /** The screen was left for good: stop everything and forget the cards, the bodies and what was marked read. */
     fun reset() {
         transfer.cancel()
         session?.cancel()
         session = null
         markedRead = false
+        active = false
+        heldBack.clear()
         closeSent = false
         pendingSave = null
         labels.reset()
@@ -291,7 +313,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
 
     /** Tells the screen to go back, once, however many reasons come together. */
     private suspend fun close() {
-        if (closeSent) return
+        if (closeSent || !active) return
         closeSent = true
         eventChannel.send(ThreadEvent.Close)
     }
@@ -357,8 +379,15 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
                     loaded = true,
                 )
             }
-            if (messages.isNotEmpty()) markInitialRead(messages)
-            if (arrived.isNotEmpty()) markRead(arrived.map { it.id })
+            if (active) {
+                if (messages.isNotEmpty()) markInitialRead(messages)
+                val unreadNow = messages.filter { it.isUnread }.map { it.id }.toSet()
+                val toMark = (arrived.map { it.id } + heldBack).filter { it in unreadNow }.distinct()
+                heldBack.clear()
+                if (toMark.isNotEmpty()) markRead(toMark)
+            } else {
+                heldBack.addAll(arrived.map { it.id })
+            }
             fetchMissingBodies()
             askUnsubscribe()
             labels.refreshLabels()

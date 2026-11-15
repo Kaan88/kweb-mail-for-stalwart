@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui
 
+import ovh.kweb.mail.ui.calendar.EventPrefill
 import ovh.kweb.mail.ui.folders.FolderAction
 import uniffi.kweb_core.Address
 
@@ -24,8 +25,9 @@ sealed interface Route {
     /**
      * The form for a new entry ([eventId] null, [startHint] the day it starts on as "2026-11-12") or for
      * changing one. [account] is the owner's account when it is in a calendar shared with the user (null: the user's own).
+     * [prefill] is what a new entry starts with when the assistant found it in a message (the user still saves it himself).
      */
-    data class EditEvent(val eventId: String?, val startHint: String?, val account: String? = null) : Route
+    data class EditEvent(val eventId: String?, val startHint: String?, val account: String? = null, val prefill: EventPrefill? = null) : Route
 
     /** The contacts: the third root beside the mail list and the agenda. */
     data object Contacts : Route
@@ -100,8 +102,11 @@ sealed interface Route {
     /** The settings of the AI assistant, reached from Settings. */
     data object Assistant : Route
 
+    /** The chat with the AI assistant, reached from the mail list's menu. Its conversation lives as long as the screen. */
+    data object AssistantChat : Route
+
     /** A screen a licensed server adds (dashboard, delivery history, recovery, alerts, tenants), opened from the admin home. */
-    data class Enterprise(val page: ovh.kweb.mail.ui.enterprise.EnterprisePage) : Route
+    data class Enterprise(val page: ovh.kweb.mail.ui.enterprise.EnterprisePage, val adminShortcut: Boolean = false) : Route
 
     data object Search : Route
 
@@ -167,7 +172,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top is Route.Filters || top == Route.AccountSecurity || (top is Route.Admin && top.screen.holdsInput)
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top == Route.AssistantChat || top is Route.Filters || top == Route.AccountSecurity || (top is Route.Admin && top.screen.holdsInput)
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

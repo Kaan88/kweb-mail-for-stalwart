@@ -31,7 +31,7 @@ class SwitchRulesTest {
     fun aFormIsNeverDroppedSilently() {
         val forms = listOf(
             Route.EditEvent("e", null), Route.EditContact(null), Route.Filters(), Route.Away, Route.Senders, Route.Assistant,
-            Route.AddAccount, Route.SignInAgain, Route.Admin(AdminScreen.NewAccount), Route.Admin(AdminScreen.Account("u1")),
+            Route.AssistantChat, Route.AddAccount, Route.SignInAgain, Route.Admin(AdminScreen.NewAccount), Route.Admin(AdminScreen.Account("u1")),
         )
         for (top in forms) assertEquals(top.toString(), Incoming.ASK, SwitchRules.onIncoming(top, sameAccount = false))
     }
@@ -39,6 +39,7 @@ class SwitchRulesTest {
     @Test
     fun onlyFormsAreForms() {
         assertTrue(SwitchRules.isForm(Route.Filters("m")))
+        assertTrue(SwitchRules.isForm(Route.AssistantChat))
         assertFalse(SwitchRules.isForm(Route.Folders()))
         assertFalse(SwitchRules.isForm(Route.Event("e", null)))
         assertFalse(SwitchRules.isForm(Route.Admin(AdminScreen.Queue)))

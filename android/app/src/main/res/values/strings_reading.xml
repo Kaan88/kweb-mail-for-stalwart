@@ -30,6 +30,24 @@
     <string name="list_older_failed">Older mail could not be loaded. Pull down to try again.</string>
     <string name="list_archived">Archived</string>
     <string name="list_deleted">Moved to Trash</string>
+    <plurals name="list_archived_many">
+        <item quantity="one">%d conversation archived</item>
+        <item quantity="other">%d conversations archived</item>
+    </plurals>
+    <plurals name="list_deleted_many">
+        <item quantity="one">%d conversation moved to Trash</item>
+        <item quantity="other">%d conversations moved to Trash</item>
+    </plurals>
+
+    <!-- Choosing conversations in the list -->
+    <plurals name="selection_count">
+        <item quantity="one">%d selected</item>
+        <item quantity="other">%d selected</item>
+    </plurals>
+    <string name="selection_close">Cancel selection</string>
+    <string name="selection_select">Select</string>
+    <string name="selection_deselect">Deselect</string>
+    <string name="selection_select_all">Select all</string>
 
     <!-- Actions on mail -->
     <string name="action_undo">Undo</string>
@@ -70,6 +88,8 @@
     <string name="thread_no_app_for_file">No app on this phone can open this file.</string>
     <string name="thread_no_app_for_link">No app on this phone can open this link.</string>
     <string name="thread_read_failed">The conversation could not be read.</string>
+    <string name="thread_previous">Previous conversation</string>
+    <string name="thread_next">Next conversation</string>
     <string name="thread_unavailable">This conversation is not on this phone yet. Open it again when you are online.</string>
 
     <!-- Search -->

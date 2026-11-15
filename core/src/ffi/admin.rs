@@ -36,6 +36,18 @@ pub struct AdminAccess {
     pub may_recovery: bool,
     pub may_alerts: bool,
     pub may_tenants: bool,
+    /// The account the key belongs to when that is not the signed-in one (everything admin is done as it); else empty.
+    #[uniffi(default = "")]
+    pub acting_as: String,
+}
+
+/// Whose key a pasted key is, for the host to ask before it is stored.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AdminKeyOwner {
+    /// The login name of the account the key belongs to.
+    pub username: String,
+    /// It is not the account signed in here: [`Core::admin_connect`] wants this name agreed to.
+    pub other_account: bool,
 }
 
 /// The figures on the admin home screen. A figure the key may not read is `None`.
@@ -158,6 +170,7 @@ fn no_access() -> AdminAccess {
         may_recovery: false,
         may_alerts: false,
         may_tenants: false,
+        acting_as: String::new(),
     }
 }
 
@@ -188,8 +201,14 @@ impl Core {
         if self.admin_key_refused_before() {
             return Ok(refused());
         }
-        match self.admin_with_key(&key, |conn| async move { conn.admin_info().await }) {
-            Ok(info) => Ok(info.access()),
+        let (account_id, username) = self.signed_in_names()?;
+        match self.admin_with_key(&key, |conn| async move {
+            Ok((conn.account_id(), conn.username(), conn.admin_info().await?))
+        }) {
+            Ok((owner_id, owner, info)) => {
+                let other = owner_id != account_id && !owner.eq_ignore_ascii_case(&username);
+                Ok(AdminAccess { acting_as: if other { owner } else { String::new() }, ..info.access() })
+            }
             Err(e) if e == key_refused() || is_unauthorized(&e) => {
                 // A key the server turned down will not be taken later: not asked again.
                 self.mark_admin_key_refused();
@@ -202,12 +221,43 @@ impl Core {
         }
     }
 
+    /// Whose key a pasted key is, checked against the server; nothing is stored. A key the server
+    /// refuses or that opens nothing administrative is `Error::Invalid` saying which.
+    pub fn admin_key_owner(&self, api_key: String) -> Result<AdminKeyOwner> {
+        let (_, owner, other, _) = self.admin_checked_key(api_key)?;
+        Ok(AdminKeyOwner { username: owner, other_account: other })
+    }
+
     /// Takes an API key the administrator pasted: checks it against the server and stores it
-    /// in the secret store when the server takes it and it belongs to the signed-in account.
-    /// A key the server refuses, a key of another account, or a key that opens nothing
-    /// administrative is `Error::Invalid` saying which, and nothing is stored. The key is
-    /// never logged, cached or put into an error.
-    pub fn admin_connect(&self, api_key: String) -> Result<AdminAccess> {
+    /// in the secret store when the server takes it. The server decides what a key may do, so
+    /// the key of another account than the signed-in one is taken too, but only when
+    /// `agreed_account` names that account (the host asked: see [`Core::admin_key_owner`]).
+    /// A key the server refuses, a key of another account that was not agreed to, or a key
+    /// that opens nothing administrative is `Error::Invalid` saying which, and nothing is
+    /// stored. The key is never logged, cached or put into an error.
+    pub fn admin_connect(&self, api_key: String, agreed_account: Option<String>) -> Result<AdminAccess> {
+        let (key, owner, other, access) = self.admin_checked_key(api_key)?;
+        if other && !agreed_account.is_some_and(|a| a.trim().eq_ignore_ascii_case(&owner)) {
+            return Err(Error::invalid(format!(
+                "this key belongs to another account ({owner}) than the one signed in here: agree to act as that account first"
+            )));
+        }
+        self.store_admin_key(key)?;
+        Ok(AdminAccess { acting_as: if other { owner } else { String::new() }, ..access })
+    }
+}
+
+impl Core {
+    /// The signed-in account's id and login name.
+    fn signed_in_names(&self) -> Result<(String, String)> {
+        let inner = self.lock();
+        let account = &inner.session.as_ref().ok_or_else(not_signed_in)?.account;
+        Ok((account.id.clone(), account.username.clone()))
+    }
+
+    /// Checks a pasted key against the server: the trimmed key, its account's login name, whether
+    /// that is another account than the signed-in one, and what it opens.
+    fn admin_checked_key(&self, api_key: String) -> Result<(String, String, bool, AdminAccess)> {
         let key = api_key.trim().to_string();
         if key.is_empty() {
             return Err(Error::invalid("paste the admin key first"));
@@ -215,25 +265,25 @@ impl Core {
         if !is_plausible_key(&key) {
             return Err(Error::invalid("this is not an API key"));
         }
-        let username = {
-            let inner = self.lock();
-            inner.session.as_ref().ok_or_else(not_signed_in)?.account.username.clone()
-        };
-        let (owner, info) = self
-            .admin_with_key(&key, |conn| async move { Ok((conn.username(), conn.admin_info().await?)) })
+        let (account_id, username) = self.signed_in_names()?;
+        let (owner_id, owner, info) =
+            self.admin_with_key(&key, |conn| async move {
+                Ok((conn.account_id(), conn.username(), conn.admin_info().await?))
+            })
             .map_err(|e| if is_unauthorized(&e) { key_refused() } else { e })?;
-        if !owner.eq_ignore_ascii_case(&username) {
-            return Err(Error::invalid("this key belongs to another account than the one signed in here"));
-        }
+        // The account id says whose key it is; the same name counts too.
+        let other = owner_id != account_id && !owner.eq_ignore_ascii_case(&username);
         if !info.opens_something() {
             return Err(Error::invalid(
                 "this key opens no admin area. Administration needs the key of an administrator account, made in the server's web interface with all of that account's rights. A key made inside this app has fewer rights and an ordinary account has no admin rights to give it",
             ));
         }
-        self.store_admin_key(key)?;
-        Ok(info.access())
+        Ok((key, owner, other, info.access()))
     }
+}
 
+#[uniffi::export]
+impl Core {
     /// Forgets the admin key on this device. The key itself stays valid on the server.
     pub fn admin_disconnect(&self) -> Result<()> {
         self.drop_admin_key()

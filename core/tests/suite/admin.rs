@@ -55,7 +55,7 @@ impl Rig {
     /// Connects a key of the signed-in account with these permissions (`None`: all).
     fn connect_with(&self, permissions: Option<&[&str]>) -> String {
         let key = self.server.admin_key(USERNAME, permissions);
-        self.core.admin_connect(key.clone()).unwrap();
+        self.core.admin_connect(key.clone(), None).unwrap();
         key
     }
 
@@ -111,7 +111,7 @@ fn without_a_key_nothing_is_open_and_it_is_not_an_error() {
 fn a_key_that_is_taken_is_stored_and_opens_the_areas_its_permissions_name() {
     let rig = Rig::new();
     let key = rig.server.admin_key(USERNAME, None);
-    let access = rig.core.admin_connect(format!("  {key}\n")).unwrap();
+    let access = rig.core.admin_connect(format!("  {key}\n"), None).unwrap();
     assert!(access.connected && !access.key_refused);
     assert_eq!(access.edition, "community");
     assert!(access.may_queue && access.may_accounts && access.may_blocked && access.may_logs && access.may_maintenance);
@@ -185,31 +185,49 @@ fn a_key_the_server_refuses_is_not_stored() {
     let rig = Rig::new();
     let key = rig.server.admin_key(USERNAME, None);
     rig.server.refuse_admin_key(&key);
-    let msg = invalid(rig.core.admin_connect(key.clone()));
+    let msg = invalid(rig.core.admin_connect(key.clone(), None));
     assert!(msg.contains("did not accept"), "{msg}");
     assert!(!msg.contains(&key));
     assert_eq!(rig.stored_key(), None);
-    let msg = invalid(rig.core.admin_connect("API_not_a_key".into()));
+    let msg = invalid(rig.core.admin_connect("API_not_a_key".into(), None));
     assert!(msg.contains("did not accept"), "{msg}");
-    assert!(invalid(rig.core.admin_connect("   ".into())).contains("paste"));
+    assert!(invalid(rig.core.admin_connect("   ".into(), None)).contains("paste"));
     assert_eq!(rig.stored_key(), None);
 }
 
 #[test]
-fn a_key_of_another_account_is_not_stored() {
+fn a_key_of_another_account_is_stored_only_when_that_account_was_agreed_to() {
     let rig = Rig::new();
     let key = rig.server.admin_key("carol@example.test", None);
-    let msg = invalid(rig.core.admin_connect(key.clone()));
-    assert!(msg.contains("another account"), "{msg}");
-    assert!(!msg.contains(&key));
+    let owner = rig.core.admin_key_owner(key.clone()).unwrap();
+    assert_eq!((owner.username.as_str(), owner.other_account), ("carol@example.test", true));
     assert_eq!(rig.stored_key(), None);
+    for agreed in [None, Some("dave@example.test".to_string())] {
+        let msg = invalid(rig.core.admin_connect(key.clone(), agreed));
+        assert!(msg.contains("another account"), "{msg}");
+        assert!(!msg.contains(&key));
+        assert_eq!(rig.stored_key(), None);
+    }
+    let access = rig.core.admin_connect(key.clone(), Some("Carol@example.test".into())).unwrap();
+    assert!(access.connected);
+    assert_eq!(access.acting_as, "carol@example.test");
+    assert_eq!(rig.stored_key(), Some(key));
+    assert_eq!(rig.core.admin_access().unwrap().acting_as, "carol@example.test");
+}
+
+#[test]
+fn the_key_of_the_signed_in_account_names_nobody_else() {
+    let rig = Rig::new();
+    let key = rig.server.admin_key(USERNAME, None);
+    assert!(!rig.core.admin_key_owner(key.clone()).unwrap().other_account);
+    assert_eq!(rig.core.admin_connect(key, None).unwrap().acting_as, "");
 }
 
 #[test]
 fn a_key_that_opens_nothing_administrative_is_not_stored() {
     let rig = Rig::new();
     let key = rig.server.admin_key(USERNAME, Some(&["emailReceive"]));
-    let msg = invalid(rig.core.admin_connect(key.clone()));
+    let msg = invalid(rig.core.admin_connect(key.clone(), None));
     assert!(msg.contains("opens no admin area"), "{msg}");
     assert!(!msg.contains(&key));
     assert_eq!(rig.stored_key(), None);
@@ -287,7 +305,7 @@ fn a_key_with_a_character_a_header_cannot_carry_is_refused_not_a_panic() {
     let rig = Rig::new();
     rig.server.reset_request_counts();
     for bad in ["API_12\u{1}34", "API_12\n34", "API_12\u{7f}34", "API_ 1234", "API_ü1234"] {
-        assert_eq!(invalid(rig.core.admin_connect(bad.into())), "this is not an API key", "{bad:?}");
+        assert_eq!(invalid(rig.core.admin_connect(bad.into(), None)), "this is not an API key", "{bad:?}");
     }
     assert_eq!(rig.stored_key(), None);
     assert_eq!(rig.server.request_count("/jmap/session"), 0, "refused before any connection");
@@ -332,7 +350,7 @@ fn a_key_the_server_answers_with_403_is_refused_too_and_kept() {
     // A key that is pasted against a 403 is refused in the same words.
     let other = rig.server.admin_key(USERNAME, None);
     rig.server.forbid_admin_key(&other);
-    assert!(invalid(rig.core.admin_connect(other)).contains("does not let this key in"));
+    assert!(invalid(rig.core.admin_connect(other, None)).contains("does not let this key in"));
 }
 
 #[test]
@@ -343,7 +361,7 @@ fn connecting_needs_a_signed_in_account() {
     let secrets = Arc::new(MemorySecrets::default());
     let core = Core::new(dir.path().join("c.db").to_string_lossy().into_owned(), secrets.clone()).unwrap();
     let key = server.admin_key(USERNAME, None);
-    assert!(matches!(core.admin_connect(key), Err(Error::SignInNeeded { .. })));
+    assert!(matches!(core.admin_connect(key, None), Err(Error::SignInNeeded { .. })));
     assert_eq!(secrets.get(KEY_NAME.into()).unwrap(), None);
 }
 

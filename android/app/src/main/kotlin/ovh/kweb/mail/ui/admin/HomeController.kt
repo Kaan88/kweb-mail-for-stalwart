@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
+import uniffi.kweb_core.AdminAccess
 import uniffi.kweb_core.AdminSummary
 
 data class HomeState(
@@ -24,11 +25,12 @@ class HomeController(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher,
     private val backend: AdminBackend,
+    onKnown: (AdminAccess) -> Unit = {},
 ) {
     private val stateFlow = MutableStateFlow(HomeState())
     private var ticket = 0
 
-    val access = AccessController(scope, io, backend, onChanged = { if (it.connected) readSummary() })
+    val access = AccessController(scope, io, backend, onChanged = { if (it.connected) readSummary() }, onKnown = onKnown)
     val state: StateFlow<HomeState> get() = stateFlow
 
     /** The screen opens, comes back or is pulled down: reads the access and, when a key opens something, the figures. */

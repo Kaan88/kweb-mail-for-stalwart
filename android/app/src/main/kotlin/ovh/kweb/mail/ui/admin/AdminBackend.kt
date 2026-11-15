@@ -7,6 +7,7 @@ import uniffi.kweb_core.Core
 import uniffi.kweb_core.LogLine
 import uniffi.kweb_core.Maintenance
 import uniffi.kweb_core.QueuePage
+import uniffi.kweb_core.AdminKeyOwner
 import uniffi.kweb_core.QueuedMessage
 import uniffi.kweb_core.ServerAccount
 import uniffi.kweb_core.ServerAccountPage
@@ -15,7 +16,11 @@ import uniffi.kweb_core.ServerDomain
 /** What the admin screens ask of the core. Every call blocks: run it off the main thread. The tests use a fake. */
 interface AdminBackend {
     fun access(): AdminAccess
-    fun connect(apiKey: String): AdminAccess
+    /** Whose key it is, asked of the server; nothing is stored. */
+    fun keyOwner(apiKey: String): AdminKeyOwner
+
+    /** [agreedAccount]: the other account the user agreed to act as, when the key is not the signed-in account's. */
+    fun connect(apiKey: String, agreedAccount: String?): AdminAccess
     fun disconnect()
     fun summary(): AdminSummary
     fun queue(offset: UInt, limit: UInt): QueuePage
@@ -39,7 +44,8 @@ interface AdminBackend {
 /** The backend of one account's core. [core] is asked at each call so that a core that was replaced is the one used. */
 class CoreAdminBackend(private val core: () -> Core) : AdminBackend {
     override fun access() = core().adminAccess()
-    override fun connect(apiKey: String) = core().adminConnect(apiKey)
+    override fun keyOwner(apiKey: String) = core().adminKeyOwner(apiKey)
+    override fun connect(apiKey: String, agreedAccount: String?) = core().adminConnect(apiKey, agreedAccount)
     override fun disconnect() = core().adminDisconnect()
     override fun summary() = core().adminSummary()
     override fun queue(offset: UInt, limit: UInt) = core().adminQueue(offset, limit)

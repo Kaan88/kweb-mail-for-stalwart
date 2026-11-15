@@ -117,11 +117,80 @@ pub fn reply_recipients(
 /// The identity a reply is sent as: the first one the source was sent to (in the order of its
 /// recipients), else the first identity.
 pub fn pick_identity<'a>(identities: &'a [Identity], source_recipients: &[Address]) -> Option<&'a Identity> {
-    let sent_to = source_recipients.iter().find_map(|r| {
-        let key = address_key(&r.email);
+    exact_identity(identities, source_recipients.iter().map(|r| r.email.as_str())).or_else(|| identities.first())
+}
+
+/// The identity of the first of `addresses` (in their order) that is exactly the address of an
+/// identity, without regard to case.
+fn exact_identity<'a, 'b>(
+    identities: &'a [Identity],
+    addresses: impl IntoIterator<Item = &'b str>,
+) -> Option<&'a Identity> {
+    addresses.into_iter().find_map(|a| {
+        let key = address_key(a);
         identities.iter().find(|i| address_key(&i.email) == key)
-    });
-    sent_to.or_else(|| identities.first())
+    })
+}
+
+/// `name@domain` for `name+tag@domain`; `None` for an address with no tag (or with nothing before
+/// the plus sign, which is not a tag on a name).
+pub fn plus_base(email: &str) -> Option<String> {
+    let key = address_key(email);
+    let (local, domain) = key.rsplit_once('@')?;
+    let (name, tag) = local.split_once('+')?;
+    (!name.is_empty() && !tag.is_empty() && !domain.is_empty()).then(|| format!("{name}@{domain}"))
+}
+
+/// The addresses in the text of delivery headers (`Delivered-To`, `X-Original-To`,
+/// `Envelope-To`): `a@b`, `<a@b>` or `Name <a@b>`, a list of them separated by commas. Texts
+/// with no address are dropped; the order is kept.
+pub fn delivery_addresses(texts: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for text in texts {
+        for part in text.split(',') {
+            let part = part.trim();
+            let inner = match (part.rfind('<'), part.rfind('>')) {
+                (Some(open), Some(close)) if open < close => part[open + 1..close].trim(),
+                _ => part,
+            };
+            if inner.contains('@') && !inner.contains(char::is_whitespace) {
+                out.push(inner.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Whether the source's recipients already say which identity answers (an exact match in To or
+/// Cc). When they do, the delivery headers need not be fetched.
+pub fn is_sent_to_an_identity(identities: &[Identity], source_recipients: &[Address]) -> bool {
+    exact_identity(identities, source_recipients.iter().map(|r| r.email.as_str())).is_some()
+}
+
+/// The identity a reply or forward is sent as. In this order: an identity that is exactly an
+/// address in To or Cc (as [`pick_identity`]); one that is exactly an address the server
+/// delivered the message to (`delivered`, the delivery headers, newest first), also as a
+/// `name+tag@domain` base; one that is the base of a `name+tag@domain` in To or Cc (the identity
+/// keeps its own address, the tag is not sent from); else the first identity.
+///
+/// Never an address that is not one of `identities`: the server would refuse to send as it.
+pub fn pick_identity_for_reply<'a>(
+    identities: &'a [Identity],
+    source_recipients: &[Address],
+    delivered: &[String],
+) -> Option<&'a Identity> {
+    let to_cc = || source_recipients.iter().map(|r| r.email.as_str());
+    exact_identity(identities, to_cc())
+        .or_else(|| exact_identity(identities, delivered.iter().map(String::as_str)))
+        .or_else(|| {
+            let bases: Vec<String> = delivered.iter().filter_map(|a| plus_base(a)).collect();
+            exact_identity(identities, bases.iter().map(String::as_str))
+        })
+        .or_else(|| {
+            let bases: Vec<String> = to_cc().filter_map(plus_base).collect();
+            exact_identity(identities, bases.iter().map(String::as_str))
+        })
+        .or_else(|| identities.first())
 }
 
 /// `Name <address>`, or the address alone when there is no name. Line breaks cannot get in.
@@ -499,6 +568,79 @@ mod tests {
         assert_eq!(pick_identity(&[], &[addr("", "a@x.org")]), None);
         // The first recipient that is an identity wins, not the first identity.
         assert_eq!(pick(&[addr("", "work@x.org"), addr("", "me@x.org")]), Some("2".into()));
+    }
+
+    fn reply_pick(ids: &[Identity], to: &[&str], delivered: &[&str]) -> Option<String> {
+        let to: Vec<Address> = to.iter().map(|e| addr("", e)).collect();
+        let delivered: Vec<String> = delivered.iter().map(|d| d.to_string()).collect();
+        pick_identity_for_reply(ids, &to, &delivered).map(|i| i.id.clone())
+    }
+
+    #[test]
+    fn a_plus_address_is_its_name_at_its_domain() {
+        assert_eq!(plus_base("Ann+news@X.org"), Some("ann@x.org".into()));
+        assert_eq!(plus_base("ann+a+b@x.org"), Some("ann@x.org".into()));
+        for none in ["ann@x.org", "+tag@x.org", "ann+@x.org", "ann+tag@", "ann+tag", "", "ann@x+y.org"] {
+            assert_eq!(plus_base(none), None, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn the_text_of_delivery_headers_gives_addresses() {
+        let texts = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            delivery_addresses(&texts(&[
+                " me@x.org",
+                "<work@x.org>",
+                "Desk <desk@x.org>, other@y.org",
+                "",
+                "no address",
+                "a b@c"
+            ])),
+            ["me@x.org", "work@x.org", "desk@x.org", "other@y.org"]
+        );
+        assert!(delivery_addresses(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_reply_prefers_the_recipients_then_the_delivery_headers_then_the_plus_base_then_the_default() {
+        let ids = [identity("1", "me@x.org"), identity("2", "work@x.org"), identity("3", "shop@x.org")];
+        // 1. An exact address in To or Cc beats everything, the delivery headers included.
+        assert_eq!(reply_pick(&ids, &["a@y.org", "Work@x.org"], &["shop@x.org"]), Some("2".into()));
+        assert_eq!(reply_pick(&ids, &["shop+x@x.org", "work@x.org"], &["me@x.org"]), Some("2".into()));
+        // 2. Else an address the server delivered to (a mailing list or a Bcc), in header order.
+        assert_eq!(reply_pick(&ids, &["list@y.org"], &["SHOP@x.org", "work@x.org"]), Some("3".into()));
+        assert_eq!(reply_pick(&ids, &["list@y.org"], &["nobody@x.org", "work@x.org"]), Some("2".into()));
+        // The delivery header may carry a tag too.
+        assert_eq!(reply_pick(&ids, &["list@y.org"], &["work+list@x.org"]), Some("2".into()));
+        // 3. Else the plus base of an address in To or Cc; the identity keeps its own address.
+        assert_eq!(reply_pick(&ids, &["a@y.org", "work+news@x.org"], &[]), Some("2".into()));
+        assert_eq!(reply_pick(&ids, &["a@y.org", "work+news@x.org"], &["unknown@x.org"]), Some("2".into()));
+        // A delivery header beats a plus base.
+        assert_eq!(reply_pick(&ids, &["work+news@x.org"], &["shop@x.org"]), Some("3".into()));
+        // 4. Else the first identity: never an address that is not an identity.
+        assert_eq!(reply_pick(&ids, &["a@y.org", "other+tag@x.org"], &["catchall@x.org"]), Some("1".into()));
+        assert_eq!(reply_pick(&ids, &[], &[]), Some("1".into()));
+        assert_eq!(reply_pick(&[], &["me@x.org"], &["me@x.org"]), None);
+        // A tag on another domain is not the identity.
+        assert_eq!(reply_pick(&ids, &["work+t@y.org"], &[]), Some("1".into()));
+    }
+
+    #[test]
+    fn the_delivery_headers_are_needed_only_when_no_recipient_is_an_identity() {
+        let ids = [identity("1", "me@x.org")];
+        assert!(is_sent_to_an_identity(&ids, &[addr("", "ME@x.org")]));
+        assert!(!is_sent_to_an_identity(&ids, &[addr("", "me+t@x.org")]));
+        assert!(!is_sent_to_an_identity(&ids, &[]));
+        assert!(!is_sent_to_an_identity(&[], &[addr("", "me@x.org")]));
+    }
+
+    #[test]
+    fn the_old_rule_stays_exact_only() {
+        // `pick_identity` (a draft opened from the server, a shared message) stays exact only.
+        let ids = [identity("1", "me@x.org"), identity("2", "work@x.org")];
+        let pick = |to: &[Address]| pick_identity(&ids, to).map(|i| i.id.clone());
+        assert_eq!(pick(&[addr("", "work+tag@x.org")]), Some("1".into()));
     }
 
     #[test]

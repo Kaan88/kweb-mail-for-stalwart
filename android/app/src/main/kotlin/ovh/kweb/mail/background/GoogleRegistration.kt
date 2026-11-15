@@ -1,14 +1,21 @@
 package ovh.kweb.mail.background
 
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
+import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
+import android.os.Message
 import android.os.Messenger
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -190,8 +197,14 @@ object GoogleRegistration {
         return taken
     }
 
-    /** The two ways to hand Play services the request. */
+    /** The ways to hand Play services the request. */
     enum class Road(val label: String) {
+        /**
+         * Binding to the `REGISTER` service and sending the request as a message: what Google's own library does on a
+         * current Play services.
+         */
+        Bound("bound"),
+
         /** `sendBroadcast` of `com.google.iid.TOKEN_REQUEST`: what current Play services answers. */
         Broadcast("broadcast"),
 
@@ -220,6 +233,112 @@ object GoogleRegistration {
         hasReceiver -> listOf(Road.Broadcast)
         hasService -> listOf(Road.Service)
         else -> listOf(Road.Broadcast, Road.Service)
+    }
+
+    /** [roadsFor] with the bound road in front wherever Play services has the service (or nothing could be looked up). */
+    fun allRoads(hasReceiver: Boolean, hasService: Boolean): List<Road> =
+        (if (hasService || !hasReceiver) listOf(Road.Bound) else emptyList()) + roadsFor(hasReceiver, hasService)
+
+    /**
+     * What the answer on the bound road means for the request that is waiting, or null when nothing in it can be used.
+     * There the token may come bare (the answer belongs to the message it answers) or with the kid in front.
+     */
+    fun boundAnswer(registrationId: String?, unregistered: String?, error: String?, accountId: String, delete: Boolean, packageName: String): RegistrationResult? {
+        if (!error.isNullOrEmpty()) return RegistrationResult.Refused(replyId.matchEntire(error)?.groupValues?.get(2) ?: error)
+        if (delete) return if (!unregistered.isNullOrEmpty() || registrationId != null) RegistrationResult.Token("") else null
+        val raw = registrationId ?: return null
+        val match = replyId.matchEntire(raw)
+        if (match != null && match.groupValues[1] != accountId) return null
+        val token = match?.groupValues?.get(2) ?: raw
+        return if (token.isEmpty() || token == packageName) null else RegistrationResult.Token(token)
+    }
+
+    const val NO_BINDING = "no binding"
+    const val UNSUPPORTED = "not supported"
+    private const val MESSENGER_DESCRIPTOR = "android.os.IMessenger"
+    private const val BIND_WAIT_MS = 5_000L
+    private val boundIds = AtomicInteger(1)
+
+    /** The bound request that is waiting: its id, whose it is, and how its wait ends early. */
+    private class BoundWait(val id: Int, val waiter: Waiter, val over: CompletableDeferred<Unit>)
+
+    @Volatile private var boundWait: BoundWait? = null
+
+    private val boundMessenger by lazy {
+        Messenger(
+            Handler(Looper.getMainLooper()) { message ->
+                onBoundReply(message.arg1, message.data)
+                true
+            },
+        )
+    }
+
+    /** The answer to a bound request. Logs the names of what came, never a value. */
+    private fun onBoundReply(id: Int, data: Bundle?) {
+        val wait = boundWait?.takeIf { it.id == id } ?: return
+        val answer = try {
+            if (data?.getBoolean("unsupported", false) == true) {
+                unmatched = UNSUPPORTED
+                null
+            } else {
+                val inner = data?.getBundle("data")
+                Log.i(Background.TAG, "Play services answered a bound registration request with: ${inner?.keySet()?.sorted()}")
+                boundAnswer(
+                    inner?.getString(EXTRA_REGISTRATION_ID), inner?.getString("unregistered"), inner?.getString(EXTRA_ERROR),
+                    wait.waiter.accountId, wait.waiter.delete, appPackage,
+                ).also { if (it == null) unmatched = "an answer in an unknown form" }
+            }
+        } catch (e: RuntimeException) {
+            unmatched = "an answer that cannot be read"
+            null
+        }
+        if (answer != null) wait.waiter.result.complete(answer) else wait.over.complete(Unit)
+    }
+
+    private class Binding : ServiceConnection {
+        val binder = CompletableDeferred<IBinder?>()
+
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            binder.complete(service)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) = Unit
+
+        override fun onNullBinding(name: ComponentName?) {
+            binder.complete(null)
+        }
+
+        override fun onBindingDied(name: ComponentName?) {
+            binder.complete(null)
+        }
+    }
+
+    /** Binds and sends the request as Google's library does (`what` 1, the extras under `data`); [SENT] or a short word. */
+    private suspend fun sendBound(app: Context, binding: Binding, id: Int, extras: Map<String, String>): String = try {
+        if (!app.bindService(Intent(ACTION_REGISTER).setPackage(GMS_PACKAGE), binding, Context.BIND_AUTO_CREATE)) {
+            NO_SERVICE
+        } else {
+            val binder = withTimeoutOrNull(BIND_WAIT_MS) { binding.binder.await() }
+            when {
+                binder == null -> NO_BINDING
+                binder.interfaceDescriptor != MESSENGER_DESCRIPTOR -> UNSUPPORTED
+                else -> {
+                    val message = Message.obtain()
+                    message.what = 1
+                    message.arg1 = id
+                    message.replyTo = boundMessenger
+                    message.data = Bundle().apply {
+                        putBoolean("oneWay", false)
+                        putString("pkg", app.packageName)
+                        putBundle("data", Bundle().apply { extras.forEach { (k, v) -> putString(k, v) } })
+                    }
+                    Messenger(binder).send(message)
+                    SENT
+                }
+            }
+        }
+    } catch (e: Exception) {
+        "threw ${e.javaClass.simpleName}"
     }
 
     /** How long road number [index] of [count] waits: an equal share, and the last one gets what is left. */
@@ -260,6 +379,7 @@ object GoogleRegistration {
                 SENT
             }
             Road.Service -> if (app.startService(intent) == null) NO_SERVICE else SENT
+            Road.Bound -> NO_SERVICE
         }
     } catch (e: Exception) {
         "threw ${e.javaClass.simpleName}"
@@ -286,24 +406,48 @@ object GoogleRegistration {
         var asked = false
         try {
             appPackage = app.packageName
-            unmatched = null
             val hasReceiver = offers(app, Road.Broadcast)
             val hasService = offers(app, Road.Service)
-            val roads = roadsFor(hasReceiver, hasService)
+            val roads = allRoads(hasReceiver, hasService)
             val attempts = mutableListOf<Attempt>()
             if (!hasReceiver && hasService) attempts += Attempt(Road.Broadcast, NO_RECEIVER)
             if (hasReceiver && !hasService) attempts += Attempt(Road.Service, NO_SERVICE)
             for ((i, road) in roads.withIndex()) {
-                val outcome = send(app, road, intentFor(app, road, accountId, sender, subtype, delete))
-                Log.i(Background.TAG, "Registration request on the ${road.label} road: $outcome")
-                if (outcome != SENT) {
-                    attempts += Attempt(road, outcome)
-                    continue
+                unmatched = null
+                val binding = if (road == Road.Bound) Binding() else null
+                val over = CompletableDeferred<Unit>()
+                try {
+                    val outcome = if (binding != null) {
+                        val id = boundIds.getAndIncrement()
+                        boundWait = BoundWait(id, waiter, over)
+                        sendBound(app, binding, id, extras(accountId, sender, subtype, delete))
+                    } else {
+                        send(app, road, intentFor(app, road, accountId, sender, subtype, delete))
+                    }
+                    Log.i(Background.TAG, "Registration request on the ${road.label} road: $outcome")
+                    if (outcome != SENT) {
+                        attempts += Attempt(road, outcome)
+                        continue
+                    }
+                    asked = true
+                    val answer = withTimeoutOrNull(shareMs(timeoutMs, i, roads.size)) {
+                        select<RegistrationResult?> {
+                            waiter.result.onAwait { it }
+                            over.onAwait { null }
+                        }
+                    }
+                    if (answer != null) return@withLock answer
+                    attempts += Attempt(road, unansweredText(unmatched))
+                } finally {
+                    if (binding != null) {
+                        boundWait = null
+                        try {
+                            app.unbindService(binding)
+                        } catch (e: Exception) {
+                            // Never bound.
+                        }
+                    }
                 }
-                asked = true
-                val answer = withTimeoutOrNull(shareMs(timeoutMs, i, roads.size)) { waiter.result.await() }
-                if (answer != null) return@withLock answer
-                attempts += Attempt(road, unansweredText(unmatched))
             }
             val detail = diagnostic(gmsVersion(app), attempts)
             Log.i(Background.TAG, "Registration failed: $detail")

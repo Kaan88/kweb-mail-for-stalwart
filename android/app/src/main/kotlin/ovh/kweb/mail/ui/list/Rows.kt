@@ -1,5 +1,19 @@
 package ovh.kweb.mail.ui.list
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,7 +83,10 @@ data class RowContent(
 /**
  * One row of the mock-up: unread mail on a raised surface with a square avatar, read mail on a
  * quiet one with a round avatar. [shape] is the row's place in its group ([Groups]).
- * [onLongClick] is null where there is no menu.
+ * [onLongClick] is null where there is no long press.
+ *
+ * A list whose rows can be chosen gives [onAvatarClick] (a tap on the picture chooses the row) and [selected]: a chosen row has
+ * the selected container colour and a check mark in place of the picture.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -79,24 +96,69 @@ fun MailRow(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(Groups.INNER_DP.dp),
     onLongClick: (() -> Unit)? = null,
+    selected: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
 ) {
-    val menuLabel = stringResource(R.string.list_row_actions)
-    val surface = if (row.unread) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surfaceContainerLow
+    val colors = MaterialTheme.colorScheme
+    val longLabel = stringResource(if (onAvatarClick != null) R.string.selection_select else R.string.list_row_actions)
+    val haptic = LocalHapticFeedback.current
+    // The long press is felt, and says so itself (the foundation's own is switched off, so it is not done twice).
+    val longClick: (() -> Unit)? = onLongClick?.let { act -> { haptic.performHapticFeedback(HapticFeedbackType.LongPress); act() } }
+    val surface = if (row.unread) colors.surfaceContainerHigh else colors.surfaceContainerLow
+    val container by animateColorAsState(if (selected) colors.secondaryContainer else surface, tween(150), label = "row container")
     Row(
         modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(surface)
+            .background(container)
+            .then(if (onAvatarClick != null) Modifier.semantics { this.selected = selected } else Modifier)
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onLongClick,
-                onLongClickLabel = if (onLongClick != null) menuLabel else null,
+                onLongClick = longClick,
+                onLongClickLabel = if (longClick != null) longLabel else null,
+                hapticFeedbackEnabled = false,
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (onAvatarClick != null) 12.dp else 14.dp),
     ) {
-        Avatar(row.initial, size = 44.dp, strong = row.unread)
+        if (onAvatarClick == null) {
+            Avatar(row.initial, size = 44.dp, strong = row.unread)
+        } else {
+            // A target of 48 dp around the 44 dp picture; a long press on it is the row's long press.
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(
+                        onClickLabel = stringResource(if (selected) R.string.selection_deselect else R.string.selection_select),
+                        onClick = onAvatarClick,
+                        onLongClick = longClick,
+                        hapticFeedbackEnabled = false,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                AnimatedContent(
+                    targetState = selected,
+                    transitionSpec = {
+                        (fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.6f)) togetherWith
+                            (fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.6f))
+                    },
+                    label = "row avatar",
+                ) { chosen ->
+                    if (chosen) CheckAvatar(44.dp) else Avatar(row.initial, size = 44.dp, strong = row.unread)
+                }
+            }
+        }
         RowText(row, Modifier.weight(1f))
+    }
+}
+
+/** What stands in the place of the letter on a chosen row. */
+@Composable
+private fun CheckAvatar(size: Dp) {
+    val colors = MaterialTheme.colorScheme
+    Box(Modifier.size(size).clip(CircleShape).background(colors.primary), contentAlignment = Alignment.Center) {
+        Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onPrimary, modifier = Modifier.size(size * 0.55f))
     }
 }
 

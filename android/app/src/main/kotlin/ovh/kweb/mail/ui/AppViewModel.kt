@@ -89,6 +89,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { SessionState.load(app) }
         viewModelScope.launch { stackFlow.collect { stores.retain(it) } }
+        // No thread on the stack: the next one opened starts its own order.
         // A message was handed over to be sent later: say when, on whichever screen is up.
         viewModelScope.launch {
             ScheduledNotices.scheduled.collect { at ->

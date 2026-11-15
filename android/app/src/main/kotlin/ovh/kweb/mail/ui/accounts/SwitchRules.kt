@@ -29,6 +29,7 @@ object SwitchRules {
     /** Screens where the user may have typed something that a switch of the account would throw away. */
     fun isForm(route: Route): Boolean = when (route) {
         is Route.EditEvent, is Route.EditContact, is Route.Filters, Route.AccountSecurity, Route.Away, Route.Senders, Route.Assistant,
+        Route.AssistantChat,
         Route.AddAccount, Route.SignInAgain -> true
         is Route.Admin -> route.screen.holdsInput
         else -> false

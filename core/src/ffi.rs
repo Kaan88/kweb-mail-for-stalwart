@@ -6,6 +6,7 @@
 
 mod admin;
 mod admin_link;
+mod ai_chat;
 mod download;
 mod enterprise;
 
@@ -13,6 +14,7 @@ pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
     ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
 };
+pub use ai_chat::{ai_parse_findings, ai_parse_ideas, AiChatListener};
 pub use download::{DownloadCancel, DownloadListener};
 #[doc(hidden)]
 pub use enterprise::probe;
@@ -112,6 +114,10 @@ const DEFAULT_IDENTITY_KEY: &str = "default_identity";
 /// there should not keep the user waiting, and the message is held here meanwhile.
 const HAND_OVER_BUDGET: Duration = Duration::from_secs(8);
 
+/// The longest a reply or forward waits for the delivery headers of its source: they only
+/// improve the choice of the sender, so a slow or absent server must not hold the draft back.
+const DELIVERY_HEADERS_BUDGET: Duration = Duration::from_secs(4);
+
 /// One per process. Owns the cache, the sign-in and the live connection.
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -122,6 +128,9 @@ pub struct Core {
     inner: Arc<Mutex<Inner>>,
     /// The assistant task that is running, if any.
     ai: assistant::Slot,
+    /// The one conversation with the assistant, of the signed-in account. Memory only: it holds
+    /// the suggestions and what can be undone, and goes on sign-out (see `ffi/ai_chat.rs`).
+    chat: Mutex<Option<assistant::chat::Chat>>,
 }
 
 #[uniffi::export]
@@ -147,6 +156,7 @@ impl Core {
             secrets,
             inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })),
             ai: assistant::Slot::default(),
+            chat: Mutex::new(None),
         }))
     }
 
@@ -247,6 +257,7 @@ impl Core {
         // stopped here. The provider key stays on the device only as long as the account does,
         // so it goes before the (slow) revoke; both steps are tried and the first error is returned.
         self.ai.cancel_all();
+        self.ai_chat_forget();
         let key = assistant::forget_key(&*self.secrets).and(self.admin_disconnect());
         // The keys of the push subscription go with the account.
         let push_keys = crate::webpush::forget(None, &*self.secrets);
@@ -522,15 +533,18 @@ impl Core {
             DraftKind::New => compose::blank(&identities, id, at),
             DraftKind::Reply { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
-                compose::answer(false, (&header, &body), &identities, id, at)
+                let delivered = self.delivered_to(&identities, &header, &body);
+                compose::answer(false, (&header, &body), &identities, Some(&delivered), id, at)
             }
             DraftKind::ReplyAll { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
-                compose::answer(true, (&header, &body), &identities, id, at)
+                let delivered = self.delivered_to(&identities, &header, &body);
+                compose::answer(true, (&header, &body), &identities, Some(&delivered), id, at)
             }
             DraftKind::Forward { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
-                compose::forward((&header, &body), &identities, id, at)
+                let delivered = self.delivered_to(&identities, &header, &body);
+                compose::forward((&header, &body), &identities, Some(&delivered), id, at)
             }
             DraftKind::Existing { message_id } => {
                 return self.open_draft(&account_id, &message_id, &identities, id, at)
@@ -759,6 +773,23 @@ impl Core {
             .get_message(account_id, message_id)?
             .ok_or_else(|| Error::invalid(format!("the message '{message_id}' is not in the cache")))?;
         Ok((header, self.message_body(message_id.to_string())?))
+    }
+
+    /// The addresses the server delivered `header`'s message to, for choosing the identity of a
+    /// reply or forward. Asked only when To and Cc do not already name an identity (a reply
+    /// whose answer is known costs no request), within a short budget, and never fails: without
+    /// an answer the choice is made from To, Cc and the default, as before.
+    fn delivered_to(&self, identities: &[Identity], header: &MessageHeader, body: &MessageBody) -> Vec<String> {
+        let recipients = [body.to.as_slice(), body.cc.as_slice()].concat();
+        if compose::rules::is_sent_to_an_identity(identities, &recipients) {
+            return Vec::new();
+        }
+        let id = header.id.as_str();
+        self.with_connection_within(
+            Some(DELIVERY_HEADERS_BUDGET),
+            |conn| async move { conn.delivery_addresses(id).await },
+        )
+        .unwrap_or_default()
     }
 
     /// A draft that is in Drafts on the server, as a local draft. One that was opened before is
@@ -1357,18 +1388,45 @@ impl Core {
     pub fn ai_cancel(&self, run_id: String) {
         self.ai.cancel(&run_id);
     }
+
+    /// Puts the assistant's settings of this account back to their defaults (off, no service,
+    /// nothing agreed to) and removes both stored keys and every consent, the chat's included.
+    /// The conversation in memory is dropped too. Sends nothing. Refused with `Error::Invalid`
+    /// ("the assistant is working on something: stop it first") while a task or the chat runs:
+    /// the reset holds the slot meanwhile, so nothing can start in the middle of it. When a key
+    /// cannot be removed from the secret store the call fails and nothing else is changed.
+    /// Returns the settings as they are now.
+    pub fn ai_reset_settings(&self) -> Result<AiSettings> {
+        let account_id = self.account_id()?;
+        let _slot = self
+            .ai
+            .begin("reset")
+            .map_err(|_| Error::invalid("the assistant is working on something: stop it first"))?;
+        let after = assistant::reset(&self.store, &*self.secrets, &account_id)?;
+        self.ai_chat_forget();
+        Ok(after)
+    }
 }
 
 impl Core {
     /// The request for `task`, with the mail it needs from the cache (the server for a body the
     /// cache lacks). A thread contributes its newest messages only.
     fn ai_prepare(&self, account_id: &str, task: &AiTask) -> Result<assistant::request::Prepared> {
+        // An explanation of a text the user gave sends that text only, even when a message is named.
+        let about_text = matches!(task, AiTask::Explain { text, .. } if !text.trim().is_empty());
         let (mails, earlier) = match task {
-            AiTask::SummarizeMessage { message_id } | AiTask::DraftReply { message_id, .. } => {
+            // No mail goes with these (`request::build` refuses an Explain that has nothing).
+            AiTask::Rewrite { .. } | AiTask::Explain { message_id: None, .. } => (Vec::new(), 0),
+            AiTask::Explain { .. } if about_text => (Vec::new(), 0),
+            AiTask::SummarizeMessage { message_id }
+            | AiTask::DraftReply { message_id, .. }
+            | AiTask::ReplyIdeas { message_id }
+            | AiTask::Extract { message_id, .. }
+            | AiTask::Explain { message_id: Some(message_id), .. } => {
                 let (header, body) = self.source(account_id, message_id)?;
                 (vec![assistant::request::mail_input(&header, &body)], 0)
             }
-            AiTask::SummarizeThread { thread_id } => {
+            AiTask::SummarizeThread { thread_id } | AiTask::ExtractThread { thread_id, .. } => {
                 let headers = self.store.thread_messages(account_id, thread_id)?;
                 if headers.is_empty() {
                     return Err(Error::invalid(format!("the conversation '{thread_id}' is not in the cache")));
@@ -1386,7 +1444,6 @@ impl Core {
                 let missing = wanted.len() - mails.len();
                 (mails, skip + missing)
             }
-            AiTask::Rewrite { .. } => (Vec::new(), 0),
         };
         assistant::request::build(task, mails, earlier)
     }
@@ -1772,9 +1829,9 @@ impl Core {
         })?;
         let source = (&message.header, &message.body);
         let mut draft = if forward {
-            compose::forward(source, &identities, id, at)
+            compose::forward(source, &identities, None, id, at)
         } else {
-            compose::answer(all, source, &identities, id, at)
+            compose::answer(all, source, &identities, None, id, at)
         };
         // The source is not a message of the user's own account: sending must not mark an own
         // message of the same id as answered, and the threading is taken from here.

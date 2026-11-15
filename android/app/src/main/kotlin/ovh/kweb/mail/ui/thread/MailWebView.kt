@@ -2,10 +2,14 @@ package ovh.kweb.mail.ui.thread
 
 import android.os.Build
 import android.view.ViewGroup
+import android.content.Context
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -25,6 +29,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
+import kotlin.math.roundToInt
 import java.io.InputStream
 import ovh.kweb.mail.R
 
@@ -85,10 +90,20 @@ fun MailWebView(
     }
 
     key(generation) {
+        // A page wider than the screen (or zoomed) is moved sideways here, in Compose, and not by the WebView's own touch handling:
+        // what the page cannot move any further goes on to the parent as leftover, which is how the pager of the thread screen
+        // takes a swipe at the edge of the page, and takes it anywhere on a page that fits. A vertical drag is not touched.
+        val panView = remember { arrayOfNulls<PanWebView>(1) }
+        val pan = rememberScrollableState { delta -> panView[0]?.pan(-delta)?.let { -it } ?: 0f }
+        // Only a page that is wider than the screen takes part: over a page that fits, the pager gets the finger directly,
+        // with its own fling and snap, and not what a scrollable in between hands on.
+        var wide by remember { mutableStateOf(false) }
         AndroidView(
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth().scrollable(pan, Orientation.Horizontal, enabled = wide),
             factory = { context ->
-                WebView(context).apply {
+                PanWebView(context).apply {
+                    panView[0] = this
+                    onWide = { wide = it }
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     settings.javaScriptEnabled = false
                     settings.allowFileAccess = false
@@ -117,11 +132,40 @@ fun MailWebView(
                 }
             },
             onRelease = { view ->
+                panView[0] = null
                 view.stopLoading()
                 (view.parent as? ViewGroup)?.removeView(view)
                 view.destroy()
             },
         )
+    }
+}
+
+/** A WebView that can be moved sideways from outside; how far is its own business (its range, its zoom). */
+private class PanWebView(context: Context) : WebView(context) {
+    /** How far the page can still be moved to the right. */
+    private fun maxScrollX(): Int = (computeHorizontalScrollRange() - computeHorizontalScrollExtent()).coerceAtLeast(0)
+
+    /** Told (on the main thread) when the page starts or stops being wider than the view. */
+    var onWide: (Boolean) -> Unit = {}
+    private var wasWide = false
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        super.onDraw(canvas)
+        val wide = maxScrollX() > 0
+        if (wide != wasWide) {
+            wasWide = wide
+            // Not during the draw pass: the state change lays out again.
+            post { onWide(wide) }
+        }
+    }
+
+    /** Moves the page by [dx] pixels to the right (negative: left), as far as it goes; returns how far it did. */
+    fun pan(dx: Float): Float {
+        val before = scrollX
+        val target = (before + dx).roundToInt().coerceIn(0, maxScrollX())
+        if (target != before) scrollTo(target, scrollY)
+        return (target - before).toFloat()
     }
 }
 

@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import ovh.kweb.mail.ui.assistant.AssistantRules.Kind
+import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiSettings
@@ -19,7 +20,14 @@ class AssistantRulesTest {
         summaries: Boolean = true,
         drafts: Boolean = true,
         rewrites: Boolean = true,
-    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = false, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites)
+        ideas: Boolean = false,
+        extract: Boolean = false,
+        explain: Boolean = false,
+        chat: Boolean = false,
+        consented: Boolean = false,
+        chatConsented: Boolean = false,
+        actions: AiActionMode = AiActionMode.ASK_FIRST,
+    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions)
 
     // ---- which entries show ----
 
@@ -39,6 +47,51 @@ class AssistantRulesTest {
         assertFalse(AssistantRules.isAllowed(settings(rewrites = false), Kind.REWRITE))
         assertTrue(AssistantRules.isAllowed(settings(rewrites = false), Kind.SUMMARY))
     }
+
+    @Test fun theNewKindsAreOffUntilSwitchedOn() {
+        // What a user of stage 1 has after the update: the three old kinds, none of the new ones.
+        assertEquals(setOf(Kind.SUMMARY, Kind.DRAFT, Kind.REWRITE), AssistantRules.visible(settings()))
+        assertFalse(AssistantRules.isAllowed(settings(), Kind.IDEAS))
+        assertFalse(AssistantRules.isAllowed(settings(), Kind.EXTRACT))
+        assertFalse(AssistantRules.isAllowed(settings(), Kind.EXPLAIN))
+    }
+
+    @Test fun eachNewKindFollowsItsOwnSwitch() {
+        val none = settings(summaries = false, drafts = false, rewrites = false)
+        assertEquals(setOf(Kind.IDEAS), AssistantRules.visible(none.copy(allowIdeas = true)))
+        assertEquals(setOf(Kind.EXTRACT), AssistantRules.visible(none.copy(allowExtract = true)))
+        assertEquals(setOf(Kind.EXPLAIN), AssistantRules.visible(none.copy(allowExplain = true)))
+        assertEquals(Kind.entries.toSet(), AssistantRules.visible(settings(ideas = true, extract = true, explain = true)))
+    }
+
+    @Test fun theNewKindsDoNotShowWhileTheAssistantIsOff() =
+        assertEquals(emptySet<Kind>(), AssistantRules.visible(settings(enabled = false, ideas = true, extract = true, explain = true)))
+
+    @Test fun theChatSwitchOffersNoKindOfTheSheet() =
+        assertEquals(emptySet<Kind>(), AssistantRules.visible(settings(summaries = false, drafts = false, rewrites = false, chat = true)))
+
+    // ---- the chat's gate ----
+
+    @Test fun theChatIsOffWhileTheSettingsAreUnknownOrTheAssistantIsOff() {
+        assertEquals(AssistantRules.ChatGate.OFF, AssistantRules.chatReady(null))
+        assertEquals(AssistantRules.ChatGate.OFF, AssistantRules.chatReady(settings(enabled = false, chat = true, consented = true, chatConsented = true)))
+    }
+
+    @Test fun theChatNeedsItsOwnSwitch() =
+        assertEquals(AssistantRules.ChatGate.CHAT_OFF, AssistantRules.chatReady(settings(chat = false, consented = true, chatConsented = true)))
+
+    @Test fun theChatNeedsBothAgreements() {
+        assertEquals(AssistantRules.ChatGate.NOT_AGREED, AssistantRules.chatReady(settings(chat = true)))
+        assertEquals(AssistantRules.ChatGate.NOT_AGREED, AssistantRules.chatReady(settings(chat = true, consented = true)))
+        // The second yes without the first is no yes (the core never stores it so; the screen does not trust it either).
+        assertEquals(AssistantRules.ChatGate.NOT_AGREED, AssistantRules.chatReady(settings(chat = true, chatConsented = true)))
+    }
+
+    @Test fun theChatIsReadyWithTheSwitchAndBothAgreements() =
+        assertEquals(AssistantRules.ChatGate.READY, AssistantRules.chatReady(settings(chat = true, consented = true, chatConsented = true)))
+
+    @Test fun theActionModeDoesNotGateTheChat() =
+        assertEquals(AssistantRules.ChatGate.READY, AssistantRules.chatReady(settings(chat = true, consented = true, chatConsented = true, actions = AiActionMode.OFF)))
 
     // ---- the default address ----
 
@@ -107,6 +160,65 @@ class AssistantRulesTest {
         assertFalse(form.withProvider(AiProvider.ANTHROPIC).toSettings(stored).consented)
     }
 
+    @Test fun savingNeverGrantsTheChatsConsentEither() {
+        // Switching the chat on in the form and saving: neither yes comes out of the form.
+        val stored = settings()
+        val sent = AssistantRules.formOf(stored).copy(allowChat = true).toSettings(stored)
+        assertTrue(sent.allowChat)
+        assertFalse(sent.consented)
+        assertFalse(sent.chatConsented)
+        // Agreed to the service only: the chat's yes is still not given by a save.
+        val agreed = settings(consented = true)
+        val again = AssistantRules.formOf(agreed).copy(allowChat = true).toSettings(agreed)
+        assertTrue(again.consented)
+        assertFalse(again.chatConsented)
+    }
+
+    @Test fun theChatsConsentIsKeptOnlyForTheSameServiceAndModel() {
+        val stored = settings(chat = true, consented = true, chatConsented = true)
+        val form = AssistantRules.formOf(stored)
+        assertTrue(form.copy(allowIdeas = true, actions = AiActionMode.OFF).toSettings(stored).chatConsented)
+        assertFalse(form.copy(model = "other").toSettings(stored).chatConsented)
+        assertFalse(form.copy(baseUrl = "https://example.org/v1").toSettings(stored).chatConsented)
+        assertFalse(form.withProvider(AiProvider.ANTHROPIC).toSettings(stored).chatConsented)
+    }
+
+    @Test fun theChatsConsentNeverOutlivesTheFirst() {
+        // A state the core does not store; the form does not make a yes out of it.
+        val odd = settings(chat = true, consented = false, chatConsented = true)
+        assertFalse(AssistantRules.formOf(odd).toSettings(odd).chatConsented)
+    }
+
+    @Test fun theFormRoundTripsTheNewSwitches() {
+        val stored = settings(ideas = true, extract = false, explain = true, chat = true, actions = AiActionMode.OFF)
+        val form = AssistantRules.formOf(stored)
+        assertTrue(form.allowIdeas)
+        assertFalse(form.allowExtract)
+        assertTrue(form.allowExplain)
+        assertTrue(form.allowChat)
+        assertEquals(AiActionMode.OFF, form.actions)
+        assertEquals(stored, form.toSettings(stored))
+    }
+
+    @Test fun theFormCarriesTheNewSwitchesToTheSettings() {
+        val stored = settings()
+        val sent = AssistantRules.formOf(stored).copy(allowIdeas = true, allowExtract = true, allowExplain = true, allowChat = true, actions = AiActionMode.OFF).toSettings(stored)
+        assertTrue(sent.allowIdeas)
+        assertTrue(sent.allowExtract)
+        assertTrue(sent.allowExplain)
+        assertTrue(sent.allowChat)
+        assertEquals(AiActionMode.OFF, sent.actions)
+    }
+
+    @Test fun aNewSwitchOrTheActionModeIsAChange() {
+        val form = AssistantRules.formOf(settings())
+        assertTrue(AssistantRules.isChanged(form.copy(allowIdeas = true), form, keyTyped = false))
+        assertTrue(AssistantRules.isChanged(form.copy(allowExtract = true), form, keyTyped = false))
+        assertTrue(AssistantRules.isChanged(form.copy(allowExplain = true), form, keyTyped = false))
+        assertTrue(AssistantRules.isChanged(form.copy(allowChat = true), form, keyTyped = false))
+        assertTrue(AssistantRules.isChanged(form.copy(actions = AiActionMode.OFF), form, keyTyped = false))
+    }
+
     @Test fun anUntouchedFormIsNotChanged() {
         val form = AssistantRules.formOf(settings())
         assertFalse(AssistantRules.isChanged(form, form, keyTyped = false))
@@ -152,6 +264,16 @@ class AssistantRulesTest {
         assertTrue(after.enabled)
         assertFalse(after.allowSummaries)
         assertFalse(after.allowDrafts)
+    }
+
+    @Test fun switchingKeepsTheNewSwitchesAndTheActionModeAsShown() {
+        val form = AssistantRules.formOf(settings()).copy(allowIdeas = true, allowExtract = true, allowExplain = true, allowChat = true, actions = AiActionMode.OFF)
+        val after = form.switchedTo(settings(provider = AiProvider.ANTHROPIC))
+        assertTrue(after.allowIdeas)
+        assertTrue(after.allowExtract)
+        assertTrue(after.allowExplain)
+        assertTrue(after.allowChat)
+        assertEquals(AiActionMode.OFF, after.actions)
     }
 
     @Test fun aServiceNeverSetUpGetsItsDefaultAddress() {

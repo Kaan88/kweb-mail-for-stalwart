@@ -89,6 +89,12 @@ class CardActions(
     val onSummarize: (() -> Unit)? = null,
     /** "Draft a reply" in the message's menu; null when the assistant does not offer it. */
     val onDraftReply: (() -> Unit)? = null,
+    /** "Reply ideas" in the message's menu; null when the assistant does not offer it. */
+    val onReplyIdeas: (() -> Unit)? = null,
+    /** "Find to-dos and dates" in the message's menu; null when the assistant does not offer it. */
+    val onFindDates: (() -> Unit)? = null,
+    /** "Explain" in the message's menu; null when the assistant does not offer it. */
+    val onExplain: (() -> Unit)? = null,
     /** "Filter mail like this" in the message's menu; null where it does not apply (a shared folder). */
     val onFilterLike: (() -> Unit)? = null,
     /** "Block sender" in the message's menu; null where it does not apply (a shared folder, or a message the user sent). */
@@ -310,6 +316,27 @@ private fun MessageMenu(actions: CardActions) {
                     onClick = { open = false; draft() },
                 )
             }
+            actions.onReplyIdeas?.let { ideas ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_reply_ideas)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; ideas() },
+                )
+            }
+            actions.onFindDates?.let { find ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_find_dates)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; find() },
+                )
+            }
+            actions.onExplain?.let { explain ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_explain)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; explain() },
+                )
+            }
         }
     }
 }
@@ -492,7 +519,7 @@ private fun AttachmentRow(attachment: Attachment, busy: Boolean, download: Downl
                 Text(progressLine ?: size, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 if (busy) {
                     if (fraction != null) {
-                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), drawStopIndicator = {})
                     } else {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
                     }

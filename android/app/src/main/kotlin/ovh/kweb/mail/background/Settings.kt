@@ -88,6 +88,21 @@ class Settings(private val values: KeyValues) {
     /** Back to "never chose": the default, also a later version's. */
     fun resetNotificationActions() = write { remove(NOTIFICATION_ACTIONS) }
 
+    /**
+     * The last known answer about this account's admin key (never the key): whether the server accepted one and whether
+     * it opens the dashboard. Read by the drawer, which makes no call; written whenever the access is read or changes.
+     */
+    val adminKeyAccepted: Boolean get() = values.getBoolean(ADMIN_KEY, false)
+    val adminMayDashboard: Boolean get() = values.getBoolean(ADMIN_DASHBOARD, false)
+
+    fun rememberAdminAccess(keyAccepted: Boolean, mayDashboard: Boolean) {
+        if (keyAccepted == adminKeyAccepted && (mayDashboard && keyAccepted) == adminMayDashboard) return
+        write {
+            putBoolean(ADMIN_KEY, keyAccepted)
+            putBoolean(ADMIN_DASHBOARD, keyAccepted && mayDashboard)
+        }
+    }
+
     /** The last background check (every 15 minutes, or one after an action or a boot). */
     val lastCheck: CheckRecord?
         get() = values.getLong(CHECK_AT, 0L).takeIf { it > 0 }?.let { CheckRecord(it, values.getString(CHECK_ERROR)) }
@@ -186,6 +201,8 @@ class Settings(private val values: KeyValues) {
         private const val REMINDERS = "show_reminders"
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
         private const val NOTIFICATION_ACTIONS = "notification_actions"
+        private const val ADMIN_KEY = "admin_key_accepted"
+        private const val ADMIN_DASHBOARD = "admin_may_dashboard"
         private const val CHECK_AT = "check_at"
         private const val CHECK_ERROR = "check_error"
         private const val DELIVERY_MODE = "delivery_mode"

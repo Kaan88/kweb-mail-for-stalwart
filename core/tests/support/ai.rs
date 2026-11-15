@@ -5,7 +5,7 @@
 //! the key never comes back out through an error message.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
@@ -22,6 +22,14 @@ use axum::{
 use futures_util::stream;
 use serde_json::{json, Value};
 use tokio::task::JoinHandle;
+
+/// A tool call the mock asks for.
+#[derive(Clone, Debug)]
+pub struct MockCall {
+    pub id: String,
+    pub name: String,
+    pub args: Value,
+}
 
 /// What the mock does with the next requests.
 #[derive(Clone, Debug)]
@@ -44,6 +52,12 @@ pub enum Script {
     /// The pieces, then the service's own output limit: `finish_reason: length` /
     /// `stop_reason: max_tokens`.
     Length(Vec<String>),
+    /// Text pieces, then these tool calls (arguments streamed in two fragments), ended with
+    /// finish_reason "tool_calls" / stop_reason "tool_use". Both protocols.
+    Tools { text: Vec<String>, calls: Vec<MockCall> },
+    /// A request that carries `tools` gets a 400 whose body mentions tools (and echoes the credentials);
+    /// one without gets these pieces as a normal answer.
+    NoTools(Vec<String>),
 }
 
 /// What `GET /v1/models` answers.
@@ -104,10 +118,42 @@ impl Seen {
         let last = self.body["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
         last["content"].as_str().unwrap_or_default().to_string()
     }
+
+    /// The messages of the request as they were sent (without the Anthropic `system` field).
+    pub fn messages(&self) -> Vec<Value> {
+        self.body["messages"].as_array().cloned().unwrap_or_default()
+    }
+
+    /// The names of the tools the request offered, in order; empty when it had no `tools` key.
+    pub fn tool_names(&self) -> Vec<String> {
+        let name = |tool: &Value| tool["name"].as_str().or(tool["function"]["name"].as_str()).map(str::to_string);
+        self.body["tools"].as_array().into_iter().flatten().filter_map(name).collect()
+    }
+
+    /// (call id, content) of every tool result in the request, either protocol.
+    pub fn tool_results(&self) -> Vec<(String, String)> {
+        let text = |value: &Value| value.as_str().unwrap_or_default().to_string();
+        let mut out = Vec::new();
+        for message in self.messages() {
+            if message["role"] == "tool" {
+                // OpenAI style: one message per result.
+                out.push((text(&message["tool_call_id"]), text(&message["content"])));
+            }
+            // Anthropic style: the blocks of one user message.
+            for block in message["content"].as_array().into_iter().flatten() {
+                if block["type"] == "tool_result" {
+                    out.push((text(&block["tool_use_id"]), text(&block["content"])));
+                }
+            }
+        }
+        out
+    }
 }
 
 struct Shared {
     script: Mutex<Script>,
+    /// Scripts that answer the next requests, one each, before `script` does.
+    queue: Mutex<VecDeque<Script>>,
     models: Mutex<Models>,
     split_events: Mutex<bool>,
     seen: Mutex<Vec<Seen>>,
@@ -132,6 +178,7 @@ impl MockAi {
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let shared = Arc::new(Shared {
             script: Mutex::new(Script::Answer(vec!["ok".into()])),
+            queue: Mutex::default(),
             models: Mutex::new(Models::Ids(Vec::new())),
             split_events: Mutex::new(false),
             seen: Mutex::default(),
@@ -166,6 +213,11 @@ impl MockAi {
     /// What the model list answers with.
     pub fn set_models(&self, models: Models) {
         *self.shared.models.lock().unwrap() = models;
+    }
+
+    /// Each request takes the next script; when the queue is empty the `set` script answers.
+    pub fn queue(&self, scripts: Vec<Script>) {
+        self.shared.queue.lock().unwrap().extend(scripts);
     }
 
     /// Answers with these pieces.
@@ -220,14 +272,21 @@ async fn record(s: &Shared, path: &str, query: &str, headers: &HeaderMap, body: 
     });
 }
 
+/// Whether the request has a `tools` key.
+fn carries_tools(body: &Bytes) -> bool {
+    serde_json::from_slice::<Value>(body).is_ok_and(|v| v.get("tools").is_some())
+}
+
 async fn openai(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
+    let tools = carries_tools(&body);
     record(&s, "/v1/chat/completions", "", &headers, body).await;
-    respond(&s, &headers, false)
+    respond(&s, &headers, false, tools)
 }
 
 async fn anthropic(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
+    let tools = carries_tools(&body);
     record(&s, "/v1/messages", "", &headers, body).await;
-    respond(&s, &headers, true)
+    respond(&s, &headers, true, tools)
 }
 
 async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> Response {
@@ -291,8 +350,9 @@ enum Step {
     Pause,
 }
 
-fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool) -> Response {
-    let script = s.script.lock().unwrap().clone();
+fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool) -> Response {
+    let queued = s.queue.lock().unwrap().pop_front();
+    let script = queued.unwrap_or_else(|| s.script.lock().unwrap().clone());
     let echoed = credentials(headers);
     let (pieces, tail) = match script {
         Script::Status(code) => {
@@ -322,6 +382,13 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool) -> Response {
         Script::Cut(pieces) => (pieces, Tail::Cut),
         Script::StreamError(pieces) => (pieces, Tail::Error(echoed)),
         Script::Length(pieces) => (pieces, Tail::Length),
+        Script::Tools { text, calls } => (text, Tail::Tools(calls)),
+        Script::NoTools(_) if tools => {
+            let message = format!("This model does not support tools. Credentials sent: {echoed}");
+            let body = json!({"error": {"message": message, "type": "invalid_request_error"}});
+            return (StatusCode::BAD_REQUEST, body.to_string()).into_response();
+        }
+        Script::NoTools(pieces) => (pieces, Tail::Done),
     };
     let events = if anthropic { anthropic_events(&pieces, &tail) } else { openai_events(&pieces, &tail) };
     let split = *s.split_events.lock().unwrap();
@@ -365,6 +432,17 @@ enum Tail {
     Cut,
     Length,
     Error(String),
+    Tools(Vec<MockCall>),
+}
+
+/// The arguments as the two fragments they are streamed in.
+fn fragments(call: &MockCall) -> (String, String) {
+    let whole = call.args.to_string();
+    let mut cut = whole.len() / 2;
+    while !whole.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (whole[..cut].to_string(), whole[cut..].to_string())
 }
 
 fn data(value: Value) -> String {
@@ -387,6 +465,19 @@ fn openai_events(pieces: &[String], tail: &Tail) -> Vec<String> {
             out.push("data: [DONE]\n\n".into());
         }
         Tail::Error(echoed) => out.push(data(json!({"error": {"message": format!("bad key {echoed}")}}))),
+        Tail::Tools(calls) => {
+            for (index, call) in calls.iter().enumerate() {
+                let (first, second) = fragments(call);
+                out.push(data(
+                    json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": index, "id": call.id,
+                    "type": "function", "function": {"name": call.name, "arguments": first}}]}}]}),
+                ));
+                out.push(data(json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": index,
+                    "function": {"arguments": second}}]}}]})));
+            }
+            out.push(data(json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})));
+            out.push("data: [DONE]\n\n".into());
+        }
         Tail::Hang | Tail::Cut => {}
     }
     out
@@ -430,6 +521,33 @@ fn anthropic_events(pieces: &[String], tail: &Tail) -> Vec<String> {
             "error",
             json!({"type": "error", "error": {"type": "authentication_error", "message": format!("bad key {echoed}")}}),
         )),
+        Tail::Tools(calls) => {
+            // The thinking block gets the signature the service wants back with it.
+            out.push(event(
+                "content_block_delta",
+                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "mock-signature"}}),
+            ));
+            out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 0})));
+            out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 1})));
+            for (at, call) in calls.iter().enumerate() {
+                let index = at + 2;
+                let (first, second) = fragments(call);
+                out.push(event(
+                    "content_block_start",
+                    json!({"type": "content_block_start", "index": index, "content_block":
+                        {"type": "tool_use", "id": call.id, "name": call.name, "input": {}}}),
+                ));
+                for piece in [first, second] {
+                    out.push(event(
+                        "content_block_delta",
+                        json!({"type": "content_block_delta", "index": index, "delta": {"type": "input_json_delta", "partial_json": piece}}),
+                    ));
+                }
+                out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": index})));
+            }
+            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}})));
+            out.push(event("message_stop", json!({"type": "message_stop"})));
+        }
         Tail::Hang | Tail::Cut => {}
     }
     out

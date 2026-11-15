@@ -1,7 +1,6 @@
 package ovh.kweb.mail.ui.thread
 
 import ovh.kweb.mail.ui.accounts.LocalAccountSession
-import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.DocumentsContract
@@ -49,10 +48,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -60,12 +63,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
+import java.time.LocalDate
+import java.time.ZoneId
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import ovh.kweb.mail.ui.transfer.ActiveTransfer
@@ -81,6 +83,7 @@ import ovh.kweb.mail.ui.assistant.AssistantEvent
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
+import ovh.kweb.mail.ui.calendar.EventPrefill
 import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
@@ -99,13 +102,25 @@ import uniffi.kweb_core.DraftKind
 /** One conversation: its messages oldest first as cards, and what can be done with the thread. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}, onOpenFilters: () -> Unit = {}) {
+fun ThreadScreen(
+    /** The conversation's own view model (the pager keeps one per page). */
+    vm: ThreadViewModel,
+    route: Route.Thread,
+    /** This is the page the user is on. A neighbour that is only loaded does not mark mail read, close the screen or say anything. */
+    active: Boolean,
+    onBack: () -> Unit,
+    onCompose: (draftId: String) -> Unit,
+    onFilterLike: (messageId: String) -> Unit = {},
+    onOpenFilters: () -> Unit = {},
+    /** Opens the form for a new calendar entry that starts with something the assistant found here; the user saves it himself. */
+    onAddToCalendar: (EventPrefill) -> Unit = {},
+    /** What TalkBack offers on the subject to go to the conversation before or after this one (the pager has no buttons for it). */
+    stepActions: List<CustomAccessibilityAction> = emptyList(),
+) {
     val context = LocalContext.current
     val accountSession = LocalAccountSession.current
-    val vm: ThreadViewModel = viewModel(
-        key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
-        factory = viewModelFactory { initializer { ThreadViewModel(this[APPLICATION_KEY] as Application, accountSession, route) } },
-    )
+    val latestActive by rememberUpdatedState(active)
+    LaunchedEffect(vm, active) { vm.setActive(active) }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
@@ -149,22 +164,27 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     val assistantState by assistant.state.collectAsStateWithLifecycle()
     val owner = "thread:${route.threadId}"
     val offered = remember(assistantState.settings) { AssistantRules.visible(assistantState.settings) }
-    LifecycleResumeEffect(assistant) {
-        assistant.refreshSettings()
+    LifecycleResumeEffect(assistant, active) {
+        if (active) assistant.refreshSettings()
         onPauseOrDispose { }
     }
     // Leaving the thread for good ends its task and closes its sheet; a rotation keeps both.
     DisposableEffect(assistant, owner) { onDispose { if (activity?.isChangingConfigurations != true) assistant.release(owner) } }
     LaunchedEffect(assistant, owner) {
         assistant.events.collect { event ->
-            // A draft someone else's sheet made is not for this screen.
-            if (event is AssistantEvent.OpenDraft && event.owner == owner) onCompose(event.draftId)
+            // A draft or a calendar form someone else's sheet asked for is not for this screen.
+            when (event) {
+                is AssistantEvent.OpenDraft -> if (event.owner == owner) onCompose(event.draftId)
+                is AssistantEvent.OpenEvent -> if (event.owner == owner) onAddToCalendar(event.prefill)
+            }
         }
     }
     // Leaving the screen for good drops what it holds; a rotation keeps it.
     DisposableEffect(vm) { onDispose { if (activity?.isChangingConfigurations != true) vm.reset() } }
     LaunchedEffect(vm) {
         vm.events.collect { event ->
+            // A page that is only next to the shown one says nothing and does not leave.
+            if (!latestActive) return@collect
             when (event) {
                 is ThreadEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
                 is ThreadEvent.Text -> snackbar.showSnackbar(event.message.resolve(resources))
@@ -352,6 +372,18 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                     onClick = { menuOpen = false; assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeThread(route.threadId)) },
                                 )
                             }
+                            if (AssistantRules.Kind.EXTRACT in offered) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.assistant_find_dates)) },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                                    enabled = hasMessages,
+                                    onClick = {
+                                        menuOpen = false
+                                        // The phone's date and zone are part of what is sent, so "tomorrow" in a message can be read.
+                                        assistant.open(owner, AssistantRules.Kind.EXTRACT, AiTask.ExtractThread(route.threadId, LocalDate.now().toString(), ZoneId.systemDefault().id))
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.labels_menu)) },
                                 leadingIcon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
@@ -387,7 +419,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Text(
                 state.subject.ifEmpty { stringResource(R.string.list_no_subject) },
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
+                modifier = Modifier
+                    .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp)
+                    .semantics { customActions = stepActions },
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Medium,
             )
@@ -440,6 +474,21 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             },
                             onDraftReply = if (AssistantRules.Kind.DRAFT in offered) {
                                 { assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(header.id, "")) }
+                            } else {
+                                null
+                            },
+                            onReplyIdeas = if (AssistantRules.Kind.IDEAS in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.IDEAS, AiTask.ReplyIdeas(header.id)) }
+                            } else {
+                                null
+                            },
+                            onFindDates = if (AssistantRules.Kind.EXTRACT in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.EXTRACT, AiTask.Extract(header.id, LocalDate.now().toString(), ZoneId.systemDefault().id)) }
+                            } else {
+                                null
+                            },
+                            onExplain = if (AssistantRules.Kind.EXPLAIN in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.EXPLAIN, AiTask.Explain(header.id, "")) }
                             } else {
                                 null
                             },

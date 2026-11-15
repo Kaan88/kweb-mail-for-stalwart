@@ -11,6 +11,7 @@ use tokio::time::timeout;
 use super::{
     settings,
     sse::{SseParser, ThinkFilter, MAX_HIDDEN},
+    wire::{Reply, ToolCall, ToolSpec, ToolsRefused, Turn},
 };
 use crate::{
     model::{AiEffort, AiProvider},
@@ -412,6 +413,610 @@ pub async fn complete(
     Ok(answer)
 }
 
+/// The most calls taken from one turn; what the model asks for beyond them is dropped.
+const MAX_CALLS: usize = 8;
+/// More than this many characters of arguments in one turn is a model that does not stop.
+const MAX_ARGS_CHARS: usize = 20_000;
+/// More content blocks than this in one turn is not an answer we understand.
+const MAX_BLOCKS: usize = 64;
+/// The most that is read of a refused request's answer, to see whether it is about the tools.
+const REFUSAL_BODY: usize = 64 * 1024;
+
+fn too_much() -> Error {
+    Error::temporary("the model asked for too much at once and was stopped")
+}
+
+/// The request for a conversation with tools. With `tools` empty no `tools` key is sent.
+///
+/// Address, headers and the fields around the messages are those of [`request_parts`]. An
+/// Anthropic assistant turn that has `raw` is sent back from it unchanged, so that thinking
+/// blocks keep their signature; the results of one turn are one user message.
+pub fn chat_parts(ep: &Endpoint, system: &str, turns: &[Turn], tools: &[ToolSpec]) -> Parts {
+    let mut parts = request_parts(ep, system, "");
+    match ep.provider {
+        AiProvider::OpenAiCompatible => {
+            let mut messages = vec![json!({"role": "system", "content": system})];
+            for turn in turns {
+                match turn {
+                    Turn::User(text) => messages.push(json!({"role": "user", "content": text})),
+                    Turn::Assistant { text, calls, .. } => {
+                        let mut message = json!({"role": "assistant", "content": text});
+                        if !calls.is_empty() {
+                            message["tool_calls"] = calls
+                                .iter()
+                                .map(|c| {
+                                    json!({
+                                        "id": c.id,
+                                        "type": "function",
+                                        "function": {"name": c.name, "arguments": c.args.to_string()},
+                                    })
+                                })
+                                .collect();
+                        }
+                        messages.push(message);
+                    }
+                    Turn::Results(results) => messages.extend(
+                        results.iter().map(|r| json!({"role": "tool", "tool_call_id": r.id, "content": r.content})),
+                    ),
+                }
+            }
+            parts.body["messages"] = Value::Array(messages);
+            if !tools.is_empty() {
+                parts.body["tools"] = tools
+                    .iter()
+                    .map(|t| {
+                        json!({
+                            "type": "function",
+                            "function": {"name": t.name, "description": t.description, "parameters": t.schema},
+                        })
+                    })
+                    .collect();
+            }
+        }
+        AiProvider::Anthropic => {
+            let messages: Vec<Value> = turns
+                .iter()
+                .map(|turn| match turn {
+                    Turn::User(text) => json!({"role": "user", "content": text}),
+                    Turn::Assistant { raw: Some(raw), .. }
+                        if raw.as_array().is_some_and(|blocks| !blocks.is_empty()) =>
+                    {
+                        json!({"role": "assistant", "content": raw})
+                    }
+                    Turn::Assistant { text, calls, .. } => {
+                        let mut blocks = Vec::new();
+                        if !text.is_empty() || calls.is_empty() {
+                            blocks.push(json!({"type": "text", "text": text}));
+                        }
+                        blocks.extend(
+                            calls
+                                .iter()
+                                .map(|c| json!({"type": "tool_use", "id": c.id, "name": c.name, "input": c.args})),
+                        );
+                        json!({"role": "assistant", "content": blocks})
+                    }
+                    Turn::Results(results) => {
+                        let blocks: Vec<Value> = results
+                            .iter()
+                            .map(|r| {
+                                json!({
+                                    "type": "tool_result",
+                                    "tool_use_id": r.id,
+                                    "content": r.content,
+                                    "is_error": r.is_error,
+                                })
+                            })
+                            .collect();
+                        json!({"role": "user", "content": blocks})
+                    }
+                })
+                .collect();
+            parts.body["messages"] = Value::Array(messages);
+            if !tools.is_empty() {
+                parts.body["tools"] = tools
+                    .iter()
+                    .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.schema}))
+                    .collect();
+            }
+        }
+    }
+    parts
+}
+
+/// What the model sent as arguments, when it is a JSON object; `{}` when it is anything else.
+fn object_or_empty(text: &str) -> Value {
+    serde_json::from_str::<Value>(text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+/// A call of an OpenAI-style answer while its pieces come in.
+struct Pending {
+    /// The `index` the stream names it by; a service that sends none starts a call with each
+    /// entry that has an id or a name.
+    key: Option<u64>,
+    id: String,
+    name: String,
+    args: String,
+}
+
+/// A content block of an Anthropic answer while its pieces come in.
+struct Block {
+    index: u64,
+    block: Value,
+    /// The arguments of a `tool_use` block as they are streamed, until the block ends.
+    partial: String,
+}
+
+impl Block {
+    /// A `tool_use` block gets the arguments that were streamed for it as its `input`.
+    fn close(&mut self) {
+        if self.block["type"] != "tool_use" {
+            return;
+        }
+        if !self.partial.is_empty() {
+            self.block["input"] = object_or_empty(&std::mem::take(&mut self.partial));
+        } else if !self.block["input"].is_object() {
+            self.block["input"] = json!({});
+        }
+    }
+}
+
+/// What one turn holds besides its visible text: the calls, and for Anthropic every content
+/// block as the service sent it.
+#[derive(Default)]
+struct Gather {
+    pending: Vec<Pending>,
+    /// The newest call without an `index` was dropped, and so are its further pieces.
+    overflow: bool,
+    blocks: Vec<Block>,
+    /// Characters of arguments so far, of the dropped calls too.
+    args_chars: usize,
+    /// Characters of thinking and signatures so far: kept for the service, never shown.
+    private_chars: usize,
+    /// A call has begun: from here on the service is held to the shorter pause.
+    begun: bool,
+    finished: bool,
+    stopped: bool,
+}
+
+impl Gather {
+    fn count_args(&mut self, piece: &str) -> Result<()> {
+        self.args_chars += piece.chars().count();
+        if self.args_chars > MAX_ARGS_CHARS {
+            return Err(too_much());
+        }
+        Ok(())
+    }
+
+    /// One `data` payload of an OpenAI-style stream, or the whole document of a service that
+    /// ignored `stream`. Returns the text it carried. As in [`parse_openai`] only `content` and
+    /// the calls are read.
+    fn openai(&mut self, data: &str) -> Result<String> {
+        if data.trim() == "[DONE]" {
+            self.stopped = true;
+            return Ok(String::new());
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else { return Ok(String::new()) };
+        if event.get("error").is_some_and(|e| !e.is_null()) {
+            return Err(stream_error());
+        }
+        let choice = &event["choices"][0];
+        match choice["finish_reason"].as_str() {
+            Some("length") => return Err(cut_off()),
+            Some("content_filter") => return Err(declined()),
+            Some(_) => self.finished = true,
+            None => {}
+        }
+        for said in [&choice["delta"], &choice["message"]] {
+            for entry in said["tool_calls"].as_array().into_iter().flatten() {
+                self.openai_call(entry)?;
+            }
+        }
+        Ok(choice["delta"]["content"]
+            .as_str()
+            .or(choice["message"]["content"].as_str())
+            .unwrap_or_default()
+            .to_string())
+    }
+
+    /// One entry of `tool_calls`: the start of a call, a further piece of its arguments, or both.
+    fn openai_call(&mut self, entry: &Value) -> Result<()> {
+        let function = &entry["function"];
+        let id = entry["id"].as_str().unwrap_or_default();
+        let name = function["name"].as_str().unwrap_or_default();
+        let piece = match &function["arguments"] {
+            Value::String(text) => text.clone(),
+            // Some services send the arguments as the object itself.
+            whole @ Value::Object(_) => whole.to_string(),
+            _ => String::new(),
+        };
+        self.count_args(&piece)?;
+        self.begun = true;
+        let at = match entry["index"].as_u64() {
+            Some(key) => match self.pending.iter().position(|p| p.key == Some(key)) {
+                Some(at) => Some(at),
+                None => self.open(Some(key)),
+            },
+            None if !id.is_empty() || !name.is_empty() => self.open(None),
+            None if self.overflow => None,
+            None => self.pending.len().checked_sub(1),
+        };
+        if let Some(call) = at.and_then(|at| self.pending.get_mut(at)) {
+            if call.id.is_empty() {
+                call.id = id.to_string();
+            }
+            if call.name.is_empty() {
+                call.name = name.to_string();
+            }
+            call.args.push_str(&piece);
+        }
+        Ok(())
+    }
+
+    /// A place for a new call, unless the turn already has as many as are taken.
+    fn open(&mut self, key: Option<u64>) -> Option<usize> {
+        self.overflow = self.pending.len() >= MAX_CALLS;
+        if self.overflow {
+            return None;
+        }
+        self.pending.push(Pending { key, id: String::new(), name: String::new(), args: String::new() });
+        Some(self.pending.len() - 1)
+    }
+
+    fn block(&mut self, index: u64) -> Option<&mut Block> {
+        self.blocks.iter_mut().find(|b| b.index == index)
+    }
+
+    fn tool_blocks(&self) -> usize {
+        self.blocks.iter().filter(|b| b.block["type"] == "tool_use").count()
+    }
+
+    fn add_block(&mut self, index: u64, block: Value) -> Result<()> {
+        if self.blocks.len() >= MAX_BLOCKS {
+            return Err(too_much());
+        }
+        self.blocks.push(Block { index, block, partial: String::new() });
+        Ok(())
+    }
+
+    /// A piece of something the service wants back but the user never sees: thinking, or its
+    /// signature.
+    fn private(&mut self, index: u64, field: &str, piece: &str) -> Result<()> {
+        self.private_chars += piece.chars().count();
+        if self.private_chars > MAX_HIDDEN {
+            return Err(Error::temporary("the model kept thinking for too long and was stopped"));
+        }
+        if let Some(block) = self.block(index).filter(|b| b.block.is_object()) {
+            match &mut block.block[field] {
+                Value::String(whole) => whole.push_str(piece),
+                other => *other = Value::String(piece.to_string()),
+            }
+        }
+        Ok(())
+    }
+
+    /// One `data` payload of an Anthropic stream, or the whole message of a service that ignored
+    /// `stream`. Returns the text it carried. Every block is kept as it was sent.
+    fn anthropic(&mut self, data: &str) -> Result<String> {
+        let Ok(event) = serde_json::from_str::<Value>(data) else { return Ok(String::new()) };
+        let index = event["index"].as_u64().unwrap_or(0);
+        match event["type"].as_str() {
+            Some("content_block_start") if event["content_block"].is_object() => {
+                let block = event["content_block"].clone();
+                if block["type"] == "tool_use" {
+                    self.begun = true;
+                    if self.tool_blocks() >= MAX_CALLS {
+                        return Ok(String::new());
+                    }
+                }
+                let text = match block["type"].as_str() {
+                    Some("text") => block["text"].as_str().unwrap_or_default().to_string(),
+                    _ => String::new(),
+                };
+                self.add_block(index, block)?;
+                Ok(text)
+            }
+            Some("content_block_delta") => {
+                let delta = &event["delta"];
+                match delta["type"].as_str() {
+                    Some("text_delta") => {
+                        let text = delta["text"].as_str().unwrap_or_default();
+                        if self.block(index).is_none() {
+                            self.add_block(index, json!({"type": "text", "text": ""}))?;
+                        }
+                        if let Some(Value::String(whole)) = self.block(index).and_then(|b| b.block.get_mut("text")) {
+                            whole.push_str(text);
+                        }
+                        Ok(text.to_string())
+                    }
+                    Some("input_json_delta") => {
+                        let piece = delta["partial_json"].as_str().unwrap_or_default();
+                        self.count_args(piece)?;
+                        if let Some(block) = self.block(index) {
+                            block.partial.push_str(piece);
+                        }
+                        Ok(String::new())
+                    }
+                    Some("thinking_delta") => {
+                        self.private(index, "thinking", delta["thinking"].as_str().unwrap_or_default())?;
+                        Ok(String::new())
+                    }
+                    Some("signature_delta") => {
+                        self.private(index, "signature", delta["signature"].as_str().unwrap_or_default())?;
+                        Ok(String::new())
+                    }
+                    _ => Ok(String::new()),
+                }
+            }
+            Some("content_block_stop") => {
+                if let Some(block) = self.block(index) {
+                    block.close();
+                }
+                Ok(String::new())
+            }
+            Some("message_delta") => match event["delta"]["stop_reason"].as_str() {
+                Some("refusal") => Err(declined()),
+                Some("max_tokens") => Err(cut_off()),
+                Some(_) => {
+                    self.finished = true;
+                    Ok(String::new())
+                }
+                None => Ok(String::new()),
+            },
+            Some("message_stop") => {
+                self.stopped = true;
+                Ok(String::new())
+            }
+            Some("error") => Err(stream_error()),
+            Some("message") if event["content"].is_array() => {
+                match event["stop_reason"].as_str() {
+                    Some("refusal") => return Err(declined()),
+                    Some("max_tokens") => return Err(cut_off()),
+                    _ => {}
+                }
+                let mut text = String::new();
+                for (at, block) in event["content"].as_array().into_iter().flatten().enumerate() {
+                    match block["type"].as_str() {
+                        Some("text") => text.push_str(block["text"].as_str().unwrap_or_default()),
+                        Some("tool_use") => {
+                            self.begun = true;
+                            self.count_args(&block["input"].to_string())?;
+                            if self.tool_blocks() >= MAX_CALLS {
+                                continue;
+                            }
+                        }
+                        _ => {}
+                    }
+                    if block.is_object() {
+                        self.add_block(at as u64, block.clone())?;
+                    }
+                }
+                self.stopped = true;
+                Ok(text)
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    /// The calls of the turn, and for Anthropic the blocks to send back. `prior` is how many
+    /// calls the conversation already holds: a call that came without an id is named after its
+    /// place in the conversation, so that no two share a name.
+    fn calls(&mut self, provider: AiProvider, prior: usize) -> (Vec<ToolCall>, Option<Value>) {
+        let made = |n: usize| format!("call_{}", prior + n + 1);
+        match provider {
+            AiProvider::OpenAiCompatible => {
+                let calls = self
+                    .pending
+                    .iter()
+                    .enumerate()
+                    .map(|(n, p)| ToolCall {
+                        id: if p.id.is_empty() { made(n) } else { p.id.clone() },
+                        name: p.name.clone(),
+                        args: object_or_empty(&p.args),
+                    })
+                    .collect();
+                (calls, None)
+            }
+            AiProvider::Anthropic => {
+                let mut calls = Vec::new();
+                for block in &mut self.blocks {
+                    block.close();
+                    if block.block["type"] != "tool_use" {
+                        continue;
+                    }
+                    if block.block["id"].as_str().is_none_or(str::is_empty) {
+                        block.block["id"] = Value::String(made(calls.len()));
+                    }
+                    calls.push(ToolCall {
+                        id: block.block["id"].as_str().unwrap_or_default().to_string(),
+                        name: block.block["name"].as_str().unwrap_or_default().to_string(),
+                        args: block.block["input"].clone(),
+                    });
+                }
+                // An empty text block is refused when it is sent back; everything else stays.
+                let raw: Vec<Value> = self
+                    .blocks
+                    .iter()
+                    .filter(|b| {
+                        b.block["type"] != "text" || !b.block["text"].as_str().unwrap_or_default().trim().is_empty()
+                    })
+                    .map(|b| b.block.clone())
+                    .collect();
+                (calls, (!raw.is_empty()).then_some(Value::Array(raw)))
+            }
+        }
+    }
+}
+
+/// The state of one turn being read: the text goes the way of [`complete`], the rest is gathered.
+struct ChatReader<'a> {
+    provider: AiProvider,
+    think: ThinkFilter,
+    sink: Sink<'a>,
+    gather: Gather,
+}
+
+impl<'a> ChatReader<'a> {
+    fn new(provider: AiProvider, on_text: &'a mut (dyn FnMut(&str) + Send)) -> ChatReader<'a> {
+        ChatReader {
+            provider,
+            think: ThinkFilter::default(),
+            sink: Sink { answer: String::new(), chars: 0, on_text },
+            gather: Gather::default(),
+        }
+    }
+
+    fn event(&mut self, data: &str) -> Result<()> {
+        let text = match self.provider {
+            AiProvider::OpenAiCompatible => self.gather.openai(data)?,
+            AiProvider::Anthropic => self.gather.anthropic(data)?,
+        };
+        let shown = self.think.push(&text);
+        if self.think.hidden > MAX_HIDDEN {
+            return Err(Error::temporary("the model kept thinking for too long and was stopped"));
+        }
+        self.sink.push(&shown)
+    }
+
+    /// Visible text or a call has begun.
+    fn begun(&self) -> bool {
+        !self.sink.answer.is_empty() || self.gather.begun
+    }
+
+    fn done(&self) -> bool {
+        self.gather.finished || self.gather.stopped
+    }
+
+    /// The turn as a whole. One with neither text nor calls is an error.
+    fn finish(mut self, prior: usize) -> Result<Reply> {
+        let rest = self.think.finish();
+        self.sink.push(&rest)?;
+        let text = self.sink.answer.trim();
+        let text = match self.provider {
+            AiProvider::OpenAiCompatible => self.think.after_orphan_close(text),
+            AiProvider::Anthropic => text,
+        }
+        .trim()
+        .to_string();
+        let (calls, raw) = self.gather.calls(self.provider, prior);
+        if text.is_empty() && calls.is_empty() {
+            return Err(Error::temporary("the service sent an empty answer"));
+        }
+        Ok(Reply { text, calls, raw })
+    }
+}
+
+/// Sends one request of a conversation. The status is the caller's to judge.
+async fn post(client: &reqwest::Client, parts: Parts, host: &str, timeouts: Timeouts) -> Result<reqwest::Response> {
+    let mut request = client
+        .post(&parts.url)
+        .header("content-type", "application/json")
+        .header("accept", "text/event-stream")
+        .body(parts.body.to_string());
+    for (name, value) in parts.headers {
+        request = request.header(name, sensitive(&value)?);
+    }
+    match timeout(timeouts.first, request.send()).await {
+        Err(_) => Err(Error::temporary("the service did not answer in time")),
+        Ok(Err(e)) if e.is_timeout() => Err(Error::temporary("the service did not answer in time")),
+        Ok(Err(_)) => Err(Error::temporary(format!("could not reach the service at {host}"))),
+        Ok(Ok(response)) => Ok(response),
+    }
+}
+
+/// One model turn. A turn with calls may have no text. OpenAI protocol only: a 400 to a request that
+/// carried tools, whose body mentions tools, is tried once more without them on the same endpoint and
+/// reported as ToolsRefused::Yes. Nothing of the service's words goes into an Error.
+///
+/// `on_text` hears each visible piece as it comes; the text of the reply is the whole of it,
+/// trimmed, as with [`complete`]. Timeouts, the size limits and the handling of the key are
+/// those of [`complete`]; once a call has begun the service is held to the pause between pieces.
+pub async fn converse(
+    ep: &Endpoint,
+    system: &str,
+    turns: &[Turn],
+    tools: &[ToolSpec],
+    timeouts: Timeouts,
+    on_text: &mut (dyn FnMut(&str) + Send),
+) -> Result<(Reply, ToolsRefused)> {
+    let url = settings::check_base_url(&ep.base_url)?;
+    let host = settings::host_label(&url);
+    if ep.provider == AiProvider::Anthropic && ep.key.is_none() {
+        return Err(Error::invalid("this service needs a key"));
+    }
+    let client = client(timeouts.connect, None)?;
+    let mut refused = ToolsRefused::No;
+    let mut response = post(&client, chat_parts(ep, system, turns, tools), &host, timeouts).await?;
+    let status = response.status().as_u16();
+    if status == 400 && ep.provider == AiProvider::OpenAiCompatible && !tools.is_empty() {
+        // The only thing ever read of an error's body, and only for one word: nothing of it is
+        // kept, shown or logged.
+        let about_tools = match read_capped(response, REFUSAL_BODY, timeouts.idle).await {
+            Ok(body) => body.to_ascii_lowercase().windows(4).any(|w| w == b"tool"),
+            Err(_) => false,
+        };
+        if !about_tools {
+            return Err(status_error(400));
+        }
+        // The same endpoint, so the key goes where it went before, and only once more.
+        response = post(&client, chat_parts(ep, system, turns, &[]), &host, timeouts).await?;
+        if !response.status().is_success() {
+            return Err(status_error(400));
+        }
+        refused = ToolsRefused::Yes;
+    } else if !response.status().is_success() {
+        return Err(status_error(status));
+    }
+
+    let mut reader = ChatReader::new(ep.provider, on_text);
+    let one_piece = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| t.to_ascii_lowercase().contains("application/json"));
+    if one_piece {
+        // A service that ignored `stream` and sent the whole answer as one JSON document.
+        let body = match read_capped(response, MAX_BODY, timeouts.first).await {
+            Ok(body) => body,
+            Err(BodyError::TooLarge) => {
+                return Err(Error::temporary("the answer grew longer than expected and was stopped"))
+            }
+            Err(BodyError::Broken) => return Err(Error::temporary("the service stopped answering")),
+        };
+        reader.event(&String::from_utf8_lossy(&body))?;
+        reader.gather.stopped = true;
+    } else {
+        let mut sse = SseParser::default();
+        'stream: loop {
+            let limit = if reader.begun() { timeouts.idle } else { timeouts.first };
+            let chunk = match timeout(limit, response.chunk()).await {
+                Err(_) => return Err(Error::temporary("the service stopped answering")),
+                Ok(Err(_)) | Ok(Ok(None)) => break,
+                Ok(Ok(Some(chunk))) => chunk,
+            };
+            for data in sse.feed(&chunk)? {
+                reader.event(&data)?;
+                if reader.gather.stopped {
+                    break 'stream;
+                }
+            }
+        }
+        if let Some(data) = sse.finish()?.filter(|_| !reader.gather.stopped) {
+            reader.event(&data)?;
+        }
+    }
+    if !reader.done() {
+        return Err(Error::temporary("the connection to the service broke while it was answering"));
+    }
+    let prior = turns
+        .iter()
+        .map(|turn| match turn {
+            Turn::Assistant { calls, .. } => calls.len(),
+            _ => 0,
+        })
+        .sum();
+    Ok((reader.finish(prior)?, refused))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +1149,489 @@ mod tests {
         assert!(msg(503).contains("status 503"));
         assert!(msg(400).contains("status 400"));
         assert!((401..=599).all(|s| matches!(status_error(s), Error::Temporary { .. })));
+    }
+
+    // ---- a conversation with tools --------------------------------------------------------
+
+    use super::super::wire::ToolResult;
+
+    fn tools() -> Vec<ToolSpec> {
+        vec![
+            ToolSpec {
+                name: "search_mail",
+                description: "Searches the mail.",
+                schema: json!({"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+            },
+            ToolSpec { name: "list_folders", description: "Lists the folders.", schema: json!({"type": "object"}) },
+        ]
+    }
+
+    fn call(id: &str, name: &str, args: Value) -> ToolCall {
+        ToolCall { id: id.into(), name: name.into(), args }
+    }
+
+    /// A question, a turn with two calls, their results, and a second question.
+    fn turns(raw: Option<Value>) -> Vec<Turn> {
+        vec![
+            Turn::User("Any mail from Maria?".into()),
+            Turn::Assistant {
+                text: "Looking.".into(),
+                calls: vec![
+                    call("c1", "search_mail", json!({"query": "maria"})),
+                    call("c2", "list_folders", json!({})),
+                ],
+                raw,
+            },
+            Turn::Results(vec![
+                ToolResult { id: "c1".into(), name: "search_mail".into(), content: "one hit".into(), is_error: false },
+                ToolResult { id: "c2".into(), name: "list_folders".into(), content: "no".into(), is_error: true },
+            ]),
+            Turn::Assistant { text: "One.".into(), calls: Vec::new(), raw: None },
+            Turn::User("And today?".into()),
+        ]
+    }
+
+    /// Reads these events as one turn; also what the listener heard.
+    fn read(provider: AiProvider, prior: usize, events: &[Value]) -> (Result<Reply>, String) {
+        let mut heard = String::new();
+        let result = {
+            let mut on_text = |piece: &str| heard.push_str(piece);
+            let mut reader = ChatReader::new(provider, &mut on_text);
+            events.iter().try_for_each(|e| reader.event(&e.to_string())).and_then(|()| reader.finish(prior))
+        };
+        (result, heard)
+    }
+
+    fn openai_delta(delta: Value) -> Value {
+        json!({"choices": [{"index": 0, "delta": delta}]})
+    }
+
+    fn openai_end(reason: &str) -> Value {
+        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]})
+    }
+
+    #[test]
+    fn the_openai_conversation_carries_calls_results_and_tools() {
+        let parts = chat_parts(&ep(AiProvider::OpenAiCompatible, Some("k-1")), "sys", &turns(None), &tools());
+        assert_eq!(parts.url, "https://api.example.com/v1/chat/completions");
+        assert_eq!(parts.headers, [("authorization", "Bearer k-1".to_string())]);
+        assert_eq!(
+            parts.body,
+            json!({"model": "m-1", "stream": true,
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "Any mail from Maria?"},
+                    {"role": "assistant", "content": "Looking.", "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "search_mail", "arguments": "{\"query\":\"maria\"}"}},
+                        {"id": "c2", "type": "function", "function": {"name": "list_folders", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_call_id": "c1", "content": "one hit"},
+                    {"role": "tool", "tool_call_id": "c2", "content": "no"},
+                    {"role": "assistant", "content": "One."},
+                    {"role": "user", "content": "And today?"}],
+                "tools": [
+                    {"type": "function", "function": {"name": "search_mail", "description": "Searches the mail.",
+                        "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
+                                       "required": ["query"]}}},
+                    {"type": "function", "function": {"name": "list_folders", "description": "Lists the folders.",
+                        "parameters": {"type": "object"}}}]})
+        );
+        // The service's own blocks are an Anthropic matter: here they change nothing.
+        let with_raw = chat_parts(
+            &ep(AiProvider::OpenAiCompatible, Some("k-1")),
+            "sys",
+            &turns(Some(json!([{"type": "text", "text": "other"}]))),
+            &tools(),
+        );
+        assert_eq!(with_raw.body, parts.body);
+        assert!(chat_parts(&ep(AiProvider::OpenAiCompatible, None), "sys", &turns(None), &tools()).headers.is_empty());
+    }
+
+    #[test]
+    fn the_anthropic_conversation_carries_calls_results_and_tools() {
+        let effort = Endpoint { effort: AiEffort::High, ..ep(AiProvider::Anthropic, Some("k-2")) };
+        let parts = chat_parts(&effort, "sys", &turns(None), &tools());
+        assert_eq!(parts.url, "https://api.example.com/v1/messages");
+        assert_eq!(header(&parts, "x-api-key"), Some("k-2"));
+        assert_eq!(header(&parts, "anthropic-version"), Some(ANTHROPIC_VERSION));
+        assert_eq!(header(&parts, "authorization"), None);
+        assert_eq!(
+            parts.body,
+            json!({"model": "m-1", "max_tokens": 32000, "stream": true, "system": "sys",
+                "output_config": {"effort": "high"},
+                "messages": [
+                    {"role": "user", "content": "Any mail from Maria?"},
+                    {"role": "assistant", "content": [
+                        {"type": "text", "text": "Looking."},
+                        {"type": "tool_use", "id": "c1", "name": "search_mail", "input": {"query": "maria"}},
+                        {"type": "tool_use", "id": "c2", "name": "list_folders", "input": {}}]},
+                    {"role": "user", "content": [
+                        {"type": "tool_result", "tool_use_id": "c1", "content": "one hit", "is_error": false},
+                        {"type": "tool_result", "tool_use_id": "c2", "content": "no", "is_error": true}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "One."}]},
+                    {"role": "user", "content": "And today?"}],
+                "tools": [
+                    {"name": "search_mail", "description": "Searches the mail.",
+                     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}},
+                                      "required": ["query"]}},
+                    {"name": "list_folders", "description": "Lists the folders.",
+                     "input_schema": {"type": "object"}}]})
+        );
+        // A turn that is only calls has no empty text block.
+        let only_calls =
+            [Turn::Assistant { text: String::new(), calls: vec![call("c9", "list_folders", json!({}))], raw: None }];
+        assert_eq!(
+            chat_parts(&ep(AiProvider::Anthropic, Some("k")), "s", &only_calls, &[]).body["messages"],
+            json!([{"role": "assistant", "content": [
+                {"type": "tool_use", "id": "c9", "name": "list_folders", "input": {}}]}])
+        );
+    }
+
+    #[test]
+    fn without_tools_no_tools_key_is_sent() {
+        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+            let parts = chat_parts(&ep(provider, Some("k")), "sys", &[Turn::User("Hi".into())], &[]);
+            assert!(parts.body.get("tools").is_none(), "{provider:?}");
+            // With one user turn it is the stage 1 request.
+            assert_eq!(parts.body, request_parts(&ep(provider, Some("k")), "sys", "Hi").body, "{provider:?}");
+        }
+    }
+
+    #[test]
+    fn the_services_own_blocks_are_sent_back_unchanged() {
+        let raw = json!([
+            {"type": "thinking", "thinking": "", "signature": "sig-abc"},
+            {"type": "redacted_thinking", "data": "opaque"},
+            {"type": "text", "text": "Looking."},
+            {"type": "tool_use", "id": "c1", "name": "search_mail", "input": {"query": "maria"}},
+            {"type": "tool_use", "id": "c2", "name": "list_folders", "input": {}}]);
+        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "sys", &turns(Some(raw.clone())), &tools());
+        assert_eq!(parts.body["messages"][1], json!({"role": "assistant", "content": raw}));
+        // An empty list of blocks is no answer to send back: the turn is built from its parts.
+        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "sys", &turns(Some(json!([]))), &tools());
+        assert_eq!(parts.body["messages"][1]["content"][0], json!({"type": "text", "text": "Looking."}));
+    }
+
+    #[test]
+    fn openai_calls_are_put_together_from_their_fragments() {
+        let events = [
+            openai_delta(json!({"role": "assistant", "content": ""})),
+            openai_delta(json!({"content": "Let me "})),
+            openai_delta(json!({"content": "look."})),
+            openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+                "function": {"name": "search_mail", "arguments": ""}}]})),
+            openai_delta(json!({"tool_calls": [{"index": 0, "function": {"arguments": "{\"que"}}]})),
+            openai_delta(json!({"tool_calls": [{"index": 1, "id": "c2", "type": "function",
+                "function": {"name": "list_folders", "arguments": "{"}}]})),
+            // Pieces of two calls in one event, and a name said again.
+            openai_delta(json!({"tool_calls": [
+                {"index": 0, "function": {"name": "search_mail", "arguments": "ry\":\"maria\"}"}},
+                {"index": 1, "function": {"arguments": "}"}}]})),
+            openai_end("tool_calls"),
+        ];
+        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        assert_eq!(
+            reply.unwrap(),
+            Reply {
+                text: "Let me look.".into(),
+                calls: vec![
+                    call("c1", "search_mail", json!({"query": "maria"})),
+                    call("c2", "list_folders", json!({}))
+                ],
+                raw: None,
+            }
+        );
+        assert_eq!(heard, "Let me look.");
+    }
+
+    #[test]
+    fn a_whole_openai_call_in_one_chunk_and_a_missing_id_are_taken() {
+        // No `index`, no id: each entry with a name is a call, named after its place in the
+        // conversation (three calls came before).
+        let events = [
+            openai_delta(json!({"tool_calls": [{"function": {"name": "list_folders", "arguments": "{}"}}]})),
+            openai_delta(json!({"tool_calls": [{"function": {"name": "search_mail", "arguments": "{\"query\""}}]})),
+            openai_delta(json!({"tool_calls": [{"function": {"arguments": ":\"x\"}"}}]})),
+            openai_end("stop"),
+        ];
+        let (reply, heard) = read(AiProvider::OpenAiCompatible, 3, &events);
+        assert_eq!(
+            reply.unwrap().calls,
+            [call("call_4", "list_folders", json!({})), call("call_5", "search_mail", json!({"query": "x"}))]
+        );
+        assert_eq!(heard, "");
+        // Arguments sent as the object itself.
+        let events = [
+            openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1",
+                "function": {"name": "search_mail", "arguments": {"query": "y"}}}]})),
+            openai_end("tool_calls"),
+        ];
+        let (reply, _) = read(AiProvider::OpenAiCompatible, 0, &events);
+        assert_eq!(reply.unwrap().calls, [call("c1", "search_mail", json!({"query": "y"}))]);
+    }
+
+    #[test]
+    fn a_whole_document_with_calls_is_read_in_both_protocols() {
+        let openai = json!({"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": null, "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "search_mail", "arguments": "{\"query\":\"a\"}"}},
+                {"id": "c2", "type": "function", "function": {"name": "list_folders", "arguments": "{}"}}]}}]});
+        let (reply, _) = read(AiProvider::OpenAiCompatible, 0, &[openai]);
+        assert_eq!(
+            reply.unwrap(),
+            Reply {
+                text: String::new(),
+                calls: vec![call("c1", "search_mail", json!({"query": "a"})), call("c2", "list_folders", json!({}))],
+                raw: None,
+            }
+        );
+        let content = json!([
+            {"type": "thinking", "thinking": "", "signature": "sig-1"},
+            {"type": "text", "text": "Looking."},
+            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {"query": "a"}}]);
+        let anthropic =
+            json!({"type": "message", "role": "assistant", "content": content.clone(), "stop_reason": "tool_use"});
+        let (reply, heard) = read(AiProvider::Anthropic, 0, &[anthropic]);
+        assert_eq!(
+            reply.unwrap(),
+            Reply {
+                text: "Looking.".into(),
+                calls: vec![call("t1", "search_mail", json!({"query": "a"}))],
+                raw: Some(content),
+            }
+        );
+        assert_eq!(heard, "Looking.");
+        let cut =
+            json!({"type": "message", "content": [{"type": "text", "text": "Half"}], "stop_reason": "max_tokens"});
+        assert!(
+            matches!(read(AiProvider::Anthropic, 0, &[cut]).0, Err(Error::Temporary { msg }) if msg.contains("length limit"))
+        );
+    }
+
+    #[test]
+    fn anthropic_calls_and_thinking_are_put_together_and_kept_for_the_service() {
+        let start =
+            |index: u64, block: Value| json!({"type": "content_block_start", "index": index, "content_block": block});
+        let delta = |index: u64, delta: Value| json!({"type": "content_block_delta", "index": index, "delta": delta});
+        let stop = |index: u64| json!({"type": "content_block_stop", "index": index});
+        let events = [
+            json!({"type": "message_start", "message": {"id": "msg_1", "role": "assistant"}}),
+            start(0, json!({"type": "thinking", "thinking": ""})),
+            delta(0, json!({"type": "thinking_delta", "thinking": "private "})),
+            delta(0, json!({"type": "thinking_delta", "thinking": "reasoning"})),
+            delta(0, json!({"type": "signature_delta", "signature": "sig-xyz"})),
+            stop(0),
+            start(1, json!({"type": "redacted_thinking", "data": "opaque"})),
+            stop(1),
+            start(2, json!({"type": "text", "text": ""})),
+            json!({"type": "ping"}),
+            delta(2, json!({"type": "text_delta", "text": "Let me "})),
+            delta(2, json!({"type": "text_delta", "text": "look."})),
+            stop(2),
+            start(3, json!({"type": "tool_use", "id": "t1", "name": "search_mail", "input": {}})),
+            delta(3, json!({"type": "input_json_delta", "partial_json": ""})),
+            delta(3, json!({"type": "input_json_delta", "partial_json": "{\"query\": \"ma"})),
+            delta(3, json!({"type": "input_json_delta", "partial_json": "ria\"}"})),
+            stop(3),
+            start(4, json!({"type": "tool_use", "id": "t2", "name": "list_folders", "input": {}})),
+            stop(4),
+            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+            json!({"type": "message_stop"}),
+        ];
+        let (reply, heard) = read(AiProvider::Anthropic, 0, &events);
+        let reply = reply.unwrap();
+        assert_eq!(reply.text, "Let me look.");
+        assert_eq!(heard, "Let me look.", "thinking is never shown");
+        assert_eq!(
+            reply.calls,
+            [call("t1", "search_mail", json!({"query": "maria"})), call("t2", "list_folders", json!({}))]
+        );
+        let raw = json!([
+            {"type": "thinking", "thinking": "private reasoning", "signature": "sig-xyz"},
+            {"type": "redacted_thinking", "data": "opaque"},
+            {"type": "text", "text": "Let me look."},
+            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {"query": "maria"}},
+            {"type": "tool_use", "id": "t2", "name": "list_folders", "input": {}}]);
+        assert_eq!(reply.raw, Some(raw.clone()));
+        // And that is, to the letter, what the next request sends back.
+        let next = [Turn::Assistant { text: reply.text, calls: reply.calls, raw: reply.raw }];
+        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "s", &next, &tools());
+        assert_eq!(parts.body["messages"][0]["content"], raw);
+    }
+
+    #[test]
+    fn a_turn_of_calls_alone_is_an_answer_and_one_of_nothing_is_not() {
+        let events = [
+            openai_delta(json!({"role": "assistant", "content": ""})),
+            openai_delta(
+                json!({"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "list_folders", "arguments": "{}"}}]}),
+            ),
+            openai_end("tool_calls"),
+        ];
+        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        assert_eq!(
+            reply.unwrap(),
+            Reply { text: String::new(), calls: vec![call("c1", "list_folders", json!({}))], raw: None }
+        );
+        assert_eq!(heard, "");
+        let events = [
+            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_start", "index": 1,
+                "content_block": {"type": "tool_use", "id": "t1", "name": "list_folders", "input": {}}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+        ];
+        let reply = read(AiProvider::Anthropic, 0, &events).0.unwrap();
+        assert_eq!(reply.calls, [call("t1", "list_folders", json!({}))]);
+        // The empty text block is not sent back: the service would refuse it.
+        assert_eq!(reply.raw, Some(json!([{"type": "tool_use", "id": "t1", "name": "list_folders", "input": {}}])));
+
+        for (provider, events) in [
+            (AiProvider::OpenAiCompatible, vec![openai_delta(json!({"content": "  \n"})), openai_end("stop")]),
+            (AiProvider::OpenAiCompatible, vec![openai_delta(json!({"content": "<think>only this</think>"}))]),
+            (
+                AiProvider::Anthropic,
+                vec![
+                    json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "x"}}),
+                    json!({"type": "message_stop"}),
+                ],
+            ),
+        ] {
+            let result = read(provider, 0, &events).0;
+            assert!(
+                matches!(&result, Err(Error::Temporary { msg }) if msg == "the service sent an empty answer"),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn arguments_that_are_not_an_object_become_an_empty_one_and_the_call_stays() {
+        for arguments in ["", "[1,2]", "\"text\"", "{\"query\": \"cut", "null", "7"] {
+            let events = [
+                openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1",
+                    "function": {"name": "search_mail", "arguments": arguments}}]})),
+                openai_end("tool_calls"),
+            ];
+            let reply = read(AiProvider::OpenAiCompatible, 0, &events).0.unwrap();
+            assert_eq!(reply.calls, [call("c1", "search_mail", json!({}))], "{arguments}");
+
+            let events = [
+                json!({"type": "content_block_start", "index": 0,
+                    "content_block": {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {}}}),
+                json!({"type": "content_block_delta", "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": arguments}}),
+                json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
+            ];
+            let reply = read(AiProvider::Anthropic, 0, &events).0.unwrap();
+            assert_eq!(reply.calls, [call("t1", "search_mail", json!({}))], "{arguments}");
+            assert_eq!(reply.raw.unwrap()[0]["input"], json!({}), "{arguments}");
+        }
+        let whole = json!({"type": "message", "stop_reason": "tool_use", "content": [
+            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": "text"}, {"type": "tool_use", "name": "x"}]});
+        let reply = read(AiProvider::Anthropic, 2, &[whole]).0.unwrap();
+        assert_eq!(reply.calls, [call("t1", "search_mail", json!({})), call("call_4", "x", json!({}))]);
+        assert_eq!(reply.raw.unwrap()[1], json!({"type": "tool_use", "id": "call_4", "name": "x", "input": {}}));
+    }
+
+    #[test]
+    fn the_first_eight_calls_are_kept_and_endless_arguments_are_an_error() {
+        let many: Vec<Value> = (0..12)
+            .map(|n| {
+                openai_delta(json!({"tool_calls": [{"index": n, "id": format!("c{n}"),
+                    "function": {"name": "list_folders", "arguments": "{}"}}]}))
+            })
+            .chain([openai_delta(json!({"tool_calls": [{"index": 11, "function": {"arguments": " "}}]}))])
+            .chain([openai_end("tool_calls")])
+            .collect();
+        let reply = read(AiProvider::OpenAiCompatible, 0, &many).0.unwrap();
+        assert_eq!(
+            reply.calls.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"]
+        );
+        // The same without `index`: the pieces of a dropped call do not land in the one before.
+        let many: Vec<Value> = (0..9)
+            .map(|n| {
+                openai_delta(json!({"tool_calls": [{"id": format!("c{n}"), "function": {"name": "list_folders"}}]}))
+            })
+            .chain([openai_delta(json!({"tool_calls": [{"function": {"arguments": "[]"}}]}))])
+            .collect();
+        let reply = read(AiProvider::OpenAiCompatible, 0, &many).0.unwrap();
+        assert_eq!(reply.calls.len(), 8);
+        assert_eq!(reply.calls[7], call("c7", "list_folders", json!({})));
+
+        let many: Vec<Value> = (0..12)
+            .flat_map(|n| {
+                [
+                    json!({"type": "content_block_start", "index": n, "content_block":
+                        {"type": "tool_use", "id": format!("t{n}"), "name": "list_folders", "input": {}}}),
+                    json!({"type": "content_block_delta", "index": n, "delta": {"type": "input_json_delta", "partial_json": "{}"}}),
+                    json!({"type": "content_block_stop", "index": n}),
+                ]
+            })
+            .collect();
+        let reply = read(AiProvider::Anthropic, 0, &many).0.unwrap();
+        assert_eq!(reply.calls.len(), 8);
+        assert_eq!(reply.calls[7].id, "t7");
+        // What is sent back holds exactly the calls that will get a result.
+        assert_eq!(reply.raw.unwrap().as_array().unwrap().len(), 8);
+
+        let long = "x".repeat(MAX_ARGS_CHARS / 2 + 1);
+        let piece = |n: u64| {
+            openai_delta(
+                json!({"tool_calls": [{"index": n, "id": "c", "function": {"name": "search_mail", "arguments": long}}]}),
+            )
+        };
+        let result = read(AiProvider::OpenAiCompatible, 0, &[piece(0), piece(1)]).0;
+        assert!(
+            matches!(&result, Err(Error::Temporary { msg }) if msg == "the model asked for too much at once and was stopped")
+        );
+        let piece = json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": long}});
+        let result = read(AiProvider::Anthropic, 0, &[piece.clone(), piece]).0;
+        assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains("too much at once")));
+        let whole = json!({"type": "message", "content": [{"type": "tool_use", "id": "t", "name": "n", "input": {"a": long, "b": long}}]});
+        assert!(matches!(read(AiProvider::Anthropic, 0, &[whole]).0, Err(Error::Temporary { .. })));
+    }
+
+    #[test]
+    fn a_turn_with_tools_keeps_the_rules_of_a_plain_answer() {
+        // Reasoning in a `<think>` block stays hidden, also in front of a call.
+        let events = [
+            openai_delta(json!({"content": "<think>secret plan</think>"})),
+            openai_delta(json!({"content": "Found it."})),
+            openai_delta(json!({"reasoning_content": "never read"})),
+            openai_end("stop"),
+        ];
+        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        assert_eq!(reply.unwrap().text, "Found it.");
+        assert_eq!(heard, "Found it.");
+        // The service's own words never come out through an error.
+        for (provider, event) in [
+            (AiProvider::OpenAiCompatible, json!({"error": {"message": "sk-leak"}})),
+            (
+                AiProvider::Anthropic,
+                json!({"type": "error", "error": {"type": "overloaded_error", "message": "sk-leak"}}),
+            ),
+        ] {
+            let result = read(provider, 0, &[event]).0;
+            assert!(matches!(&result, Err(Error::Temporary { msg }) if !msg.contains("sk-leak")), "{result:?}");
+        }
+        for (provider, event, word) in [
+            (AiProvider::OpenAiCompatible, openai_end("length"), "length limit"),
+            (AiProvider::OpenAiCompatible, openai_end("content_filter"), "declined"),
+            (
+                AiProvider::Anthropic,
+                json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}}),
+                "length limit",
+            ),
+            (AiProvider::Anthropic, json!({"type": "message_delta", "delta": {"stop_reason": "refusal"}}), "declined"),
+        ] {
+            let result = read(provider, 0, &[event]).0;
+            assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains(word)), "{result:?}");
+        }
+        // An answer that never stops is cut at the same size.
+        let chunk = "y".repeat(60_000);
+        let events = [openai_delta(json!({"content": chunk})), openai_delta(json!({"content": chunk}))];
+        let result = read(AiProvider::OpenAiCompatible, 0, &events).0;
+        assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains("longer than expected")));
     }
 }
