@@ -79,6 +79,22 @@ impl Store {
         })
     }
 
+    /// The mailbox of the set whose window ends latest, with that time: the one that limits how far
+    /// back a list of the whole set is complete. `None`: every mailbox of the set is cached whole.
+    pub fn window_limit(&self, account_id: &str, mailbox_ids: &[String]) -> Result<Option<(String, i64)>> {
+        let ids = serde_json::to_string(mailbox_ids).map_err(|e| crate::Error::store(e.to_string()))?;
+        self.read(|c| {
+            Ok(c.query_row(
+                "SELECT mailbox_id, oldest FROM mailbox_windows
+                 WHERE account_id = ?1 AND mailbox_id IN (SELECT value FROM json_each(?2))
+                 ORDER BY oldest DESC, mailbox_id LIMIT 1",
+                params![account_id, ids],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+        })
+    }
+
     pub fn set_window(&self, account_id: &str, mailbox_id: &str, oldest: i64) -> Result<()> {
         self.write(|c| {
             c.execute(

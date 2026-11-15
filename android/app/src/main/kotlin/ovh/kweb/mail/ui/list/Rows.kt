@@ -60,6 +60,8 @@ data class RowContent(
     val hasAttachment: Boolean,
     /** The names of the labels the mail carries (see [RowLabelChips]). */
     val labels: List<String> = emptyList(),
+    /** The folder to name on the row, in a list that covers a folder and its subfolders; null elsewhere. */
+    val folder: String? = null,
     /** The subject with the search hit marked; used instead of [subject] when there is one. */
     val subjectHighlight: Highlight? = null,
     /** The text around the search hit, marked; used instead of [preview] when there is one. */
@@ -211,6 +213,13 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+        row.folder?.let { name ->
+            Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(painterResource(R.drawable.ic_folder), contentDescription = null, modifier = Modifier.size(14.dp), tint = muted)
+                Spacer(Modifier.width(4.dp))
+                Text(name, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+            }
         }
         RowLabelChips(row.labels)
     }

@@ -570,6 +570,34 @@ fn submit_all_applies_everything_in_order_and_needs_an_account() {
 }
 
 #[test]
+fn a_list_over_several_mailboxes_loads_older_mail_for_the_one_that_limits_it() {
+    let rig = Rig::synced(|s| {
+        fill_junk(s, 160, false);
+    });
+    let set = vec![INBOX_ID.to_string(), JUNK_ID.to_string()];
+    let inbox = rig.inbox_ids().len();
+    let listed = |rig: &Rig| rig.core.threads_in(set.clone(), ListFilter::All, 1000, 0).unwrap().len();
+    // The Inbox is cached whole and Junk back to its window: the list reaches as far as Junk does.
+    assert!(rig.core.has_older_in(set.clone()).unwrap());
+    assert_eq!(listed(&rig), inbox + 100);
+    assert!(rig.core.load_older_in(set.clone()).unwrap());
+    assert_eq!(listed(&rig), inbox + 149);
+    assert!(!rig.core.load_older_in(set.clone()).unwrap());
+    assert_eq!(listed(&rig), inbox + 160);
+    assert!(!rig.core.has_older_in(set.clone()).unwrap());
+    // With nothing older the call needs no server.
+    rig.server.set_down(true);
+    assert!(!rig.core.load_older_in(set.clone()).unwrap());
+    rig.server.set_down(false);
+    // The set is checked before anything else.
+    assert!(matches!(rig.core.threads_in(Vec::new(), ListFilter::All, 10, 0), Err(Error::Invalid { .. })));
+    assert!(matches!(rig.core.has_older_in(vec!["x".to_string(); 501]), Err(Error::Invalid { .. })));
+    // A mailbox alone gives what the old call gives.
+    let alone = rig.core.threads_in(vec![JUNK_ID.to_string()], ListFilter::All, 1000, 0).unwrap();
+    assert_eq!(alone, rig.core.threads(JUNK_ID.into(), ListFilter::All, 1000, 0).unwrap());
+}
+
+#[test]
 fn threads_older_mail_and_thread_refresh_through_the_core() {
     let rig = Rig::synced(|s| {
         fill_junk(s, 160, false);

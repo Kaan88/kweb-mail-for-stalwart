@@ -45,6 +45,10 @@ data class MailListState(
     val selectedId: String? = null,
     /** The folder shown: [selectedId] if it exists, else the Inbox. Null before the first sync. */
     val current: Mailbox? = null,
+    /** The user asked for [selectedId] with the folders below it (not kept across restarts). */
+    val withSubfolders: Boolean = false,
+    /** The folders the rows come from: [current] alone, or it and its subfolders (see [SubfolderRules.scope]). */
+    val scope: List<String> = emptyList(),
     val filter: ListFilter = ListFilter.ALL,
     val rows: List<ThreadRow> = emptyList(),
     /** How many rows the cache is asked for. Grows by a page when the user nears the end. */
@@ -142,15 +146,15 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
     /** Shows the Inbox without a filter (a tap on a notification). */
     fun showInbox() = selectFolder(null)
 
-    fun selectFolder(mailboxId: String?) {
-        stateFlow.update { it.fresh(selectedId = mailboxId, filter = ListFilter.ALL) }
+    fun selectFolder(mailboxId: String?, withSubfolders: Boolean = false) {
+        stateFlow.update { it.fresh(selectedId = mailboxId, filter = ListFilter.ALL, withSubfolders = withSubfolders) }
         listState.requestScrollToItem(0)
         reload()
     }
 
     fun selectFilter(filter: ListFilter) {
         if (stateFlow.value.filter == filter) return
-        stateFlow.update { it.fresh(selectedId = it.selectedId, filter = filter) }
+        stateFlow.update { it.fresh(selectedId = it.selectedId, filter = filter, withSubfolders = it.withSubfolders) }
         listState.requestScrollToItem(0)
         reload()
     }
@@ -208,7 +212,8 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
             try {
                 withContext(Dispatchers.IO) {
                     val core = session.core
-                    more = core.hasOlder(mailbox.id) && core.loadOlder(mailbox.id)
+                    val scope = asked.scope.ifEmpty { listOf(mailbox.id) }
+                    more = if (scope.size > 1) core.hasOlderIn(scope) && core.loadOlderIn(scope) else core.hasOlder(mailbox.id) && core.loadOlder(mailbox.id)
                     read = read(asked)
                 }
             } catch (e: CancellationException) {
@@ -453,30 +458,44 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
     private class OutboxRead(val failedDraftId: String?, val waiting: Int, val holding: PendingSend?, val pendingIds: Set<String>)
 
     private fun MailListState.sameQuestion(asked: MailListState) =
-        selectedId == asked.selectedId && filter == asked.filter && limit == asked.limit && generation == asked.generation
+        selectedId == asked.selectedId && withSubfolders == asked.withSubfolders && filter == asked.filter && limit == asked.limit &&
+            generation == asked.generation
 
     /** The state with what was read from the cache; unchanged when [read] is null. */
     private fun MailListState.withRead(read: Read?): MailListState = if (read == null) this else copy(
         username = read.username,
         mailboxes = read.mailboxes,
         current = read.current,
+        scope = read.scope,
         rows = read.rows,
         loaded = true,
         synced = read.mailboxes.isNotEmpty(),
     )
 
-    private class Read(val username: String, val mailboxes: List<Mailbox>, val current: Mailbox?, val rows: List<ThreadRow>)
+    private class Read(
+        val username: String,
+        val mailboxes: List<Mailbox>,
+        val current: Mailbox?,
+        val scope: List<String>,
+        val rows: List<ThreadRow>,
+    )
 
     private fun read(asked: MailListState): Read {
         val core = session.core
         val mailboxes = core.mailboxes()
         val current = mailboxes.firstOrNull { it.id == asked.selectedId } ?: Folders.withRole(mailboxes, "inbox")
-        val rows = current?.let { core.threads(it.id, asked.filter, asked.limit.toUInt(), 0u) }.orEmpty()
-        return Read(core.account()?.username.orEmpty(), mailboxes, current, rows)
+        // A folder that lost its subfolders meanwhile is just itself.
+        val scope = current?.let { SubfolderRules.scope(mailboxes, it.id, asked.withSubfolders) }.orEmpty()
+        val rows = current?.let {
+            if (scope.size > 1) core.threadsIn(scope, asked.filter, asked.limit.toUInt(), 0u) else core.threads(it.id, asked.filter, asked.limit.toUInt(), 0u)
+        }.orEmpty()
+        return Read(core.account()?.username.orEmpty(), mailboxes, current, scope, rows)
     }
 
-    private fun MailListState.fresh(selectedId: String?, filter: ListFilter) = copy(
+    private fun MailListState.fresh(selectedId: String?, filter: ListFilter, withSubfolders: Boolean) = copy(
         selectedId = selectedId,
+        withSubfolders = withSubfolders,
+        scope = emptyList(),
         filter = filter,
         rows = emptyList(),
         limit = PAGE,
