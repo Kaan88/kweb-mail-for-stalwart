@@ -105,6 +105,9 @@ sealed interface Route {
     /** The chat with the AI assistant, reached from the mail list's menu. Its conversation lives as long as the screen. */
     data object AssistantChat : Route
 
+    /** The chat opened from a conversation: that conversation is attached as context (the user can take it away). Its own conversation, always a new one. */
+    data class AssistantChatAbout(val threadId: String) : Route
+
     /** A screen a licensed server adds (dashboard, delivery history, recovery, alerts, tenants), opened from the admin home. */
     data class Enterprise(val page: ovh.kweb.mail.ui.enterprise.EnterprisePage, val adminShortcut: Boolean = false) : Route
 
@@ -172,7 +175,7 @@ object BackStack {
      */
     fun showOver(stack: List<Route>, target: List<Route>): List<Route> {
         val top = stack.last()
-        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top == Route.AssistantChat || top is Route.Filters || top == Route.AccountSecurity || (top is Route.Admin && top.screen.holdsInput)
+        val isForm = top is Route.EditEvent || top is Route.EditContact || top is Route.Compose || top == Route.Away || top == Route.Senders || top == Route.Assistant || top == Route.AssistantChat || top is Route.AssistantChatAbout || top is Route.Filters || top == Route.AccountSecurity || (top is Route.Admin && top.screen.holdsInput)
         if (!isForm) return target
         return if (target.size > initial.size) push(stack, target.last()) else stack
     }

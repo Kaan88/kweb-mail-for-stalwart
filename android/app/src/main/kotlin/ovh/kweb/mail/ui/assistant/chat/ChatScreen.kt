@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -26,12 +27,14 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,6 +66,8 @@ fun ChatScreen(
     onOpenThread: (threadId: String, messageId: String) -> Unit,
     onOpenDraft: (draftId: String) -> Unit,
     onOpenSettings: () -> Unit,
+    /** The conversation this chat is opened about (from the thread screen); null for the plain chat. */
+    aboutThreadId: String? = null,
 ) {
     // The store of this route builds it with (Application, AccountSession).
     val vm: ChatViewModel = viewModel()
@@ -71,9 +76,12 @@ fun ChatScreen(
     val words = rememberChatWords()
     val listState = rememberLazyListState()
     var menuOpen by remember { mutableStateOf(false) }
+    // The explanation before automatic changes go on: "" from the menu, the card's id from "Accept, and accept the rest".
+    var explaining by rememberSaveable { mutableStateOf<String?>(null) }
 
     // Coming back from the settings puts this screen into the composition again without resuming the activity.
     LaunchedEffect(vm) { vm.refresh() }
+    LaunchedEffect(vm, aboutThreadId) { vm.startAbout(aboutThreadId) }
     LifecycleResumeEffect(vm) {
         vm.refresh()
         onPauseOrDispose { }
@@ -92,6 +100,21 @@ fun ChatScreen(
     val tail = (items.lastOrNull() as? ChatItem.Theirs)?.text?.length ?: 0
     LaunchedEffect(items.size, tail) {
         if (items.isNotEmpty()) listState.scrollToItem(items.size)
+    }
+
+    explaining?.let { from ->
+        AlertDialog(
+            onDismissRequest = { explaining = null },
+            title = { Text(stringResource(R.string.chat_auto_title)) },
+            text = { Text(stringResource(R.string.chat_auto_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    explaining = null
+                    if (from.isEmpty()) vm.setAuto(true) else vm.approveAndAuto(from)
+                }) { Text(stringResource(R.string.chat_auto_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { explaining = null }) { Text(stringResource(R.string.chat_auto_cancel)) } },
+        )
     }
 
     Scaffold(
@@ -116,6 +139,15 @@ fun ChatScreen(
                                     vm.newChat()
                                 },
                             )
+                            if (state.gate == ChatGate.READY && state.actionsOn) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(if (state.auto) R.string.chat_auto_off else R.string.chat_auto_on)) },
+                                    onClick = {
+                                        menuOpen = false
+                                        if (state.auto) vm.setAuto(false) else explaining = ""
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_settings)) },
                                 onClick = {
@@ -139,6 +171,18 @@ fun ChatScreen(
                 gate == ChatGate.OFF -> NoticeBar(stringResource(R.string.chat_gate_off), error = false, action = openSettings)
                 gate == ChatGate.CHAT_OFF -> NoticeBar(stringResource(R.string.chat_gate_chat_off), error = false, action = openSettings)
                 gate == ChatGate.NOT_AGREED -> NoticeBar(stringResource(R.string.chat_gate_not_agreed), error = false, action = openSettings)
+            }
+
+            state.about?.let { about ->
+                AboutChip(about, removable = ChatRules.aboutRemovable(state), onRemove = vm::removeAbout)
+            }
+            if (state.auto) {
+                Text(
+                    stringResource(R.string.chat_auto_banner),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -170,6 +214,11 @@ fun ChatScreen(
                                     onApprove = { vm.approve(item.proposal.id) },
                                     onDecline = { vm.decline(item.proposal.id) },
                                     onUndo = { vm.undo(item.proposal.id) },
+                                    onApproveAll = if (state.actionsOn && ChatRules.canAcceptRest(item, state.auto)) {
+                                        { explaining = item.proposal.id }
+                                    } else {
+                                        null
+                                    },
                                 )
                                 is ChatItem.Notice -> NoteLine(item.note)
                             }

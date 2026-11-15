@@ -9,7 +9,9 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
 import ovh.kweb.mail.ui.assistant.AssistantMessages
 import ovh.kweb.mail.ui.assistant.AssistantRules.ChatGate
+import uniffi.kweb_core.AiAbout
 import uniffi.kweb_core.AiApplied
+import uniffi.kweb_core.AiAutoResult
 import uniffi.kweb_core.AiChange
 import uniffi.kweb_core.AiChatEnd
 import uniffi.kweb_core.AiChatTurn
@@ -30,7 +32,8 @@ sealed interface CardState {
 
     data object Applying : CardState
 
-    data class Applied(val canUndo: Boolean) : CardState
+    /** [automatically]: the core did it because the user switched automatic changes on, not on a tap. */
+    data class Applied(val canUndo: Boolean, val automatically: Boolean = false) : CardState
 
     data object Undoing : CardState
 
@@ -99,6 +102,12 @@ data class ChatState(
     val toolsOff: Boolean = false,
     /** A reply draft is being made from a chip. */
     val draftBusy: Boolean = false,
+    /** The conversation this chat was opened about (the chip "About: ..."), until it is removed or a new chat begins. */
+    val about: AiAbout? = null,
+    /** The settings let the chat suggest changes ("Ask first"); with them off there is nothing to make automatic. */
+    val actionsOn: Boolean = true,
+    /** Automatic changes are on for this chat (the user switched them on; the core holds the real flag). */
+    val auto: Boolean = false,
 )
 
 /** Every decision of the chat screen. Plain Kotlin: nothing here needs Android or talks to the core. */
@@ -168,7 +177,8 @@ object ChatRules {
         val items = withoutInterim(state.items).toMutableList()
         if (turn.text.isNotBlank()) items += ChatItem.Theirs(turn.text)
         turn.links.forEach { items += ChatItem.Chip(it) }
-        turn.proposals.forEach { items += ChatItem.Card(it, CardState.Pending) }
+        val automatic = turn.automatic.associateBy { it.proposalId }
+        turn.proposals.forEach { items += ChatItem.Card(it, cardAfterSend(automatic[it.id])) }
         when (turn.end) {
             AiChatEnd.ANSWERED -> if (turn.text.isBlank() && turn.links.isEmpty() && turn.proposals.isEmpty()) items += ChatItem.Notice(ChatNote.NoAnswer)
             AiChatEnd.STEP_LIMIT -> items += ChatItem.Notice(ChatNote.StepLimit(turn.steps.toInt()))
@@ -178,6 +188,28 @@ object ChatRules {
         if (turn.toolsOff && !state.toolsOff) items += ChatItem.Notice(ChatNote.ToolsOff)
         return state.copy(items = items, running = false, runId = null, toolsOff = state.toolsOff || turn.toolsOff)
     }
+
+    /**
+     * Where a new card stands: waiting, unless the core applied it by itself (done, with an Undo where there is one) or
+     * tried to and could not (closed, failed) or left it for a tap (still waiting).
+     */
+    fun cardAfterSend(result: AiAutoResult?): CardState = when {
+        result == null -> CardState.Pending
+        result.applied -> CardState.Applied(result.canUndo, automatically = true)
+        result.leftOpen -> CardState.Pending
+        else -> CardState.Failed(UiMessage.Text(result.message), canUndo = true)
+    }
+
+    /**
+     * Whether a waiting card offers "Accept, and accept the rest in this chat". It mirrors the core's list of changes
+     * that may become automatic (the core decides, and checks again): not a card that warns about many messages, and
+     * not while automatic changes are already on.
+     */
+    fun canAcceptRest(card: ChatItem.Card, auto: Boolean): Boolean =
+        !auto && card.state == CardState.Pending && card.proposal.risk == AiRisk.CHANGE
+
+    /** The chip can be taken away until the first message went out: after it the text has been sent. */
+    fun aboutRemovable(state: ChatState): Boolean = state.about != null && state.items.none { it is ChatItem.Mine }
 
     /** The user stopped the run: what came so far stays, marked as stopped, and whatever still arrives is dropped. */
     fun stopped(state: ChatState): ChatState {
@@ -210,6 +242,8 @@ object ChatRules {
         notice = null,
         toolsOff = false,
         draftBusy = false,
+        about = null,
+        auto = false,
     )
 
     // ---- errors ----

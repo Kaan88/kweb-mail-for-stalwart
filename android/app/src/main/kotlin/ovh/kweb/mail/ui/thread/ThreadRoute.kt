@@ -97,6 +97,7 @@ fun ThreadRoute(
     onFilterLike: (messageId: String) -> Unit,
     onOpenFilters: () -> Unit,
     onAddToCalendar: (EventPrefill) -> Unit,
+    onAskAssistant: (threadId: String) -> Unit = {},
 ) {
     val acct = LocalAccountSession.current
     val application = LocalContext.current.applicationContext as Application
@@ -186,6 +187,7 @@ fun ThreadRoute(
             onFilterLike = onFilterLike,
             onOpenFilters = onOpenFilters,
             onAddToCalendar = onAddToCalendar,
+            onAskAssistant = onAskAssistant,
             stepActions = steps,
         )
     }

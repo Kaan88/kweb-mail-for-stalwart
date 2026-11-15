@@ -627,7 +627,8 @@ pub enum AiFinding {
     },
 }
 
-/// The four risk classes. Read and Ui run at once; Change and Confirm never run without the user's tap.
+/// The four risk classes. Read and Ui run at once; Change and Confirm never run without the user's tap,
+/// except a Change of a kind in `assistant::changes::automatic` in a chat the user switched to automatic.
 /// Confirm is a change the card must warn about (more than 10 messages).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum AiRisk {
@@ -748,6 +749,32 @@ pub struct AiChatTurn {
     pub steps: u32,
     pub end: AiChatEnd,
     pub tools_off: bool,
+    /// What the core applied by itself in this send (automatic changes), in order. Each of these
+    /// suggestions is also in `proposals`; its card is shown in its done state.
+    pub automatic: Vec<AiAutoResult>,
+}
+
+/// What became of a suggestion the core applied without a tap.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiAutoResult {
+    pub proposal_id: String,
+    /// False: it could not be done; `message` says why.
+    pub applied: bool,
+    pub can_undo: bool,
+    /// Not applied and not closed: the card still waits for a tap, as in ask mode.
+    pub left_open: bool,
+    pub message: String,
+}
+
+/// The conversation a chat is about (`ai_chat_about`).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiAbout {
+    pub thread_id: String,
+    pub subject: String,
+    /// Messages of it that will be sent with the first message.
+    pub messages: u32,
+    /// Something was left out to stay within the limits.
+    pub is_cut: bool,
 }
 
 /// What `ai_apply` did. `event_id`: the event an AddEvent made.

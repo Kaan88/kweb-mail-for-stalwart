@@ -99,7 +99,7 @@ pub fn run(core: &Core, what: Ai, env_key: Option<String>) -> Result<(), String>
             Ok(())
         }
         Ai::ChatConsent { agree } => chat_consent(core, agree),
-        Ai::Chat => chat(core),
+        Ai::Chat { about, auto } => chat(core, about, auto),
     }
 }
 
@@ -386,6 +386,16 @@ fn chat_ready(s: &AiSettings) -> Result<(), String> {
     Ok(())
 }
 
+/// What became of a suggestion the core applied by itself.
+pub fn auto_line(n: usize, result: &kweb_core::model::AiAutoResult) -> String {
+    match (result.applied, result.left_open) {
+        (true, _) if result.can_undo => format!("Done automatically. `undo {n}` takes it back."),
+        (true, _) => "Done automatically.".into(),
+        (false, true) => "Not done automatically; it waits for you.".into(),
+        (false, false) => format!("Could not be done: {}", line(&result.message)),
+    }
+}
+
 /// What a line typed into the chat means.
 #[derive(Debug, PartialEq)]
 pub enum Line {
@@ -437,7 +447,7 @@ fn prompt(text: &str) {
 
 /// One conversation on the terminal. Each line is one `ai_chat_send`; nothing is changed
 /// except by `ai_apply` after a `y` to the suggestion printed just above it.
-fn chat(core: &Core) -> Result<(), String> {
+fn chat(core: &Core, about: Option<String>, auto: bool) -> Result<(), String> {
     let settings = core.ai_settings().map_err(|e| e.to_string())?;
     chat_ready(&settings)?;
     let zone = zone().name().to_string();
@@ -449,11 +459,33 @@ fn chat(core: &Core) -> Result<(), String> {
         line(&host_of(&settings)?),
         line(&settings.model)
     );
+    if let Some(thread_id) = about {
+        // Sends nothing yet: the text goes with the first line, after the yes the chat has.
+        if let Some(about) = core.ai_chat_about(chat_id.clone(), Some(thread_id)).map_err(|e| e.to_string())? {
+            eprintln!(
+                "About: {} ({} messages{}). It is sent with your first line.",
+                line(&about.subject),
+                about.messages,
+                if about.is_cut { ", the newest part only" } else { "" }
+            );
+        }
+    }
+    if auto {
+        eprintln!("{AUTO_TEXT}");
+        core.ai_chat_auto(chat_id.clone(), true).map_err(|e| e.to_string())?;
+    }
     let outcome = converse(core, &chat_id, &zone, &mut io::stdin().lock());
     // The conversation, its suggestions and their undo records are memory only and go here.
     core.ai_chat_close(chat_id);
     outcome
 }
+
+/// What `--auto` means, said before it is switched on.
+const AUTO_TEXT: &str =
+    "Automatic changes are on for this chat: suggestions to mark, star, label, archive or move mail\n\
+     and to add an entry to your own calendar are done at once and shown as done (`undo <n>` takes one back).\n\
+     A mail could try to trick the assistant, which is why only changes inside your account that can be undone\n\
+     are automatic. Everything else still asks.";
 
 fn converse(core: &Core, chat_id: &str, zone: &str, input: &mut dyn BufRead) -> Result<(), String> {
     // The ids of the suggestions in the order they were printed: `undo <n>` names one.
@@ -502,6 +534,12 @@ fn converse(core: &Core, chat_id: &str, zone: &str, input: &mut dyn BufRead) -> 
             shown.push(proposal.id.clone());
             let n = shown.len();
             println!("\n{}", proposal_text(n, proposal));
+            if let Some(result) = turn.automatic.iter().find(|a| a.proposal_id == proposal.id) {
+                println!("{}", auto_line(n, result));
+                if result.applied || !result.left_open {
+                    continue;
+                }
+            }
             let yes = asking && {
                 prompt("Do exactly this? [y/N] ");
                 match next_line(input)? {
@@ -1229,7 +1267,26 @@ mod tests {
             steps: 2,
             end: AiChatEnd::Answered,
             tools_off: false,
+            automatic: Vec::new(),
         }
+    }
+
+    #[test]
+    fn an_automatic_change_is_reported_in_its_own_words() {
+        use kweb_core::model::AiAutoResult;
+        let done = AiAutoResult {
+            proposal_id: "c:1".into(),
+            applied: true,
+            can_undo: true,
+            left_open: false,
+            message: String::new(),
+        };
+        assert_eq!(auto_line(2, &done), "Done automatically. `undo 2` takes it back.");
+        let waits = AiAutoResult { applied: false, left_open: true, can_undo: false, ..done.clone() };
+        assert!(auto_line(1, &waits).contains("waits for you"));
+        let failed =
+            AiAutoResult { applied: false, left_open: false, can_undo: false, message: "gone\u{1b}[2J".into(), ..done };
+        assert!(!auto_line(1, &failed).contains('\u{1b}'));
     }
 
     #[test]

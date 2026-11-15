@@ -6,6 +6,7 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -19,6 +20,8 @@ import ovh.kweb.mail.ui.assistant.chat.ChatRules.EventField
 import ovh.kweb.mail.ui.assistant.chat.ChatRules.StepKind
 import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiApplied
+import uniffi.kweb_core.AiAutoResult
+import uniffi.kweb_core.AiAbout
 import uniffi.kweb_core.AiChange
 import uniffi.kweb_core.AiChatEnd
 import uniffi.kweb_core.AiChatTurn
@@ -98,7 +101,8 @@ class ChatRulesTest {
         steps: UInt = 1u,
         end: AiChatEnd = AiChatEnd.ANSWERED,
         toolsOff: Boolean = false,
-    ) = AiChatTurn(text, proposals, links, steps, end, toolsOff)
+        automatic: List<AiAutoResult> = emptyList(),
+    ) = AiChatTurn(text, proposals, links, steps, end, toolsOff, automatic)
 
     private fun step(tool: AiToolKind, detail: String = "") = AiStep(tool, AiRisk.READ, detail)
 
@@ -489,5 +493,49 @@ class ChatRulesTest {
         assertEquals(2 to 3, ChatRules.chipRun(items, 3))
         assertEquals(0 to 1, ChatRules.chipRun(items, 4))
         assertEquals(0 to 1, ChatRules.chipRun(items, 5))
+    }
+
+    @Test
+    fun a_card_the_core_applied_by_itself_is_done_with_its_undo_and_one_it_could_not_is_failed_or_waiting() {
+        val one = proposal("c:1", AiChange.Archive(refs(1)))
+        val two = proposal("c:2", AiChange.MarkRead(refs(1), true))
+        val three = proposal("c:3", AiChange.Star(refs(1), true))
+        val four = proposal("c:4", AiChange.Archive(refs(2)))
+        val results = listOf(
+            AiAutoResult("c:1", applied = true, canUndo = true, leftOpen = false, message = ""),
+            AiAutoResult("c:2", applied = false, canUndo = false, leftOpen = false, message = "one of these messages is no longer there"),
+            AiAutoResult("c:3", applied = false, canUndo = false, leftOpen = true, message = "waits"),
+        )
+        val after = ChatRules.finished(running(), "r1", turn("Done.", proposals = listOf(one, two, three, four), automatic = results))
+        val cards = after.items.filterIsInstance<ChatItem.Card>().map { it.state }
+        assertEquals(CardState.Applied(canUndo = true, automatically = true), cards[0])
+        assertEquals(CardState.Failed(UiMessage.Text("one of these messages is no longer there"), canUndo = true), cards[1])
+        // Left for a tap, and one the core did not touch at all, both wait as in ask mode.
+        assertEquals(CardState.Pending, cards[2])
+        assertEquals(CardState.Pending, cards[3])
+        assertNotNull(ChatRules.undo(cards[0]))
+    }
+
+    @Test
+    fun the_rest_is_offered_on_a_waiting_card_only_while_automatic_changes_are_off() {
+        val plain = ChatItem.Card(proposal("c:1", AiChange.Archive(refs(1))), CardState.Pending)
+        assertTrue(ChatRules.canAcceptRest(plain, auto = false))
+        assertFalse(ChatRules.canAcceptRest(plain, auto = true))
+        assertFalse(ChatRules.canAcceptRest(plain.copy(state = CardState.Applying), auto = false))
+        // A change the card warns about (many messages) always asks by itself.
+        val warned = ChatItem.Card(proposal("c:2", AiChange.Archive(refs(11)), AiRisk.CONFIRM), CardState.Pending)
+        assertFalse(ChatRules.canAcceptRest(warned, auto = false))
+    }
+
+    @Test
+    fun the_conversation_chip_can_be_removed_until_the_first_message_and_a_new_chat_clears_it_and_the_switch() {
+        val about = AiAbout("t1", "Lunch", 2u, false)
+        val chat = ready.copy(about = about, auto = true)
+        assertTrue(ChatRules.aboutRemovable(chat))
+        assertFalse(ChatRules.aboutRemovable(ready))
+        assertFalse(ChatRules.aboutRemovable(ChatRules.sent(chat, "hi", "r1")))
+        val fresh = ChatRules.cleared(chat, restarted = false)
+        assertNull(fresh.about)
+        assertFalse(fresh.auto)
     }
 }

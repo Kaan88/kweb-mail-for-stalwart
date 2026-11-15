@@ -27,6 +27,36 @@ object AssistantRules {
     const val OPENAI_ADDRESS = "https://api.openai.com/v1"
     const val ANTHROPIC_ADDRESS = "https://api.anthropic.com/v1"
 
+    /** The addresses the settings offer to fill in. A local server is plain http and needs no key. */
+    enum class Preset(val address: String, val port: Int?, val local: Boolean) {
+        OPENAI(OPENAI_ADDRESS, null, false),
+        OLLAMA("http://localhost:11434/v1", 11434, true),
+        LM_STUDIO("http://localhost:1234/v1", 1234, true),
+        LLAMA_CPP("http://localhost:8080/v1", 8080, true),
+    }
+
+    private val localAddress = Regex("""^http://([^/:\s]+)(?::(\d+))?(/.*)?$""", RegexOption.IGNORE_CASE)
+
+    /** Plain http: nothing sent is encrypted. The core only allows it for this device and private networks. */
+    fun isCleartext(address: String): Boolean = address.trim().startsWith("http://", ignoreCase = true)
+
+    /** The preset the address looks like: the hosted default exactly, a local one by its port (the host is the user's). */
+    fun presetOf(address: String): Preset? {
+        if (sameAddress(address, OPENAI_ADDRESS)) return Preset.OPENAI
+        val port = localAddress.matchEntire(address.trim())?.groupValues?.get(2)?.toIntOrNull() ?: return null
+        return Preset.entries.firstOrNull { it.local && it.port == port }
+    }
+
+    /**
+     * The address after [preset] was picked: the hosted one as it is; a local one keeps the host the user already wrote
+     * for a local server (so another port does not lose "192.168.1.20") and otherwise starts at localhost.
+     */
+    fun addressForPreset(current: String, preset: Preset): String {
+        if (!preset.local) return preset.address
+        val host = localAddress.matchEntire(current.trim())?.groupValues?.get(1)
+        return if (host.isNullOrEmpty()) preset.address else "http://$host:${preset.port}/v1"
+    }
+
     /** Whether the assistant offers [kind]: it is on as a whole and that kind is switched on. No settings read yet: no. */
     fun isAllowed(settings: AiSettings?, kind: Kind): Boolean = settings != null && settings.enabled && when (kind) {
         Kind.SUMMARY -> settings.allowSummaries

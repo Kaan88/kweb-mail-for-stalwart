@@ -1427,25 +1427,33 @@ impl Core {
                 (vec![assistant::request::mail_input(&header, &body)], 0)
             }
             AiTask::SummarizeThread { thread_id } | AiTask::ExtractThread { thread_id, .. } => {
-                let headers = self.store.thread_messages(account_id, thread_id)?;
-                if headers.is_empty() {
-                    return Err(Error::invalid(format!("the conversation '{thread_id}' is not in the cache")));
-                }
-                let skip = headers.len().saturating_sub(assistant::request::THREAD_MESSAGES);
-                let wanted = &headers[skip..];
-                let bodies = self.bodies_of(account_id, wanted.iter().map(|h| h.id.clone()).collect())?;
-                let mails: Vec<_> = wanted
-                    .iter()
-                    .filter_map(|h| {
-                        bodies.iter().find(|b| b.message_id == h.id).map(|b| assistant::request::mail_input(h, b))
-                    })
-                    .collect();
-                // A message whose body is gone counts as left out, so the preview says so.
-                let missing = wanted.len() - mails.len();
-                (mails, skip + missing)
+                self.thread_mails(account_id, thread_id)?.0
             }
         };
         assistant::request::build(task, mails, earlier)
+    }
+
+    /// The newest messages of a thread as the assistant reads them (oldest first) and how many
+    /// were left out, with the subject of the thread. The same for a task and a chat about it.
+    pub(crate) fn thread_mails(
+        &self,
+        account_id: &str,
+        thread_id: &str,
+    ) -> Result<((Vec<assistant::request::MailInput>, usize), String)> {
+        let headers = self.store.thread_messages(account_id, thread_id)?;
+        if headers.is_empty() {
+            return Err(Error::invalid(format!("the conversation '{thread_id}' is not in the cache")));
+        }
+        let skip = headers.len().saturating_sub(assistant::request::THREAD_MESSAGES);
+        let wanted = &headers[skip..];
+        let bodies = self.bodies_of(account_id, wanted.iter().map(|h| h.id.clone()).collect())?;
+        let mails: Vec<_> = wanted
+            .iter()
+            .filter_map(|h| bodies.iter().find(|b| b.message_id == h.id).map(|b| assistant::request::mail_input(h, b)))
+            .collect();
+        // A message whose body is gone counts as left out, so the preview says so.
+        let missing = wanted.len() - mails.len();
+        Ok(((mails, skip + missing), headers[0].subject.clone()))
     }
 
     /// The bodies of these messages, from the cache, the missing ones fetched in one go. A

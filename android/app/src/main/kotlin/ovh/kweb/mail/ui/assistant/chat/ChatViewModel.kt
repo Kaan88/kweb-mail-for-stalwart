@@ -33,6 +33,7 @@ import ovh.kweb.mail.ui.assistant.ConsentRules
 import ovh.kweb.mail.ui.assistant.DraftText
 import ovh.kweb.mail.ui.assistant.RunRules
 import ovh.kweb.mail.ui.compose.DraftLauncher
+import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiChatListener
 import uniffi.kweb_core.AiLink
 import uniffi.kweb_core.AiStep
@@ -113,17 +114,118 @@ class ChatViewModel(app: Application, private val session: AccountSession) : And
                 return@launch
             }
             val gate = AssistantRules.chatReady(read)
-            stateFlow.update { it.copy(gate = gate, settingsFailed = false, host = ConsentRules.hostOf(read.baseUrl)) }
+            stateFlow.update {
+                it.copy(gate = gate, settingsFailed = false, host = ConsentRules.hostOf(read.baseUrl), actionsOn = read.actions == AiActionMode.ASK_FIRST)
+            }
             // The first start may have failed, or was made before the chat was allowed: now it can be used.
             if (gate == ChatGate.READY && startedId != chatId) startChat(chatId)
+            if (gate == ChatGate.READY) attachAbout()
         }
     }
 
     /** "New chat": a running answer is stopped, the list is emptied and the core starts a new conversation. */
-    fun newChat() = restart(restarted = false)
+    fun newChat() {
+        aboutRequest = null
+        restart(restarted = false)
+    }
+
+    // ---- about one conversation ----
+
+    /** The conversation this chat is to be opened about; attached as soon as the chat may be used. */
+    private var aboutRequest: String? = null
+
+    /** The thread screen opened this chat about [threadId]. Asked again only when it is a different one. */
+    fun startAbout(threadId: String?) {
+        if (threadId == null || aboutRequest == threadId) return
+        aboutRequest = threadId
+        attachAbout()
+    }
+
+    /** Gives the core the conversation, once the chat is started and may be used. Sends nothing. */
+    private fun attachAbout() {
+        val thread = aboutRequest ?: return
+        if (stateFlow.value.gate != ChatGate.READY) return
+        val id = chatId
+        viewModelScope.launch {
+            chatLock.withLock {
+                if (chatId != id || aboutRequest != thread || stateFlow.value.about != null) return@launch
+                if (startedId != id) {
+                    try {
+                        withContext(Dispatchers.IO) { session.core.aiChatNew(id) }
+                        startedId = id
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.w(Background.TAG, "starting a chat failed: ${e.javaClass.simpleName}")
+                        stateFlow.update { it.copy(notice = ChatRules.message(e, R.string.chat_new_failed)) }
+                        return@launch
+                    }
+                }
+                try {
+                    val about = withContext(Dispatchers.IO) { session.core.aiChatAbout(id, thread) }
+                    if (chatId == id) stateFlow.update { it.copy(about = about) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "attaching a conversation failed: ${e.javaClass.simpleName}")
+                    aboutRequest = null
+                    stateFlow.update { it.copy(notice = ChatRules.message(e, R.string.chat_about_failed)) }
+                }
+            }
+        }
+    }
+
+    /** The chip's cross: the conversation is not part of this chat. Only before the first message. */
+    fun removeAbout() {
+        if (!ChatRules.aboutRemovable(stateFlow.value)) return
+        val id = chatId
+        aboutRequest = null
+        stateFlow.update { it.copy(about = null) }
+        viewModelScope.launch {
+            chatLock.withLock {
+                try {
+                    withContext(Dispatchers.IO) { session.core.aiChatAbout(id, null) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "removing the conversation failed: ${e.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
+    // ---- automatic changes ----
+
+    /**
+     * Switches automatic changes on or off for this chat: the core's own call, made only from the user's tap on the
+     * switch or on "Accept, and accept the rest" (after the explanation). [then] runs once it is on.
+     */
+    fun setAuto(on: Boolean, then: (() -> Unit)? = null) {
+        val id = chatId
+        viewModelScope.launch {
+            val done = chatLock.withLock {
+                try {
+                    withContext(Dispatchers.IO) { session.core.aiChatAuto(id, on) }
+                    if (chatId == id) stateFlow.update { it.copy(auto = on) }
+                    true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "switching automatic changes failed: ${e.javaClass.simpleName}")
+                    stateFlow.update { it.copy(notice = ChatRules.message(e, R.string.chat_auto_failed)) }
+                    false
+                }
+            }
+            if (done && on) then?.invoke()
+        }
+    }
+
+    /** "Accept, and accept the rest in this chat": automatic changes on, then this card is approved as a tap. */
+    fun approveAndAuto(proposalId: String) = setAuto(true) { approve(proposalId) }
 
     private fun restart(restarted: Boolean) {
         cancelCore(stateFlow.value.runId)
+        aboutRequest = null
         val id = newChatId()
         chatId = id
         stateFlow.update { ChatRules.cleared(it, restarted) }

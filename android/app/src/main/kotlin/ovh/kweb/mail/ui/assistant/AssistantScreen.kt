@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -222,6 +224,10 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
             )
         }
 
+        if (form.provider == AiProvider.OPEN_AI_COMPATIBLE) PresetRow(form.baseUrl, !state.saving) { preset ->
+            vm.edit { it.copy(baseUrl = AssistantRules.addressForPreset(it.baseUrl, preset)) }
+        }
+
         val showEffort = EffortRules.isShown(form.provider)
         val count = if (showEffort) 4 else 3
         val ready = !state.switching
@@ -230,6 +236,21 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
             ModelRow(Groups.shape(1, count), form.model, ready, { v -> vm.edit { it.copy(model = v) } }, vm::chooseModel)
             if (showEffort) EffortRow(Groups.shape(2, count), state, form, ready) { e -> vm.edit { it.copy(effort = e) } }
             KeyRow(Groups.shape(count - 1, count), state, form, vm, ready)
+        }
+
+        if (form.provider == AiProvider.OPEN_AI_COMPATIBLE && AssistantRules.isCleartext(form.baseUrl)) {
+            Text(
+                stringResource(R.string.assistant_local_detail),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                stringResource(R.string.assistant_cleartext_warning),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 4.dp),
+                color = colors.error,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
 
         SectionLabel(stringResource(R.string.assistant_allow))
@@ -515,6 +536,28 @@ private fun ModelsSheet(state: ModelsState, onPick: (AiModel) -> Unit, onRetry: 
  * never put in the field. The field uses a password keyboard, and while it is on screen the window is kept out of
  * autofill, so that no service offers to save or fill it.
  */
+@Composable
+private fun PresetRow(address: String, enabled: Boolean, onPick: (AssistantRules.Preset) -> Unit) {
+    val chosen = AssistantRules.presetOf(address)
+    val names = listOf(
+        AssistantRules.Preset.OPENAI to R.string.assistant_preset_openai,
+        AssistantRules.Preset.OLLAMA to R.string.assistant_preset_ollama,
+        AssistantRules.Preset.LM_STUDIO to R.string.assistant_preset_lmstudio,
+        AssistantRules.Preset.LLAMA_CPP to R.string.assistant_preset_llamacpp,
+    )
+    Text(
+        stringResource(R.string.assistant_presets),
+        modifier = Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 8.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.labelMedium,
+    )
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        names.forEach { (preset, label) ->
+            FilterChip(selected = chosen == preset, onClick = { onPick(preset) }, enabled = enabled, label = { Text(stringResource(label)) })
+        }
+    }
+}
+
 @Composable
 private fun KeyRow(shape: Shape, state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel, enabled: Boolean) {
     val keepStored = state.hasKey && !form.removeKey

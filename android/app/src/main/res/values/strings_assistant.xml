@@ -29,6 +29,13 @@
     <string name="assistant_consent_settings_text">When you use the assistant, the mail you choose is sent to %1$s, using the model %2$s. You will not be asked again for this service and model.</string>
     <string name="assistant_consent_agree">Agree</string>
     <string name="assistant_consent_decline">Decline</string>
+    <string name="assistant_presets">Fill in the address of</string>
+    <string name="assistant_preset_openai">OpenAI</string>
+    <string name="assistant_preset_ollama">Ollama</string>
+    <string name="assistant_preset_lmstudio">LM Studio</string>
+    <string name="assistant_preset_llamacpp">llama.cpp</string>
+    <string name="assistant_local_detail">A model on your own computer needs no key: leave the key empty. Replace localhost with the computer\'s address on your network, for example 192.168.1.20.</string>
+    <string name="assistant_cleartext_warning">This address is not encrypted (http). Whatever is sent to it, mail included, can be read by others on the same network. Use it only on a network you trust. The app allows this only for this device and private network addresses.</string>
     <string name="assistant_address">Address</string>
     <string name="assistant_model">Model</string>
     <string name="assistant_key">Key</string>

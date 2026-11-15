@@ -361,6 +361,17 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                         onOpenSettings = { app.open(Route.Assistant) },
                     )
                 }
+                is Route.AssistantChatAbout -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        ChatScreen(
+                            onBack = app::back,
+                            onOpenThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                            onOpenDraft = { app.open(Route.Compose(it)) },
+                            onOpenSettings = { app.open(Route.Assistant) },
+                            aboutThreadId = route.threadId,
+                        )
+                    }
+                }
                 Route.MaskedAddresses -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     MaskedScreen(onBack = app::back)
                 }
@@ -382,6 +393,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                         onOpenFilters = { app.open(Route.Filters()) },
                         // The form opens on the day of what was found; the user saves it himself.
                         onAddToCalendar = { app.open(Route.EditEvent(null, it.start.take(10), prefill = it)) },
+                        onAskAssistant = { app.open(Route.AssistantChatAbout(it)) },
                     )
                 }
                 is Route.Compose -> key(route) { ComposeScreen(route.draftId, route.prefillTo, onLeave = app::back, onSent = app::sent) }

@@ -287,4 +287,26 @@ class AssistantRulesTest {
         assertEquals(AiEffort.MAX, form.toSettings(stored).effort)
         assertTrue(AssistantRules.isChanged(form, AssistantRules.formOf(stored), keyTyped = false))
     }
+
+    @Test
+    fun a_local_preset_fills_plain_http_with_its_port_and_keeps_the_host_the_user_wrote() {
+        val ollama = AssistantRules.Preset.OLLAMA
+        assertEquals("http://localhost:11434/v1", AssistantRules.addressForPreset("https://api.openai.com/v1", ollama))
+        assertEquals("http://localhost:1234/v1", AssistantRules.addressForPreset("", AssistantRules.Preset.LM_STUDIO))
+        assertEquals("http://192.168.1.20:8080/v1", AssistantRules.addressForPreset("http://192.168.1.20:11434/v1", AssistantRules.Preset.LLAMA_CPP))
+        assertEquals("https://api.openai.com/v1", AssistantRules.addressForPreset("http://192.168.1.20:11434/v1", AssistantRules.Preset.OPENAI))
+    }
+
+    @Test
+    fun the_selected_preset_is_found_from_the_address_and_cleartext_is_flagged() {
+        assertEquals(AssistantRules.Preset.OPENAI, AssistantRules.presetOf("https://api.openai.com/v1/"))
+        assertEquals(AssistantRules.Preset.OLLAMA, AssistantRules.presetOf("http://192.168.1.20:11434/v1"))
+        assertEquals(AssistantRules.Preset.LM_STUDIO, AssistantRules.presetOf(" http://box.local:1234/v1 "))
+        assertNull(AssistantRules.presetOf("https://example.com:11434/v1"))
+        assertNull(AssistantRules.presetOf("http://192.168.1.20:9999/v1"))
+        assertTrue(AssistantRules.isCleartext("http://localhost:11434/v1"))
+        assertTrue(AssistantRules.isCleartext(" HTTP://10.0.0.2/v1"))
+        assertFalse(AssistantRules.isCleartext("https://api.openai.com/v1"))
+        assertFalse(AssistantRules.isCleartext(""))
+    }
 }

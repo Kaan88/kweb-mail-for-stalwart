@@ -83,6 +83,7 @@ import ovh.kweb.mail.ui.assistant.AssistantEvent
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
+import ovh.kweb.mail.ui.assistant.chat.ChatRules
 import ovh.kweb.mail.ui.calendar.EventPrefill
 import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
@@ -114,6 +115,8 @@ fun ThreadScreen(
     onOpenFilters: () -> Unit = {},
     /** Opens the form for a new calendar entry that starts with something the assistant found here; the user saves it himself. */
     onAddToCalendar: (EventPrefill) -> Unit = {},
+    /** Opens the assistant's chat about this conversation (offered when the chat is on; the chat asks for the rest). */
+    onAskAssistant: (threadId: String) -> Unit = {},
     /** What TalkBack offers on the subject to go to the conversation before or after this one (the pager has no buttons for it). */
     stepActions: List<CustomAccessibilityAction> = emptyList(),
 ) {
@@ -364,6 +367,14 @@ fun ThreadScreen(
                                 enabled = hasMessages,
                                 onClick = { menuOpen = false; vm.toggleFlag() },
                             )
+                            if (ChatRules.entryShown(assistantState.settings)) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.assistant_ask_about)) },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                                    enabled = hasMessages,
+                                    onClick = { menuOpen = false; onAskAssistant(route.threadId) },
+                                )
+                            }
                             if (AssistantRules.Kind.SUMMARY in offered) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.assistant_summarize)) },

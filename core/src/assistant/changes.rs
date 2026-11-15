@@ -311,6 +311,29 @@ pub fn risk(change: &AiChange) -> AiRisk {
     }
 }
 
+/// Whether a change may be applied without a tap when the user switched automatic changes on for
+/// the chat. An explicit allow-list: a kind that is not named here asks, in every mode. Only what
+/// stays inside the mailbox, is not mailed to anyone and is taken back by [`undo`] is named, and
+/// not a change of more than [`CONFIRM_ABOVE`] messages (its card asks first, as always).
+///
+/// A new calendar entry is named too (owner): it is made in the user's own calendar, has no
+/// participants (so saving mails no invitation: `EventInput` has no way to name any), does not
+/// repeat, and its Undo deletes it again. Changing or deleting an existing entry, an entry with
+/// guests and anything in a shared calendar are not changes of the chat at all, so they cannot be
+/// automatic; a new kind asks until it is named here.
+pub fn automatic(change: &AiChange, risk: AiRisk) -> bool {
+    risk == AiRisk::Change
+        && matches!(
+            change,
+            AiChange::MarkRead { .. }
+                | AiChange::Star { .. }
+                | AiChange::Tag { .. }
+                | AiChange::Archive { .. }
+                | AiChange::Move { .. }
+                | AiChange::AddEvent { .. }
+        )
+}
+
 /// The one mail action a change means for one message; None for a tag and a calendar entry.
 fn action_for(change: &AiChange, id: &str) -> Option<Action> {
     let message_id = id.to_string();
@@ -1046,5 +1069,55 @@ mod tests {
         let applied = apply(&fake, &fake, &AiChange::AddEvent { input: odd, calendar_name: "Home".into() });
         assert!(applied.result.is_err() && applied.undo.is_none());
         assert_eq!(submitted(&fake).len(), 2);
+    }
+
+    /// Every kind a change can be, and whether it is applied without a tap. A new kind has no
+    /// entry in `automatic`, so it asks until someone decides here.
+    #[test]
+    fn only_undoable_changes_inside_the_mailbox_are_automatic() {
+        let messages = vec![AiMessageRef {
+            id: "m1".into(),
+            thread_id: "t1".into(),
+            subject: "s".into(),
+            from: "f".into(),
+            mailbox_name: "Inbox".into(),
+        }];
+        let kinds = [
+            (AiChange::MarkRead { messages: messages.clone(), read: true }, true),
+            (AiChange::Star { messages: messages.clone(), on: true }, true),
+            (
+                AiChange::Tag { messages: messages.clone(), label_id: "l".into(), label_name: "L".into(), on: true },
+                true,
+            ),
+            (AiChange::Archive { messages: messages.clone() }, true),
+            (
+                AiChange::Move { messages: messages.clone(), mailbox_id: "work".into(), mailbox_name: "Work".into() },
+                true,
+            ),
+            (
+                AiChange::AddEvent {
+                    input: EventInput {
+                        calendar_id: "c".into(),
+                        title: "t".into(),
+                        location: String::new(),
+                        description: String::new(),
+                        start: "2026-11-20T10:00:00".into(),
+                        time_zone: None,
+                        duration_secs: 3600,
+                        all_day: false,
+                        is_task: false,
+                        repeat: None,
+                        alert_minutes: vec![],
+                    },
+                    calendar_name: "Home".into(),
+                },
+                true,
+            ),
+        ];
+        for (change, allowed) in kinds {
+            assert_eq!(automatic(&change, AiRisk::Change), allowed, "{change:?}");
+            // A change that needs the user's eye (more than ten messages) asks, whatever it is.
+            assert!(!automatic(&change, AiRisk::Confirm), "{change:?}");
+        }
     }
 }

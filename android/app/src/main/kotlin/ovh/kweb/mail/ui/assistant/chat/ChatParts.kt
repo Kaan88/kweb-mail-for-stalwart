@@ -26,6 +26,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -53,6 +54,7 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.calendar.NoticeBar
 import ovh.kweb.mail.ui.calendar.rememberLocale
 import ovh.kweb.mail.ui.list.Groups
+import uniffi.kweb_core.AiAbout
 import uniffi.kweb_core.AiChange
 import uniffi.kweb_core.AiLink
 import uniffi.kweb_core.AiMessageRef
@@ -196,12 +198,20 @@ internal fun LinkChip(link: AiLink, shape: Shape, busy: Boolean, onOpen: () -> U
  * happened, with Undo for as long as the chat lives.
  */
 @Composable
-internal fun ProposalCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> Unit, onDecline: () -> Unit, onUndo: () -> Unit) {
-    if (ChatRules.isOpen(card.state)) OpenCard(card, words, onApprove, onDecline) else ClosedCard(card, words, onApprove, onDecline, onUndo)
+internal fun ProposalCard(
+    card: ChatItem.Card,
+    words: ChatWords,
+    onApprove: () -> Unit,
+    onDecline: () -> Unit,
+    onUndo: () -> Unit,
+    /** "Accept, and accept the rest in this chat"; null where the card does not offer it. */
+    onApproveAll: (() -> Unit)? = null,
+) {
+    if (ChatRules.isOpen(card.state)) OpenCard(card, words, onApprove, onDecline, onApproveAll) else ClosedCard(card, words, onApprove, onDecline, onUndo)
 }
 
 @Composable
-private fun OpenCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> Unit, onDecline: () -> Unit) {
+private fun OpenCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> Unit, onDecline: () -> Unit, onApproveAll: (() -> Unit)?) {
     val colors = MaterialTheme.colorScheme
     val change = card.proposal.change
     val applying = card.state == CardState.Applying
@@ -225,6 +235,11 @@ private fun OpenCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> Uni
             }
             Button(onClick = onApprove, enabled = !applying, shape = CircleShape, modifier = Modifier.weight(1f).height(52.dp)) {
                 Text(stringResource(R.string.chat_approve), style = MaterialTheme.typography.labelLarge)
+            }
+        }
+        if (onApproveAll != null) {
+            TextButton(onClick = onApproveAll, enabled = !applying, modifier = Modifier.align(Alignment.End)) {
+                Text(stringResource(R.string.chat_approve_all))
             }
         }
     }
@@ -282,6 +297,43 @@ private fun EventFields(change: AiChange.AddEvent, words: ChatWords) {
     }
 }
 
+/**
+ * The chip "About: subject" of a chat opened from a conversation. The cross shows only while the first message has not
+ * been sent: after that the text has gone to the service and cannot be taken back.
+ */
+@Composable
+internal fun AboutChip(about: AiAbout, removable: Boolean, onRemove: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(Groups.shape(0, 1))
+            .background(colors.secondaryContainer)
+            .heightIn(min = 48.dp)
+            .padding(start = 20.dp, end = if (removable) 4.dp else 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                stringResource(R.string.chat_about, about.subject.ifBlank { stringResource(R.string.chat_about_no_subject) }),
+                color = colors.onSecondaryContainer,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (about.isCut) {
+                Text(stringResource(R.string.chat_about_cut), color = colors.onSecondaryContainer, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (removable) {
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.chat_about_remove), tint = colors.onSecondaryContainer)
+            }
+        }
+    }
+}
+
 /** The row a card becomes: what was done (or was not), and Undo or Try again where that is possible. */
 @Composable
 private fun ClosedCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> Unit, onDecline: () -> Unit, onUndo: () -> Unit) {
@@ -292,6 +344,7 @@ private fun ClosedCard(card: ChatItem.Card, words: ChatWords, onApprove: () -> U
     val status: String? = when (state) {
         CardState.Undone -> stringResource(R.string.chat_undone)
         CardState.Declined -> stringResource(R.string.chat_declined)
+        is CardState.Applied -> if (state.automatically) stringResource(R.string.chat_done_automatically) else null
         is CardState.Failed -> state.message.resolve(LocalResources.current)
         else -> null
     }

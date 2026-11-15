@@ -149,6 +149,30 @@ pub(crate) fn one_block(mail: &MailInput) -> (String, bool) {
     (packed.blocks.concat(), packed.is_cut)
 }
 
+/// The most of a conversation that goes into a chat opened about it (characters).
+pub const ABOUT_CHARS: usize = 30_000;
+/// The name the chat's system text gives the block ([`prompts::tool_frame`]).
+pub const ABOUT_NAME: &str = "open_conversation";
+
+/// A conversation as a chat is given it: the same messages, limits, quote stripping and escaping
+/// as a thread summary (the newest [`THREAD_MESSAGES`], each body at most [`BODY_CHARS`]), inside
+/// a result block that the chat's system text declares to be data. `mails` oldest first; `earlier`
+/// is how many messages the caller left out. Returns the text, the messages in it and whether
+/// anything was left out.
+pub fn about_block(mails: Vec<MailInput>, earlier: usize) -> Result<(String, u32, bool)> {
+    if mails.is_empty() {
+        return Err(Error::invalid("there is no mail in this conversation"));
+    }
+    let mut mails = mails;
+    let too_old = mails.len().saturating_sub(THREAD_MESSAGES);
+    mails.drain(..too_old);
+    let head = "The conversation the user has open, its messages in order, the oldest first.\n<mail>\n";
+    let packed = pack(&mails, true, ABOUT_CHARS.saturating_sub(chars(head) + chars("</mail>")));
+    let text = format!("{head}{}</mail>", packed.blocks.concat());
+    let is_cut = packed.is_cut || earlier + too_old > 0;
+    Ok((prompts::tool_frame(ABOUT_NAME, &text), packed.blocks.len() as u32, is_cut))
+}
+
 fn done(system: String, user: String, messages: usize, is_cut: bool) -> Prepared {
     Prepared { system, characters: chars(&user) as u32, user, messages: messages as u32, is_cut }
 }

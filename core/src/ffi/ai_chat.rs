@@ -31,8 +31,8 @@ use crate::{
     },
     jmap,
     model::{
-        Action, Agenda, AiActionMode, AiApplied, AiChange, AiChatTurn, AiFinding, AiSettings, AiStep, Calendar,
-        EventDetail, EventInput, Label, Mailbox, MessageBody, MessageHeader, SearchResult,
+        Action, Agenda, AiAbout, AiActionMode, AiApplied, AiAutoResult, AiChange, AiChatTurn, AiFinding, AiSettings,
+        AiStep, Calendar, EventDetail, EventInput, Label, Mailbox, MessageBody, MessageHeader, SearchResult,
     },
     sync, Error, Result,
 };
@@ -344,6 +344,10 @@ impl Core {
             }
             _ => return Err(over()),
         };
+        // Automatic changes were switched on for one service and model; for another they are off.
+        if copy.auto.is_some() && copy.auto.as_ref() != Some(&origin) {
+            copy.auto = None;
+        }
         copy.origin = Some(origin);
 
         let at = now();
@@ -353,7 +357,7 @@ impl Core {
         let mut model = Live { core: self, endpoint: &endpoint, running: &running };
         let mut on_text = |piece: &str| listener.text(piece.to_string());
         let mut on_step = |step: AiStep| listener.step(step);
-        let turn = chat::send(&mut copy, &text, &env, &today, &mut model, &reader, &mut on_text, &mut on_step)?;
+        let mut turn = chat::send(&mut copy, &text, &env, &today, &mut model, &reader, &mut on_text, &mut on_step)?;
 
         // Commit, and only into the conversation the run began in.
         let mut stored = self.chat_lock();
@@ -369,8 +373,107 @@ impl Core {
                     }
                 }
                 copy.events.extend(c.events.iter().skip(told).cloned());
+                // The switch is the user's, made through `ai_chat_auto` only; a send keeps what is
+                // stored now, or switches it off when this send saw another service or model.
+                copy.auto = if copy.auto.is_some() { c.auto.clone() } else { None };
                 *c = copy;
-                Ok(turn)
+            }
+            _ => return Err(over()),
+        }
+        drop(stored);
+
+        // Automatic changes: the loop only proposed. What the user allowed is applied here, through
+        // the same path and checks as a tap, one at a time, and shown as done cards. Stop ends it,
+        // and what is left waits for a tap.
+        let mut done = 0;
+        let automatic = self.chat_lock().as_ref().is_some_and(|c| c.id == chat_id && c.automatic());
+        for proposal in turn.proposals.iter().filter(|_| automatic) {
+            if running.is_cancelled() || done >= chat::AUTO_PER_RUN {
+                break;
+            }
+            if !changes::automatic(&proposal.change, proposal.risk) {
+                continue;
+            }
+            done += 1;
+            let (result, left_open) = self.apply_entry(&proposal.id, true);
+            turn.automatic.push(match result {
+                Ok(applied) => AiAutoResult {
+                    proposal_id: proposal.id.clone(),
+                    applied: true,
+                    can_undo: applied.can_undo,
+                    left_open: false,
+                    message: String::new(),
+                },
+                Err(e) => AiAutoResult {
+                    proposal_id: proposal.id.clone(),
+                    applied: false,
+                    can_undo: false,
+                    left_open,
+                    message: e.to_string(),
+                },
+            });
+        }
+        Ok(turn)
+    }
+
+    /// Tells the chat which conversation it is about (`Some(thread id)`), or takes that back
+    /// (`None`). Only before the first message: the text goes to the service with it, once, and
+    /// what has been sent cannot be taken back (Invalid "start a new conversation..."). Reads the
+    /// cache (a body it lacks from the server) and sends nothing. The text is the one a thread
+    /// summary sends, within its limits, framed as data. Refused like a send when the chat is off
+    /// or not agreed to. Only the signed-in account's own mail can be named.
+    pub fn ai_chat_about(&self, chat_id: String, thread_id: Option<String>) -> Result<Option<AiAbout>> {
+        let account_id = self.account_id()?;
+        let settings = assistant::load(&self.store, &*self.secrets, &account_id)?;
+        assistant::check_chat(&settings)?;
+        let still_empty = |chat: &Option<Chat>| match chat {
+            Some(c) if c.id == chat_id && c.account_id == account_id => match c.turns.is_empty() {
+                true => Ok(()),
+                false => Err(Error::invalid("start a new conversation to ask about another mail")),
+            },
+            _ => Err(over()),
+        };
+        still_empty(&self.chat_lock())?;
+        let about = match thread_id {
+            None => None,
+            Some(thread_id) => {
+                let ((mails, earlier), subject) = self.thread_mails(&account_id, &thread_id)?;
+                let (block, messages, is_cut) = assistant::request::about_block(mails, earlier)?;
+                Some(chat::About { thread_id, subject, messages, is_cut, block })
+            }
+        };
+        let mut stored = self.chat_lock();
+        still_empty(&stored)?;
+        let shown = about.as_ref().map(|a| AiAbout {
+            thread_id: a.thread_id.clone(),
+            subject: a.subject.clone(),
+            messages: a.messages,
+            is_cut: a.is_cut,
+        });
+        if let Some(c) = stored.as_mut() {
+            c.about = about;
+        }
+        Ok(shown)
+    }
+
+    /// Switches automatic changes on or off for this chat. Its own call: nothing the model or a
+    /// mail says can reach it. On: suggestions to mark, star, tag, archive or move mail and to add
+    /// an entry to the user's own calendar are applied right away, each shown as done with an Undo;
+    /// anything else still asks. It holds for the service and model in use now, ends when either
+    /// changes, and with `ai_chat_new`, `ai_chat_close`, a reset and sign-out. Refused (Invalid)
+    /// unless the chat is on and agreed to, and actions are on ("ask first").
+    pub fn ai_chat_auto(&self, chat_id: String, on: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        let settings = assistant::load(&self.store, &*self.secrets, &account_id)?;
+        assistant::check_chat(&settings)?;
+        if on && settings.actions != AiActionMode::AskFirst {
+            return Err(Error::invalid("actions are switched off in the settings"));
+        }
+        let mut stored = self.chat_lock();
+        match stored.as_mut() {
+            Some(c) if c.id == chat_id && c.account_id == account_id => {
+                c.auto = on.then(|| origin_of(&settings));
+                Ok(())
             }
             _ => Err(over()),
         }
@@ -381,48 +484,7 @@ impl Core {
     /// "actions are switched off in the settings"; the chat gates are checked again. A failed event save
     /// leaves the suggestion open; a failed mail change closes it and keeps an Undo for what was done.
     pub fn ai_apply(&self, proposal_id: String) -> Result<AiApplied> {
-        // Asked before the chat is locked, so the two locks are never held together.
-        let signed_in = self.account_id().ok();
-        let (account_id, origin, change) = {
-            let mut chat = self.chat_lock();
-            let chat = chat.as_mut().filter(|c| Some(&c.account_id) == signed_in.as_ref()).ok_or_else(gone)?;
-            let (account_id, origin) = (chat.account_id.clone(), chat.origin.clone());
-            let entry = chat
-                .entries
-                .iter_mut()
-                .find(|e| e.proposal.id == proposal_id && e.state == State::Pending)
-                .ok_or_else(gone)?;
-            // Single use: a second tap finds it no longer pending.
-            entry.state = State::Applying;
-            (account_id, origin, entry.proposal.change.clone())
-        };
-        // Outside the lock, the gates again: what was allowed when it was suggested may not be now.
-        let allowed = assistant::load(&self.store, &*self.secrets, &account_id).and_then(|settings| {
-            assistant::check_chat(&settings)?;
-            if settings.actions != AiActionMode::AskFirst {
-                return Err(Error::invalid("actions are switched off in the settings"));
-            }
-            // A suggestion belongs to the service and model it was made with.
-            match origin == Some(origin_of(&settings)) {
-                true => Ok(()),
-                false => Err(gone()),
-            }
-        });
-        if let Err(e) = allowed {
-            self.settle(&proposal_id, State::Pending, None);
-            return Err(e);
-        }
-        let reader = CoreReader { core: self, account_id: account_id.clone() };
-        let writer = CoreWriter { core: self, account_id };
-        let applied = changes::apply(&reader, &writer, &change);
-        let (state, line) = match (&applied.result, &change) {
-            (Ok(_), _) => (State::Applied(applied.undo), Some("done")),
-            // Nothing was saved: the suggestion stays open and can be tried again.
-            (Err(_), AiChange::AddEvent { .. }) => (State::Pending, None),
-            (Err(_), _) => (State::Failed(applied.undo), Some("could not be done")),
-        };
-        self.settle(&proposal_id, state, line);
-        applied.result
+        self.apply_entry(&proposal_id, false).0
     }
 
     /// Marks it declined. Never fails, does not block.
@@ -475,6 +537,87 @@ impl Core {
 }
 
 impl Core {
+    /// The one way a suggestion is applied: a tap (`automatic` false) and the automatic changes
+    /// of a send (true) both come here, with the same gates. For an automatic one the chat must
+    /// still have automatic changes on for this service and model and the kind must be in
+    /// [`changes::automatic`], else it is left as it is (it waits for a tap) and the second value
+    /// says so (true: still open).
+    fn apply_entry(&self, proposal_id: &str, automatic: bool) -> (Result<AiApplied>, bool) {
+        // Asked before the chat is locked, so the two locks are never held together.
+        let signed_in = self.account_id().ok();
+        let claimed = (|| {
+            let mut chat = self.chat_lock();
+            let chat = chat.as_mut().filter(|c| Some(&c.account_id) == signed_in.as_ref()).ok_or_else(gone)?;
+            let (account_id, origin) = (chat.account_id.clone(), chat.origin.clone());
+            let allowed_alone = chat.automatic();
+            let entry = chat
+                .entries
+                .iter_mut()
+                .find(|e| e.proposal.id == proposal_id && e.state == State::Pending)
+                .ok_or_else(gone)?;
+            if automatic && !(allowed_alone && changes::automatic(&entry.proposal.change, entry.proposal.risk)) {
+                return Err(Error::invalid("this suggestion waits for the user"));
+            }
+            // Single use: a second tap finds it no longer pending.
+            entry.state = State::Applying;
+            Ok((account_id, origin, entry.proposal.change.clone()))
+        })();
+        let (account_id, origin, change) = match claimed {
+            Ok(claimed) => claimed,
+            Err(e) => return (Err(e), automatic),
+        };
+        let result = self.apply_claimed(proposal_id, account_id, origin, change, automatic);
+        let open = self
+            .chat_lock()
+            .as_ref()
+            .is_some_and(|c| c.entries.iter().any(|e| e.proposal.id == proposal_id && e.state == State::Pending));
+        (result, open)
+    }
+
+    fn apply_claimed(
+        &self,
+        proposal_id: &str,
+        account_id: String,
+        origin: Option<Origin>,
+        change: AiChange,
+        automatic: bool,
+    ) -> Result<AiApplied> {
+        // Outside the lock, the gates again: what was allowed when it was suggested may not be now.
+        let allowed = assistant::load(&self.store, &*self.secrets, &account_id).and_then(|settings| {
+            assistant::check_chat(&settings)?;
+            if settings.actions != AiActionMode::AskFirst {
+                return Err(Error::invalid("actions are switched off in the settings"));
+            }
+            // A suggestion belongs to the service and model it was made with.
+            match origin == Some(origin_of(&settings)) {
+                true => Ok(()),
+                false => Err(gone()),
+            }
+        });
+        if let Err(e) = allowed {
+            self.settle(proposal_id, State::Pending, None);
+            if automatic {
+                // The user's yes was for something that no longer holds.
+                if let Some(chat) = self.chat_lock().as_mut() {
+                    chat.auto = None;
+                }
+            }
+            return Err(e);
+        }
+        let reader = CoreReader { core: self, account_id: account_id.clone() };
+        let writer = CoreWriter { core: self, account_id };
+        let applied = changes::apply(&reader, &writer, &change);
+        let done = if automatic { "done automatically, as the user allowed" } else { "done" };
+        let (state, line) = match (&applied.result, &change) {
+            (Ok(_), _) => (State::Applied(applied.undo), Some(done)),
+            // Nothing was saved: the suggestion stays open and can be tried again.
+            (Err(_), AiChange::AddEvent { .. }) => (State::Pending, None),
+            (Err(_), _) => (State::Failed(applied.undo), Some("could not be done")),
+        };
+        self.settle(proposal_id, state, line);
+        applied.result
+    }
+
     fn chat_lock(&self) -> MutexGuard<'_, Option<Chat>> {
         self.chat.lock().unwrap_or_else(|e| e.into_inner())
     }

@@ -30,6 +30,8 @@ pub const USER_CHARS: usize = 4_000;
 /// Characters sent in total per send.
 pub const RUN_CHARS: usize = 600_000;
 pub const PROPOSALS_PER_RUN: usize = 5;
+/// With automatic changes on, so many suggestions per send; the rest of what a model asks for waits for a tap.
+pub const AUTO_PER_RUN: usize = 20;
 /// The most suggestions that wait for a tap; older ones are declined.
 pub const PENDING: usize = 20;
 /// The same call (name + arguments) this often ends the run.
@@ -71,6 +73,19 @@ pub enum State {
     Declined,
 }
 
+/// The conversation the chat was opened about: its text as the model gets it, with the first message.
+#[derive(Debug, Clone)]
+pub struct About {
+    pub thread_id: String,
+    pub subject: String,
+    /// Messages in `block`.
+    pub messages: u32,
+    /// Something was left out to stay within the limits.
+    pub is_cut: bool,
+    /// The framed, escaped text (a `<tool_result>`), data like every tool result.
+    pub block: String,
+}
+
 /// A suggestion and its state.
 #[derive(Debug, Clone)]
 pub struct Entry {
@@ -93,6 +108,11 @@ pub struct Chat {
     pub events: Vec<String>,
     /// The number of the next suggestion.
     pub next: u32,
+    /// Switched on by the user, for the service and model named here: suggestions of the kinds in
+    /// [`changes::automatic`] are applied by the core without a tap. Only `ai_chat_auto` sets it.
+    pub auto: Option<Origin>,
+    /// The conversation this chat is about, until the first message is sent.
+    pub about: Option<About>,
 }
 
 impl Chat {
@@ -106,7 +126,19 @@ impl Chat {
             entries: Vec::new(),
             events: Vec::new(),
             next: 1,
+            auto: None,
+            about: None,
         }
+    }
+
+    /// Automatic changes are on, for the service and model this chat is held with now.
+    pub fn automatic(&self) -> bool {
+        self.auto.is_some() && self.auto == self.origin
+    }
+
+    /// Whether the change of this suggestion is applied without a tap.
+    pub fn applies_itself(&self, proposal: &AiProposal) -> bool {
+        self.automatic() && changes::automatic(&proposal.change, proposal.risk)
     }
 }
 
@@ -264,7 +296,13 @@ fn drive(
     let text = check_text(text)?;
     // Escaped text is at most four times as long (`<` becomes `&lt;`), so nothing is cut here.
     let (escaped, _) = prompts::escape_cut(text, USER_CHARS * 4);
-    let mut user = prompts::events_frame(&chat.events);
+    let mut user = String::new();
+    // The conversation the chat is about goes in front of the first message, framed as data.
+    if let (true, Some(about)) = (chat.turns.is_empty(), &chat.about) {
+        user.push_str(&about.block);
+        user.push_str("\n\n");
+    }
+    user.push_str(&prompts::events_frame(&chat.events));
     user.push_str(USER_OPEN);
     user.push_str(&escaped);
     user.push_str(USER_CLOSE);
@@ -278,6 +316,7 @@ fn drive(
         steps: 0,
         end: AiChatEnd::Answered,
         tools_off: chat.tools_off,
+        automatic: Vec::new(),
     };
     // How often each call (name + arguments) was asked for in this run.
     let mut asked: HashMap<(String, String), usize> = HashMap::new();
@@ -285,7 +324,8 @@ fn drive(
     let mut requests = 0u32;
     out.end = loop {
         let specs = if chat.tools_off { Vec::new() } else { toolbox.specs() };
-        let system = prompts::chat_system(today, env.zone, env.actions, chat.tools_off);
+        let auto = chat.automatic() && env.actions == AiActionMode::AskFirst;
+        let system = prompts::chat_system(today, env.zone, env.actions, chat.tools_off, chat.about.is_some(), auto);
         let fixed = chars(&system) + specs_chars(&specs);
         if !fit(&mut chat.turns, fixed) {
             break AiChatEnd::SizeLimit;
@@ -355,7 +395,7 @@ fn drive(
                     (sentence, false)
                 }
                 Outcome::Proposal(..) if env.actions != AiActionMode::AskFirst => (NO_CHANGES.to_string(), true),
-                Outcome::Proposal(..) if out.proposals.len() >= PROPOSALS_PER_RUN => {
+                Outcome::Proposal(..) if out.proposals.len() >= proposals_per_run(chat) => {
                     (TOO_MANY_PROPOSALS.to_string(), true)
                 }
                 Outcome::Proposal(change, sentence) => {
@@ -389,12 +429,24 @@ fn drive(
     Ok(out)
 }
 
+fn proposals_per_run(chat: &Chat) -> usize {
+    if chat.automatic() {
+        AUTO_PER_RUN
+    } else {
+        PROPOSALS_PER_RUN
+    }
+}
+
 /// At most [`PENDING`] suggestions wait for a tap: the oldest beyond that are declined, and the
 /// model is told so with the next message.
 fn withdraw_oldest(chat: &mut Chat, out: &mut AiChatTurn) {
-    let pending = chat.entries.iter().filter(|e| e.state == State::Pending).count();
+    // What the core is about to apply by itself does not wait for a tap, so it is not withdrawn.
+    let auto = chat.automatic();
+    let waits =
+        |e: &Entry| e.state == State::Pending && !(auto && changes::automatic(&e.proposal.change, e.proposal.risk));
+    let pending = chat.entries.iter().filter(|e| waits(e)).count();
     let mut over = pending.saturating_sub(PENDING);
-    for entry in chat.entries.iter_mut().filter(|e| e.state == State::Pending) {
+    for entry in chat.entries.iter_mut().filter(|e| waits(e)) {
         if over == 0 {
             break;
         }
@@ -625,7 +677,7 @@ mod tests {
         assert_eq!(model.sent[0].tools, ["look"]);
         assert_eq!(
             model.sent[0].system,
-            prompts::chat_system("2026-11-15, Sunday", "UTC", AiActionMode::AskFirst, false)
+            prompts::chat_system("2026-11-15, Sunday", "UTC", AiActionMode::AskFirst, false, false, false)
         );
     }
 
@@ -966,7 +1018,7 @@ mod tests {
         assert!(model.sent[0].tools.is_empty());
         assert_eq!(
             model.sent[0].system,
-            prompts::chat_system("2026-11-15, Sunday", "UTC", AiActionMode::AskFirst, true)
+            prompts::chat_system("2026-11-15, Sunday", "UTC", AiActionMode::AskFirst, true, false, false)
         );
     }
 

@@ -252,7 +252,11 @@ pub enum Ai {
     ChatConsent {
         agree: Option<bool>,
     },
-    Chat,
+    /// `about`: a conversation (thread id) to attach; `auto`: switch automatic changes on for the chat.
+    Chat {
+        about: Option<String>,
+        auto: bool,
+    },
 }
 
 /// The switches of stages 2 to 4 as `kweb ai set` was given them; `None` keeps what is stored.
@@ -774,7 +778,7 @@ fn ai(rest: &[String]) -> Result<Ai, String> {
             "ideas" => one_arg("ai ideas", "message-id", rest).map(|id| Ai::Ideas { id }),
             "found" => one_arg("ai found", "message-id", rest).map(|id| Ai::Found { id }),
             "explain" => ai_explain(rest),
-            "chat" => no_args(rest, Command::Status).map(|_| Ai::Chat),
+            "chat" => ai_chat(rest),
             "chat-consent" => match rest {
                 [] => Ok(Ai::ChatConsent { agree: None }),
                 [one] => match one.to_ascii_lowercase().as_str() {
@@ -798,6 +802,23 @@ fn ai(rest: &[String]) -> Result<Ai, String> {
 const AI_COMMANDS: &str = "status, set, models, summary, ideas, found, explain, chat-consent or chat";
 
 /// A message id, or `--text` and the words after it as one text (so quotes are optional).
+fn ai_chat(rest: &[String]) -> Result<Ai, String> {
+    let (mut about, mut auto) = (None, false);
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--about" => match args.next() {
+                Some(id) if !id.starts_with("--") && about.is_none() => about = Some(id.clone()),
+                Some(_) | None => return Err("--about needs one conversation (thread) id".into()),
+            },
+            "--auto" => auto = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option '{}'", option_name(flag))),
+            extra => return Err(format!("unexpected argument '{extra}'")),
+        }
+    }
+    Ok(Ai::Chat { about, auto })
+}
+
 fn ai_explain(rest: &[String]) -> Result<Ai, String> {
     match rest {
         [] => Err("ai explain needs a <message-id>, or --text and the words to explain".into()),
@@ -1112,7 +1133,15 @@ mod tests {
             p(&["ai", "explain", "--text", "pro", "rata", "temporis"]),
             Ok(Command::Ai(Ai::Explain { id: None, text: "pro rata temporis".into() }))
         );
-        assert_eq!(p(&["ai", "chat"]), Ok(Command::Ai(Ai::Chat)));
+        assert_eq!(p(&["ai", "chat"]), Ok(Command::Ai(Ai::Chat { about: None, auto: false })));
+        assert_eq!(
+            p(&["ai", "chat", "--about", "t1", "--auto"]),
+            Ok(Command::Ai(Ai::Chat { about: Some("t1".into()), auto: true }))
+        );
+        assert!(p(&["ai", "chat", "--about"]).is_err());
+        assert!(p(&["ai", "chat", "--about", "--auto"]).is_err());
+        assert!(p(&["ai", "chat", "--bogus"]).is_err());
+        assert!(p(&["ai", "chat", "extra"]).is_err());
         assert_eq!(p(&["ai", "chat-consent"]), Ok(Command::Ai(Ai::ChatConsent { agree: None })));
         assert_eq!(p(&["ai", "chat-consent", "Yes"]), Ok(Command::Ai(Ai::ChatConsent { agree: Some(true) })));
         assert_eq!(p(&["ai", "chat-consent", "no"]), Ok(Command::Ai(Ai::ChatConsent { agree: Some(false) })));
