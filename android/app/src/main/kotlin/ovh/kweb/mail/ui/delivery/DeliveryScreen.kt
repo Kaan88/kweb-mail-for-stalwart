@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -91,7 +90,6 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 import androidx.compose.ui.text.toUpperCase
 import ovh.kweb.mail.R
-import ovh.kweb.mail.ui.theme.KwebSwitch
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.background.DeliveryMode
 import ovh.kweb.mail.background.ModeRules
@@ -115,7 +113,7 @@ private class CheckItem(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryViewModel = viewModel()) {
+fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, onOpenNotifications: () -> Unit, vm: DeliveryViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val now by rememberNowMillis()
     val resources = LocalResources.current
@@ -179,9 +177,21 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
             items.forEach { CheckRow(it) }
             GoogleModeSection(state.push, now, vm::askGoogleMode)
             SectionTitle(stringResource(R.string.delivery_what_to_show))
-            SwitchRow(stringResource(R.string.delivery_show_mail), state.mailEnabled, vm::setMailEnabled)
-            SwitchRow(stringResource(R.string.delivery_show_reminders), state.remindersEnabled, vm::setRemindersEnabled)
-            SwitchRow(stringResource(R.string.delivery_remove_elsewhere), state.removeWhenReadElsewhere, vm::setRemoveWhenReadElsewhere)
+            // The switches live on the Notifications screen (one place, one state); this row leads there.
+            Row(
+                Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onOpenNotifications).heightIn(min = 52.dp).padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.notifications_title), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.delivery_open_notifications),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Button(
                 onClick = vm::sendTestNotification,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp).height(52.dp),
@@ -493,25 +503,6 @@ private fun SectionTitle(text: String) {
         letterSpacing = 0.8.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-}
-
-@Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        KwebSwitch(
-            checked = checked,
-            onCheckedChange = null,
-        )
-    }
 }
 
 /** The question before signing out, shared with the Settings screen. */

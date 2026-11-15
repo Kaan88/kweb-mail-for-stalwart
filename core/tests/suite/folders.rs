@@ -12,7 +12,7 @@ use crate::support::{MockServer, ARCHIVE_ID, DRAFTS_ID, INBOX_ID, JUNK_ID, SENT_
 use kweb_core::{
     ffi::{Core, Shade},
     model::{Action, ConnectionStatus, Mailbox, Reminder},
-    notify::Plan,
+    notify::{AddressMode, Plan},
     push::Listener,
     secrets::MemorySecrets,
     Error,
@@ -898,4 +898,59 @@ fn blocking_leaves_the_notification_like_any_message_that_goes_to_the_trash() {
     assert_eq!(posted(&rig.sync()), [id.as_str()]);
     rig.core.block_sender(id.clone()).unwrap();
     assert_eq!(cancelled(&rig.sync()), [id.as_str()]);
+}
+
+// ---- notifications per receiving address ---------------------------------------------------
+
+/// A rig whose account has the addresses me@ and work@ (the mock's identities), synced once.
+fn addressed() -> Rig {
+    Rig::build(|server| {
+        server.set_identities(&[("i1", "Me", "me@example.test", ""), ("i2", "Work", "work@example.test", "")])
+    })
+}
+
+fn to_address(rig: &Rig, subject: &str, to: &[&str]) -> String {
+    let id = rig.server.deliver("Dora", "dora@example.test", subject, "preview");
+    let to: Vec<(&str, &str)> = to.iter().map(|e| ("", *e)).collect();
+    rig.server.set_recipients(&id, &to, &[]);
+    id
+}
+
+#[test]
+fn the_addresses_are_listed_with_their_choice_and_a_stranger_is_refused() {
+    let rig = addressed();
+    let list = rig.core.address_notify().unwrap();
+    let got: Vec<(&str, AddressMode)> = list.iter().map(|c| (c.address.as_str(), c.mode)).collect();
+    assert_eq!(got, [("me@example.test", AddressMode::Notify), ("work@example.test", AddressMode::Notify)]);
+    rig.core.set_address_notify("WORK@example.test".into(), AddressMode::Silent).unwrap();
+    assert_eq!(rig.core.address_notify().unwrap()[1].mode, AddressMode::Silent);
+    let refused = rig.refusal(rig.core.set_address_notify("nobody@example.test".into(), AddressMode::Off));
+    assert!(refused.contains("not one of this account's addresses"), "{refused}");
+}
+
+#[test]
+fn mail_to_a_silent_address_is_posted_quietly_and_other_mail_is_not() {
+    let rig = addressed();
+    rig.core.set_address_notify("work@example.test".into(), AddressMode::Silent).unwrap();
+    let quiet = to_address(&rig, "q", &["work+x@example.test"]);
+    let loud = to_address(&rig, "l", &["s@else.test"]);
+    let plan = rig.sync();
+    let by_id = |id: &str| plan.post.iter().find(|n| n.message_id == id).map(|n| n.quiet);
+    assert_eq!(by_id(&quiet), Some(true), "{plan:?}");
+    assert_eq!(by_id(&loud), Some(false), "a mail to no address of mine notifies");
+}
+
+#[test]
+fn switching_an_address_off_withdraws_its_notification_and_on_again_brings_it_back() {
+    let rig = addressed();
+    let id = to_address(&rig, "m", &["me@example.test"]);
+    assert_eq!(posted(&rig.sync()), [id.as_str()]);
+    rig.core.set_address_notify("me@example.test".into(), AddressMode::Off).unwrap();
+    // With no listener the cancel is left to the next pass.
+    assert_eq!(cancelled(&rig.sync()), [id.as_str()]);
+    let later = to_address(&rig, "n", &["me@example.test"]);
+    assert!(rig.sync().is_empty(), "a mail to an address that is off is not shown");
+    rig.core.notification_swiped(later.clone()).unwrap();
+    rig.core.set_address_notify("me@example.test".into(), AddressMode::Notify).unwrap();
+    assert_eq!(posted(&rig.sync()), [id.as_str()], "the unread one is back; the swiped one is not");
 }

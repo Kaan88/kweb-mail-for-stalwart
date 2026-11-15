@@ -192,7 +192,7 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
     }
 
     fun sendTestNotification() {
-        val delivered = Notifier(getApplication()).sendTest()
+        val delivered = Notifier(getApplication()).sendTest(session.record)
         if (!delivered) messageChannel.trySend(R.string.delivery_test_off)
     }
 

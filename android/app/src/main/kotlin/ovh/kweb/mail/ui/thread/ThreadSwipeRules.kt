@@ -3,6 +3,7 @@ package ovh.kweb.mail.ui.thread
 import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.list.ListRules
 import ovh.kweb.mail.ui.list.MailListState
+import ovh.kweb.mail.ui.list.SubfolderRules
 
 /**
  * The conversations a thread screen can page through: the order of the list it was opened from (folder, chip, search results),
@@ -19,7 +20,15 @@ object ThreadSwipeRules {
         val more: Boolean = false,
         /** The folder the conversations are in: what a thread opened from here acts on (null for a search). */
         val folderId: String? = null,
+        /**
+         * In a list that covers a folder and its subfolders: the folder each conversation (by id) is shown in, which is what
+         * its page acts on. A conversation not named here is in [folderId].
+         */
+        val folders: Map<String, String> = emptyMap(),
     ) {
+        /** The folder the page of [threadId] opens with. */
+        fun folderOf(threadId: String): String? = folders[threadId] ?: folderId
+
         companion object {
             val EMPTY = Listing(emptyList())
         }
@@ -51,7 +60,12 @@ object ThreadSwipeRules {
         if (!state.loaded || ListRules.opensCompose(current.role)) return Listing.EMPTY
         // The same test as the list's own loading of more: more of the cache, or older mail the server may still have.
         val more = state.rows.size >= state.limit || !(state.olderStopped || state.olderPaused)
-        return Listing(state.rows.map { it.newest.threadId }.distinct(), more, current.id)
+        val folders = if (SubfolderRules.isCombined(state.scope)) {
+            state.rows.associate { it.newest.threadId to SubfolderRules.openFrom(it, current.id, state.mailboxes, state.scope) }
+        } else {
+            emptyMap()
+        }
+        return Listing(state.rows.map { it.newest.threadId }.distinct(), more, current.id, folders)
     }
 
     /** The conversations of a search, each once: the results are messages, and several can be of one thread. A search cannot load more. */

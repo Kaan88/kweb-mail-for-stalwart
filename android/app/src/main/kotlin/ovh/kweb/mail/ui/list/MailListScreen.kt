@@ -299,9 +299,15 @@ fun MailListScreen(
                 username = state.username,
                 folders = folders,
                 currentId = current?.id,
+                combinedId = current?.id?.takeIf { SubfolderRules.isCombined(state.scope) },
+                allFolders = state.mailboxes,
                 onFolder = {
                     scope.launch { drawerState.close() }
                     vm.selectFolder(it)
+                },
+                onSubfolders = { folder, with ->
+                    scope.launch { drawerState.close() }
+                    vm.selectFolder(folder.id, withSubfolders = with)
                 },
                 onFolderMenu = { folder, item ->
                     scope.launch { drawerState.close() }
@@ -385,7 +391,11 @@ fun MailListScreen(
                             )
                         }
                     }
-                    FilterChips(current?.let { folderName(it) }, state.filter, vm::selectFilter)
+                    FilterChips(
+                        current?.let { if (SubfolderRules.isCombined(state.scope)) stringResource(R.string.list_with_subfolders, folderName(it)) else folderName(it) },
+                        state.filter,
+                        vm::selectFilter,
+                    )
                 }
             },
             bottomBar = bottomBar,
@@ -437,6 +447,11 @@ fun MailListScreen(
                                     shape = Groups.shape(index, state.rows.size),
                                     role = current?.role,
                                     labelNames = LabelRules.namesOfAny(row.messageIds, labels.byMessage, labels.labels),
+                                    folder = if (current != null && SubfolderRules.isCombined(state.scope)) {
+                                        SubfolderRules.rowFolder(row, current.id, state.mailboxes, state.scope)?.let { folderName(it) }
+                                    } else {
+                                        null
+                                    },
                                     selecting = selecting,
                                     selected = SelectionRules.key(row) in state.selection,
                                     onToggleSelect = { vm.toggleSelected(SelectionRules.key(row)) },
@@ -445,7 +460,7 @@ fun MailListScreen(
                                             if (ListRules.opensCompose(it.role)) {
                                                 vm.startDraft(DraftKind.Existing(row.newest.id))
                                             } else {
-                                                onOpenThread(row.newest.threadId, it.id)
+                                                onOpenThread(row.newest.threadId, SubfolderRules.openFrom(row, it.id, state.mailboxes, state.scope))
                                             }
                                         }
                                     },
@@ -477,7 +492,8 @@ fun MailListScreen(
     if (moving) {
         MoveDialog(
             folders = folders,
-            exclude = current?.id,
+            // Chosen rows of a combined list sit in different folders: any folder may be the target, the parent included.
+            exclude = current?.id?.takeIf { !SubfolderRules.isCombined(state.scope) },
             onPick = {
                 moving = false
                 vm.moveSelected(it.id)
@@ -649,7 +665,10 @@ private fun DrawerContent(
     username: String,
     folders: List<FolderEntry>,
     currentId: String?,
+    combinedId: String?,
+    allFolders: List<Mailbox>,
     onFolder: (String) -> Unit,
+    onSubfolders: (Mailbox, Boolean) -> Unit,
     onFolderMenu: (Mailbox, FolderMenuItem) -> Unit,
     onManageFolders: () -> Unit,
     labels: List<Label>,
@@ -678,7 +697,8 @@ private fun DrawerContent(
                 val bell = FolderRules.showsDrawerBell(folder)
                 var menuOpen by remember { mutableStateOf(false) }
                 val shareable = ShareRules.mailboxShareable(folder.role)
-                val hasMenu = shareable || FolderRules.menu(folder, withBell = true).isNotEmpty()
+                val subfolders = SubfolderRules.offered(allFolders, folder.id)
+                val hasMenu = shareable || subfolders || FolderRules.menu(folder, withBell = true).isNotEmpty()
                 val shareName = folderName(folder)
                 Box {
                     NavigationDrawerItem(
@@ -716,13 +736,24 @@ private fun DrawerContent(
                             withBell = true,
                             expanded = menuOpen,
                             onDismiss = { menuOpen = false },
-                            extra = if (shareable) {
+                            extra = if (shareable || subfolders) {
                                 {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.share_menu)) },
-                                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
-                                        onClick = { menuOpen = false; openShare(ShareKind.MAILBOX, folder.id, shareName) },
-                                    )
+                                    if (subfolders) {
+                                        // The list of this folder shows its subfolders too: the entry then takes them away again.
+                                        val combined = folder.id == combinedId
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(if (combined) R.string.list_without_subfolders else R.string.list_show_subfolders)) },
+                                            leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
+                                            onClick = { menuOpen = false; onSubfolders(folder, !combined) },
+                                        )
+                                    }
+                                    if (shareable) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.share_menu)) },
+                                            leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                                            onClick = { menuOpen = false; openShare(ShareKind.MAILBOX, folder.id, shareName) },
+                                        )
+                                    }
                                 }
                             } else {
                                 null
@@ -912,6 +943,7 @@ private fun ConversationItem(
     shape: Shape,
     role: String?,
     labelNames: List<String>,
+    folder: String?,
     selecting: Boolean,
     selected: Boolean,
     onToggleSelect: () -> Unit,
@@ -966,7 +998,7 @@ private fun ConversationItem(
         },
     ) {
         MailRow(
-            rowContent(row, role, labelNames),
+            rowContent(row, role, labelNames, folder),
             onClick = if (SelectionRules.tap(selecting) == SelectionRules.Tap.TOGGLE) onToggleSelect else onOpen,
             shape = shape,
             onLongClick = onToggleSelect,
@@ -1067,7 +1099,7 @@ private fun MenuItem(textRes: Int, icon: @Composable () -> Unit, onClick: () -> 
 
 /** A conversation as a row. Sent and Drafts show who it went to instead of who sent it. */
 @Composable
-private fun rowContent(row: ThreadRow, role: String?, labelNames: List<String>): RowContent {
+private fun rowContent(row: ThreadRow, role: String?, labelNames: List<String>, folder: String?): RowContent {
     val newest = row.newest
     val toYou = role == "sent" || role == "drafts"
     val unknown = stringResource(R.string.list_unknown_sender)
@@ -1093,6 +1125,7 @@ private fun rowContent(row: ThreadRow, role: String?, labelNames: List<String>):
         flagged = row.isFlagged,
         hasAttachment = row.hasAttachment,
         labels = labelNames,
+        folder = folder,
     )
 }
 

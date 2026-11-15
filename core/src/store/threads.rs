@@ -7,20 +7,25 @@ use crate::Result;
 use rusqlite::params;
 use std::collections::HashMap;
 
-/// The cached messages of one mailbox with the key of their thread (a message without a
-/// thread id is its own thread). Takes `?1` = account id and `?2` = mailbox id.
+/// The cached messages of a set of mailboxes (a message in several of them counts once) with the
+/// key of their thread (a message without a thread id is its own thread). Takes `?1` = account id
+/// and `?2` = the mailbox ids as a JSON array.
 const CANDIDATES: &str = "
     candidates AS (
         SELECT m.id, m.from_name, m.from_email, m.received_at, m.is_unread, m.is_flagged, m.has_attachment,
                CASE WHEN m.thread_id = '' THEN 'm:' || m.id ELSE 't:' || m.thread_id END AS k
         FROM messages m
-        JOIN message_mailboxes mm ON mm.account_id = m.account_id AND mm.message_id = m.id
-        WHERE m.account_id = ?1 AND mm.mailbox_id = ?2
+        WHERE m.account_id = ?1 AND EXISTS (
+            SELECT 1 FROM message_mailboxes mm
+            WHERE mm.account_id = m.account_id AND mm.message_id = m.id
+              AND mm.mailbox_id IN (SELECT value FROM json_each(?2)))
     )";
 
-/// Where the mailbox's window ends; the smallest number when the whole mailbox is cached.
+/// Where the set's window ends: the latest end among its mailboxes (the list is gap-free only
+/// from there on); the smallest number when every mailbox of the set is cached whole.
 const WINDOW: &str = "COALESCE(
-    (SELECT oldest FROM mailbox_windows w WHERE w.account_id = ?1 AND w.mailbox_id = ?2), -9223372036854775808)";
+    (SELECT MAX(w.oldest) FROM mailbox_windows w
+     WHERE w.account_id = ?1 AND w.mailbox_id IN (SELECT value FROM json_each(?2))), -9223372036854775808)";
 
 fn filter_code(filter: ListFilter) -> u32 {
     match filter {
@@ -67,6 +72,22 @@ impl Store {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<ThreadRow>> {
+        self.list_threads_in(account_id, &[mailbox_id.to_string()], filter, limit, offset)
+    }
+
+    /// Like [`Store::list_threads`] for the mail of several mailboxes at once (a folder and the
+    /// folders inside it): a message in more than one of them is listed once, and the list
+    /// reaches back as far as every one of the mailboxes is cached without gaps.
+    pub fn list_threads_in(
+        &self,
+        account_id: &str,
+        mailbox_ids: &[String],
+        filter: ListFilter,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ThreadRow>> {
+        let mailbox_id = serde_json::to_string(mailbox_ids).map_err(|e| crate::Error::store(e.to_string()))?;
+        let mailbox_id = mailbox_id.as_str();
         self.read(|c| {
             // The newest message of each thread of the page, and what the whole thread adds up to.
             let page_sql = format!(

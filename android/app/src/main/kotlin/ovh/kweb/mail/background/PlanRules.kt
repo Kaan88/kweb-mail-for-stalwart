@@ -17,11 +17,12 @@ internal fun Plan.honouring(mailEnabled: Boolean, removeWhenReadElsewhere: Boole
 )
 
 /**
- * Whether a posting must be silent. Besides what the core says, a notification that is already
- * on screen is only refreshed (a pass whose picture of the shade was a moment old posts it again).
+ * Whether a posting must be silent. Besides what the core says (the mail was announced already, or it came to
+ * an address the user chose "silent" for), a notification that is already on screen is only refreshed (a pass
+ * whose picture of the shade was a moment old posts it again).
  */
 internal fun isSilent(notification: MailNotification, onScreen: Set<Int>): Boolean =
-    notification.silent || notification.androidId in onScreen
+    notification.silent || notification.quiet || notification.androidId in onScreen
 
 /** The Android ids of mail notifications that will be on screen once [plan] has been applied. */
 internal fun idsAfter(onScreen: Set<Int>, plan: Plan): Set<Int> =

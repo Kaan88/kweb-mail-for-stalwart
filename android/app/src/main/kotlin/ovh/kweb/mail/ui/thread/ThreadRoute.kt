@@ -167,7 +167,7 @@ fun ThreadRoute(
         key = { index -> pagesNow.getOrElse(index) { "gone-$index" } },
     ) { index ->
         val id = pagesNow.getOrNull(index) ?: return@HorizontalPager
-        val pageRoute = if (id == route.threadId) route else Route.Thread(id, listing.folderId ?: route.mailboxId, null)
+        val pageRoute = if (id == route.threadId) route else Route.Thread(id, listing.folderOf(id) ?: route.mailboxId, null)
         val vm = remember(id, holder) { holder.threadModel(pageRoute) }
         // Stepping for those who cannot drag: the actions TalkBack offers on the subject.
         val steps = buildList {

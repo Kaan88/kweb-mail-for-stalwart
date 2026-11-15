@@ -427,6 +427,71 @@ fn rows(st: &Store, mailbox: &str, filter: ListFilter, limit: u32, offset: u32) 
     st.list_threads(A, mailbox, filter, limit, offset).unwrap()
 }
 
+fn rows_in(st: &Store, boxes: &[&str], filter: ListFilter, limit: u32, offset: u32) -> Vec<ThreadRow> {
+    st.list_threads_in(A, &strs(boxes), filter, limit, offset).unwrap()
+}
+
+#[test]
+fn a_list_over_several_mailboxes_mixes_them_newest_first_and_counts_a_thread_once() {
+    let st = s();
+    st.upsert_messages(
+        A,
+        &[
+            msg("parent", &["work"], 10, true),
+            msg("child", &["work/a"], 30, false),
+            msg("grand", &["work/a/b"], 20, true),
+            msg("both", &["work", "work/a"], 40, true),
+            msg("elsewhere", &["inbox"], 50, true),
+            plain(msg("old", &["work"], 5, true)),
+        ],
+    )
+    .unwrap();
+    let all = ["work", "work/a", "work/a/b"];
+    assert_eq!(newest_ids(&rows_in(&st, &all, ListFilter::All, 50, 0)), ["both", "child", "grand", "parent", "old"]);
+    // One mailbox gives what it always gave.
+    assert_eq!(
+        newest_ids(&rows_in(&st, &["work"], ListFilter::All, 50, 0)),
+        newest_ids(&rows(&st, "work", ListFilter::All, 50, 0))
+    );
+    // The filter and the paging work over the whole set.
+    assert_eq!(newest_ids(&rows_in(&st, &all, ListFilter::Unread, 50, 0)), ["both", "grand", "parent", "old"]);
+    assert_eq!(newest_ids(&rows_in(&st, &all, ListFilter::All, 2, 1)), ["child", "grand"]);
+    // A thread with a message in the set and one outside it is made of the part in the set.
+    let mut reply = msg("reply", &["work/a"], 60, true);
+    reply.thread_id = "t-elsewhere".into();
+    let mut first = msg("elsewhere", &["inbox"], 50, true);
+    first.thread_id = "t-elsewhere".into();
+    st.upsert_messages(A, &[first, reply]).unwrap();
+    let got = rows_in(&st, &all, ListFilter::All, 50, 0);
+    assert_eq!(got[0].newest.id, "reply");
+    assert_eq!(got[0].message_ids, ["reply"]);
+}
+
+#[test]
+fn the_window_of_a_set_is_the_latest_end_of_its_mailboxes() {
+    let st = s();
+    let msgs: Vec<_> = (1..=6)
+        .map(|i| msg(&format!("w{i}"), &["work"], i * 10, true))
+        .chain((1..=6).map(|i| msg(&format!("a{i}"), &["work/a"], i * 10 + 5, true)))
+        .collect();
+    st.upsert_messages(A, &msgs).unwrap();
+    let both = strs(&["work", "work/a"]);
+    assert_eq!(st.window_limit(A, &both).unwrap(), None, "both cached whole");
+    st.set_window(A, "work", 30).unwrap();
+    st.set_window(A, "work/a", 45).unwrap();
+    // The folder that is cached the shorter way back limits the list.
+    assert_eq!(st.window_limit(A, &both).unwrap(), Some(("work/a".to_string(), 45)));
+    assert_eq!(st.window_limit(A, &strs(&["work"])).unwrap(), Some(("work".to_string(), 30)));
+    assert_eq!(
+        newest_ids(&rows_in(&st, &both.iter().map(String::as_str).collect::<Vec<_>>(), ListFilter::All, 50, 0)),
+        ["a6", "w6", "a5", "w5", "a4"]
+    );
+    st.clear_window(A, "work/a").unwrap();
+    assert_eq!(st.window_limit(A, &both).unwrap(), Some(("work".to_string(), 30)));
+    let got = rows_in(&st, &["work", "work/a"], ListFilter::All, 50, 0);
+    assert_eq!(newest_ids(&got), ["a6", "w6", "a5", "w5", "a4", "w4", "a3", "w3"]);
+}
+
 fn newest_ids(rows: &[ThreadRow]) -> Vec<&str> {
     rows.iter().map(|r| r.newest.id.as_str()).collect()
 }

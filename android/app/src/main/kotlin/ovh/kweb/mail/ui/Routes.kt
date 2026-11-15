@@ -115,6 +115,9 @@ sealed interface Route {
 
     data object DeliveryCheck : Route
 
+    /** What notifies and how, per account and per address of the account, reached from Settings and the Delivery check. */
+    data object Notifications : Route
+
     /** Which buttons a mail notification of the account has, reached from Settings. */
     data object NotificationButtons : Route
 

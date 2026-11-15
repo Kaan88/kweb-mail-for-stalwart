@@ -47,6 +47,23 @@ class ThreadSwipeRulesTest {
         assertEquals("m1", listing.folderId)
     }
 
+    @Test fun inAListWithSubfoldersEachPageOpensWithItsOwnFolder() {
+        val boxes = listOf(box("inbox"), Mailbox("sub", "Sub", null, "m1", 0u, 0u, 0u, false))
+        fun inFolder(threadId: String, folder: String) = row(threadId).let {
+            it.copy(newest = it.newest.copy(mailboxIds = listOf(folder)))
+        }
+        val s = MailListState(
+            current = boxes[0], mailboxes = boxes, scope = listOf("m1", "sub"), loaded = true,
+            rows = listOf(inFolder("a", "m1"), inFolder("b", "sub")),
+        )
+        val listing = ThreadSwipeRules.listing(s)
+        assertEquals("m1", listing.folderOf("a"))
+        assertEquals("sub", listing.folderOf("b"))
+        // A list of one folder names no folders: every page opens with the folder.
+        assertEquals("m1", ThreadSwipeRules.listing(state("a", "b")).folderOf("b"))
+        assertNull(ThreadSwipeRules.searchListing(listOf("a")).folderOf("a"))
+    }
+
     @Test fun aFolderThatOpensForEditingOrIsNotReadHasNoOrder() {
         assertEquals(ThreadSwipeRules.Listing.EMPTY, ThreadSwipeRules.listing(state("a", role = "drafts")))
         assertEquals(ThreadSwipeRules.Listing.EMPTY, ThreadSwipeRules.listing(state("a", loaded = false)))

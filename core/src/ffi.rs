@@ -379,6 +379,38 @@ impl Core {
         self.store.list_threads(&self.account_id()?, &mailbox_id, filter, limit, offset)
     }
 
+    /// The conversations of several mailboxes at once, newest first: a folder and the folders
+    /// inside it. A conversation counts once however many of them it is in, and only the part
+    /// that every one of the mailboxes holds without gaps is listed ([`Core::load_older_in`]
+    /// extends it). At least one and at most 500 mailboxes, else `Error::Invalid`.
+    pub fn threads_in(
+        &self,
+        mailbox_ids: Vec<String>,
+        filter: ListFilter,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<ThreadRow>> {
+        check_mailbox_set(&mailbox_ids)?;
+        self.store.list_threads_in(&self.account_id()?, &mailbox_ids, filter, limit, offset)
+    }
+
+    /// Whether the server may have older mail in one of these mailboxes than the cache lists.
+    pub fn has_older_in(&self, mailbox_ids: Vec<String>) -> Result<bool> {
+        check_mailbox_set(&mailbox_ids)?;
+        Ok(self.store.window_limit(&self.account_id()?, &mailbox_ids)?.is_some())
+    }
+
+    /// Fetches the next older page into the cache for the mailbox of the set that limits the
+    /// list (network), then says whether any mailbox of the set may still have older mail.
+    pub fn load_older_in(&self, mailbox_ids: Vec<String>) -> Result<bool> {
+        check_mailbox_set(&mailbox_ids)?;
+        let account_id = self.account_id()?;
+        let Some((limiting, _)) = self.store.window_limit(&account_id, &mailbox_ids)? else { return Ok(false) };
+        let (store, account, mailbox) = (&self.store, &account_id, &limiting);
+        self.with_connection(|conn| async move { sync::load_older(&conn, store, account, mailbox).await })?;
+        Ok(self.store.window_limit(&account_id, &mailbox_ids)?.is_some())
+    }
+
     /// Whether the server may have older mail in this mailbox than the cache lists. From the cache.
     pub fn has_older(&self, mailbox_id: String) -> Result<bool> {
         Ok(self.store.get_window(&self.account_id()?, &mailbox_id)?.is_some())
@@ -1031,6 +1063,17 @@ fn stored_client(store: &Store, account_id: &str) -> Result<Option<OAuthClient>>
     // An unreadable entry is treated as none: the user signs in again.
     Ok(store.kv_get(account_id, OAUTH_CLIENT_KEY)?.and_then(|json| serde_json::from_str(&json).ok()))
 }
+
+/// A set of mailboxes for a combined list: not empty, not absurdly big.
+fn check_mailbox_set(ids: &[String]) -> Result<()> {
+    if ids.is_empty() || ids.len() > MAX_MAILBOX_SET {
+        return Err(Error::invalid("A list needs between 1 and 500 folders."));
+    }
+    Ok(())
+}
+
+/// The most folders one combined list may span.
+const MAX_MAILBOX_SET: usize = 500;
 
 fn not_signed_in() -> Error {
     Error::sign_in_needed("not signed in")
@@ -1918,6 +1961,32 @@ impl Core {
         if !notify {
             self.replan_from_cache()?;
         }
+        self.poke();
+        Ok(())
+    }
+
+    /// The user's own addresses (the identities, from the cache) with what happens to mail that
+    /// came to each: notify (the default), notify without sound, or do not notify. Kept on this
+    /// device. Which address a mail came to is decided from its cached To list: the address
+    /// itself or with a plus tag; a mail to several of them takes the loudest choice, and one
+    /// that matches none notifies.
+    pub fn address_notify(&self) -> Result<Vec<notify::AddressChoice>> {
+        let account_id = self.account_id()?;
+        Ok(notify::choices(&self.store.identities_list(&account_id)?, &self.store.address_modes(&account_id)?))
+    }
+
+    /// Sets the choice for one of the user's addresses (`Error::Invalid` for an address that is
+    /// not an identity of the account). Mail that is now off is withdrawn from the notifications
+    /// shown, at once and from the cache; it is not counted as swiped, so it comes back if the
+    /// address is switched on again while the mail is still unread.
+    pub fn set_address_notify(&self, address: String, mode: notify::AddressMode) -> Result<()> {
+        let account_id = self.account_id()?;
+        let key = notify::choice_key(&address);
+        if !self.store.identities_list(&account_id)?.iter().any(|i| notify::choice_key(&i.email) == key) {
+            return Err(Error::invalid("That is not one of this account's addresses."));
+        }
+        self.store.set_address_mode(&account_id, &key, mode)?;
+        self.replan_from_cache()?;
         self.poke();
         Ok(())
     }

@@ -36,6 +36,7 @@ import ovh.kweb.mail.ui.contacts.ContactScreen
 import ovh.kweb.mail.ui.contacts.ContactsScreen
 import ovh.kweb.mail.ui.contacts.EditContactScreen
 import ovh.kweb.mail.ui.delivery.DeliveryScreen
+import ovh.kweb.mail.ui.notifications.NotificationsScreen
 import ovh.kweb.mail.ui.files.FilesScreen
 import ovh.kweb.mail.ui.account.MaskedScreen
 import ovh.kweb.mail.ui.account.SecurityScreen
@@ -405,6 +406,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenFilters = { app.open(Route.Filters()) },
                     onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
                     onOpenAssistant = { app.open(Route.Assistant) },
+                    onOpenNotifications = { app.open(Route.Notifications) },
                     onOpenScheduled = { app.open(Route.Scheduled) },
                     onOpenSenders = { app.open(Route.Senders) },
                     onOpenMasked = { app.open(Route.MaskedAddresses) },
@@ -420,7 +422,14 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.DeliveryCheck -> DeliveryScreen(
                     onBack = app::back,
                     onSignInAgain = { app.open(Route.SignInAgain) },
+                    onOpenNotifications = { app.open(Route.Notifications) },
                 )
+                Route.Notifications -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    NotificationsScreen(
+                        onBack = app::back,
+                        onOpenFolders = { app.open(Route.Folders()) },
+                    )
+                }
                 // Their sign-in is cancelled when the route leaves the stack (its store is cleared with it).
                 Route.SignInAgain -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { SignInAgain(app) }
