@@ -30,7 +30,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <!-- One instance only: a share starts in the sharing app's task otherwise, and a second activity would
                  take the Undo bar and the scheduling notice (single-reader channels) away from the visible one. -->
             <intent-filter>
