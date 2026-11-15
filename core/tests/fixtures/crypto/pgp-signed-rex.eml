@@ -1,0 +1,23 @@
+From: Rex <rex@example.test>
+To: Bob <bob@example.test>
+Subject: Revoked
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <896305004@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256; protocol="application/pgp-signature"; boundary="rex-boundary"
+
+--rex-boundary
+Content-Type: text/plain; charset=utf-8
+
+Signed by a key that is revoked later.
+--rex-boundary
+Content-Type: application/pgp-signature
+
+-----BEGIN PGP SIGNATURE-----
+
+iIcEABYKAC8WIQR6VGjIHLO966HSR6Stefr03p3RTwUCavo/QREccmV4QGV4YW1w
+bGUudGVzdAAKCRCtefr03p3RT5mkAP497YwROXIocsFriGwJjhJPBSS9xa3Qiq+D
+SeRPi2a1eAEA/o/ruZIsDQjbF4cJQ2vdUHW8yKKBlWMinpNghjhcuQk=
+=rEX/
+-----END PGP SIGNATURE-----
+--rex-boundary--

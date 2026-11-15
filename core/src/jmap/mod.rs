@@ -13,6 +13,7 @@ mod calendars;
 mod clock;
 mod contacts;
 mod convert;
+mod crypto;
 mod download;
 mod enterprise;
 mod errors;
@@ -58,6 +59,7 @@ use convert::{
     batch_size, body_part_properties, body_properties, header_properties, mailbox_properties, merge_pages,
     order_by_ids, to_body, to_header, to_keywords, to_mailbox, Page,
 };
+pub use crypto::{Structure, MAX_RAW_BYTES};
 use download::Outcome;
 pub use download::{DownloadWatch, Outcome as DownloadOutcome, OFFLINE as DOWNLOAD_OFFLINE};
 use errors::from_jmap;

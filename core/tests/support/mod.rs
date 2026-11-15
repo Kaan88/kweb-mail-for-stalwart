@@ -468,6 +468,12 @@ impl MockServer {
         blob_id
     }
 
+    /// Gives a message its raw RFC 5322 bytes: the blob `b<id>` serves them and `bodyStructure` shows
+    /// their parts.
+    pub fn set_raw(&self, id: &str, raw: &[u8]) {
+        self.edit(id, |e| e.raw = Some(raw.to_vec()));
+    }
+
     pub fn destroy(&self, id: &str) {
         assert!(self.shared.mail().destroy(id), "no message '{id}'");
     }

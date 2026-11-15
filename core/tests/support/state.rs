@@ -183,6 +183,9 @@ pub struct Email {
     /// The addresses of the `Delivered-To`, `X-Original-To` and `Envelope-To` headers the server
     /// wrote, as `(header name, address)`; asked for as `header:<name>:asText:all`.
     pub delivery: Vec<(String, String)>,
+    /// The message as received (RFC 5322), when a test supplies one: it is what the blob `b<id>`
+    /// serves and what `bodyStructure` describes.
+    pub raw: Option<Vec<u8>>,
 }
 
 const DEFAULT_EMAIL_PROPS: &[&str] = &[
@@ -266,6 +269,22 @@ impl Email {
         (text_body, html_body, files)
     }
 
+    /// `bodyStructure`: the part types of the raw message when there is one (parts are not numbered).
+    fn structure(&self) -> Value {
+        fn node(n: &kweb_core::crypto::mime::Node) -> Value {
+            let subs: Vec<Value> = n.children.iter().map(node).collect();
+            if subs.is_empty() {
+                json!({ "type": n.ctype.media })
+            } else {
+                json!({ "type": n.ctype.media, "subParts": subs })
+            }
+        }
+        match self.raw.as_deref().and_then(kweb_core::crypto::mime::parse) {
+            Some(root) => node(&root),
+            None => json!({ "partId": "1", "type": "text/plain" }),
+        }
+    }
+
     fn has_attachment(&self) -> bool {
         self.attachments.iter().any(|a| !a.inline)
     }
@@ -287,7 +306,7 @@ impl Email {
         put("threadId", json!(self.thread_id()));
         put("mailboxIds", Value::Object(flags(&self.mailbox_ids)));
         put("keywords", Value::Object(flags(&self.keywords)));
-        put("size", json!(1200 + self.subject.len() + self.preview.len()));
+        put("size", json!(self.raw.as_ref().map_or(1200 + self.subject.len() + self.preview.len(), Vec::len)));
         put("receivedAt", json!(rfc3339(self.received_at)));
         put("sentAt", json!(rfc3339(self.received_at - 5)));
         put("from", json!([{ "name": self.from_name, "email": self.from_email }]));
@@ -301,6 +320,7 @@ impl Email {
         put("preview", json!(self.preview));
         put("hasAttachment", json!(self.has_attachment()));
         put("messageId", json!([format!("{}@mock.example.test", self.id)]));
+        put("bodyStructure", self.structure());
 
         let (text_body, html_body, files) = self.parts();
         let part_list = |parts: &[Part]| parts.iter().map(|p| p.json(body.part_props.as_ref())).collect::<Vec<_>>();
@@ -586,6 +606,7 @@ impl Mail {
                     preview: preview.into(),
                     received_at: now - age,
                     delivery: Vec::new(),
+                    raw: None,
                 },
             );
         }
@@ -611,6 +632,9 @@ impl Mail {
 
     /// The type and bytes of an attachment, by blob id.
     pub fn blob(&self, blob_id: &str) -> Option<(String, Vec<u8>)> {
+        if let Some(raw) = blob_id.strip_prefix('b').and_then(|id| self.emails.get(id)).and_then(|e| e.raw.clone()) {
+            return Some(("message/rfc822".to_string(), raw));
+        }
         let all = self.emails.values().flat_map(|e| e.attachments.iter());
         let attached = all.into_iter().find(|a| a.blob_id == blob_id).map(|a| (a.mime_type.clone(), a.bytes.clone()));
         attached.or_else(|| self.uploads.get(blob_id).cloned())
@@ -764,6 +788,7 @@ impl Mail {
                 preview: preview.into(),
                 received_at,
                 delivery: Vec::new(),
+                raw: None,
             },
         );
         self.log_email(&id, Kind::Created);
@@ -1545,6 +1570,7 @@ impl Mail {
             preview,
             received_at: now_secs(),
             delivery: Vec::new(),
+            raw: None,
         };
         let (thread_id, size) = (email.thread_id(), 1200 + email.subject.len() + email.preview.len());
         self.emails.insert(id.clone(), email);

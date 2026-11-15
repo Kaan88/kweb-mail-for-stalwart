@@ -1,0 +1,44 @@
+From: Erin Example <erin@example.test>
+To: Bob <bob@example.test>
+Subject: SMIME signed EC
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <902793110@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----06BEC930FB9D1F9FFA1E75A8BFC93F4A"
+
+This is an S/MIME signed message
+
+------06BEC930FB9D1F9FFA1E75A8BFC93F4A
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello, this is S/MIME signed.
+
+------06BEC930FB9D1F9FFA1E75A8BFC93F4A
+Content-Type: application/x-pkcs7-signature; name="smime.p7s"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="smime.p7s"
+
+MIIDugYJKoZIhvcNAQcCoIIDqzCCA6cCAQExDzANBglghkgBZQMEAgEFADALBgkq
+hkiG9w0BBwGgggHYMIIB1DCCAXugAwIBAgIUP/FEDITGBxKAzi9T3JYqqAbx0rww
+CgYIKoZIzj0EAwIwOTEVMBMGA1UEAwwMRXJpbiBFeGFtcGxlMSAwHgYJKoZIhvcN
+AQkBFhFlcmluQGV4YW1wbGUudGVzdDAeFw0yNjExMTUyMzI0NDlaFw00NjExMTAy
+MzI0NDlaMDkxFTATBgNVBAMMDEVyaW4gRXhhbXBsZTEgMB4GCSqGSIb3DQEJARYR
+ZXJpbkBleGFtcGxlLnRlc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASR9OPZ
+ejdrOovrexkwhdhSnDehq8a9SBiZGWoVE9MYhmwXjeUxNN1Rw4KaONPHCWbMSSJk
+y6o/U5+z0ahzDc/Wo2EwXzAcBgNVHREEFTATgRFlcmluQGV4YW1wbGUudGVzdDAL
+BgNVHQ8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwQwHQYDVR0OBBYEFKs6lQ1E
+YbRXk7qVrVCe62O6ffctMAoGCCqGSM49BAMCA0cAMEQCIFHGWGWaorl4N7HBoWbI
+vuBB0zqru6EUA/BqXbtrTLiXAiBJab85yX65D/+lspo+NFJbyX/ioUA1tKxaxZ1Q
+Ng4hKTGCAaYwggGiAgEBMFEwOTEVMBMGA1UEAwwMRXJpbiBFeGFtcGxlMSAwHgYJ
+KoZIhvcNAQkBFhFlcmluQGV4YW1wbGUudGVzdAIUP/FEDITGBxKAzi9T3JYqqAbx
+0rwwDQYJYIZIAWUDBAIBBQCggeQwGAYJKoZIhvcNAQkDMQsGCSqGSIb3DQEHATAc
+BgkqhkiG9w0BCQUxDxcNMjYxMTE1MjMyNDQ5WjAvBgkqhkiG9w0BCQQxIgQgAA48
+BQ8O/L1UQY3luZsbVsmZy/eUecpowy4s4irR67cweQYJKoZIhvcNAQkPMWwwajAL
+BglghkgBZQMEASowCwYJYIZIAWUDBAEWMAsGCWCGSAFlAwQBAjAKBggqhkiG9w0D
+BzAOBggqhkiG9w0DAgICAIAwDQYIKoZIhvcNAwICAUAwBwYFKw4DAgcwDQYIKoZI
+hvcNAwICASgwCgYIKoZIzj0EAwIESDBGAiEAw5yvCtmJp1SOLokHFqDvtXyKKi4p
+uqX9ybuuOxu1oH0CIQDjJVXRZiKOMhz4M76fMPKL4SBJ+ZH61QcteQq5wxtuIw==
+
+------06BEC930FB9D1F9FFA1E75A8BFC93F4A--
+

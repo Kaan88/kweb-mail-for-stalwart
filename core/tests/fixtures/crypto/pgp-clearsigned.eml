@@ -1,0 +1,21 @@
+From: Alice <alice@example.test>
+To: Bob <bob@example.test>
+Subject: Clear
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <210938226@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Hello Bob, this is clear-signed.
+
+-----BEGIN PGP SIGNATURE-----
+
+iIkEARYKADEWIQQZb4lTLeRVCjkniRs13Yqt/CScHwUCavo/QRMcYWxpY2VAZXhh
+bXBsZS50ZXN0AAoJEDXdiq38JJwf8h0A/2Dqu0+0WVcB7/xTJwshet86LmgFfo6Z
+BiJcZSIA3EVEAQD+eirJ38Z6RUda1H3gGaoqb/9s/1IqGXAhJ/XzSZHvCQ==
+=/uHR
+-----END PGP SIGNATURE-----

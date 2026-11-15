@@ -1,0 +1,31 @@
+From: Alice <alice@example.test>
+To: Bob <bob@example.test>
+Subject: My key
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <156031124@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="kk"
+
+--kk
+Content-Type: text/plain
+
+My key is attached.
+
+--kk
+Content-Type: application/pgp-keys; name="alice.asc"
+Content-Disposition: attachment; filename="alice.asc"
+
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEavo/PxYJKwYBBAHaRw8BAQdAGFv2GdctVRwr6t7ZFWKAWK9EMRxpapWfGaG6
+Y3Zk8g+0GkFsaWNlIDxhbGljZUBleGFtcGxlLnRlc3Q+iJAEExYKADgWIQQZb4lT
+LeRVCjkniRs13Yqt/CScHwUCavo/PwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIX
+gAAKCRA13Yqt/CScHxV1AP40xdgQfAmZ7LVZrFhm4Quj9RGqtbMfrOjyP5ov64Sf
+EwEA+rywGt1dEzpYG8fbBZEePi/zJw75X+2Z9tm3yjsxCQa4OARq+j8/EgorBgEE
+AZdVAQUBAQdAJWr3Ly+ehDEIeLh/jMjyqnyIaqPJHTQ3YKS+FIwMygMDAQgHiHgE
+GBYKACAWIQQZb4lTLeRVCjkniRs13Yqt/CScHwUCavo/PwIbDAAKCRA13Yqt/CSc
+HzhBAP99xbL8+LAdASmiqlHWADM85r3A0lVI11xrtaKD7wDSzgEA7WwNIsuuR60N
+6hEcI5yhwpmU8WaLRhedALWKRiBkygY=
+=1Fcp
+-----END PGP PUBLIC KEY BLOCK-----
+--kk--

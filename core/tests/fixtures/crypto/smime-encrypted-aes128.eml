@@ -1,0 +1,23 @@
+From: Erin Example <erin@example.test>
+To: Bob <bob@example.test>
+Subject: SMIME encrypted 128
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <686628244@example.test>
+MIME-Version: 1.0
+Content-Disposition: attachment; filename="smime.p7m"
+Content-Type: application/x-pkcs7-mime; smime-type=enveloped-data; name="smime.p7m"
+Content-Transfer-Encoding: base64
+
+MIICKAYJKoZIhvcNAQcDoIICGTCCAhUCAQAxggFvMIIBawIBADBTMDsxFjAUBgNV
+BAMMDUNhcm9sIEV4YW1wbGUxITAfBgkqhkiG9w0BCQEWEmNhcm9sQGV4YW1wbGUu
+dGVzdAIUYu7h3Dgxq6Q0X5EIh1GawG9Fyo4wDQYJKoZIhvcNAQEBBQAEggEAjwOr
+PNXlhnVEtvhIQqXpVUi4SEebKz6FMjqv90gjEQ97QpI3bHhjlL8fccLb3MVB1evA
+5t1W24kuCzBFXMc+xMi9uUi3R67Xv7K8mUMh6NmLgMZxLR0c4ItH7bHI/sApEFgf
+vPd4rEc40Sj1IFQe4My3pmT9YpToV4qio6ZYaRIKQqQ1cjO0ZWq8VwG9KE7VCAj1
+POxFG593Gj3XOKC2vl9cGEh+DtBRajFNEJ1k+t4Qy67262aVzQLuqLC0+hIjhdF+
+2c6QEaqbC8wsDiBaIhh0qWAGd9Jfr0ZdOOjzTqRVyiYouE0r/6Kaz6wkYrMncIbi
+vcSMTmtvT2DkOonAJzCBnAYJKoZIhvcNAQcBMB0GCWCGSAFlAwQBAgQQwEQNLzPK
+O3528wDGKanyVIBwISDaeaon26qw+LwF8H5P1yiE4gC2fiKcmXe36Kp8TgBQr0DZ
+VSytPXkAI20oLcXFdJdCifvPPOJ76BLOMJIwltTuXEqFSxRtjVQ641rSI4gxcTe4
+tapzT+NdRs9GIRo2c4+7FOoOAh3Ue368jaIULQ==
+

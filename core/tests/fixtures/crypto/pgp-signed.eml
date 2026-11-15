@@ -1,0 +1,24 @@
+From: Alice <alice@example.test>
+To: Bob <bob@example.test>
+Subject: Signed
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <531002559@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256; protocol="application/pgp-signature"; boundary="pgp-boundary-1"
+
+--pgp-boundary-1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Bob, this is signed.
+--pgp-boundary-1
+Content-Type: application/pgp-signature; name="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iIkEABYKADEWIQQZb4lTLeRVCjkniRs13Yqt/CScHwUCavo/QRMcYWxpY2VAZXhh
+bXBsZS50ZXN0AAoJEDXdiq38JJwfpssA/iwnzR8mkXwVLK16sVuXrti1/luM4iB9
+iOdd5BDkCZ8jAP9vCOZX/pD8dj95jKf7KUQ6RuJz40x5w+XsDU+fhtQBAg==
+=CGec
+-----END PGP SIGNATURE-----
+--pgp-boundary-1--

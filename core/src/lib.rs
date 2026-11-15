@@ -8,6 +8,7 @@ pub mod assistant;
 pub mod auth;
 pub mod compose;
 pub mod contacts;
+pub mod crypto;
 pub mod error;
 pub mod ffi;
 pub mod filters;

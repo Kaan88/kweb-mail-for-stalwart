@@ -18,6 +18,8 @@ mod assistant_converse;
 mod calendar;
 #[path = "suite/contacts.rs"]
 mod contacts;
+#[path = "suite/crypto_raw.rs"]
+mod crypto_raw;
 #[path = "suite/enterprise.rs"]
 mod enterprise;
 #[path = "suite/ffi.rs"]

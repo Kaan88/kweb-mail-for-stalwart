@@ -2,3 +2,6 @@
 gradlew text eol=lf
 *.sh text eol=lf
 *.bat text eol=crlf
+
+# Test messages and keys are compared byte for byte (signatures cover exact bytes): never convert them.
+core/tests/fixtures/** -text

@@ -1,0 +1,16 @@
+From: Alice <alice@example.test>
+To: Bob <bob@example.test>
+Subject: Inline
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <637899378@example.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+-----BEGIN PGP MESSAGE-----
+
+hF4DdGTQlLnB0n4SAQdAD8g+bMbo8SnkSILWpAmsnW95eX/zNAwMgPPQ9CdcJ0ww
+qsPZrMmTunc4ByYT2UgsUeTc6cEl5Gx5IjL3BjnDPN2v034V40Zeej5OaNI9+B2C
+0koBqAf8SYuQXPKk1Si49gMywZtzHVKe5qUOSxgGyfcMZGfToFAvtzrYKvAuZ+pa
+0s3F/6BT4nVbhZMuKb1NYzsDm5Peah1WJwh82w==
+=fJPP
+-----END PGP MESSAGE-----
