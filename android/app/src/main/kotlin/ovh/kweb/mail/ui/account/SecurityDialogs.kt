@@ -291,6 +291,11 @@ private fun SecretDialog(dialog: SecurityDialog.Secret, c: SecurityController, p
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(dialog.secret.secret, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(R.string.security_secret_text), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                when (SecurityRules.secretNote(dialog.kind, dialog.secret.narrowed)) {
+                    SecretNote.KEY_NARROWED -> Text(stringResource(R.string.security_secret_key_narrowed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SecretNote.APP_PASSWORD_NARROWED -> Text(stringResource(R.string.security_secret_app_password_narrowed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SecretNote.NONE -> {}
+                }
                 FilledTonalButton(onClick = { copy(dialog.secret.secret) }, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(if (copied) R.string.security_copied else R.string.account_copy))
                 }

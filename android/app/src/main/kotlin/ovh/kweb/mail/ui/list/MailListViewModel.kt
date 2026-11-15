@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -76,14 +77,23 @@ data class MailListState(
     val waiting: Int = 0,
     /** The message just sent whose Undo is still on offer; cleared by a timer when the core lets it go. */
     val holding: PendingSend? = null,
+    /** The conversations chosen for an action (their thread ids, see [SelectionRules]); empty when nothing is being chosen. */
+    val selection: Set<String> = emptySet(),
 )
 
 /** What the screen shows once, as a snackbar. */
 sealed interface ListEvent {
     data class Message(val textRes: Int) : ListEvent
 
-    /** [messageIds] were taken out of [mailboxId]; undoing moves them back. */
-    data class Undo(val textRes: Int, val messageIds: List<String>, val mailboxId: String) : ListEvent
+    /** [messageIds] were taken out of [mailboxId]; undoing moves them back. [count]: how many conversations (one Undo for a batch). */
+    data class Undo(
+        val textRes: Int,
+        val messageIds: List<String>,
+        val mailboxId: String,
+        val count: Int = 1,
+        /** In a list of a folder and its subfolders: the folder each message was shown in; undoing puts each back there. */
+        val homes: Map<String, String> = emptyMap(),
+    ) : ListEvent
 
     /** A refusal in the core's own words, or any text that is not one of the app's strings. */
     data class Text(val message: UiMessage) : ListEvent
@@ -188,6 +198,39 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         fetchOlder(s)
     }
 
+    /**
+     * A conversation is open and the user stepped past the last loaded one. Reads another page of the cache, else fetches older
+     * mail from the server, and returns when that is done: true when the list has more rows now. Nothing is tried again when the
+     * list is stopped or paused (it ends there). The list's own state is the one that changes, so the screen under the thread
+     * shows the same rows.
+     */
+    suspend fun loadMoreForSwipe(): Boolean {
+        val before = stateFlow.value
+        if (before.current == null || !before.loaded) return false
+        if (before.rows.size >= before.limit) {
+            stateFlow.update { it.copy(limit = it.limit + PAGE) }
+            val asked = stateFlow.value
+            val read = try {
+                withContext(Dispatchers.IO) { read(asked) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading more of the cache failed", e)
+                null
+            }
+            if (read != null && stateFlow.value.sameQuestion(asked)) {
+                stateFlow.update { it.withRead(read) }
+                if (read.rows.size > before.rows.size) return true
+            }
+        }
+        val now = stateFlow.value
+        if (!now.sameQuestion(before.copy(limit = now.limit)) || now.current == null) return false
+        if (!now.loadingOlder && !now.olderStopped && !now.olderPaused) fetchOlder(now)
+        // fetchOlder marks the list as loading at once; its end is the end of this wait.
+        stateFlow.first { !it.loadingOlder }
+        return stateFlow.value.rows.size > before.rows.size
+    }
+
     /** The user tapped "Load older mail". */
     fun loadOlderNow() {
         stateFlow.update { it.copy(emptyPages = 0, olderPaused = false) }
@@ -241,19 +284,102 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         }
     }
 
-    fun toggleRead(row: ThreadRow) {
-        val ids = row.messageIds
-        submit(if (row.unreadCount > 0u) MailActions.markRead(ids) else MailActions.markUnread(ids))
-    }
-
-    fun toggleFlag(row: ThreadRow) = submit(MailActions.setFlagged(row.messageIds, !row.isFlagged))
-
     /** Archive, or Delete (permanent in Trash), with an Undo that moves the messages back. */
-    fun archive(row: ThreadRow) = removeFromFolder(row, MailActions.archive(row.messageIds), R.string.list_archived)
+    fun archive(row: ThreadRow) = removeFromFolder(row.messageIds, MailActions.archive(row.messageIds), R.string.list_archived, rows = listOf(row))
 
     fun delete(row: ThreadRow) {
         val inTrash = stateFlow.value.current?.role == "trash"
-        removeFromFolder(row, MailActions.delete(row.messageIds), if (inTrash) null else R.string.list_deleted)
+        removeFromFolder(row.messageIds, MailActions.delete(row.messageIds), if (inTrash) null else R.string.list_deleted, rows = listOf(row))
+    }
+
+    // ---- Choosing conversations ----
+
+    /** Chooses [threadId], or lets go of it; choosing the first one starts the selection and letting go of the last ends it. */
+    fun toggleSelected(threadId: String) {
+        stateFlow.update { s ->
+            if (s.rows.none { SelectionRules.key(it) == threadId }) s else s.copy(selection = SelectionRules.toggle(s.selection, threadId))
+        }
+    }
+
+    fun selectAll() = stateFlow.update { it.copy(selection = SelectionRules.all(it.rows)) }
+
+    fun clearSelection() = stateFlow.update { if (it.selection.isEmpty()) it else it.copy(selection = emptySet()) }
+
+    /** The chosen rows in the list's order, as they are now. */
+    private fun chosen(): List<ThreadRow> = stateFlow.value.let { SelectionRules.rowsOf(it.rows, it.selection) }
+
+    /** Archives the chosen conversations, with one Undo for all. The selection ends. */
+    fun archiveSelected() {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        val ids = SelectionRules.messageIds(rows)
+        removeFromFolder(ids, MailActions.archive(ids), R.string.list_archived, rows.size, rows)
+    }
+
+    /** Deletes the chosen conversations (permanently in Trash, which the screen asked about), with one Undo for all. */
+    fun deleteSelected() {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        val ids = SelectionRules.messageIds(rows)
+        val inTrash = stateFlow.value.current?.role == "trash"
+        removeFromFolder(ids, MailActions.delete(ids), if (inTrash) null else R.string.list_deleted, rows.size, rows)
+    }
+
+    /** Read when any chosen conversation has unread mail, else unread. */
+    fun markSelected() {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        val ids = SelectionRules.messageIds(rows)
+        submit(if (SelectionRules.marksRead(rows)) MailActions.markRead(ids) else MailActions.markUnread(ids))
+    }
+
+    fun flagSelected() {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        submit(MailActions.setFlagged(SelectionRules.messageIds(rows), !SelectionRules.unstars(rows)))
+    }
+
+    fun moveSelected(mailboxId: String) {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        submit(MailActions.move(SelectionRules.messageIds(rows), mailboxId))
+    }
+
+    /**
+     * Report spam (or, in the Junk folder, "Not spam") for the chosen conversations, with one Undo that does the opposite. The
+     * core's refusal (no Junk folder) is shown as it is.
+     */
+    fun spamSelected() {
+        val rows = chosen()
+        clearSelection()
+        if (rows.isEmpty()) return
+        val ids = SelectionRules.messageIds(rows)
+        val from = stateFlow.value.current
+        val isSpam = !SpamRules.isNotSpamEntry(from?.role)
+        reportSpam(ids, isSpam) {
+            eventChannel.send(
+                ListEvent.UndoSpam(if (isSpam) R.string.spam_reported else R.string.spam_cleared, ids, isSpam, from?.id, from?.role),
+            )
+        }
+    }
+
+    /**
+     * The conversation [threadId] was read in the thread pager: if it is not in view in the list, the list scrolls to it, so
+     * Back shows where the reader got to. Does nothing for a row that is not loaded. Works while the list is off screen: the
+     * position is applied when it comes up.
+     */
+    fun reveal(threadId: String) {
+        val index = stateFlow.value.rows.indexOfFirst { SelectionRules.key(it) == threadId }
+        if (index < 0) return
+        val shown = listState.layoutInfo.visibleItemsInfo
+        if (shown.isNotEmpty() && index >= shown.first().index && index <= shown.last().index) return
+        // One row of what comes before it, so it is not pressed against the top.
+        listState.requestScrollToItem((index - 1).coerceAtLeast(0))
     }
 
     fun move(row: ThreadRow, mailboxId: String) = submit(MailActions.move(row.messageIds, mailboxId))
@@ -372,12 +498,20 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         }
     }
 
-    fun undo(event: ListEvent.Undo) = submit(MailActions.move(event.messageIds, event.mailboxId))
+    fun undo(event: ListEvent.Undo) =
+        submit(event.messageIds.groupBy { event.homes[it] ?: event.mailboxId }.flatMap { (folder, ids) -> MailActions.move(ids, folder) })
 
-    private fun removeFromFolder(row: ThreadRow, actions: List<Action>, undoText: Int?) {
-        val from = stateFlow.value.current ?: return
+    private fun removeFromFolder(messageIds: List<String>, actions: List<Action>, undoText: Int?, count: Int = 1, rows: List<ThreadRow> = emptyList()) {
+        val s = stateFlow.value
+        val from = s.current ?: return
+        // In a combined list a conversation may be in a subfolder: Undo puts it back there, not into the folder the list is for.
+        val homes = if (SubfolderRules.isCombined(s.scope)) {
+            rows.flatMap { row -> row.messageIds.map { it to SubfolderRules.openFrom(row, from.id, s.mailboxes, s.scope) } }.toMap()
+        } else {
+            emptyMap()
+        }
         submit(actions) {
-            if (undoText != null) eventChannel.send(ListEvent.Undo(undoText, row.messageIds, from.id))
+            if (undoText != null) eventChannel.send(ListEvent.Undo(undoText, messageIds, from.id, count, homes))
         }
     }
 
@@ -468,6 +602,8 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         current = read.current,
         scope = read.scope,
         rows = read.rows,
+        // What was chosen and is not in the list any more (synced away, acted on elsewhere) is dropped.
+        selection = SelectionRules.prune(selection, read.rows.map { SelectionRules.key(it) }),
         loaded = true,
         synced = read.mailboxes.isNotEmpty(),
     )
@@ -504,6 +640,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         emptyPages = 0,
         olderPaused = false,
         loadingOlder = false,
+        selection = emptySet(),
         generation = generation + 1,
     )
 

@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import ovh.kweb.mail.background.CheckRecord
+import ovh.kweb.mail.background.DeliveryMode
 import ovh.kweb.mail.ui.delivery.NotificationFix.Step
 
 class DeliveryRulesTest {
@@ -26,6 +27,27 @@ class DeliveryRulesTest {
 
     @Test fun anEventFromTheFutureIsNotNegative() =
         assertEquals(Age(0, AgeUnit.Seconds), LastPush.age(nowSeconds + 30, nowMillis))
+
+    @Test fun withoutTheExemptionTheConnectionIsAtRiskButPushThroughGoogleIsNot() {
+        fun ok(exempt: Boolean, mode: DeliveryMode, working: Boolean = true, restricted: Boolean = false) =
+            BatteryRule.isOk(exempt, mode, pushWorking = working, backgroundRestricted = restricted)
+        assertFalse(ok(exempt = false, mode = DeliveryMode.Connection))
+        assertTrue(ok(exempt = false, mode = DeliveryMode.Google))
+        assertTrue(ok(exempt = true, mode = DeliveryMode.Connection))
+        assertTrue(ok(exempt = true, mode = DeliveryMode.Google))
+    }
+
+    @Test fun pushThroughGoogleNeedsNoExemptionOnlyWhileItCanArrive() {
+        fun ok(working: Boolean, restricted: Boolean) =
+            BatteryRule.isOk(exempt = false, mode = DeliveryMode.Google, pushWorking = working, backgroundRestricted = restricted)
+        // An app Android keeps from the background gets no push from Google: a fault, with the way to fix it.
+        assertFalse(ok(working = true, restricted = true))
+        // Key changed, subscription gone, still verifying: nothing wakes the app, so the row must not say it does.
+        assertFalse(ok(working = false, restricted = false))
+        assertTrue(ok(working = true, restricted = false))
+        // The exemption settles it in every case.
+        assertTrue(BatteryRule.isOk(exempt = true, mode = DeliveryMode.Google, pushWorking = false, backgroundRestricted = false))
+    }
 
     @Test fun aRecentSuccessIsOnTime() =
         assertTrue(SafetyCheck.isOnTime(CheckRecord(nowMillis - 20 * 60_000, null), nowMillis))

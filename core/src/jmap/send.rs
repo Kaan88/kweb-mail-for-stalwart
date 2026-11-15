@@ -298,6 +298,26 @@ impl Connection {
         }))
     }
 
+    /// The addresses in the delivery headers of a message (`Delivered-To`, then `X-Original-To`,
+    /// then `Envelope-To`; each header newest first, as the server stores them), as the address
+    /// the server's own delivery wrote there. Empty when the server has no such header or no
+    /// such message. One small `Email/get`, made only when a reply or forward is started and
+    /// the mail's To and Cc did not say which identity answers.
+    pub async fn delivery_addresses(&self, email_id: &str) -> Result<Vec<String>> {
+        const HEADERS: [&str; 3] = ["Delivered-To", "X-Original-To", "Envelope-To"];
+        let property = |name: &str| format!("header:{name}:asText:all");
+        let args = json!({
+            "accountId": self.account_id,
+            "ids": [email_id],
+            "properties": HEADERS.map(property),
+        });
+        let responses = self.call(&[MAIL_CAPABILITY], &[("Email/get", args)]).await?;
+        let get = response(&responses, "Email/get")?;
+        let Some(email) = get["list"].get(0) else { return Ok(Vec::new()) };
+        let texts: Vec<String> = HEADERS.iter().flat_map(|name| strings(&email[property(name)])).collect();
+        Ok(crate::compose::rules::delivery_addresses(&texts))
+    }
+
     /// Marks the message a reply or forward was made from as answered or forwarded.
     pub async fn mark_source(&self, email_id: &str, forwarded: bool) -> Result<()> {
         let keyword = if forwarded { "$forwarded" } else { "$answered" };

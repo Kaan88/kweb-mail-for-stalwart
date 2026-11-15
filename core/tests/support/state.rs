@@ -180,6 +180,9 @@ pub struct Email {
     pub subject: String,
     pub preview: String,
     pub received_at: i64,
+    /// The addresses of the `Delivered-To`, `X-Original-To` and `Envelope-To` headers the server
+    /// wrote, as `(header name, address)`; asked for as `header:<name>:asText:all`.
+    pub delivery: Vec<(String, String)>,
 }
 
 const DEFAULT_EMAIL_PROPS: &[&str] = &[
@@ -319,6 +322,13 @@ impl Email {
             }
         }
         put("bodyValues", Value::Object(values));
+        // The delivery headers, in the one form the real server answers (see `email_get`).
+        for prop in props.into_iter().flatten().filter(|p| p.starts_with("header:") && p.ends_with(":asText:all")) {
+            let name = &prop["header:".len()..prop.len() - ":asText:all".len()];
+            let values: Vec<&str> =
+                self.delivery.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str()).collect();
+            m.insert(prop.clone(), json!(values));
+        }
         Value::Object(m)
     }
 }
@@ -575,6 +585,7 @@ impl Mail {
                     subject: subject.into(),
                     preview: preview.into(),
                     received_at: now - age,
+                    delivery: Vec::new(),
                 },
             );
         }
@@ -752,6 +763,7 @@ impl Mail {
                 subject: subject.into(),
                 preview: preview.into(),
                 received_at,
+                delivery: Vec::new(),
             },
         );
         self.log_email(&id, Kind::Created);
@@ -929,7 +941,8 @@ impl Mail {
                 "header:list-id:astext" => json!(self.list_ids.get(&e.id)),
                 "header:list-unsubscribe:asurls" => json!(unsubscribe.as_deref().map(header_urls)),
                 "header:list-unsubscribe-post:astext" => json!(post.as_deref().map(str::trim)),
-                _ => Value::Null,
+                // The delivery headers were filled in by `Email::json`.
+                _ => value.get(property.as_str()).cloned().unwrap_or(Value::Null),
             };
         }
         value
@@ -1531,6 +1544,7 @@ impl Mail {
             subject: object["subject"].as_str().unwrap_or_default().to_string(),
             preview,
             received_at: now_secs(),
+            delivery: Vec::new(),
         };
         let (thread_id, size) = (email.thread_id(), 1200 + email.subject.len() + email.preview.len());
         self.emails.insert(id.clone(), email);

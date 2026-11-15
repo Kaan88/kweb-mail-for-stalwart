@@ -80,18 +80,35 @@ pub fn blank(identities: &[Identity], id: String, now: i64) -> Draft {
     Draft { body: rules::with_signature("", signature(identity)), ..empty_draft(id, identity, now) }
 }
 
-/// An answer to `source`: to its sender, or to everyone on it.
+/// The identity for an answer or forward of `source`. `delivered` are the addresses of its
+/// delivery headers and says the full rule applies ([`rules::pick_identity_for_reply`]); `None`
+/// is the exact rule only ([`rules::pick_identity`]), which a message of a shared account keeps.
+fn identity_for<'a>(
+    identities: &'a [Identity],
+    recipients: &[Address],
+    delivered: Option<&[String]>,
+) -> Option<&'a Identity> {
+    match delivered {
+        Some(delivered) => rules::pick_identity_for_reply(identities, recipients, delivered),
+        None => rules::pick_identity(identities, recipients),
+    }
+}
+
+/// An answer to `source`: to its sender, or to everyone on it. `delivered`: see [`identity_for`].
 pub fn answer(
     all: bool,
     source: (&MessageHeader, &MessageBody),
     identities: &[Identity],
+    delivered: Option<&[String]>,
     id: String,
     now: i64,
 ) -> Draft {
     let (header, body) = source;
     let recipients = [body.to.as_slice(), body.cc.as_slice()].concat();
-    let identity = rules::pick_identity(identities, &recipients);
-    let own = rules::own_keys(identities);
+    let identity = identity_for(identities, &recipients, delivered);
+    let mut own = rules::own_keys(identities);
+    // What the delivery headers say the message was delivered to is the user too, whatever the identities are.
+    own.extend(delivered.unwrap_or_default().iter().map(|a| rules::address_key(a)));
     let to = rules::reply_recipients(all, &body.reply_to, &sender(header), &body.to, &body.cc, &own);
     let quoted = rules::quoted_reply(&sender(header), &source_text(body));
     Draft {
@@ -104,11 +121,17 @@ pub fn answer(
     }
 }
 
-/// `source` passed on, with its files.
-pub fn forward(source: (&MessageHeader, &MessageBody), identities: &[Identity], id: String, now: i64) -> Draft {
+/// `source` passed on, with its files. `delivered`: see [`identity_for`].
+pub fn forward(
+    source: (&MessageHeader, &MessageBody),
+    identities: &[Identity],
+    delivered: Option<&[String]>,
+    id: String,
+    now: i64,
+) -> Draft {
     let (header, body) = source;
     let recipients = [body.to.as_slice(), body.cc.as_slice()].concat();
-    let identity = rules::pick_identity(identities, &recipients);
+    let identity = identity_for(identities, &recipients, delivered);
     let text = rules::forwarded_text(
         &sender(header),
         body.sent_at.unwrap_or(header.received_at),
@@ -268,7 +291,7 @@ mod tests {
 
     #[test]
     fn a_reply_is_addressed_quoted_and_signed() {
-        let d = answer(false, (&header(), &body()), &ids(), "d".into(), 5);
+        let d = answer(false, (&header(), &body()), &ids(), None, "d".into(), 5);
         assert_eq!(d.identity_id, "2", "sent to me@x.org");
         assert_eq!(d.to, vec![addr("Ann", "ann@x.org")]);
         assert!(d.cc.is_empty());
@@ -279,13 +302,45 @@ mod tests {
     }
 
     #[test]
+    fn the_delivery_headers_and_plus_addresses_count_only_when_asked_for() {
+        let two = [identity("1", "me@x.org", ""), identity("2", "shop@x.org", "Shop")];
+        let mut b = body();
+        b.to = vec![addr("Me", "me+list@x.org")];
+        b.cc = Vec::new();
+        let delivered = vec!["shop@x.org".to_string()];
+        // Asked: the address the server delivered to.
+        let d = answer(false, (&header(), &b), &two, Some(&delivered), "d".into(), 5);
+        assert_eq!(d.identity_id, "2");
+        assert!(
+            d.body.starts_with(
+                "
+
+-- 
+Shop
+
+"
+            ),
+            "{}",
+            d.body
+        );
+        assert_eq!(forward((&header(), &b), &two, Some(&delivered), "d".into(), 5).identity_id, "2");
+        // Asked, with nothing delivered: the plus base of the address in To.
+        assert_eq!(answer(false, (&header(), &b), &two, Some(&[]), "d".into(), 5).identity_id, "1");
+        b.to = vec![addr("", "shop+x@x.org")];
+        assert_eq!(answer(false, (&header(), &b), &two, Some(&[]), "d".into(), 5).identity_id, "2");
+        // Not asked (a shared message): the exact rule only, so the default.
+        assert_eq!(answer(false, (&header(), &b), &two, None, "d".into(), 5).identity_id, "1");
+        assert_eq!(forward((&header(), &b), &two, None, "d".into(), 5).identity_id, "1");
+    }
+
+    #[test]
     fn a_reply_to_all_keeps_the_others_without_me() {
-        let d = answer(true, (&header(), &body()), &ids(), "d".into(), 5);
+        let d = answer(true, (&header(), &body()), &ids(), None, "d".into(), 5);
         assert_eq!(d.to, vec![addr("Ann", "ann@x.org"), addr("Bo", "bo@x.org")]);
         assert_eq!(d.cc, vec![addr("Cy", "cy@x.org")]);
         let mut b = body();
         b.reply_to = vec![addr("List", "list@x.org")];
-        let d = answer(false, (&header(), &b), &ids(), "d".into(), 5);
+        let d = answer(false, (&header(), &b), &ids(), None, "d".into(), 5);
         assert_eq!(d.to, vec![addr("List", "list@x.org")]);
     }
 
@@ -293,9 +348,19 @@ mod tests {
     fn a_reply_to_all_drops_the_tagged_own_address() {
         let mut b = body();
         b.to = vec![addr("Me", "me+shop@x.org"), addr("Bo", "bo@x.org")];
-        let d = answer(true, (&header(), &b), &ids(), "d".into(), 5);
+        let d = answer(true, (&header(), &b), &ids(), Some(&[]), "d".into(), 5);
         assert_eq!(d.to, vec![addr("Ann", "ann@x.org"), addr("Bo", "bo@x.org")]);
         assert_eq!(d.identity_id, "2", "the tag still finds the identity");
+        // Also without the full rule, the tagged own address is dropped.
+        let d = answer(true, (&header(), &b), &ids(), None, "d".into(), 5);
+        assert_eq!(d.to, vec![addr("Ann", "ann@x.org"), addr("Bo", "bo@x.org")]);
+        // What the delivery headers say the mail was delivered to is the user too (an alias that is no identity).
+        b.to = vec![addr("Al", "alias@x.org"), addr("Bo", "bo@x.org")];
+        b.cc = vec![addr("Al", "alias+x@x.org")];
+        let delivered = vec!["alias@x.org".to_string()];
+        let d = answer(true, (&header(), &b), &ids(), Some(&delivered), "d".into(), 5);
+        assert_eq!(d.to, vec![addr("Ann", "ann@x.org"), addr("Bo", "bo@x.org")]);
+        assert!(d.cc.is_empty(), "{:?}", d.cc);
     }
 
     #[test]
@@ -303,13 +368,13 @@ mod tests {
         let mut b = body();
         b.to = vec![addr("Bo", "bo@x.org")];
         b.cc = vec![addr("Me", "me@x.org")];
-        assert_eq!(forward((&header(), &b), &ids(), "d".into(), 5).identity_id, "2");
+        assert_eq!(forward((&header(), &b), &ids(), None, "d".into(), 5).identity_id, "2");
         b.cc = vec![addr("Me", "me+x@x.org")];
-        let d = forward((&header(), &b), &ids(), "d".into(), 5);
+        let d = forward((&header(), &b), &ids(), Some(&[]), "d".into(), 5);
         assert_eq!(d.identity_id, "2");
         assert!(d.body.ends_with("\n\n-- \nMe\nAcme"));
         b.cc = Vec::new();
-        assert_eq!(forward((&header(), &b), &ids(), "d".into(), 5).identity_id, "1");
+        assert_eq!(forward((&header(), &b), &ids(), Some(&[]), "d".into(), 5).identity_id, "1");
     }
 
     #[test]
@@ -317,14 +382,14 @@ mod tests {
         let mut b = body();
         b.text = None;
         b.html = Some("<p>Hi<br>you</p>".into());
-        let d = answer(false, (&header(), &b), &[], "d".into(), 5);
+        let d = answer(false, (&header(), &b), &[], None, "d".into(), 5);
         assert_eq!(d.body, "\n\nAnn <ann@x.org> wrote:\n> Hi\n> you");
         assert_eq!(d.identity_id, "");
     }
 
     #[test]
     fn a_forward_has_the_header_block_and_the_files_but_not_the_pictures() {
-        let d = forward((&header(), &body()), &ids(), "d".into(), 5);
+        let d = forward((&header(), &body()), &ids(), None, "d".into(), 5);
         assert_eq!(d.subject, "Fwd: Plans");
         assert!(d.to.is_empty() && d.cc.is_empty());
         assert!(d.is_forward);

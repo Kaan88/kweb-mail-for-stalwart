@@ -112,9 +112,12 @@ private fun SecurityList(security: AccountSecurity, state: SecurityState, c: Sec
     val locale = remember { Locale.getDefault() }
     val now = System.currentTimeMillis() / 1000
     val twoStepLabel = stringResource(R.string.security_two_step)
+    val access = security.access
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
         AccountSectionTitle(stringResource(R.string.security_group_password))
-        AccountGroup {
+        if (!access.password) {
+            AccountGroup { AccountRow(Groups.shape(0, 1), stringResource(R.string.security_not_allowed), quiet = true) }
+        } else AccountGroup {
             AccountRow(
                 Groups.shape(0, 2),
                 stringResource(R.string.security_password_title),
@@ -139,12 +142,14 @@ private fun SecurityList(security: AccountSecurity, state: SecurityState, c: Sec
             )
         }
 
-        CredentialGroup(R.string.security_group_app_passwords, R.string.security_new_app_password, CredentialKind.APP_PASSWORD, security.appPasswords, locale, now, c)
-        CredentialGroup(R.string.security_group_api_keys, R.string.security_new_api_key, CredentialKind.API_KEY, security.apiKeys, locale, now, c)
+        CredentialGroup(R.string.security_group_app_passwords, R.string.security_new_app_password, CredentialKind.APP_PASSWORD, security.appPasswords, access.appPasswords, locale, now, c)
+        CredentialGroup(R.string.security_group_api_keys, R.string.security_new_api_key, CredentialKind.API_KEY, security.apiKeys, access.apiKeys, locale, now, c)
 
         AccountSectionTitle(stringResource(R.string.security_group_passkeys))
         AccountGroup {
-            if (security.passkeys.isEmpty()) {
+            if (!access.passkeys) {
+                AccountRow(Groups.shape(0, 1), stringResource(R.string.security_not_allowed), quiet = true)
+            } else if (security.passkeys.isEmpty()) {
                 AccountRow(Groups.shape(0, 1), stringResource(R.string.security_no_passkeys), quiet = true)
             }
             security.passkeys.forEachIndexed { i, passkey -> key(passkey.id) { PasskeyRow(Groups.shape(i, security.passkeys.size), passkey, locale, c) } }
@@ -152,13 +157,21 @@ private fun SecurityList(security: AccountSecurity, state: SecurityState, c: Sec
 
         AccountSectionTitle(stringResource(R.string.security_group_apps))
         AccountGroup {
-            if (security.connectedApps.isEmpty()) {
+            if (!access.connectedApps) {
+                AccountRow(Groups.shape(0, 1), stringResource(R.string.security_not_allowed), quiet = true)
+            } else if (security.connectedApps.isEmpty()) {
                 AccountRow(Groups.shape(0, 1), stringResource(R.string.security_no_apps), quiet = true)
             }
             security.connectedApps.forEachIndexed { i, app -> AppRow(Groups.shape(i, security.connectedApps.size), app, state, c) }
         }
-        Text(
+        if (access.connectedApps) Text(
             stringResource(R.string.security_apps_note),
+            modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (SecurityRules.someNotAllowed(access)) Text(
+            stringResource(R.string.security_not_allowed_note),
             modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 12.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
@@ -172,11 +185,16 @@ private fun CredentialGroup(
     newLabel: Int,
     kind: CredentialKind,
     list: List<Credential>,
+    allowed: Boolean,
     locale: Locale,
     now: Long,
     c: SecurityController,
 ) {
     AccountSectionTitle(stringResource(title))
+    if (!allowed) {
+        AccountGroup { AccountRow(Groups.shape(0, 1), stringResource(R.string.security_not_allowed), quiet = true) }
+        return
+    }
     AccountGroup {
         val total = list.size + 1
         list.forEachIndexed { i, credential -> key(credential.id) {

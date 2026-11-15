@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kweb_core::model::{AiEffort, AiProvider, ShareKind, ShareLevel};
+use kweb_core::model::{AiActionMode, AiEffort, AiProvider, ShareKind, ShareLevel};
 
 pub const USAGE: &str = "\
 kweb: a developer tool that drives kweb-core against a Stalwart server.
@@ -117,15 +117,33 @@ Usage:
   kweb identity default <id>  make that sender the one new messages start with (this device)
   kweb ai status              show how the AI assistant is set up (never the key)
   kweb ai set <provider> <base-url> <model> [--effort <level>] [--yes]
+              [--ideas on|off] [--extract on|off] [--explain on|off] [--chat on|off]
+              [--actions off|ask]
                               set up that service and use it; provider is openai or anthropic,
                               each keeps its own address, model, key and consent. The key is
                               read from $KWEB_AI_KEY. Without --yes it only says what you agree
                               to. Effort (default, low, medium, high, xhigh, max) is sent to
-                              Anthropic only; left out, the stored one is kept
+                              Anthropic only; left out, the stored one is kept. The switches
+                              (reply ideas, finding to-dos and dates, explaining, the chat, and
+                              whether the chat may suggest changes) keep what is stored when
+                              left out; all are off until switched on
   kweb ai models [provider]   list the models of the service (the one in use, or that provider);
                               uses $KWEB_AI_KEY if set, else the stored key
   kweb ai summary <message-id>
                               summarise a message, printed as it streams
+  kweb ai ideas <message-id>  up to three directions a reply to the message could take
+  kweb ai found <message-id>  the to-dos and dates in a message (today and the zone are taken
+                              from the clock and $TZ, else UTC, and sent along)
+  kweb ai explain <message-id>
+  kweb ai explain --text <words>
+                              explain a message, or the words given (then only they are sent)
+  kweb ai chat-consent [yes|no]
+                              say what the chat sends, agree to it (yes) or take that back (no)
+  kweb ai chat                one conversation on the terminal: each line is a message; the
+                              model looks things up in your mail and calendar and changes
+                              nothing: every change it suggests is shown in full and asked
+                              y/n. `undo <n>` takes change n back, `quit` ends, Ctrl+C stops
+                              the answer being written
   kweb admin [status]         show what the stored admin key opens and the server's figures
   kweb admin connect          store the admin API key in $KWEB_ADMIN_KEY (checked first)
   kweb admin forget           forget the stored admin key on this device
@@ -210,6 +228,7 @@ pub enum Ai {
         model: String,
         effort: Option<AiEffort>,
         yes: bool,
+        switches: AiSwitches,
     },
     /// The service in use when no provider is named.
     Models {
@@ -218,6 +237,36 @@ pub enum Ai {
     Summary {
         id: String,
     },
+    Ideas {
+        id: String,
+    },
+    Found {
+        id: String,
+    },
+    /// A message, or words of the user's own.
+    Explain {
+        id: Option<String>,
+        text: String,
+    },
+    /// `None` only says what would be agreed to.
+    ChatConsent {
+        agree: Option<bool>,
+    },
+    /// `about`: a conversation (thread id) to attach; `auto`: switch automatic changes on for the chat.
+    Chat {
+        about: Option<String>,
+        auto: bool,
+    },
+}
+
+/// The switches of stages 2 to 4 as `kweb ai set` was given them; `None` keeps what is stored.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct AiSwitches {
+    pub ideas: Option<bool>,
+    pub extract: Option<bool>,
+    pub explain: Option<bool>,
+    pub chat: Option<bool>,
+    pub actions: Option<AiActionMode>,
 }
 
 /// What `kweb masked` does.
@@ -722,18 +771,89 @@ fn identity(rest: &[String]) -> Result<Identity, String> {
 
 fn ai(rest: &[String]) -> Result<Ai, String> {
     match rest.split_first() {
-        None => Err("ai needs status, set, models or summary".into()),
+        None => Err(format!("ai needs {AI_COMMANDS}")),
         Some((sub, rest)) => match sub.as_str() {
             "status" => no_args(rest, Command::Status).map(|_| Ai::Status),
             "summary" => one_arg("ai summary", "message-id", rest).map(|id| Ai::Summary { id }),
+            "ideas" => one_arg("ai ideas", "message-id", rest).map(|id| Ai::Ideas { id }),
+            "found" => one_arg("ai found", "message-id", rest).map(|id| Ai::Found { id }),
+            "explain" => ai_explain(rest),
+            "chat" => ai_chat(rest),
+            "chat-consent" => match rest {
+                [] => Ok(Ai::ChatConsent { agree: None }),
+                [one] => match one.to_ascii_lowercase().as_str() {
+                    "yes" => Ok(Ai::ChatConsent { agree: Some(true) }),
+                    "no" => Ok(Ai::ChatConsent { agree: Some(false) }),
+                    other => Err(format!("ai chat-consent takes yes or no, not '{other}'")),
+                },
+                [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+            },
             "set" => ai_set(rest),
             "models" => match rest {
                 [] => Ok(Ai::Models { provider: None }),
                 [one] => provider_named(one).map(|p| Ai::Models { provider: Some(p) }),
                 [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
             },
-            other => Err(format!("ai takes status, set, models or summary, not '{other}'")),
+            other => Err(format!("ai takes {AI_COMMANDS}, not '{other}'")),
         },
+    }
+}
+
+const AI_COMMANDS: &str = "status, set, models, summary, ideas, found, explain, chat-consent or chat";
+
+/// A message id, or `--text` and the words after it as one text (so quotes are optional).
+fn ai_chat(rest: &[String]) -> Result<Ai, String> {
+    let (mut about, mut auto) = (None, false);
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--about" => match args.next() {
+                Some(id) if !id.starts_with("--") && about.is_none() => about = Some(id.clone()),
+                Some(_) | None => return Err("--about needs one conversation (thread) id".into()),
+            },
+            "--auto" => auto = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option '{}'", option_name(flag))),
+            extra => return Err(format!("unexpected argument '{extra}'")),
+        }
+    }
+    Ok(Ai::Chat { about, auto })
+}
+
+fn ai_explain(rest: &[String]) -> Result<Ai, String> {
+    match rest {
+        [] => Err("ai explain needs a <message-id>, or --text and the words to explain".into()),
+        [flag, words @ ..] if flag == "--text" => {
+            let text = words.join(" ");
+            if text.trim().is_empty() {
+                return Err("--text needs the words to explain".into());
+            }
+            Ok(Ai::Explain { id: None, text })
+        }
+        [flag, ..] if flag.starts_with("--") => Err(format!("unknown option '{}'", option_name(flag))),
+        [id] => Ok(Ai::Explain { id: Some(id.clone()), text: String::new() }),
+        [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
+    }
+}
+
+/// The name of an option without a value written after `=`: what an error may repeat.
+fn option_name(arg: &str) -> &str {
+    arg.split_once('=').map_or(arg, |(name, _)| name)
+}
+
+fn on_off(option: &str, value: &str) -> Result<bool, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "on" => Ok(true),
+        "off" => Ok(false),
+        _ => Err(format!("{option} takes on or off")),
+    }
+}
+
+/// There is no "automatic": every change the chat suggests waits for the user's yes.
+fn actions_named(value: &str) -> Result<AiActionMode, String> {
+    match value.to_ascii_lowercase().as_str() {
+        "off" => Ok(AiActionMode::Off),
+        "ask" | "ask-first" => Ok(AiActionMode::AskFirst),
+        _ => Err("--actions takes off or ask".into()),
     }
 }
 
@@ -761,26 +881,48 @@ fn effort_named(name: &str) -> Result<AiEffort, String> {
 fn ai_set(rest: &[String]) -> Result<Ai, String> {
     let mut yes = false;
     let mut effort = None;
+    let mut switches = AiSwitches::default();
     let mut words: Vec<&String> = Vec::new();
     let mut args = rest.iter();
     while let Some(arg) = args.next() {
         if arg == "--yes" {
             yes = true;
-        } else if arg == "--effort" {
-            let value = args.next().ok_or("--effort needs a level")?;
-            effort = Some(effort_named(value)?);
-        } else if let Some(value) = arg.strip_prefix("--effort=") {
-            effort = Some(effort_named(value)?);
-        } else if arg.starts_with("--") {
-            return Err(format!("unknown option '{arg}'"));
-        } else {
+            continue;
+        }
+        if !arg.starts_with("--") {
             words.push(arg);
+            continue;
+        }
+        // The value is the next argument, or what follows `=`. An option that is not known is
+        // named without its value: someone may have tried to pass the key that way.
+        let name = option_name(arg);
+        if !["--effort", "--ideas", "--extract", "--explain", "--chat", "--actions"].contains(&name) {
+            return Err(format!("unknown option '{name}'"));
+        }
+        let value = match arg.split_once('=') {
+            Some((_, value)) => value,
+            None => args.next().ok_or_else(|| format!("{name} needs a value"))?.as_str(),
+        };
+        match name {
+            "--effort" => effort = Some(effort_named(value)?),
+            "--ideas" => switches.ideas = Some(on_off(name, value)?),
+            "--extract" => switches.extract = Some(on_off(name, value)?),
+            "--explain" => switches.explain = Some(on_off(name, value)?),
+            "--chat" => switches.chat = Some(on_off(name, value)?),
+            _ => switches.actions = Some(actions_named(value)?),
         }
     }
     let [provider, base_url, model] = words[..] else {
         return Err("ai set needs <provider> <base-url> <model>".into());
     };
-    Ok(Ai::Set { provider: provider_named(provider)?, base_url: base_url.clone(), model: model.clone(), effort, yes })
+    Ok(Ai::Set {
+        provider: provider_named(provider)?,
+        base_url: base_url.clone(),
+        model: model.clone(),
+        effort,
+        yes,
+        switches,
+    })
 }
 
 fn agenda(rest: &[String]) -> Result<Command, String> {
@@ -949,6 +1091,7 @@ mod tests {
                 model: "m".into(),
                 effort: None,
                 yes,
+                switches: AiSwitches::default(),
             }))
         };
         assert_eq!(p(&["ai", "set", "openai", "https://a.example/v1", "m"]), set(AiProvider::OpenAiCompatible, false));
@@ -979,6 +1122,75 @@ mod tests {
     }
 
     #[test]
+    fn ai_stage_two_and_chat_commands() {
+        assert_eq!(p(&["ai", "ideas", "e1"]), Ok(Command::Ai(Ai::Ideas { id: "e1".into() })));
+        assert_eq!(p(&["ai", "found", "e1"]), Ok(Command::Ai(Ai::Found { id: "e1".into() })));
+        assert_eq!(
+            p(&["ai", "explain", "e1"]),
+            Ok(Command::Ai(Ai::Explain { id: Some("e1".into()), text: String::new() }))
+        );
+        assert_eq!(
+            p(&["ai", "explain", "--text", "pro", "rata", "temporis"]),
+            Ok(Command::Ai(Ai::Explain { id: None, text: "pro rata temporis".into() }))
+        );
+        assert_eq!(p(&["ai", "chat"]), Ok(Command::Ai(Ai::Chat { about: None, auto: false })));
+        assert_eq!(
+            p(&["ai", "chat", "--about", "t1", "--auto"]),
+            Ok(Command::Ai(Ai::Chat { about: Some("t1".into()), auto: true }))
+        );
+        assert!(p(&["ai", "chat", "--about"]).is_err());
+        assert!(p(&["ai", "chat", "--about", "--auto"]).is_err());
+        assert!(p(&["ai", "chat", "--bogus"]).is_err());
+        assert!(p(&["ai", "chat", "extra"]).is_err());
+        assert_eq!(p(&["ai", "chat-consent"]), Ok(Command::Ai(Ai::ChatConsent { agree: None })));
+        assert_eq!(p(&["ai", "chat-consent", "Yes"]), Ok(Command::Ai(Ai::ChatConsent { agree: Some(true) })));
+        assert_eq!(p(&["ai", "chat-consent", "no"]), Ok(Command::Ai(Ai::ChatConsent { agree: Some(false) })));
+    }
+
+    #[test]
+    fn ai_set_takes_the_new_switches_and_keeps_what_is_left_out() {
+        let switches = |more: &[&str]| {
+            let args = [&["ai", "set", "openai", "https://a.example/v1", "m"], more].concat();
+            match p(&args) {
+                Ok(Command::Ai(Ai::Set { switches, .. })) => switches,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(switches(&[]), AiSwitches::default());
+        assert_eq!(
+            switches(&["--ideas", "on", "--extract=off", "--explain", "ON", "--chat=on", "--actions", "ask"]),
+            AiSwitches {
+                ideas: Some(true),
+                extract: Some(false),
+                explain: Some(true),
+                chat: Some(true),
+                actions: Some(AiActionMode::AskFirst),
+            }
+        );
+        assert_eq!(switches(&["--actions=off", "--yes"]).actions, Some(AiActionMode::Off));
+        assert_eq!(switches(&["--chat", "off"]), AiSwitches { chat: Some(false), ..AiSwitches::default() });
+    }
+
+    #[test]
+    fn there_is_no_automatic_action_mode_and_an_unknown_option_is_named_without_its_value() {
+        let set = |more: &[&str]| p(&[&["ai", "set", "openai", "https://a.example/v1", "m"], more].concat());
+        for bad in [
+            &["--actions", "auto"][..],
+            &["--actions=automatic"],
+            &["--actions", "on"],
+            &["--actions"],
+            &["--chat"],
+            &["--chat", "yes"],
+            &["--ideas=maybe"],
+            &["--tools", "on"],
+        ] {
+            assert!(set(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(set(&["--key=sk-secret-1"]), Err("unknown option '--key'".into()));
+        assert_eq!(p(&["ai", "explain", "--key=sk-secret-1"]), Err("unknown option '--key'".into()));
+    }
+
+    #[test]
     fn ai_mistakes_are_errors_and_a_key_is_never_an_argument() {
         for bad in [
             &["ai"][..],
@@ -996,6 +1208,15 @@ mod tests {
             &["ai", "set", "openai", "https://a.example/v1", "m", "--effort", "huge"],
             &["ai", "models", "gemini"],
             &["ai", "models", "openai", "x"],
+            &["ai", "ideas"],
+            &["ai", "found", "a", "b"],
+            &["ai", "explain"],
+            &["ai", "explain", "a", "b"],
+            &["ai", "explain", "--text"],
+            &["ai", "explain", "--text", " "],
+            &["ai", "chat", "x"],
+            &["ai", "chat-consent", "maybe"],
+            &["ai", "chat-consent", "yes", "x"],
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }

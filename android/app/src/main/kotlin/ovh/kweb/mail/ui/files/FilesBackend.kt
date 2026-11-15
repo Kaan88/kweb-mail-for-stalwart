@@ -1,6 +1,8 @@
 package ovh.kweb.mail.ui.files
 
 import java.io.File
+import ovh.kweb.mail.ui.transfer.CoreDownloads
+import ovh.kweb.mail.ui.transfer.DownloadStop
 import uniffi.kweb_core.Core
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileListing
@@ -16,7 +18,11 @@ interface FilesBackend {
     fun rename(account: String?, id: String, name: String)
     fun move(account: String?, id: String, parentId: String?)
     fun delete(account: String?, id: String)
-    fun download(account: String?, blobId: String, destPath: String)
+    /**
+     * Downloads to [destPath], reporting progress to [onProgress] (bytes so far, the total when known) on the calling
+     * thread, and ending at [stop]. True when the file is complete; false when [stop] ended it (nothing is left).
+     */
+    fun download(account: String?, blobId: String, destPath: String, stop: DownloadStop, onProgress: (Long, Long?) -> Unit): Boolean
 }
 
 class CoreFilesBackend(private val core: () -> Core) : FilesBackend {
@@ -29,7 +35,8 @@ class CoreFilesBackend(private val core: () -> Core) : FilesBackend {
     override fun rename(account: String?, id: String, name: String) = core().fileRename(account, id, name)
     override fun move(account: String?, id: String, parentId: String?) = core().fileMove(account, id, parentId)
     override fun delete(account: String?, id: String) = core().fileDelete(account, id)
-    override fun download(account: String?, blobId: String, destPath: String) = core().fileDownload(account, blobId, destPath)
+    override fun download(account: String?, blobId: String, destPath: String, stop: DownloadStop, onProgress: (Long, Long?) -> Unit) =
+        CoreDownloads.file(core(), account, blobId, destPath, stop, onProgress)
 }
 
 /** The name and size of a document the user picked; [size] is null when the provider does not say. */

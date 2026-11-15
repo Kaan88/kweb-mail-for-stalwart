@@ -102,8 +102,9 @@ pub async fn check_once(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
 }
 
 /// [`check_once`] without the extras after the pass (the directory and the bodies): the plan is
-/// returned as soon as the pass has made it. For a push receiver, whose seconds are few and
-/// whose process has no listener, so that the returned plan is the only way to the screen.
+/// returned as soon as the pass has made it. For a push receiver, whose seconds are few. As in
+/// [`check_once`], the listener is given the plan inside the pass; a host without one (the cli)
+/// shows the returned plan.
 pub async fn check_pass_only(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     match attempt_pass(deps, on_screen).await {
         Err(e) if is_unauthorized(&e) => {

@@ -582,6 +582,55 @@ fn a_download_streams_to_the_destination_through_a_part_file() {
     assert!(leftovers.is_empty());
 }
 
+/// Cancels from inside the callback, as a host might.
+struct CancelAtFirstByte(Arc<kweb_core::ffi::DownloadCancel>);
+
+impl kweb_core::ffi::DownloadListener for CancelAtFirstByte {
+    fn progress(&self, done: u64, _: Option<u64>) {
+        if done > 0 {
+            self.0.cancel();
+        }
+    }
+}
+
+#[test]
+fn a_file_download_reports_progress_and_can_be_cancelled() {
+    let rig = Rig::new();
+    let bytes = vec![5_u8; 600_000];
+    let id = rig.server.add_file(ACCOUNT_ID, None, "d.bin", &bytes, "application/octet-stream");
+    let blob = rig.core.files(None, None).unwrap().entries.into_iter().find(|e| e.id == id).unwrap().blob_id.unwrap();
+    rig.server.pace_downloads(60, false);
+    let dest = rig.dir.path().join("p.bin");
+    let cancel = kweb_core::ffi::DownloadCancel::new();
+    let listener = Arc::new(CancelAtFirstByte(cancel.clone()));
+    let done = rig
+        .core
+        .file_download_tracked(None, blob.clone(), dest.to_string_lossy().into_owned(), cancel, Some(listener))
+        .unwrap();
+    assert!(!done);
+    assert!(!dest.exists());
+    let parts: Vec<_> = fs::read_dir(rig.dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains("p.bin"))
+        .collect();
+    assert!(parts.is_empty(), "no part file is left");
+    // The same file, not cancelled, arrives whole.
+    rig.server.pace_downloads(0, false);
+    let done = rig
+        .core
+        .file_download_tracked(
+            None,
+            blob,
+            dest.to_string_lossy().into_owned(),
+            kweb_core::ffi::DownloadCancel::new(),
+            None,
+        )
+        .unwrap();
+    assert!(done);
+    assert_eq!(fs::read(&dest).unwrap(), bytes);
+}
+
 #[test]
 fn a_download_from_a_shared_space_names_that_space_in_the_url() {
     let rig = Rig::new();

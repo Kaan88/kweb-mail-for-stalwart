@@ -20,6 +20,21 @@
 
     <string name="action_archive">Archive</string>
     <string name="action_mark_read">Mark read</string>
+    <!-- The setting for the buttons of a mail notification (Delete is action_delete, Reply is action_reply). -->
+    <string name="notif_buttons_title">Notification buttons</string>
+    <string name="notif_buttons_none">None</string>
+    <string name="notif_buttons_preview">Preview</string>
+    <string name="notif_buttons_preview_sender">Sender</string>
+    <string name="notif_buttons_preview_subject">Subject of the mail</string>
+    <string name="notif_buttons_preview_none">No buttons</string>
+    <string name="notif_buttons_choose">Buttons</string>
+    <string name="notif_buttons_position">Button %1$d</string>
+    <string name="notif_buttons_off">Not shown</string>
+    <string name="notif_buttons_full">Not shown · switch another off first</string>
+    <string name="notif_buttons_move_up">Move %1$s earlier</string>
+    <string name="notif_buttons_move_down">Move %1$s later</string>
+    <string name="notif_buttons_note">A notification has room for three buttons. Delete moves the mail to the Trash. Notifications already on screen get the new buttons too.</string>
+    <string name="notif_buttons_reset">Use the default</string>
     <string name="action_snooze">Snooze 10 min</string>
     <string name="action_open">Open</string>
 

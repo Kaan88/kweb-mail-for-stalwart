@@ -20,6 +20,9 @@ sealed interface AccessDialog {
     /** A key was read from the clipboard; [shown] is its first eight characters and dots. */
     data class ConfirmKey(val shown: String) : AccessDialog
 
+    /** The key belongs to [account], which is not the account signed in here: act as it? */
+    data class ActAs(val account: String) : AccessDialog
+
     data object Forget : AccessDialog
 }
 
@@ -45,6 +48,8 @@ class AccessController(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher,
     private val backend: AdminBackend,
+    /** Called with every access read from the core (a read, a key taken, a key forgotten): the drawer keeps the answer. */
+    private val onKnown: (AdminAccess) -> Unit = {},
     /** Called on the main thread when the access changed (a key taken or forgotten). */
     private val onChanged: (AdminAccess) -> Unit = {},
 ) {
@@ -61,6 +66,7 @@ class AccessController(
         scope.launch {
             try {
                 val access = withContext(io) { backend.access() }
+                onKnown(access)
                 if (mine != ticket) return@launch
                 stateFlow.update {
                     it.copy(phase = AccessPhase.READY, access = access, error = null, refused = if (access.connected) false else it.refused, refusal = if (access.connected) null else it.refusal)
@@ -86,8 +92,16 @@ class AccessController(
         stateFlow.update { it.copy(dialog = AccessDialog.ConfirmKey(AdminRules.maskKey(key)), error = null) }
     }
 
+    /** Yes, act as the account the key belongs to. */
+    fun confirmActAs() {
+        val account = (stateFlow.value.dialog as? AccessDialog.ActAs)?.account ?: return
+        connect(account)
+    }
+
     /** Yes, use this key. */
-    fun confirmKey() {
+    fun confirmKey() = connect(null)
+
+    private fun connect(agreedAccount: String?) {
         val key = pendingKey
         pendingKey = null
         stateFlow.update { it.copy(dialog = null) }
@@ -96,7 +110,18 @@ class AccessController(
         stateFlow.update { it.copy(busy = true, error = null) }
         scope.launch {
             try {
-                val access = withContext(io) { backend.connect(key) }
+                // A key of another account is taken only after the user was told whose it is.
+                val agreed = agreedAccount
+                if (agreed == null) {
+                    val owner = withContext(io) { backend.keyOwner(key) }
+                    if (owner.otherAccount) {
+                        pendingKey = key
+                        stateFlow.update { it.copy(busy = false, dialog = AccessDialog.ActAs(owner.username)) }
+                        return@launch
+                    }
+                }
+                val access = withContext(io) { backend.connect(key, agreed) }
+                onKnown(access)
                 stateFlow.update { it.copy(busy = false, phase = AccessPhase.READY, access = access, refused = false, refusal = null) }
                 onChanged(access)
             } catch (e: CancellationException) {
@@ -126,6 +151,7 @@ class AccessController(
             try {
                 withContext(io) { backend.disconnect() }
                 val access = withContext(io) { backend.access() }
+                onKnown(access)
                 stateFlow.update { it.copy(busy = false, access = access, refused = false, refusal = null) }
                 onChanged(access)
             } catch (e: CancellationException) {

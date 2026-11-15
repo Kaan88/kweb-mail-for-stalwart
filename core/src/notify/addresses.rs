@@ -11,7 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    compose::rules::{address_key, own_keys, untagged_key},
+    compose::rules::{address_key, own_keys, plus_base},
     model::{Address, Identity},
 };
 
@@ -84,8 +84,7 @@ pub fn mode_for(to: &[Address], own: &HashSet<String>, chosen: &HashMap<String, 
             if own.contains(&exact) {
                 return Some(exact);
             }
-            let untagged = untagged_key(&a.email);
-            own.contains(&untagged).then_some(untagged)
+            plus_base(&a.email).filter(|base| own.contains(base))
         })
         .map(|key| chosen.get(&key).copied().unwrap_or(AddressMode::Notify))
         .max()

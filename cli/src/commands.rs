@@ -937,9 +937,22 @@ fn masked(core: &Core, what: Masked) -> Result<(), String> {
 /// Never a secret: the server does not list them, and the names of what exists are all there is.
 fn security(core: &Core) -> Result<(), String> {
     let s = core.account_security().map_err(|e| e.to_string())?;
-    println!("two-step codes: {}", if s.two_step { "on" } else { "off" });
+    println!(
+        "two-step codes: {}",
+        if !s.access.password {
+            "not allowed for this account"
+        } else if s.two_step {
+            "on"
+        } else {
+            "off"
+        }
+    );
     let when = |t: Option<i64>| t.map(|t| format!(" ({})", timefmt::utc(t))).unwrap_or_default();
-    let section = |title: &str, lines: Vec<String>| {
+    let section = |title: &str, allowed: bool, lines: Vec<String>| {
+        if !allowed {
+            println!("{title}: not allowed for this account");
+            return;
+        }
         println!("{title}: {}", lines.len());
         for line in lines {
             println!("  {line}");
@@ -949,14 +962,16 @@ fn security(core: &Core) -> Result<(), String> {
         let expires = c.expires_at.map(|t| format!(", expires {}", timefmt::utc(t))).unwrap_or_default();
         format!("{}  {}{expires}", c.id, one_line(&c.description))
     };
-    section("app passwords", s.app_passwords.iter().map(credential).collect());
-    section("API keys", s.api_keys.iter().map(credential).collect());
+    section("app passwords", s.access.app_passwords, s.app_passwords.iter().map(credential).collect());
+    section("API keys", s.access.api_keys, s.api_keys.iter().map(credential).collect());
     section(
         "passkeys",
+        s.access.passkeys,
         s.passkeys.iter().map(|p| format!("{}  {}{}", p.id, one_line(&p.name), when(p.created_at))).collect(),
     );
     section(
         "connected apps",
+        s.access.connected_apps,
         s.connected_apps
             .iter()
             .map(|a| {

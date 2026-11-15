@@ -21,13 +21,18 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.UiMessage
+import java.time.LocalDate
 import ovh.kweb.mail.ui.assistant.AssistantRules.Kind
+import ovh.kweb.mail.ui.calendar.EventPrefill
 import ovh.kweb.mail.ui.compose.DraftLauncher
+import uniffi.kweb_core.AiFinding
 import uniffi.kweb_core.AiListener
 import uniffi.kweb_core.AiPreview
 import uniffi.kweb_core.AiSettings
 import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.DraftKind
+import uniffi.kweb_core.aiParseFindings
+import uniffi.kweb_core.aiParseIdeas
 
 /** Where the text of a rewrite came from, to put the result back exactly there. */
 data class RewriteTarget(val span: Span, val original: String)
@@ -67,6 +72,10 @@ data class AssistSession(
     val phase: AssistPhase,
     val text: String = "",
     val rewrite: RewriteTarget? = null,
+    /** The reply ideas read from a finished answer (at most three); empty for every other kind. */
+    val ideas: List<String> = emptyList(),
+    /** The to-dos and dates read from a finished answer; empty for every other kind. */
+    val findings: List<AiFinding> = emptyList(),
     /** A reply draft is being made from the answer. */
     val busy: Boolean = false,
     /** Something went wrong after the answer was complete (the draft could not be started). */
@@ -82,6 +91,12 @@ data class AssistantState(
 sealed interface AssistantEvent {
     /** A reply draft with the answer in it is ready: the screen of [owner] opens it. */
     data class OpenDraft(val owner: String, val draftId: String) : AssistantEvent
+
+    /**
+     * The user tapped something found in a message: the screen of [owner] opens the form for a new calendar entry
+     * that starts with [prefill]. Nothing is saved; the user saves the form himself.
+     */
+    data class OpenEvent(val owner: String, val prefill: EventPrefill) : AssistantEvent
 }
 
 /**
@@ -97,6 +112,9 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
     private val runLock = Mutex()
     private var counter = 0L
 
+    /** The owner whose session survives its screen being left once: it left for the calendar form and comes back. */
+    private var keptFor: String? = null
+
     val state: StateFlow<AssistantState> get() = stateFlow
 
     val events: Flow<AssistantEvent> get() = eventChannel.receiveAsFlow()
@@ -106,6 +124,7 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
             SessionState.signedIn.collect { signedIn ->
                 if (signedIn == false) {
                     cancelCore(stateFlow.value.session?.runId)
+                    keptFor = null
                     stateFlow.value = AssistantState()
                 }
             }
@@ -130,14 +149,15 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
     // ---- starting ----
 
     /**
-     * Opens the sheet of [owner] for [task]. A task that is running is stopped first. A summary or a rewrite starts at
-     * once; a reply draft waits for [start] (the user may say what it should say). Does nothing when this kind is
+     * Opens the sheet of [owner] for [task]. A task that is running is stopped first. Every kind starts at once, except
+     * a reply draft, which waits for [start] (the user may say what it should say). Does nothing when this kind is
      * not allowed.
      */
     fun open(owner: String, kind: Kind, task: AiTask, rewrite: RewriteTarget? = null) {
         val settings = stateFlow.value.settings
         if (!AssistantRules.isAllowed(settings, kind)) return
         stopRunning()
+        keptFor = null
         val id = ++counter
         val phase = if (kind == Kind.DRAFT) AssistPhase.Input else AssistPhase.Checking
         val session = AssistSession(id, RunRules.newRunId(), owner, kind, task, model = settings?.model.orEmpty(), phase = phase, rewrite = rewrite)
@@ -235,7 +255,29 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
             return
         }
         // The whole answer replaces what was streamed, so it is complete even if a piece was lost.
-        updateSession(id) { if (it.phase == AssistPhase.Running) it.copy(phase = AssistPhase.Done, text = answer.ifBlank { it.text }) else it }
+        val running = sessionOf(id)?.takeIf { it.phase == AssistPhase.Running } ?: return
+        val text = answer.ifBlank { running.text }
+        val read = read(running.kind, text)
+        updateSession(id) { if (it.phase == AssistPhase.Running) it.copy(phase = AssistPhase.Done, text = text, ideas = read.ideas, findings = read.findings) else it }
+    }
+
+    private class Read(val ideas: List<String> = emptyList(), val findings: List<AiFinding> = emptyList())
+
+    /**
+     * What the core reads out of a finished answer: ideas or findings. It only parses text (nothing is sent or stored);
+     * an answer it cannot read gives nothing, and the sheet then says so.
+     */
+    private suspend fun read(kind: Kind, answer: String): Read = try {
+        when (kind) {
+            Kind.IDEAS -> Read(ideas = withContext(Dispatchers.Default) { aiParseIdeas(answer) })
+            Kind.EXTRACT -> Read(findings = withContext(Dispatchers.Default) { aiParseFindings(answer) })
+            Kind.SUMMARY, Kind.DRAFT, Kind.REWRITE, Kind.EXPLAIN -> Read()
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(Background.TAG, "reading an assistant answer failed: ${e.javaClass.simpleName}")
+        Read()
     }
 
     /** Receives the answer on a core thread. It only appends to the session it was made for, if that is still running. */
@@ -261,11 +303,19 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
     /** The sheet was left or dismissed: a running task is cancelled and the session is gone. */
     fun close() {
         stopRunning()
+        keptFor = null
         stateFlow.update { it.copy(session = null) }
     }
 
-    /** A screen was left for good: its session goes, and with it any task still running for it. */
+    /**
+     * A screen was left for good: its session goes, and with it any task still running for it. The one exception is a
+     * screen left for the calendar form its own sheet opened ([addToCalendar]): its finished findings wait for it.
+     */
     fun release(owner: String) {
+        if (keptFor == owner) {
+            keptFor = null
+            return
+        }
         if (stateFlow.value.session?.owner == owner) close()
     }
 
@@ -293,23 +343,62 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
     // ---- using the answer ----
 
     /**
-     * Makes a reply draft with the answer above the quoted original, saves it and tells the owner's screen to open it.
-     * Nothing is sent from here.
+     * "Use as reply" under a finished reply draft: a reply with the answer above the quoted original. Nothing is sent
+     * from here.
      */
     fun useAsReply() {
         val s = stateFlow.value.session ?: return
         val task = s.task as? AiTask.DraftReply ?: return
+        if (s.kind != Kind.DRAFT) return
+        makeReply(s, task.messageId, s.text)
+    }
+
+    /**
+     * A tap on a reply idea. With reply drafts allowed the assistant writes a draft that says what the idea says (a new
+     * task, with its own Stop and its own answer to check); otherwise a reply is started with the idea itself as its
+     * text. Either way the user sees the result before anything is sent, and sends it himself.
+     */
+    fun useIdea(idea: String) {
+        val s = stateFlow.value.session ?: return
+        val task = s.task as? AiTask.ReplyIdeas ?: return
+        if (s.kind != Kind.IDEAS || s.phase != AssistPhase.Done || s.busy || idea.isBlank()) return
+        when (InsightRules.ideaTap(AssistantRules.isAllowed(stateFlow.value.settings, Kind.DRAFT))) {
+            InsightRules.IdeaTap.WRITE_DRAFT -> {
+                open(s.owner, Kind.DRAFT, AiTask.DraftReply(task.messageId, idea.trim()))
+                start(idea)
+            }
+            InsightRules.IdeaTap.USE_AS_TEXT -> makeReply(s, task.messageId, idea)
+        }
+    }
+
+    /**
+     * A tap on a to-do or a date found in a message: asks the owner's screen to open the form for a new calendar
+     * entry that starts with it. Nothing is saved from here, so nothing needs approving: the user saves the form.
+     * The findings stay for when he comes back from the form.
+     */
+    fun addToCalendar(finding: AiFinding) {
+        val s = stateFlow.value.session ?: return
+        if (s.kind != Kind.EXTRACT || s.phase != AssistPhase.Done || finding !in s.findings) return
+        keptFor = s.owner
+        if (eventChannel.trySend(AssistantEvent.OpenEvent(s.owner, InsightRules.prefill(finding, LocalDate.now()))).isFailure) keptFor = null
+    }
+
+    /**
+     * Makes a reply draft to [messageId] with [text] above the quoted original, saves it and tells the owner's screen
+     * to open it. Nothing is sent from here.
+     */
+    private fun makeReply(s: AssistSession, messageId: String, text: String) {
         if (s.phase != AssistPhase.Done || s.busy) return
         updateSession(s.id) { it.copy(busy = true, notice = null) }
         viewModelScope.launch {
             var draftId: String? = null
             try {
-                val id = DraftLauncher.create(session.core, DraftKind.Reply(task.messageId))
+                val id = DraftLauncher.create(session.core, DraftKind.Reply(messageId))
                 draftId = id
                 withContext(Dispatchers.IO) {
                     val core = session.core
                     val draft = checkNotNull(core.draft(id)) { "the new draft is gone" }
-                    core.saveDraft(draft.copy(body = DraftText.withAnswer(draft.body, s.text)))
+                    core.saveDraft(draft.copy(body = DraftText.withAnswer(draft.body, text)))
                 }
                 if (sessionOf(s.id) == null) {
                     // The sheet was closed meanwhile: do not open a screen nobody asked for; the draft stays in Drafts.

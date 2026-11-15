@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.ui.assistant.AssistantScreen
+import ovh.kweb.mail.ui.assistant.chat.ChatScreen
 import ovh.kweb.mail.ui.away.AwayScreen
 import ovh.kweb.mail.ui.calendar.CalendarScreen
 import ovh.kweb.mail.ui.calendar.EditEventScreen
@@ -58,7 +60,7 @@ import ovh.kweb.mail.ui.shared.SharedMessageScreen
 import ovh.kweb.mail.ui.shared.SharedScreen
 import ovh.kweb.mail.ui.sharing.LocalOpenShare
 import ovh.kweb.mail.ui.sharing.ShareScreen
-import ovh.kweb.mail.ui.thread.ThreadScreen
+import ovh.kweb.mail.ui.thread.ThreadRoute
 import android.app.Application
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
@@ -182,8 +184,17 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
             }
             val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
+            // What a screen remembers (its scroll position) is kept while another screen is over it and dropped when its route leaves the stack.
+            val stateHolder = rememberSaveableStateHolder()
+            val keptKeys = remember { arrayOf(emptySet<String>()) }
+            LaunchedEffect(stack, account) {
+                RouteStateRules.gone(keptKeys[0], account, stack).forEach { stateHolder.removeState(it) }
+                keptKeys[0] = RouteStateRules.keys(account, stack)
+            }
+            val route = stack.last()
             CompositionLocalProvider(LocalOpenShare provides openShare) {
-            when (val route = stack.last()) {
+            stateHolder.SaveableStateProvider(RouteStateRules.key(account, route)) {
+            when (route) {
                 Route.MailList -> MailListScreen(
                     onOpenThread = { threadId, mailboxId -> app.open(Route.Thread(threadId, mailboxId, null)) },
                     onOpenSearch = { app.open(Route.Search) },
@@ -191,8 +202,10 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenSettings = { app.open(Route.Settings) },
                     onCompose = { app.open(Route.Compose(it)) },
                     onOpenShared = { app.open(Route.Shared) },
+                    onOpenAdminEntry = { app.open(if (it == ovh.kweb.mail.ui.admin.AdminEntry.Dashboard) Route.Enterprise(ovh.kweb.mail.ui.enterprise.EnterprisePage.Dashboard, adminShortcut = true) else Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
                     onOpenFolders = { folderId, action -> app.open(Route.Folders(folderId, action)) },
                     onOpenLabel = { id, name -> app.open(Route.Label(id, name)) },
+                    onOpenChat = { app.open(Route.AssistantChat) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
@@ -217,7 +230,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 }
                 is Route.EditEvent -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account)
+                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account, prefill = route.prefill)
                     }
                 }
                 is Route.Contact -> key(route) {
@@ -321,7 +334,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 is Route.Filters -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     FiltersScreen(route, onBack = app::back)
                 }
-                is Route.Enterprise -> key(route) { CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { ovh.kweb.mail.ui.enterprise.EnterpriseScreen(route.page, onBack = app::back, onOpen = { app.open(Route.Enterprise(it)) }) } }
+                is Route.Enterprise -> key(route) { CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { ovh.kweb.mail.ui.enterprise.EnterpriseScreen(route.page, onBack = app::back, onOpen = { app.open(Route.Enterprise(it)) }, onOpenAdmin = if (route.adminShortcut) ({ app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) }) else null) } }
                 is Route.Folders -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                         FoldersScreen(route, onBack = app::back)
@@ -341,26 +354,54 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     AssistantScreen(onBack = app::back)
                 }
+                Route.AssistantChat -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    ChatScreen(
+                        onBack = app::back,
+                        onOpenThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                        onOpenDraft = { app.open(Route.Compose(it)) },
+                        onOpenSettings = { app.open(Route.Assistant) },
+                    )
+                }
+                is Route.AssistantChatAbout -> key(route) {
+                    CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                        ChatScreen(
+                            onBack = app::back,
+                            onOpenThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                            onOpenDraft = { app.open(Route.Compose(it)) },
+                            onOpenSettings = { app.open(Route.Assistant) },
+                            aboutThreadId = route.threadId,
+                        )
+                    }
+                }
                 Route.MaskedAddresses -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     MaskedScreen(onBack = app::back)
                 }
                 Route.AccountSecurity -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     SecurityScreen(onBack = app::back)
                 }
-                // One thread replacing another (a notification tap) must not inherit the first one's state.
+                // One thread replacing another (a notification tap) must not inherit the first one's state. The conversations of the
+                // list it was opened from are pages of one pager on this one route: Back leaves the route, to the list.
                 is Route.Thread -> key(route) {
-                    ThreadScreen(
+                    ThreadRoute(
+                        app,
                         route,
+                        stack,
+                        mailList,
+                        search,
                         onBack = app::back,
                         onCompose = { app.open(Route.Compose(it)) },
                         onFilterLike = { app.open(Route.Filters(it)) },
                         onOpenFilters = { app.open(Route.Filters()) },
+                        // The form opens on the day of what was found; the user saves it himself.
+                        onAddToCalendar = { app.open(Route.EditEvent(null, it.start.take(10), prefill = it)) },
+                        onAskAssistant = { app.open(Route.AssistantChatAbout(it)) },
                     )
                 }
                 is Route.Compose -> key(route) { ComposeScreen(route.draftId, route.prefillTo, onLeave = app::back, onSent = app::sent) }
                 Route.Settings -> SettingsScreen(
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
+                    onOpenNotificationButtons = { app.open(Route.NotificationButtons) },
                     onOpenAway = { app.open(Route.Away) },
                     onOpenFilters = { app.open(Route.Filters()) },
                     onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
@@ -377,6 +418,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onBack = app::back,
                     onOpen = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                 )
+                Route.NotificationButtons -> ovh.kweb.mail.ui.settings.NotificationButtonsScreen(onBack = app::back)
                 Route.DeliveryCheck -> DeliveryScreen(
                     onBack = app::back,
                     onSignInAgain = { app.open(Route.SignInAgain) },
@@ -395,6 +437,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.AddAccount -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { AddAccount(app) }
                 }
+            }
             }
             }
             // The root screens put it above their bottom bar themselves.

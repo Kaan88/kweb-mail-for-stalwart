@@ -25,9 +25,10 @@ sealed interface MessageOutcome {
 /**
  * The decision logic of a received Web Push, with every side effect passed in so a test can use fakes
  * (decision 3). The core call runs on a thread of [executor]; if it has not finished after [budgetMs] or
- * fails, [checkSoon] is called and the receiver finishes. The call goes on meanwhile and applies its own result
- * when it comes (a late plan is shown with its alert, a late reminder is shown); that is safe: the core's passes take
- * turns and [apply] never alerts twice.
+ * fails, [checkSoon] is called and the receiver finishes. The call goes on meanwhile and its result still counts
+ * when it comes (a late plan was shown with its alert by the account's listener inside the pass, a late reminder
+ * is shown); that is safe: the core's passes take turns. [apply] is what follows a pass that went well; it must
+ * not post the plan a second time.
  */
 class PushMessageHandler(
     private val executor: ExecutorService,
@@ -38,9 +39,8 @@ class PushMessageHandler(
     private val checkSoon: () -> Unit,
 ) {
     fun run(): MessageOutcome {
-        // The task applies its own result as soon as it has it, whether or not the receiver still waits: the plan of
-        // the pass that found the mail (with its alert) is the one that is shown. A pass that is late would otherwise
-        // have marked the mail as announced, and the hand-over check would post it again without sound.
+        // The task finishes its own work whether or not the receiver still waits: the plan of the pass that found the
+        // mail (with its alert) is the one that is shown, by the listener inside that pass.
         val task = executor.submit(Callable { deliver() })
         return try {
             task.get(budgetMs, TimeUnit.MILLISECONDS)
@@ -73,5 +73,14 @@ class PushMessageHandler(
             if (subtype.isNullOrEmpty()) return null
             return subtypes.firstOrNull { it.second == subtype }?.first
         }
+
+        /**
+         * A message that cannot be read (no body, or no account) is dropped. Whether a check must look instead:
+         * yes when Google says it discarded messages ([messageType] `deleted_messages`, which names no account), and
+         * yes when the message is for an account of ours ([accountKnown]) and only its body is missing. A message for
+         * nobody we know stays a plain drop.
+         */
+        fun dropNeedsCheck(messageType: String?, accountKnown: Boolean): Boolean =
+            messageType == GoogleRegistration.TYPE_DELETED_MESSAGES || accountKnown
     }
 }

@@ -12,9 +12,10 @@ import ovh.kweb.mail.accounts.AccountRecord
 import ovh.kweb.mail.accounts.Accounts
 import uniffi.kweb_core.Action
 import uniffi.kweb_core.ConnectionStatus
+import uniffi.kweb_core.Core
 
 /**
- * Handles the buttons and swipes of notifications: Archive, Mark read, a swipe, and the
+ * Handles the buttons and swipes of notifications: Archive, Delete, Mark read, a swipe, and the
  * reminder's Snooze (plus the alarm that ends a snooze). Not exported.
  *
  * The work runs on its own thread under `goAsync()`, because the core's functions block.
@@ -39,8 +40,11 @@ class ActionReceiver : BroadcastReceiver() {
         val record = IntentAccount.resolve(extra, Accounts.load(context))
         if (record == null) return dropOrphan(context, intent, extra)
         when (intent.action) {
-            ACTION_ARCHIVE -> actOnMessage(context, record, intent) { Action.Archive(it) }
-            ACTION_MARK_READ -> actOnMessage(context, record, intent) { Action.MarkRead(it) }
+            ACTION_ARCHIVE -> actOnMessage(context, record, intent) { _, id -> Action.Archive(id) }
+            // To the Trash and never further: a notification can outlive its mail's move to the Trash, and the
+            // core's Delete would then delete it for good ([NotificationActionRules.deleteAction]).
+            ACTION_DELETE -> actOnMessage(context, record, intent) { core, id -> NotificationActionRules.deleteAction(id, core.mailboxes()) }
+            ACTION_MARK_READ -> actOnMessage(context, record, intent) { _, id -> Action.MarkRead(id) }
             ACTION_SWIPED -> intent.getStringExtra(EXTRA_MESSAGE_ID)?.let { Accounts.session(record.id)?.core?.notificationSwiped(it) }
             ACTION_SNOOZE -> ReminderExtras.read(intent)?.let { snooze(context, record, it) }
             ACTION_REMINDER_DUE -> ReminderExtras.read(intent)?.let { showSnoozed(context, record, it) }
@@ -63,13 +67,14 @@ class ActionReceiver : BroadcastReceiver() {
     /**
      * Removes the notification first so the tap feels instant, then hands the action to the core,
      * which applies it to the cache at once. If the live connection is not up, nobody would send it
-     * to the server soon, so a check is queued for that.
+     * to the server soon, so a check is queued for that. No action ([action] gives null) only removes
+     * the notification.
      */
-    private fun actOnMessage(context: Context, record: AccountRecord, intent: Intent, action: (String) -> Action) {
+    private fun actOnMessage(context: Context, record: AccountRecord, intent: Intent, action: (Core, String) -> Action?) {
         val messageId = intent.getStringExtra(EXTRA_MESSAGE_ID) ?: return
         Notifier(context).cancelMail(record, intent.getIntExtra(EXTRA_ANDROID_ID, 0))
         val core = Accounts.session(record.id)?.core ?: return
-        core.submit(action(messageId))
+        core.submit(action(core, messageId) ?: return)
         if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(context)
     }
 
@@ -93,6 +98,7 @@ class ActionReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_ARCHIVE = "ovh.kweb.mail.action.ARCHIVE"
+        const val ACTION_DELETE = "ovh.kweb.mail.action.DELETE"
         const val ACTION_MARK_READ = "ovh.kweb.mail.action.MARK_READ"
         const val ACTION_SWIPED = "ovh.kweb.mail.action.SWIPED"
         const val ACTION_SNOOZE = "ovh.kweb.mail.action.SNOOZE"

@@ -8,9 +8,9 @@ import androidx.compose.runtime.Composable
  * [onOpen] opens another page (the delivery history opens one delivery).
  */
 @Composable
-fun EnterpriseScreen(page: EnterprisePage, onBack: () -> Unit, onOpen: (EnterprisePage) -> Unit) {
+fun EnterpriseScreen(page: EnterprisePage, onBack: () -> Unit, onOpen: (EnterprisePage) -> Unit, onOpenAdmin: (() -> Unit)? = null) {
     when (page) {
-        EnterprisePage.Dashboard -> DashboardScreen(onBack)
+        EnterprisePage.Dashboard -> DashboardScreen(onBack, onOpenAdmin = onOpenAdmin)
         EnterprisePage.Deliveries -> DeliveriesScreen(onBack, onOpen = { onOpen(EnterprisePage.Delivery(it)) })
         is EnterprisePage.Delivery -> DeliveryDetailScreen(page.id, onBack)
         EnterprisePage.Recovery -> RecoveryScreen(onBack)

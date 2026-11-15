@@ -352,13 +352,14 @@ object Accounts {
 
     private fun finishRemoval(record: AccountRecord) {
         val notifier = Notifier(app)
+        // First: a pass or a registration of this account that is still running must not show or write anything more.
+        Settings.forget(record)
         requireStore().remove(record.id) { notifier.cancelAccount(it) }
         synchronized(sessionLock) {
             sessions.remove(record.id)
         }
         statuses.update { it - record.id }
         cacheCounts.update { it - record.id }
-        Settings.forget(record)
         publish(store!!.state)
         Background.afterAccountRemoved(app, record)
     }

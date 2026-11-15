@@ -10,6 +10,10 @@ mod actions;
 mod admin;
 #[path = "suite/assistant.rs"]
 mod assistant;
+#[path = "suite/assistant_chat.rs"]
+mod assistant_chat;
+#[path = "suite/assistant_converse.rs"]
+mod assistant_converse;
 #[path = "suite/calendar.rs"]
 mod calendar;
 #[path = "suite/contacts.rs"]

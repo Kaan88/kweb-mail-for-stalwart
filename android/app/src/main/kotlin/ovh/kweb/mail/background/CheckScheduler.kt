@@ -53,10 +53,10 @@ object CheckScheduler {
      * ahead a plain one-off with that delay. [ownSlot]: the slot of the due worker that asks, so a worker never
      * enqueues its own name with REPLACE (that would cancel itself); it uses the other one. At the end of a worker
      * ([fromWorker]) work owed *now* means the pass could not do it: the retry backs off and ends ([DueRules.plan],
-     * [attempt] retries so far).
+     * [attempt] retries so far), unless the work only appeared while the pass ran ([fresh]).
      */
-    fun checkAt(context: Context, inMs: Long, fromWorker: Boolean = false, ownSlot: Int? = null, attempt: Int = 0) {
-        val plan = DueRules.plan(inMs, fromWorker, attempt) ?: return
+    fun checkAt(context: Context, inMs: Long, fromWorker: Boolean = false, ownSlot: Int? = null, attempt: Int = 0, fresh: Boolean = false) {
+        val plan = DueRules.plan(inMs, fromWorker, attempt, fresh) ?: return
         val slot = ownSlot?.let { DueRules.otherSlot(it) } ?: 0
         val builder = OneTimeWorkRequestBuilder<CheckWorker>()
             .setConstraints(needsNetwork)
@@ -64,7 +64,7 @@ object CheckScheduler {
             is DuePlan.Delayed -> plan.delayMs
             is DuePlan.Expedited -> plan.waitMs
         }
-        val retry = fromWorker && inMs <= 0L
+        val retry = fromWorker && inMs <= 0L && plan is DuePlan.Delayed
         val data = workDataOf(
             CheckWorker.KEY_ONE_OFF to true,
             CheckWorker.KEY_SLOT to slot,

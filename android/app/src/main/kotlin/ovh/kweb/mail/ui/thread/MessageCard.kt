@@ -55,6 +55,10 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.platform.LocalResources
+import ovh.kweb.mail.ui.transfer.DownloadProgress
+import ovh.kweb.mail.ui.transfer.DownloadRules
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.list.Avatar
@@ -85,6 +89,12 @@ class CardActions(
     val onSummarize: (() -> Unit)? = null,
     /** "Draft a reply" in the message's menu; null when the assistant does not offer it. */
     val onDraftReply: (() -> Unit)? = null,
+    /** "Reply ideas" in the message's menu; null when the assistant does not offer it. */
+    val onReplyIdeas: (() -> Unit)? = null,
+    /** "Find to-dos and dates" in the message's menu; null when the assistant does not offer it. */
+    val onFindDates: (() -> Unit)? = null,
+    /** "Explain" in the message's menu; null when the assistant does not offer it. */
+    val onExplain: (() -> Unit)? = null,
     /** "Filter mail like this" in the message's menu; null where it does not apply (a shared folder). */
     val onFilterLike: (() -> Unit)? = null,
     /** "Block sender" in the message's menu; null where it does not apply (a shared folder, or a message the user sent). */
@@ -95,6 +105,8 @@ class CardActions(
     val onUnsubscribe: () -> Unit = {},
     /** False for a message that may not be answered (one of a shared folder): the card has no menu. */
     val showMenu: Boolean = true,
+    /** The Cancel on the attachment that is being downloaded. */
+    val onCancelDownload: () -> Unit = {},
 )
 
 /**
@@ -111,6 +123,8 @@ fun MessageCard(
     myAddress: String?,
     busyBlobId: String?,
     actions: CardActions,
+    /** How far the download of the attachment named by [busyBlobId] is; null when not known (a plain spinner). */
+    download: DownloadProgress? = null,
     /** The owner's account id when the message is in a shared account (its pictures and files come from there); null for the user's own. */
     account: String? = null,
     /** The names of the message's labels. */
@@ -162,7 +176,7 @@ fun MessageCard(
         } else {
             ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                BodyView(header, body, remoteAllowed, busyBlobId, actions, account, flatNow)
+                BodyView(header, body, remoteAllowed, busyBlobId, download, actions, account, flatNow)
             }
         }
     }
@@ -302,6 +316,27 @@ private fun MessageMenu(actions: CardActions) {
                     onClick = { open = false; draft() },
                 )
             }
+            actions.onReplyIdeas?.let { ideas ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_reply_ideas)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; ideas() },
+                )
+            }
+            actions.onFindDates?.let { find ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_find_dates)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; find() },
+                )
+            }
+            actions.onExplain?.let { explain ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.assistant_explain)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    onClick = { open = false; explain() },
+                )
+            }
         }
     }
 }
@@ -322,6 +357,7 @@ private fun BodyView(
     state: BodyState?,
     remoteAllowed: Boolean,
     busyBlobId: String?,
+    download: DownloadProgress?,
     actions: CardActions,
     account: String?,
     flat: Boolean,
@@ -336,7 +372,7 @@ private fun BodyView(
             Text(stringResource(R.string.thread_body_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = actions.onRetryBody) { Text(stringResource(R.string.retry)) }
         }
-        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, actions, account, flat)
+        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, download, actions, account, flat)
     }
 }
 
@@ -346,6 +382,7 @@ private fun LoadedBody(
     body: MessageBody,
     remoteAllowed: Boolean,
     busyBlobId: String?,
+    download: DownloadProgress?,
     actions: CardActions,
     account: String?,
     flat: Boolean,
@@ -425,16 +462,25 @@ private fun LoadedBody(
     if (files.isNotEmpty()) {
         Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             files.forEachIndexed { index, attachment ->
-                AttachmentRow(attachment, busy = busyBlobId == attachment.blobId, actions, Groups.shape(index, files.size), flat)
+                AttachmentRow(attachment, busy = busyBlobId == attachment.blobId, download, actions, Groups.shape(index, files.size), flat)
             }
         }
     }
 }
 
 @Composable
-private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardActions, shape: Shape, flat: Boolean) {
+private fun AttachmentRow(attachment: Attachment, busy: Boolean, download: DownloadProgress?, actions: CardActions, shape: Shape, flat: Boolean) {
     val size = remember(attachment.size) { SizeFormat.format(attachment.size.toLong(), Locale.getDefault()) }
     val kind = remember(attachment.name) { FileNames.kind(attachment.name) }
+    val resources = LocalResources.current
+    val locale = remember { Locale.getDefault() }
+    // While it downloads the line says how much has arrived; the bar is filled where the size is known.
+    val fraction = if (busy && download != null) DownloadRules.fraction(download) else null
+    val progressLine = if (busy && download != null) {
+        DownloadRules.line(download, locale) { done, total -> resources.getString(R.string.download_of, done, total) }
+    } else {
+        null
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -458,6 +504,7 @@ private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardAc
             ) {
                 val tint = MaterialTheme.colorScheme.onTertiaryContainer
                 when {
+                    busy && fraction != null -> CircularProgressIndicator(progress = { fraction }, modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = tint, trackColor = tint.copy(alpha = 0.2f))
                     busy -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = tint)
                     kind != null -> Text(kind, color = tint, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                     else -> Icon(painterResource(R.drawable.ic_attachment), contentDescription = null, modifier = Modifier.size(20.dp), tint = tint)
@@ -469,11 +516,22 @@ private fun AttachmentRow(attachment: Attachment, busy: Boolean, actions: CardAc
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(size, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text(progressLine ?: size, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                if (busy) {
+                    if (fraction != null) {
+                        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), drawStopIndicator = {})
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                    }
+                }
             }
         }
-        TextButton(onClick = { actions.onSaveAttachment(attachment) }, enabled = !busy) {
-            Text(stringResource(R.string.thread_save))
+        if (busy) {
+            TextButton(onClick = actions.onCancelDownload) { Text(stringResource(R.string.cancel)) }
+        } else {
+            TextButton(onClick = { actions.onSaveAttachment(attachment) }) {
+                Text(stringResource(R.string.thread_save))
+            }
         }
     }
 }

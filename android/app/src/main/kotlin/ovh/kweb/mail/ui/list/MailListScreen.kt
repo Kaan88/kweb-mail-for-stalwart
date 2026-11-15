@@ -1,9 +1,19 @@
 package ovh.kweb.mail.ui.list
 
+import android.util.Log
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -32,6 +42,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
@@ -68,8 +80,10 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -95,7 +109,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
+import ovh.kweb.mail.ui.admin.AdminEntry
+import ovh.kweb.mail.ui.admin.AdminEntryRules
+import ovh.kweb.mail.ui.assistant.chat.ChatRules
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.accounts.AccountList
 import ovh.kweb.mail.ui.accounts.AccountRows
@@ -135,8 +157,11 @@ fun MailListScreen(
     onOpenSettings: () -> Unit,
     onCompose: (draftId: String) -> Unit,
     onOpenShared: () -> Unit,
+    onOpenAdminEntry: (AdminEntry) -> Unit = {},
     onOpenFolders: (folderId: String?, action: FolderAction?) -> Unit,
     onOpenLabel: (labelId: String, name: String) -> Unit = { _, _ -> },
+    /** Opens the chat with the assistant, from the entry in the drawer. */
+    onOpenChat: () -> Unit = {},
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
@@ -148,8 +173,12 @@ fun MailListScreen(
     val scope = rememberCoroutineScope()
     val resources = LocalResources.current
     var accountSheet by rememberSaveable { mutableStateOf(false) }
-    var moving by remember { mutableStateOf<ThreadRow?>(null) }
+    // The chosen conversations are asked about a folder to move to / a delete forever; one swiped row in Trash is asked about alone.
+    var moving by remember { mutableStateOf(false) }
+    var deletingChosen by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
+    val selecting = state.selection.isNotEmpty()
+    val chosenRows = remember(state.rows, state.selection) { SelectionRules.rowsOf(state.rows, state.selection) }
     // The label whose Delete was asked for; saved, so a rotation keeps the question.
     var deletingLabelId by rememberSaveable { mutableStateOf<String?>(null) }
     val labels by vm.labels.state.collectAsStateWithLifecycle()
@@ -160,6 +189,30 @@ fun MailListScreen(
         vm.reload()
         onPauseOrDispose { }
     }
+    // The drawer offers the chat only while the assistant and its chat are switched on: a small read of the
+    // settings (local, nothing is sent), when the list comes up and when the app comes back.
+    val accountSession = LocalAccountSession.current
+    // The admin entry comes from two remembered flags of this account: no call, no key. It follows the settings file.
+    val adminTick by accountSession.settings.changes.collectAsState()
+    val adminEntry = remember(accountSession, adminTick) {
+        AdminEntryRules.entry(accountSession.settings.adminKeyAccepted, accountSession.settings.adminMayDashboard)
+    }
+    var chatOffered by remember(accountSession) { mutableStateOf(false) }
+    var chatAsked by remember(accountSession) { mutableIntStateOf(0) }
+    LifecycleResumeEffect(accountSession) {
+        chatAsked++
+        onPauseOrDispose { }
+    }
+    LaunchedEffect(accountSession, chatAsked) {
+        chatOffered = try {
+            withContext(Dispatchers.IO) { ChatRules.entryShown(accountSession.core.aiSettings()) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(Background.TAG, "reading the assistant settings failed: ${e.javaClass.simpleName}")
+            false
+        }
+    }
     // New mail goes on top. A list keeps its place by row, so without this the reader who was at
     // the top would be left looking at the second row with the new mail hidden above it.
     val topThread = state.rows.firstOrNull()?.newest?.threadId
@@ -167,7 +220,16 @@ fun MailListScreen(
         if (listState.firstVisibleItemIndex in 1..2) listState.scrollToItem(0)
     }
     AskForNotificationsOnce()
+    // Registered first, so the drawer's (below) is asked first when both are up: Back closes the drawer, then the selection.
+    BackHandler(enabled = selecting) { vm.clearSelection() }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
+    // The questions about the chosen rows go with the selection.
+    LaunchedEffect(selecting) {
+        if (!selecting) {
+            moving = false
+            deletingChosen = false
+        }
+    }
     LaunchedEffect(vm) {
         vm.events.collect { event ->
             // A newer message replaces the one on screen instead of queueing behind it.
@@ -178,8 +240,14 @@ fun MailListScreen(
                     is ListEvent.Text -> snackbar.showSnackbar(event.message.resolve(resources))
                     is ListEvent.OpenDraft -> onCompose(event.draftId)
                     is ListEvent.Undo -> {
+                        // One Undo for a batch, which says how many.
+                        val text = when {
+                            event.count <= 1 -> resources.getString(event.textRes)
+                            event.textRes == R.string.list_archived -> resources.getQuantityString(R.plurals.list_archived_many, event.count, event.count)
+                            else -> resources.getQuantityString(R.plurals.list_deleted_many, event.count, event.count)
+                        }
                         val result = snackbar.showSnackbar(
-                            resources.getString(event.textRes),
+                            text,
                             actionLabel = resources.getString(R.string.action_undo),
                             duration = SnackbarDuration.Long,
                         )
@@ -224,6 +292,8 @@ fun MailListScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // No drawer from the edge while rows are being chosen (an open one can still be swiped shut).
+        gesturesEnabled = !selecting || drawerState.isOpen,
         drawerContent = {
             DrawerContent(
                 username = state.username,
@@ -265,6 +335,19 @@ fun MailListScreen(
                     scope.launch { drawerState.close() }
                     onOpenDeliveryCheck()
                 },
+                adminEntry = adminEntry,
+                onAdminEntry = {
+                    scope.launch { drawerState.close() }
+                    adminEntry?.let(onOpenAdminEntry)
+                },
+                onChat = if (chatOffered) {
+                    {
+                        scope.launch { drawerState.close() }
+                        onOpenChat()
+                    }
+                } else {
+                    null
+                },
                 onSettings = {
                     scope.launch { drawerState.close() }
                     onOpenSettings()
@@ -276,12 +359,38 @@ fun MailListScreen(
         Scaffold(
             topBar = {
                 Column(Modifier.background(MaterialTheme.colorScheme.background)) {
-                    SearchPill(
-                        initial = Sender.initial("", state.username),
-                        onSearch = onOpenSearch,
-                        onMenu = { scope.launch { drawerState.open() } },
-                        onAccount = { accountSheet = true },
-                    )
+                    // The bar of the chosen rows takes the place of the search field, at the same height, so the list does not move.
+                    val shownCount = remember { intArrayOf(1) }
+                    if (selecting) shownCount[0] = state.selection.size
+                    Crossfade(targetState = selecting, animationSpec = tween(150), label = "top bar") { choosing ->
+                        if (choosing) {
+                            SelectionBar(
+                                count = shownCount[0],
+                                marksRead = SelectionRules.marksRead(chosenRows),
+                                unstars = SelectionRules.unstars(chosenRows),
+                                archiveOffered = SelectionRules.archiveOffered(current?.role),
+                                spamOffered = SpamRules.offered(current?.role, junk != null),
+                                notSpam = SpamRules.isNotSpamEntry(current?.role),
+                                inTrash = inTrash,
+                                allSelected = SelectionRules.allSelected(state.rows, state.selection),
+                                onClose = vm::clearSelection,
+                                onArchive = vm::archiveSelected,
+                                onDelete = { if (inTrash) deletingChosen = true else vm.deleteSelected() },
+                                onMark = vm::markSelected,
+                                onMove = { moving = true },
+                                onStar = vm::flagSelected,
+                                onSpam = vm::spamSelected,
+                                onSelectAll = vm::selectAll,
+                            )
+                        } else {
+                            SearchPill(
+                                initial = Sender.initial("", state.username),
+                                onSearch = onOpenSearch,
+                                onMenu = { scope.launch { drawerState.open() } },
+                                onAccount = { accountSheet = true },
+                            )
+                        }
+                    }
                     FilterChips(
                         current?.let { if (SubfolderRules.isCombined(state.scope)) stringResource(R.string.list_with_subfolders, folderName(it)) else folderName(it) },
                         state.filter,
@@ -297,7 +406,8 @@ fun MailListScreen(
                 }
             },
             floatingActionButton = {
-                // The primary container, a pen and a word, at the bottom right, as in the Inbox figure.
+                // The primary container, a pen and a word, at the bottom right, as in the Inbox figure. Out of the way while choosing.
+                AnimatedVisibility(visible = !selecting, enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
                 ExtendedFloatingActionButton(
                     onClick = { vm.startDraft(DraftKind.New) },
                     icon = { Icon(Icons.Filled.Create, contentDescription = null) },
@@ -306,6 +416,7 @@ fun MailListScreen(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
+                }
             },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize()) {
@@ -341,7 +452,9 @@ fun MailListScreen(
                                     } else {
                                         null
                                     },
-                                    spamOffered = SpamRules.offered(current?.role, junk != null),
+                                    selecting = selecting,
+                                    selected = SelectionRules.key(row) in state.selection,
+                                    onToggleSelect = { vm.toggleSelected(SelectionRules.key(row)) },
                                     onOpen = {
                                         current?.let {
                                             if (ListRules.opensCompose(it.role)) {
@@ -353,10 +466,6 @@ fun MailListScreen(
                                     },
                                     onArchive = { vm.archive(row) },
                                     onDelete = { if (inTrash) deleting = row else vm.delete(row) },
-                                    onToggleRead = { vm.toggleRead(row) },
-                                    onToggleFlag = { vm.toggleFlag(row) },
-                                    onMove = { moving = row },
-                                    onSpam = { vm.spam(row) },
                                 )
                             }
                         }
@@ -380,15 +489,25 @@ fun MailListScreen(
         }
     }
 
-    moving?.let { row ->
+    if (moving) {
         MoveDialog(
             folders = folders,
-            exclude = current?.id,
+            // Chosen rows of a combined list sit in different folders: any folder may be the target, the parent included.
+            exclude = current?.id?.takeIf { !SubfolderRules.isCombined(state.scope) },
             onPick = {
-                moving = null
-                vm.move(row, it.id)
+                moving = false
+                vm.moveSelected(it.id)
             },
-            onDismiss = { moving = null },
+            onDismiss = { moving = false },
+        )
+    }
+    if (deletingChosen) {
+        DeleteForeverDialog(
+            onConfirm = {
+                deletingChosen = false
+                vm.deleteSelected()
+            },
+            onDismiss = { deletingChosen = false },
         )
     }
     deletingLabelId?.let { id ->
@@ -557,6 +676,11 @@ private fun DrawerContent(
     onDeleteLabel: (Label) -> Unit,
     onShared: () -> Unit,
     onDeliveryCheck: () -> Unit,
+    /** The server's admin area, when this account has an accepted key on the phone; null: no entry. */
+    adminEntry: AdminEntry?,
+    onAdminEntry: () -> Unit,
+    /** The chat with the assistant; null while it is not switched on, and then there is no entry. */
+    onChat: (() -> Unit)?,
     onSettings: () -> Unit,
     onAccountChosen: () -> Unit,
 ) {
@@ -646,12 +770,28 @@ private fun DrawerContent(
             )
             DrawerLabels(labels, onLabel, onDeleteLabel)
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            if (onChat != null) {
+                NavigationDrawerItem(
+                    label = { Text(stringResource(R.string.chat_entry)) },
+                    icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                    selected = false,
+                    onClick = onChat,
+                )
+            }
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.shared_title)) },
                 icon = { Icon(Icons.Filled.Share, contentDescription = null) },
                 selected = false,
                 onClick = onShared,
             )
+            if (adminEntry != null) {
+                NavigationDrawerItem(
+                    label = { Text(stringResource(AdminEntryRules.label(adminEntry))) },
+                    icon = { Icon(if (adminEntry == AdminEntry.Dashboard) Icons.Filled.Info else Icons.Filled.Lock, contentDescription = null) },
+                    selected = false,
+                    onClick = onAdminEntry,
+                )
+            }
             NavigationDrawerItem(
                 label = { Text(stringResource(R.string.delivery_check_title)) },
                 icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
@@ -792,7 +932,10 @@ private fun EmptyState(state: MailListState, modifier: Modifier) {
     }
 }
 
-/** One conversation: the row inside a swipe box (right: archive, left: delete) with its long-press menu. */
+/**
+ * One conversation: the row inside a swipe box (right: archive, left: delete). A long press or a tap on the picture chooses it
+ * ([onToggleSelect]); while rows are chosen ([selecting]) a tap anywhere chooses or lets go, and the swipes are off.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConversationItem(
@@ -801,16 +944,13 @@ private fun ConversationItem(
     role: String?,
     labelNames: List<String>,
     folder: String?,
-    spamOffered: Boolean,
+    selecting: Boolean,
+    selected: Boolean,
+    onToggleSelect: () -> Unit,
     onOpen: () -> Unit,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
-    onToggleRead: () -> Unit,
-    onToggleFlag: () -> Unit,
-    onMove: () -> Unit,
-    onSpam: () -> Unit,
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     val canArchive = role != "archive"
     val inTrash = role == "trash"
     val scope = rememberCoroutineScope()
@@ -818,7 +958,8 @@ private fun ConversationItem(
     SwipeToDismissBox(
         state = swipe,
         modifier = Modifier.clip(shape),
-        enableDismissFromStartToEnd = canArchive,
+        enableDismissFromStartToEnd = canArchive && !selecting,
+        enableDismissFromEndToStart = !selecting,
         onDismiss = { value ->
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> onArchive()
@@ -856,40 +997,96 @@ private fun ConversationItem(
             }
         },
     ) {
-        Box {
-            MailRow(rowContent(row, role, labelNames, folder), onClick = onOpen, shape = shape, onLongClick = { menuOpen = true })
-            // Anchored at the right end of the row, not at the left screen edge.
-            Box(Modifier.align(Alignment.CenterEnd)) {
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                MenuItem(if (row.unreadCount > 0u) R.string.action_mark_read else R.string.action_mark_unread, { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) }) {
-                    menuOpen = false
-                    onToggleRead()
-                }
-                MenuItem(if (row.isFlagged) R.string.action_unstar else R.string.action_star, { Icon(Icons.Filled.Star, contentDescription = null) }) {
-                    menuOpen = false
-                    onToggleFlag()
-                }
-                if (canArchive) {
-                    MenuItem(R.string.action_archive, { Icon(painterResource(R.drawable.ic_archive), contentDescription = null) }) {
-                        menuOpen = false
-                        onArchive()
-                    }
-                }
-                MenuItem(if (inTrash) R.string.action_delete_forever else R.string.action_delete, { Icon(Icons.Filled.Delete, contentDescription = null) }) {
-                    menuOpen = false
-                    onDelete()
-                }
-                MenuItem(R.string.action_move, { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) }) {
-                    menuOpen = false
-                    onMove()
-                }
-                if (spamOffered) {
-                    MenuItem(if (SpamRules.isNotSpamEntry(role)) R.string.spam_not else R.string.spam_report, { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) }) {
-                        menuOpen = false
-                        onSpam()
-                    }
+        MailRow(
+            rowContent(row, role, labelNames, folder),
+            onClick = if (SelectionRules.tap(selecting) == SelectionRules.Tap.TOGGLE) onToggleSelect else onOpen,
+            shape = shape,
+            onLongClick = onToggleSelect,
+            selected = selected,
+            onAvatarClick = onToggleSelect,
+        )
+    }
+}
+
+/**
+ * The bar of the chosen rows, in the shape and place of the search field: close, how many, the actions that matter most, and
+ * the rest in the menu. What it does is done to every chosen conversation.
+ */
+@Composable
+private fun SelectionBar(
+    count: Int,
+    marksRead: Boolean,
+    unstars: Boolean,
+    archiveOffered: Boolean,
+    spamOffered: Boolean,
+    notSpam: Boolean,
+    inTrash: Boolean,
+    allSelected: Boolean,
+    onClose: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+    onMark: () -> Unit,
+    onMove: () -> Unit,
+    onStar: () -> Unit,
+    onSpam: () -> Unit,
+    onSelectAll: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.statusBarsPadding().padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth().height(52.dp),
+        shape = CircleShape,
+        color = colors.secondaryContainer,
+        contentColor = colors.onSecondaryContainer,
+    ) {
+        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.selection_close))
+            }
+            val description = pluralStringResource(R.plurals.selection_count, count, count)
+            Text(
+                count.toString(),
+                modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { contentDescription = description },
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+            )
+            if (archiveOffered) {
+                IconButton(onClick = onArchive) {
+                    Icon(painterResource(R.drawable.ic_archive), contentDescription = stringResource(R.string.action_archive))
                 }
             }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = stringResource(if (inTrash) R.string.action_delete_forever else R.string.action_delete))
+            }
+            IconButton(onClick = onMark) {
+                Icon(painterResource(R.drawable.ic_mail), contentDescription = stringResource(if (marksRead) R.string.action_mark_read else R.string.action_mark_unread))
+            }
+            var menuOpen by remember { mutableStateOf(false) }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    MenuItem(R.string.action_move, { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) }) {
+                        menuOpen = false
+                        onMove()
+                    }
+                    MenuItem(if (unstars) R.string.action_unstar else R.string.action_star, { Icon(Icons.Filled.Star, contentDescription = null) }) {
+                        menuOpen = false
+                        onStar()
+                    }
+                    if (spamOffered) {
+                        MenuItem(if (notSpam) R.string.spam_not else R.string.spam_report, { Icon(painterResource(R.drawable.ic_spam), contentDescription = null) }) {
+                            menuOpen = false
+                            onSpam()
+                        }
+                    }
+                    if (!allSelected) {
+                        MenuItem(R.string.selection_select_all, { Icon(Icons.Filled.Check, contentDescription = null) }) {
+                            menuOpen = false
+                            onSelectAll()
+                        }
+                    }
+                }
             }
         }
     }

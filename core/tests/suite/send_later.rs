@@ -763,6 +763,53 @@ fn the_default_sender_comes_first_everywhere_and_new_drafts_start_with_it() {
 }
 
 #[test]
+fn a_reply_is_sent_as_the_address_the_mail_came_to_by_recipient_delivery_header_or_plus_address() {
+    let rig = Rig::new();
+    rig.server.set_identities(&[("i1", "One", USERNAME, ""), ("i2", "Two", "two@example.test", "")]);
+    // One message for each case: (id, To, what the server wrote in its delivery headers).
+    type Case = (&'static str, &'static str, &'static [(&'static str, &'static str)]);
+    let cases: [Case; 4] = [
+        // To names an identity: nothing is asked, whatever the headers say.
+        ("e1", "two@example.test", &[("Delivered-To", USERNAME)]),
+        // To names none (a list, a Bcc): the address the server delivered to.
+        ("e2", "list@example.test", &[("Delivered-To", "nobody@example.test"), ("X-Original-To", "TWO@example.test")]),
+        // A tag on an identity's address, nothing delivered.
+        ("e3", "two+shop@example.test", &[]),
+        // Nothing says: the default.
+        ("e4", "catchall@example.test", &[("Delivered-To", "catchall@example.test")]),
+    ];
+    for (id, to, delivery) in cases {
+        rig.server.set_bodies(id, Some("Hello"), None);
+        rig.server.set_recipients(id, &[("", to)], &[]);
+        rig.server.set_delivery_headers(id, delivery);
+    }
+    rig.sync();
+    for (id, ..) in cases {
+        rig.core.message_body(id.into()).unwrap();
+    }
+    let asked = |rig: &Rig| rig.server.request_count("Email/get");
+    let reply = |rig: &Rig, id: &str| rig.core.new_draft(DraftKind::Reply { message_id: id.into() }).unwrap();
+
+    let before = asked(&rig);
+    assert_eq!(reply(&rig, "e1").identity_id, "i2");
+    assert_eq!(asked(&rig), before, "a known answer costs no request");
+
+    let before = asked(&rig);
+    assert_eq!(reply(&rig, "e2").identity_id, "i2");
+    assert_eq!(asked(&rig), before + 1, "one small request for the delivery headers");
+    let forward = rig.core.new_draft(DraftKind::Forward { message_id: "e2".into() }).unwrap();
+    assert_eq!(forward.identity_id, "i2");
+
+    // The sender is the identity, with its own address, not the tagged one.
+    let draft = reply(&rig, "e3");
+    let sender = rig.core.identities().unwrap().into_iter().find(|i| i.id == draft.identity_id).unwrap();
+    assert_eq!(sender.email, "two@example.test");
+
+    // Never an address that is not an identity.
+    assert_eq!(reply(&rig, "e4").identity_id, "i1");
+}
+
+#[test]
 fn a_reply_and_a_forward_get_the_signature_of_the_sender_the_reply_goes_out_as() {
     let rig = Rig::new();
     rig.server.set_identities(&[("i1", "One", USERNAME, "One sig"), ("i2", "Two", "two@example.test", "Two sig")]);

@@ -47,6 +47,8 @@ class EditEventViewModel(
     private val startHint: String?,
     /** The owner's account when the entry is in a calendar shared with the user; null for the user's own. */
     account: String? = null,
+    /** What a NEW entry starts with (see [EventPrefill]); an entry that is being changed ignores it. */
+    private val prefill: EventPrefill? = null,
 ) : AndroidViewModel(app) {
     private val backend = eventFormBackend({ session.core }, account)
     private val stateFlow = MutableStateFlow(EditState(creating = eventId == null))
@@ -79,7 +81,9 @@ class EditEventViewModel(
                         return@launch
                     }
                     val day = startHint?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: LocalDate.now(zone)
-                    EventForms.blank(calendar.id, day, LocalDateTime.now(zone), zone)
+                    val blank = EventForms.blank(calendar.id, day, LocalDateTime.now(zone), zone)
+                    // Only a new entry: what the server has for an existing one is never overwritten from here.
+                    if (prefill != null) EventPrefills.apply(blank, prefill) else blank
                 }
                 val readOnly = detail != null && !detail.mayWrite
                 stateFlow.update {
@@ -133,6 +137,23 @@ class EditEventViewModel(
                 Log.w(Background.TAG, "saving an entry failed: ${e.javaClass.simpleName}")
                 stateFlow.update { it.copy(saving = false, error = CalendarMessage.of(e, R.string.cal_save_failed)) }
             }
+        }
+    }
+}
+
+/** Putting an [EventPrefill] into the blank form of a new entry. Nothing is saved: the user sees the form and saves it. */
+internal object EventPrefills {
+    /**
+     * [blank] with the title, start, "All day" and "Task" of [prefill]. A timed entry keeps the blank form's length;
+     * an all-day one is that one day. A start that cannot be read leaves the blank form's times as they are.
+     */
+    fun apply(blank: EventForm, prefill: EventPrefill): EventForm {
+        val titled = blank.copy(title = prefill.title.trim()).withTask(prefill.isTask)
+        val at = runCatching { LocalDateTime.parse(prefill.start.trim()) }.getOrNull() ?: return titled
+        return if (prefill.allDay) {
+            titled.copy(allDay = true, startDate = at.toLocalDate(), endDate = at.toLocalDate())
+        } else {
+            titled.withStart(at.toLocalDate(), at.toLocalTime().withSecond(0).withNano(0))
         }
     }
 }

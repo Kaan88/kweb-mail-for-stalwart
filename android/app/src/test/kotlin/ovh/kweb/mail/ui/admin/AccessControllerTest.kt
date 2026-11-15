@@ -67,6 +67,33 @@ class AccessControllerTest {
         assertNull(c.state.value.dialog)
     }
 
+    @Test fun aKeyOfAnotherAccountIsTakenOnlyAfterThatAccountWasAgreedTo() {
+        loaded()
+        backend.keyOf = "master@example.test"
+        c.paste("abcdefgh12345678")
+        c.confirmKey()
+        waitFor("asked") { c.state.value.dialog is AccessDialog.ActAs }
+        assertEquals("master@example.test", (c.state.value.dialog as AccessDialog.ActAs).account)
+        assertTrue(backend.calls.none { it == "connect" })
+        c.confirmActAs()
+        waitFor("open") { c.state.value.kind == AccessKind.Open }
+        assertEquals("master@example.test", backend.lastAgreed)
+        assertEquals("abcdefgh12345678", backend.lastKey)
+    }
+
+    @Test fun notActingAsTheOtherAccountLetsGoOfTheKey() {
+        loaded()
+        backend.keyOf = "master@example.test"
+        c.paste("abcdefgh12345678")
+        c.confirmKey()
+        waitFor("asked") { c.state.value.dialog is AccessDialog.ActAs }
+        c.declineKey()
+        c.confirmActAs()
+        c.confirmKey()
+        assertTrue(backend.calls.none { it == "connect" })
+        assertEquals(AccessKind.Locked, c.state.value.kind)
+    }
+
     @Test fun decliningLetsGoOfTheKey() {
         loaded()
         c.paste("abcdefgh12345678")

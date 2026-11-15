@@ -20,12 +20,16 @@ import uniffi.kweb_core.Exception as CoreException
  * the one-off checks after a boot or after an action that the connection could not send.
  * Also restarts the service, so a service Android killed comes back within 15 minutes.
  *
- * The core hands the plan to the service's listener as well as returning it here. That is safe:
- * [Notifier.apply] is idempotent and never re-alerts for a notification already on screen.
+ * The plan of a pass is applied by the account's listener ([ovh.kweb.mail.accounts.AccountSession]), inside the
+ * pass. The plan `checkOnce` returns is the same one and is not applied here: it comes back seconds later (after
+ * the bodies were fetched), when another pass may already have changed what is shown.
  */
 class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     /** The accounts whose pass said "sign in": only a sign-in cures that, so nothing is scheduled for them. */
     private var signInNeeded: Set<String> = emptySet()
+
+    /** Every account's check went well: work that is owed at the end was not there when the pass looked. */
+    private var allPassed = false
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val records = Accounts.load(applicationContext)
@@ -54,7 +58,7 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 val core = Accounts.session(record.id)?.core ?: return@runAll
                 if (core.account() == null) return@runAll
                 val shade = if (shadeCleared) Shade.Cleared else Shade.Ids(notifier.activeMailIds(record))
-                notifier.apply(record, core.checkOnce(shade))
+                core.checkOnce(shade)
                 settings.recordCheck(System.currentTimeMillis(), null)
             } catch (e: CancellationException) {
                 throw e
@@ -64,6 +68,7 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             }
         }
         signInNeeded = failures.filter { it.error is CoreException.SignInNeeded }.map { it.item.id }.toSet()
+        allPassed = failures.isEmpty()
         val retry = failures.any { it.error is CoreException.Temporary } &&
             inputData.getBoolean(KEY_ONE_OFF, false) && runAttemptCount < MAX_ATTEMPTS
         return if (retry) Result.retry() else Result.success()
@@ -77,7 +82,9 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         for (record in records) GooglePush.renewStep(applicationContext, record)
         val ownSlot = inputData.getInt(KEY_SLOT, -1).takeIf { it >= 0 && inputData.getLong(KEY_NOT_BEFORE, 0L) > 0 }
         val attempt = if (ownSlot != null) inputData.getInt(KEY_ATTEMPT, 0) else 0
-        LiveWindow.scheduleDue(applicationContext, fromWorker = true, ownSlot = ownSlot, attempt = attempt, skip = signInNeeded)
+        // A pass that was not itself for owed work and went well: what is owed now came in while it ran.
+        val fresh = ownSlot == null && allPassed
+        LiveWindow.scheduleDue(applicationContext, fromWorker = true, ownSlot = ownSlot, attempt = attempt, skip = signInNeeded, fresh = fresh)
     }
 
     /** Needed by expedited work on Android 11 and older, where it runs as a foreground service. */

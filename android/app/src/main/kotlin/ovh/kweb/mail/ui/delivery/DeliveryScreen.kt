@@ -325,11 +325,13 @@ private fun notificationItem(state: DeliveryState, actions: Actions): CheckItem 
 
 @Composable
 private fun batteryItem(state: DeliveryState, actions: Actions): CheckItem {
-    val ok = state.batteryExempt
+    val ok = BatteryRule.isOk(state.batteryExempt, state.push.mode, PushTexts.working(state.push), state.backgroundRestricted)
+    // On push through Google there is no connection for Android to pause: not exempt is then "not needed", no fault.
+    val notNeeded = ok && !state.batteryExempt
     return CheckItem(
         stringResource(R.string.delivery_battery_title),
-        stringResource(R.string.delivery_battery_detail),
-        stringResource(if (ok) R.string.pill_exempt else R.string.pill_not_exempt),
+        stringResource(if (notNeeded) R.string.push_battery_not_needed else R.string.delivery_battery_detail),
+        stringResource(if (notNeeded) R.string.push_pill_not_needed else if (ok) R.string.pill_exempt else R.string.pill_not_exempt),
         ok,
         hint = stringResource(R.string.delivery_hint_battery).takeIf { !ok },
         onClick = actions.fixBattery.takeIf { !ok },

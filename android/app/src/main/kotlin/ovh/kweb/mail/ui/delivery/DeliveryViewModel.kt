@@ -1,6 +1,7 @@
 package ovh.kweb.mail.ui.delivery
 
 import ovh.kweb.mail.accounts.AccountSession
+import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
@@ -52,6 +53,7 @@ data class DeliveryState(
     val startFailure: StartFailure? = null,
     val notificationsAllowed: Boolean = true,
     val batteryExempt: Boolean = true,
+    val backgroundRestricted: Boolean = false,
     val lastCheck: CheckRecord? = null,
     val mailEnabled: Boolean = true,
     val remindersEnabled: Boolean = true,
@@ -63,7 +65,7 @@ data class DeliveryState(
 )
 
 /** The state of the phone that the app cannot observe: re-read on every resume. */
-private data class SystemState(val notificationsAllowed: Boolean, val batteryExempt: Boolean)
+private data class SystemState(val notificationsAllowed: Boolean, val batteryExempt: Boolean, val backgroundRestricted: Boolean)
 
 private data class Extras(val host: String? = null, val version: String? = null, val signingOut: Boolean = false)
 
@@ -100,6 +102,7 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
             startFailure = serviceLog.lastStartFailure,
             notificationsAllowed = sys.notificationsAllowed,
             batteryExempt = sys.batteryExempt,
+            backgroundRestricted = sys.backgroundRestricted,
             lastCheck = settings.lastCheck,
             mailEnabled = settings.mailEnabled,
             remindersEnabled = settings.remindersEnabled,
@@ -252,7 +255,8 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
         val app = getApplication<Application>()
         val allowed = NotificationManagerCompat.from(app).areNotificationsEnabled()
         val exempt = app.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(app.packageName)
-        return SystemState(allowed, exempt)
+        val restricted = app.getSystemService(ActivityManager::class.java).isBackgroundRestricted
+        return SystemState(allowed, exempt, restricted)
     }
 
     companion object {

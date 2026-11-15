@@ -77,6 +77,32 @@ class Settings(private val values: KeyValues) {
         get() = values.getBoolean(REMOVE_ELSEWHERE, true)
         set(value) = write { putBoolean(REMOVE_ELSEWHERE, value) }
 
+    /**
+     * The buttons of this account's mail notifications, in order ([NotificationActionRules]). Nothing stored (the
+     * user never chose, or the install is older than the setting) reads as the default.
+     */
+    var notificationActions: List<MailAction>
+        get() = NotificationActionRules.parse(values.getString(NOTIFICATION_ACTIONS))
+        set(value) = write { putString(NOTIFICATION_ACTIONS, NotificationActionRules.encode(value)) }
+
+    /** Back to "never chose": the default, also a later version's. */
+    fun resetNotificationActions() = write { remove(NOTIFICATION_ACTIONS) }
+
+    /**
+     * The last known answer about this account's admin key (never the key): whether the server accepted one and whether
+     * it opens the dashboard. Read by the drawer, which makes no call; written whenever the access is read or changes.
+     */
+    val adminKeyAccepted: Boolean get() = values.getBoolean(ADMIN_KEY, false)
+    val adminMayDashboard: Boolean get() = values.getBoolean(ADMIN_DASHBOARD, false)
+
+    fun rememberAdminAccess(keyAccepted: Boolean, mayDashboard: Boolean) {
+        if (keyAccepted == adminKeyAccepted && (mayDashboard && keyAccepted) == adminMayDashboard) return
+        write {
+            putBoolean(ADMIN_KEY, keyAccepted)
+            putBoolean(ADMIN_DASHBOARD, keyAccepted && mayDashboard)
+        }
+    }
+
     /** The last background check (every 15 minutes, or one after an action or a boot). */
     val lastCheck: CheckRecord?
         get() = values.getLong(CHECK_AT, 0L).takeIf { it > 0 }?.let { CheckRecord(it, values.getString(CHECK_ERROR)) }
@@ -111,6 +137,11 @@ class Settings(private val values: KeyValues) {
         get() = values.getLong(PUSH_TRIES, 0L).toInt()
         set(value) = write { putLong(PUSH_TRIES, value.toLong()) }
 
+    /** Failures of Play services in a row while registering again (see [ModeRules.fallsBack]). */
+    var pushFailures: Int
+        get() = values.getLong(PUSH_FAILURES, 0L).toInt()
+        set(value) = write { putLong(PUSH_FAILURES, value.toLong()) }
+
     fun recordPushRegistration(subtype: String, sender: String, token: String, atMillis: Long, appVersion: Long) = write {
         putString(PUSH_SUBTYPE, subtype)
         putString(PUSH_SENDER, sender)
@@ -135,20 +166,32 @@ class Settings(private val values: KeyValues) {
 
     /** Forgets the registration (not the mode and not the fallback reason). */
     fun clearPushRegistration() = write {
-        remove(PUSH_SETUP, PUSH_SUBTYPE, PUSH_SENDER, PUSH_TOKEN, PUSH_TOKEN_AT, PUSH_APP_VERSION, PUSH_TRIES)
+        remove(PUSH_SETUP, PUSH_SUBTYPE, PUSH_SENDER, PUSH_TOKEN, PUSH_TOKEN_AT, PUSH_APP_VERSION, PUSH_TRIES, PUSH_FAILURES)
     }
 
-    /** Takes the three switches of [old] (the settings an older, single-account install left behind). */
+    /**
+     * Takes the three switches of [old] (the settings an older, single-account install left behind), and its
+     * choice of notification buttons if it made one.
+     */
     fun takeSwitchesFrom(old: Settings) {
         mailEnabled = old.mailEnabled
         remindersEnabled = old.remindersEnabled
         removeWhenReadElsewhere = old.removeWhenReadElsewhere
+        old.values.getString(NOTIFICATION_ACTIONS)?.let { stored -> write { putString(NOTIFICATION_ACTIONS, stored) } }
     }
 
     /** Forgets the bookkeeping (not the switches). Used when the user removes the account. */
     fun clearBookkeeping() = write { remove(CHECK_AT, CHECK_ERROR) }
 
+    /** Set when the account was removed: its file is deleted, and nothing still running may write it back. */
+    @Volatile private var retired = false
+
+    internal fun retire() {
+        retired = true
+    }
+
     private fun write(block: KeyValues.() -> Unit) {
+        if (retired) return
         values.block()
         ticks.value = ticks.value + 1
     }
@@ -157,6 +200,9 @@ class Settings(private val values: KeyValues) {
         private const val MAIL = "show_mail"
         private const val REMINDERS = "show_reminders"
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
+        private const val NOTIFICATION_ACTIONS = "notification_actions"
+        private const val ADMIN_KEY = "admin_key_accepted"
+        private const val ADMIN_DASHBOARD = "admin_may_dashboard"
         private const val CHECK_AT = "check_at"
         private const val CHECK_ERROR = "check_error"
         private const val DELIVERY_MODE = "delivery_mode"
@@ -167,27 +213,43 @@ class Settings(private val values: KeyValues) {
         private const val PUSH_TOKEN_AT = "push_token_at"
         private const val PUSH_APP_VERSION = "push_app_version"
         private const val PUSH_TRIES = "push_tries"
+        private const val PUSH_FAILURES = "push_failures"
         private const val PUSH_FALLBACK = "push_fallback"
         private const val PUSH_FALLBACK_AT = "push_fallback_at"
         private const val PUSH_FALLBACK_DETAIL = "push_fallback_detail"
 
         private val instances = HashMap<String, Settings>()
 
+        /** The ids of accounts removed in this process (an id is random and never given out again). */
+        private val gone = HashSet<String>()
+
         /** The one [Settings] of [record] in this process. The migrated account keeps the file `settings`. */
         fun of(context: Context, record: AccountRecord): Settings = synchronized(instances) {
-            instances.getOrPut(record.id) {
+            val open = {
                 val file = AccountPaths.settingsPrefs(record.id, record.legacy)
                 Settings(PrefsKeyValues(context.applicationContext.getSharedPreferences(file, Context.MODE_PRIVATE)))
             }
+            // Work that was in flight when the account was removed still asks: it reads defaults and writes nothing.
+            if (record.id in gone) open().also { it.retire() } else instances.getOrPut(record.id, open)
         }
+
+        /** True once [forget] was called for this account: nothing of it may be shown or written any more. */
+        fun isGone(record: AccountRecord): Boolean = synchronized(instances) { record.id in gone }
 
         /** The file the single-account app used (`settings`), read to carry its switches to the first account added after a sign-out. */
         fun legacy(context: Context): Settings =
             Settings(PrefsKeyValues(context.applicationContext.getSharedPreferences(AccountPaths.settingsPrefs("", true), Context.MODE_PRIVATE)))
 
-        /** Drops the instance of a removed account (its file is deleted with the rest of its storage). */
+        /**
+         * Drops the instance of a removed account (its file is deleted with the rest of its storage). Call it before
+         * the files are deleted: from then on a pass or a registration of that account that is still running cannot
+         * write the file back, and [Notifier] shows nothing more for it.
+         */
         fun forget(record: AccountRecord) {
-            synchronized(instances) { instances.remove(record.id) }
+            synchronized(instances) {
+                gone.add(record.id)
+                instances.remove(record.id)?.retire()
+            }
         }
     }
 }

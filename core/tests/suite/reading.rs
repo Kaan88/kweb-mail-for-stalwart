@@ -1,11 +1,11 @@
 //! M3 against the mock server: bodies, threads, older mail, search, downloads and the actions
 //! the list offers. The first half drives the sync layer, the second the `Core` object.
 
-use std::{fs, path::Path, sync::Arc};
+use std::{fs, path::Path, sync::Arc, sync::Mutex};
 
 use crate::support::*;
 use kweb_core::{
-    ffi::{Core, Shade},
+    ffi::{Core, DownloadCancel, DownloadListener, Shade},
     jmap::{self, Connection},
     model::{Account, Action, ListFilter},
     secrets::{MemorySecrets, SecretStore},
@@ -531,6 +531,160 @@ fn a_failed_download_leaves_no_file_and_no_part_file() {
     fs::create_dir(rig.path("taken")).unwrap();
     assert!(rig.core.download_blob(blob, rig.path("taken")).is_err());
     assert_eq!(leftovers(rig.dir.path()), ["taken"]);
+}
+
+/// Records what a download reports.
+#[derive(Default)]
+struct Seen(Mutex<Vec<(u64, Option<u64>)>>);
+
+impl DownloadListener for Seen {
+    fn progress(&self, done: u64, total: Option<u64>) {
+        self.0.lock().unwrap().push((done, total));
+    }
+}
+
+fn big(rig: &Rig, size: usize) -> String {
+    rig.server.add_attachment(E1, "big.bin", "application/octet-stream", &vec![9; size], None, false)
+}
+
+#[test]
+fn a_download_reports_how_far_it_is_and_how_big_it_will_be() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 300_000);
+    rig.server.pace_downloads(40, false);
+    let seen = Arc::new(Seen::default());
+    let done = rig
+        .core
+        .download_blob_tracked(
+            blob,
+            rig.path("big.bin"),
+            DownloadCancel::new(),
+            Some(seen.clone() as Arc<dyn DownloadListener>),
+        )
+        .unwrap();
+    assert!(done);
+    assert_eq!(fs::read(rig.path("big.bin")).unwrap().len(), 300_000);
+    let seen = seen.0.lock().unwrap().clone();
+    assert_eq!(seen.first(), Some(&(0, Some(300_000))));
+    assert_eq!(seen.last(), Some(&(300_000, Some(300_000))));
+    assert!(seen.len() >= 3, "{seen:?}");
+    assert!(seen.windows(2).all(|w| w[0].0 <= w[1].0), "never goes back: {seen:?}");
+    assert_eq!(leftovers(rig.dir.path()), ["big.bin"]);
+}
+
+#[test]
+fn a_download_of_unknown_length_reports_no_total() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 150_000);
+    rig.server.pace_downloads(5, true);
+    let seen = Arc::new(Seen::default());
+    assert!(rig
+        .core
+        .download_blob_tracked(
+            blob,
+            rig.path("u.bin"),
+            DownloadCancel::new(),
+            Some(seen.clone() as Arc<dyn DownloadListener>)
+        )
+        .unwrap());
+    let seen = seen.0.lock().unwrap().clone();
+    assert!(seen.iter().all(|(_, total)| total.is_none()), "{seen:?}");
+    assert_eq!(seen.last().map(|s| s.0), Some(150_000));
+}
+
+#[test]
+fn a_cancelled_download_leaves_no_part_file_and_nothing_under_the_final_name() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 2_000_000);
+    rig.server.pace_downloads(60, false);
+    let cancel = DownloadCancel::new();
+    let stopper = {
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            cancel.cancel();
+        })
+    };
+    let seen = Arc::new(Seen::default());
+    let started = std::time::Instant::now();
+    let done = rig
+        .core
+        .download_blob_tracked(blob, rig.path("c.bin"), cancel.clone(), Some(seen.clone() as Arc<dyn DownloadListener>))
+        .unwrap();
+    stopper.join().unwrap();
+    assert!(!done, "cancelled, not complete");
+    assert!(cancel.is_cancelled());
+    // It stopped long before the whole file (about two seconds) could arrive.
+    assert!(started.elapsed() < std::time::Duration::from_millis(1500), "{:?}", started.elapsed());
+    let last = seen.0.lock().unwrap().last().copied().unwrap();
+    assert!(last.0 < 2_000_000);
+    assert!(leftovers(rig.dir.path()).is_empty(), "{:?}", leftovers(rig.dir.path()));
+}
+
+#[test]
+fn a_cancel_that_came_first_asks_nothing_and_a_file_already_there_stays() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 1000);
+    fs::write(rig.path("old.bin"), b"old").unwrap();
+    let cancel = DownloadCancel::new();
+    cancel.cancel();
+    assert!(!rig.core.download_blob_tracked(blob.clone(), rig.path("old.bin"), cancel, None).unwrap());
+    assert_eq!(fs::read(rig.path("old.bin")).unwrap(), b"old");
+    assert_eq!(leftovers(rig.dir.path()), ["old.bin"]);
+    assert_eq!(rig.server.request_count(&format!("/jmap/download/{ACCOUNT}/{blob}/none")), 0);
+}
+
+#[test]
+fn what_the_server_does_wrong_is_told_in_its_own_words() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 1000);
+    for status in [503, 403, 413] {
+        rig.server.set_download_status(status);
+        let e =
+            rig.core.download_blob_tracked(blob.clone(), rig.path("e.bin"), DownloadCancel::new(), None).unwrap_err();
+        match e {
+            Error::Temporary { msg } => assert_eq!(msg, format!("download: the server answered {status}")),
+            other => panic!("{status}: {other:?}"),
+        }
+        assert!(leftovers(rig.dir.path()).is_empty());
+    }
+    rig.server.set_download_status(0);
+    let e = rig
+        .core
+        .download_blob_tracked("no-such-blob".into(), rig.path("e.bin"), DownloadCancel::new(), None)
+        .unwrap_err();
+    assert!(matches!(e, Error::Invalid { ref msg } if msg.contains("does not have")), "{e:?}");
+    // The disk, not the server.
+    let e = rig.core.download_blob_tracked(blob, rig.path("no-dir/e.bin"), DownloadCancel::new(), None).unwrap_err();
+    assert!(matches!(e, Error::Store { ref msg } if msg.contains("saving the file")), "{e:?}");
+}
+
+#[test]
+fn a_server_that_cannot_be_reached_is_the_one_failure_that_says_offline() {
+    let rig = Rig::synced(|_| {});
+    let blob = big(&rig, 1000);
+    // Once a connection is made, the download itself finds nobody there.
+    assert!(rig.core.download_blob_tracked(blob.clone(), rig.path("ok.bin"), DownloadCancel::new(), None).unwrap());
+    rig.server.shut_down();
+    let e = rig.core.download_blob_tracked(blob.clone(), rig.path("o.bin"), DownloadCancel::new(), None).unwrap_err();
+    match e {
+        Error::Temporary { msg } => assert!(msg.starts_with(jmap::DOWNLOAD_OFFLINE), "{msg}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(leftovers(rig.dir.path()), ["ok.bin"]);
+}
+
+#[test]
+fn a_server_that_is_gone_before_the_connection_is_made_says_transport_error() {
+    // The words the host's "you may be offline" rule also recognises (see DownloadRules).
+    let rig = Rig::new(|_| {});
+    let blob = big(&rig, 1000);
+    rig.server.shut_down();
+    let e = rig.core.download_blob_tracked(blob, rig.path("o.bin"), DownloadCancel::new(), None).unwrap_err();
+    match e {
+        Error::Temporary { msg } => assert!(msg.starts_with("Transport error"), "{msg}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

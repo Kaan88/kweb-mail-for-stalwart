@@ -75,6 +75,7 @@ private fun TenantRow(shape: androidx.compose.ui.graphics.Shape, tenant: Tenant)
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     color = if (SizeText.isNearlyFull(fraction)) colors.error else colors.primary,
                     trackColor = colors.surfaceContainerHighest,
+                    drawStopIndicator = {},
                 )
             }
         }

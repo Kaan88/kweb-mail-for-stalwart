@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** A map standing in for SharedPreferences. */
-private class MapValues : KeyValues {
+internal class MapValues : KeyValues {
     val map = mutableMapOf<String, Any>()
     override fun getBoolean(key: String, default: Boolean) = map[key] as Boolean? ?: default
     override fun putBoolean(key: String, value: Boolean) { map[key] = value }
@@ -24,6 +24,20 @@ private class MapValues : KeyValues {
 
 class SettingsTest {
     private val settings = Settings(MapValues())
+
+    @Test
+    fun theSettingsOfARemovedAccountWriteNothingBack() {
+        val values = MapValues()
+        val removed = Settings(values)
+        removed.pushSetup = true
+        values.map.clear() // the file was deleted with the account
+        removed.retire()
+        // A pass or a registration that was still running reports in.
+        removed.recordCheck(5, null)
+        removed.pushTries = 2
+        removed.recordPushRegistration("subtype", "sender", "token", 1, 1)
+        assertTrue("nothing of the account comes back", values.map.isEmpty())
+    }
 
     @Test
     fun allSwitchesAreOnByDefault() {
@@ -122,5 +136,21 @@ class SettingsTest {
         assertEquals(PushFallback(FallbackReason.NotVerified, 9L, "E"), settings.pushFallback)
         settings.clearFallback()
         assertNull(settings.pushFallback)
+    }
+
+    @Test
+    fun theAdminAnswerIsRememberedPerAccountAndGoneWithTheKey() {
+        val other = Settings(MapValues())
+        assertFalse(settings.adminKeyAccepted)
+        settings.rememberAdminAccess(true, true)
+        assertTrue(settings.adminKeyAccepted)
+        assertTrue(settings.adminMayDashboard)
+        assertFalse("another account does not see it", other.adminKeyAccepted)
+        val ticks = settings.changes.value
+        settings.rememberAdminAccess(true, true)
+        assertEquals("the same answer is not a change", ticks, settings.changes.value)
+        settings.rememberAdminAccess(false, true)
+        assertFalse(settings.adminKeyAccepted)
+        assertFalse("no key, no dashboard", settings.adminMayDashboard)
     }
 }
