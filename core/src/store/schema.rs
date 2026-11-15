@@ -239,6 +239,16 @@ pub(super) const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX message_keywords_by_keyword ON message_keywords (account_id, keyword, message_id);
     ",
+    // 8: notification choices per receiving address (device only). A row only where the user chose
+    // something other than the default (notify): 0 off, 1 silent. Additive: nothing is fetched again.
+    "
+    CREATE TABLE address_notify (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        address    TEXT NOT NULL,
+        mode       INTEGER NOT NULL,
+        PRIMARY KEY (account_id, address)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

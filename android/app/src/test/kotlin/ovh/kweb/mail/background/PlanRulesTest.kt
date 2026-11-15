@@ -9,8 +9,8 @@ import uniffi.kweb_core.MailNotification
 import uniffi.kweb_core.Plan
 
 class PlanRulesTest {
-    private fun mail(id: Int, silent: Boolean = false) =
-        MailNotification("m$id", id, "Sender", "Subject", "Preview", 1_000L, silent)
+    private fun mail(id: Int, silent: Boolean = false, quiet: Boolean = false) =
+        MailNotification("m$id", id, "Sender", "Subject", "Preview", 1_000L, silent, quiet)
 
     private val plan = Plan(post = listOf(mail(1001), mail(1002)), cancel = listOf(Cancel("m1003", 1003)))
 
@@ -31,6 +31,12 @@ class PlanRulesTest {
         val result = plan.honouring(mailEnabled = true, removeWhenReadElsewhere = false)
         assertEquals(plan.post, result.post)
         assertTrue(result.cancel.isEmpty())
+    }
+
+    @Test
+    fun mailToAQuietAddressIsPostedSilentlyTheFirstTimeToo() {
+        assertTrue(isSilent(mail(1001, quiet = true), onScreen = emptySet()))
+        assertFalse(isSilent(mail(1001), onScreen = emptySet()))
     }
 
     @Test

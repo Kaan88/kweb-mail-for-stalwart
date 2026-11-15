@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Texts of the Notifications screen and the per-account channels. -->
+<resources>
+    <string name="channel_mail_quiet">Mail, quiet</string>
+    <string name="channel_mail_quiet_description">Mail to addresses you set to quiet: shown without sound or vibration</string>
+
+    <string name="notifications_title">Notifications</string>
+    <string name="notifications_settings_detail">New mail, sound, addresses and reminders</string>
+    <string name="delivery_open_notifications">New mail, reminders, sound and addresses</string>
+    <string name="notifications_for">Account: %1$s</string>
+    <string name="notifications_mail">New mail</string>
+    <string name="notifications_remove_detail">A notification goes when the mail is read, moved or deleted on another device</string>
+    <string name="notifications_sound">Sound and vibration</string>
+    <string name="notifications_sound_detail">Opens Android\'s settings for this account\'s mail</string>
+    <string name="notifications_folders">Folders that notify</string>
+    <string name="notifications_folders_detail">Choose folders besides the Inbox</string>
+    <string name="notifications_addresses">By address</string>
+    <string name="notifications_addresses_text">What happens to mail by the address it came to. A mail to several of your addresses uses the loudest choice.</string>
+    <string name="notifications_addresses_loading">Your addresses appear after the first sync</string>
+    <string name="notifications_addresses_none">The server has no addresses for you yet</string>
+    <string name="notifications_quiet_sound">Quiet notifications</string>
+    <string name="notifications_quiet_detail">Opens Android\'s settings for mail set to quiet</string>
+    <string name="notifications_mode_notify">Notify</string>
+    <string name="notifications_mode_notify_detail">Shown with the sound of the mail channel</string>
+    <string name="notifications_mode_silent">Quiet</string>
+    <string name="notifications_mode_silent_detail">Shown without sound or vibration</string>
+    <string name="notifications_mode_off">Do not notify</string>
+    <string name="notifications_mode_off_detail">Not shown at all; the mail stays in your folders</string>
+    <string name="notifications_reminders">Reminders</string>
+    <string name="notifications_reminder_sound">Reminder sound</string>
+    <string name="notifications_reminder_sound_detail">Opens Android\'s settings for calendar and task reminders</string>
+    <string name="notifications_address_failed">The choice could not be saved</string>
+    <string name="notifications_channel_failed">This phone has no settings screen for that</string>
+</resources>

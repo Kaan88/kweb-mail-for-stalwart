@@ -8,6 +8,10 @@
 //! that set with what is shown and says what to post and what to cancel. It is a pure function;
 //! the store supplies both sets and remembers the result.
 
+mod addresses;
+
+pub use addresses::{choice_key, choices, AddressChoice, AddressMode};
+
 use std::collections::HashSet;
 
 use crate::{
@@ -33,6 +37,9 @@ pub struct MailNotification {
     pub received_at: i64,
     /// True when this mail was already announced once: put it back without sound or vibration.
     pub silent: bool,
+    /// The mail came to an address the user chose "silent" for: post it in the quiet channel
+    /// (shown, no sound or vibration), also the first time.
+    pub quiet: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -109,6 +116,7 @@ pub fn plan(desired: &[MessageHeader], shown: &[String], on_screen: OnScreen) ->
                 preview: m.preview.clone(),
                 received_at: m.received_at,
                 silent: announced,
+                quiet: false,
             })
         })
         .collect();
@@ -137,8 +145,16 @@ pub fn run(store: &Store, account: &Account, on_screen: OnScreen, now: i64) -> R
         return Ok(Plan::default());
     };
     let desired = store.notifiable(&account.id, &inbox.id, account.signed_in_at)?;
+    // The choices per receiving address: mail the user turned off is no part of what is wanted
+    // (so it is withdrawn if shown, and is not counted as swiped); silent mail is wanted, quietly.
+    let chosen = store.address_modes(&account.id)?;
+    let identities = if chosen.is_empty() { Vec::new() } else { store.identities_list(&account.id)? };
+    let (desired, quiet) = addresses::apply(desired, |m| m.to.as_slice(), |m| m.id.as_str(), &identities, &chosen);
     let shown: Vec<String> = store.shown_list(&account.id)?.into_iter().map(|(id, _)| id).collect();
-    let plan = plan(&desired, &shown, on_screen);
+    let mut plan = plan(&desired, &shown, on_screen);
+    for n in &mut plan.post {
+        n.quiet = quiet.contains(&n.message_id);
+    }
     for n in &plan.post {
         store.shown_add(&account.id, &n.message_id, now)?;
     }
@@ -474,6 +490,71 @@ mod store_tests {
         assert_eq!(store.mailbox_notify_since(&account.id, "work").unwrap(), None);
         // A folder the cache does not know cannot be switched on.
         assert!(!store.set_mailbox_notify(&account.id, "nope", true, ON).unwrap());
+    }
+
+    // ---- choices per receiving address ----
+
+    fn to(mail: MessageHeader, addresses: &[&str]) -> MessageHeader {
+        let to =
+            addresses.iter().map(|e| crate::model::Address { name: String::new(), email: e.to_string() }).collect();
+        MessageHeader { to, ..mail }
+    }
+
+    fn with_addresses() -> (Store, Account) {
+        let (store, account) = setup();
+        let ids = ["me@x.org", "work@x.org"].map(|e| crate::model::Identity {
+            id: e.into(),
+            name: String::new(),
+            email: e.into(),
+            signature: String::new(),
+        });
+        store.identities_replace(&account.id, &ids).unwrap();
+        (store, account)
+    }
+
+    #[test]
+    fn mail_to_an_address_that_is_off_is_not_shown_and_not_counted_as_swiped() {
+        let (store, account) = with_addresses();
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Off).unwrap();
+        let both = [to(mail("w", NOW), &["Work@x.org"]), to(mail("m", NOW), &["me@x.org"])];
+        store.upsert_messages(&account.id, &both).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["m"]);
+        assert!(!store.is_dismissed(&account.id, "w").unwrap());
+        // Chosen "notify" again: the mail, still unread, is part of the rule again.
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Notify).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["w"]);
+    }
+
+    #[test]
+    fn switching_an_address_off_withdraws_what_was_shown() {
+        let (store, account) = with_addresses();
+        store.upsert_messages(&account.id, &[to(mail("w", NOW), &["work@x.org"])]).unwrap();
+        assert_eq!(posted(&pass(&store, &account)), ["w"]);
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Off).unwrap();
+        assert_eq!(cancelled(&pass(&store, &account)), ["w"]);
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn mail_to_a_silent_address_is_posted_quietly_and_the_rest_is_not() {
+        let (store, account) = with_addresses();
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Silent).unwrap();
+        let mail = [to(mail("q", NOW), &["work+tag@x.org"]), to(mail("l", NOW), &["me@x.org"])];
+        store.upsert_messages(&account.id, &mail).unwrap();
+        let plan = pass(&store, &account);
+        let quiet: Vec<(&str, bool)> = plan.post.iter().map(|n| (n.message_id.as_str(), n.quiet)).collect();
+        assert_eq!(quiet, [("q", true), ("l", false)]);
+    }
+
+    #[test]
+    fn the_choice_is_per_account_and_notify_removes_it() {
+        let (store, account) = with_addresses();
+        store.set_address_mode(&account.id, "me@x.org", AddressMode::Silent).unwrap();
+        store.set_address_mode(&account.id, "me@x.org", AddressMode::Off).unwrap();
+        assert_eq!(store.address_modes(&account.id).unwrap().get("me@x.org"), Some(&AddressMode::Off));
+        assert!(store.address_modes("other").unwrap().is_empty());
+        store.set_address_mode(&account.id, "me@x.org", AddressMode::Notify).unwrap();
+        assert!(store.address_modes(&account.id).unwrap().is_empty());
     }
 
     #[test]

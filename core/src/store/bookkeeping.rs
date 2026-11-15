@@ -4,9 +4,38 @@ use super::mailboxes::QUIET_ROLES;
 use super::messages::{query_headers, COLUMNS};
 use super::Store;
 use crate::model::MessageHeader;
+use crate::notify::AddressMode;
 use crate::Result;
+use std::collections::HashMap;
 
 impl Store {
+    /// The notification choices per receiving address, by lower-case address. An address with
+    /// no entry notifies.
+    pub fn address_modes(&self, account_id: &str) -> Result<HashMap<String, AddressMode>> {
+        self.read(|c| {
+            let mut stmt = c.prepare("SELECT address, mode FROM address_notify WHERE account_id = ?1")?;
+            let rows =
+                stmt.query_map([account_id], |r| Ok((r.get::<_, String>(0)?, AddressMode::from_code(r.get(1)?))))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
+    /// Records the choice for `address` (already lower case); `Notify` removes the row.
+    pub fn set_address_mode(&self, account_id: &str, address: &str, mode: AddressMode) -> Result<()> {
+        self.write(|c| {
+            if mode == AddressMode::Notify {
+                c.execute("DELETE FROM address_notify WHERE account_id = ?1 AND address = ?2", [account_id, address])?;
+            } else {
+                c.execute(
+                    "INSERT INTO address_notify (account_id, address, mode) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(account_id, address) DO UPDATE SET mode = ?3",
+                    rusqlite::params![account_id, address, mode.code()],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     /// Messages that should have a notification: unread, not dismissed, and either in
     /// `inbox_id` and received at or after `since`, or in a folder switched on for
     /// notifications and received at or after `since` and after it was switched on. A message in

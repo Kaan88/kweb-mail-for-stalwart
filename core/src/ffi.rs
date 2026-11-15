@@ -1818,6 +1818,32 @@ impl Core {
         Ok(())
     }
 
+    /// The user's own addresses (the identities, from the cache) with what happens to mail that
+    /// came to each: notify (the default), notify without sound, or do not notify. Kept on this
+    /// device. Which address a mail came to is decided from its cached To list: the address
+    /// itself or with a plus tag; a mail to several of them takes the loudest choice, and one
+    /// that matches none notifies.
+    pub fn address_notify(&self) -> Result<Vec<notify::AddressChoice>> {
+        let account_id = self.account_id()?;
+        Ok(notify::choices(&self.store.identities_list(&account_id)?, &self.store.address_modes(&account_id)?))
+    }
+
+    /// Sets the choice for one of the user's addresses (`Error::Invalid` for an address that is
+    /// not an identity of the account). Mail that is now off is withdrawn from the notifications
+    /// shown, at once and from the cache; it is not counted as swiped, so it comes back if the
+    /// address is switched on again while the mail is still unread.
+    pub fn set_address_notify(&self, address: String, mode: notify::AddressMode) -> Result<()> {
+        let account_id = self.account_id()?;
+        let key = notify::choice_key(&address);
+        if !self.store.identities_list(&account_id)?.iter().any(|i| notify::choice_key(&i.email) == key) {
+            return Err(Error::invalid("That is not one of this account's addresses."));
+        }
+        self.store.set_address_mode(&account_id, &key, mode)?;
+        self.replan_from_cache()?;
+        self.poke();
+        Ok(())
+    }
+
     /// Makes a folder named `name` in `parent_id` (`None`: the top level). Needs the server.
     /// A blank name, a name with "/" or a control character, a name that is already there, too
     /// deep, or a parent that is Drafts, Trash or Junk is `Error::Invalid` with words for the

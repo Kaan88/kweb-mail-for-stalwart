@@ -17,12 +17,13 @@ internal fun Plan.honouring(mailEnabled: Boolean, removeWhenReadElsewhere: Boole
 )
 
 /**
- * Whether a posting must be silent. Besides what the core says, a notification that is already
- * on screen is only refreshed: this makes applying the same plan twice (the core hands a check's
- * plan both to the caller and to the listener) harmless even if a channel's sound is on.
+ * Whether a posting must be silent. Besides what the core says (the mail was announced already, or it came to
+ * an address the user chose "silent" for), a notification that is already on screen is only refreshed: this
+ * makes applying the same plan twice (the core hands a check's plan both to the caller and to the listener)
+ * harmless even if a channel's sound is on.
  */
 internal fun isSilent(notification: MailNotification, onScreen: Set<Int>): Boolean =
-    notification.silent || notification.androidId in onScreen
+    notification.silent || notification.quiet || notification.androidId in onScreen
 
 /** The Android ids of mail notifications that will be on screen once [plan] has been applied. */
 internal fun idsAfter(onScreen: Set<Int>, plan: Plan): Set<Int> =

@@ -47,6 +47,7 @@ class Notifier(context: Context) {
         val onScreen = activeMailIds(record).toSet()
         val tag = NotificationKeys.tag(record)
         val label = labelOf(record)
+        if (allowed.post.isNotEmpty()) Channels.ensureAccount(context, record, label)
         allowed.cancel.forEach { manager.cancel(tag, it.androidId) }
         allowed.post.forEach { manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen))) }
         updateSummary(record, idsAfter(onScreen, allowed).size)
@@ -94,6 +95,7 @@ class Notifier(context: Context) {
             emptyList()
         }
         mine.forEach { manager.cancel(it.tag, it.id) }
+        Channels.forget(context, record)
     }
 
     /**
@@ -134,11 +136,12 @@ class Notifier(context: Context) {
     }
 
     /**
-     * Posts a test notification on the Mail channel, with its sound. Returns false when Android
+     * Posts a test notification on the Mail channel of [record], with its sound. Returns false when Android
      * will drop it because notifications are off for the app (the permission or the app setting).
      */
-    fun sendTest(): Boolean {
-        val notification = NotificationCompat.Builder(context, Channels.MAIL)
+    fun sendTest(record: AccountRecord): Boolean {
+        Channels.ensureAccount(context, record, labelOf(record))
+        val notification = NotificationCompat.Builder(context, ChannelRules.mail(record))
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(context.getString(R.string.test_title))
             .setContentText(context.getString(R.string.test_text))
@@ -150,7 +153,7 @@ class Notifier(context: Context) {
     }
 
     private fun mailNotification(record: AccountRecord, n: MailNotification, label: String?, silent: Boolean): Notification {
-        val builder = NotificationCompat.Builder(context, Channels.MAIL)
+        val builder = NotificationCompat.Builder(context, ChannelRules.forMail(record, n.quiet))
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(n.from)
             .setContentText(n.subject)
@@ -183,7 +186,8 @@ class Notifier(context: Context) {
             manager.cancel(tag, SUMMARY_ID)
             return
         }
-        val summary = NotificationCompat.Builder(context, Channels.MAIL)
+        Channels.ensureAccount(context, record, labelOf(record))
+        val summary = NotificationCompat.Builder(context, ChannelRules.mail(record))
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(context.getString(R.string.app_name))
             .setContentText(context.resources.getQuantityString(R.plurals.mail_summary, count, count))
