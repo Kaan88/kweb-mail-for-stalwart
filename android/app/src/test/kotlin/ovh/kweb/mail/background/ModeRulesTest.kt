@@ -133,6 +133,29 @@ class ModeRulesTest {
     }
 
     @Test
+    fun workThatCameInWhileAPassRanGetsOnePassAtOnceAndOnlyOne() {
+        // The check after an action went well, and a second action was queued while it ran.
+        assertEquals(DuePlan.Expedited(0), DueRules.plan(0, fromWorker = true, attempt = 0, fresh = true))
+        // The pass that follows is one for owed work (not fresh): what it still leaves backs off as before.
+        assertEquals(DuePlan.Delayed(60_000), DueRules.plan(0, fromWorker = true, attempt = 0, fresh = false))
+        // A real time ahead is kept either way.
+        assertEquals(DuePlan.Expedited(5_000), DueRules.plan(5_000, fromWorker = true, fresh = true))
+    }
+
+    @Test
+    fun registeringAgainFallsBackOnADeadRoadAndOnTheThirdSilenceOfPlayServices() {
+        val f = ModeRules::fallsBack
+        assertFalse(f(FallbackReason.Unreachable, false, false, 9))
+        assertTrue(f(FallbackReason.NotVerified, false, true, 0))
+        assertTrue(f(FallbackReason.NoServerKey, false, true, 0))
+        assertTrue("Play services is not there", f(FallbackReason.NoPlayServices, true, true, 1))
+        assertTrue("nothing subscribed that works", f(FallbackReason.RegistrationRefused, false, false, 1))
+        assertFalse(f(FallbackReason.NoPlayServices, false, true, 1))
+        assertFalse(f(FallbackReason.RegistrationRefused, false, true, 2))
+        assertTrue(f(FallbackReason.RegistrationRefused, false, true, 3))
+    }
+
+    @Test
     fun aSendTimeAFewSecondsAwayIsNotAFailureAndKeepsItsRealTimeAlsoFromAWorker() {
         assertEquals(DuePlan.Expedited(5_000), DueRules.plan(5_000, fromWorker = true))
         assertEquals(DuePlan.Expedited(60_000), DueRules.plan(60_000, fromWorker = true))

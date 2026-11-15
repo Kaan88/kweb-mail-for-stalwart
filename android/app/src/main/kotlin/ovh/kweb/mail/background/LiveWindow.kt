@@ -88,9 +88,17 @@ object LiveWindow {
      * Asks every Google-mode account what is owed and schedules the earliest. Does nothing while the app is on
      * screen (its loop does the work). [fromWorker]: asked at the end of a pass; [ownSlot]: the slot of the due
      * worker that asks, so it never replaces itself; [attempt]: the retries so far ([DueRules.plan]); [skip]: accounts
-     * whose pass said "sign in", for which nothing is scheduled. Blocks briefly (a cache read per account).
+     * whose pass said "sign in", for which nothing is scheduled; [fresh]: see [DueRules.plan]. Blocks briefly (a
+     * cache read per account).
      */
-    fun scheduleDue(context: Context, fromWorker: Boolean = false, ownSlot: Int? = null, attempt: Int = 0, skip: Set<String> = emptySet()) {
+    fun scheduleDue(
+        context: Context,
+        fromWorker: Boolean = false,
+        ownSlot: Int? = null,
+        attempt: Int = 0,
+        skip: Set<String> = emptySet(),
+        fresh: Boolean = false,
+    ) {
         if (gate.onScreen) return
         try {
             val waitings = googleSessions(context).filter { it.record.id !in skip }.mapNotNull {
@@ -102,7 +110,7 @@ object LiveWindow {
                 }
             }
             val earliest = DueRules.earliest(waitings) ?: return
-            CheckScheduler.checkAt(context, earliest, fromWorker, ownSlot, attempt)
+            CheckScheduler.checkAt(context, earliest, fromWorker, ownSlot, attempt, fresh)
         } catch (e: Exception) {
             Log.w(Background.TAG, "scheduling owed work failed", e)
         }

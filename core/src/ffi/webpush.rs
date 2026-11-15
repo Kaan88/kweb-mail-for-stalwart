@@ -264,8 +264,9 @@ impl Core {
     /// The receiver has 10 seconds in all. This call does not watch the clock: the host runs it
     /// on a thread, waits about 8 seconds, and if it has not returned (or returned an error)
     /// hands over to the expedited check and finishes. The call goes on meanwhile and is safe to
-    /// overlap with that check: passes take turns (the store's pass lock) and the host's
-    /// notifier applies a plan twice without alerting twice.
+    /// overlap with that check: passes take turns (the store's pass lock), and each hands its
+    /// plan to the listener ([`Core::listen`]) while it holds that lock, so the host shows the
+    /// plans in the order they were made and does not apply the returned one again.
     ///
     /// Errors mean "understood, but the work did not get done": `Temporary` (server unreachable)
     /// and `SignInNeeded` from the pass or the write-back, `Store` from the cache. No error for a

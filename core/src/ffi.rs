@@ -269,6 +269,15 @@ impl Core {
         }
     }
 
+    /// Remembers `listener` without starting the live connection, so that every pass, also one
+    /// of [`Core::check_once`] or of a push message in a process that never started the
+    /// connection, hands its plan to the listener while it still holds the pass lock. The host
+    /// that registers one shows what the listener is given and does not apply a returned plan
+    /// again: one pass, one application, in the order of the passes. Does not block.
+    pub fn listen(&self, listener: Arc<dyn Listener>) {
+        self.lock().listener = Some(listener);
+    }
+
     /// Ends the live connection. The listener is kept for the next [`Core::start`] or sign-in.
     pub fn stop(&self) {
         let watcher = self.lock().watcher.take();
@@ -295,7 +304,9 @@ impl Core {
     }
 
     /// One pass without the live connection: for the 15-minute job and the boot receiver.
-    /// Returns what to post and cancel; the listener, if any, is told as well.
+    /// Returns what to post and cancel; the listener, if any, is told as well, inside the pass.
+    /// A host with a listener ([`Core::listen`]) shows what the listener got and not the returned
+    /// plan, which comes back only after the bodies were fetched.
     pub fn check_once(&self, shade: Shade) -> Result<Plan> {
         let deps = {
             let inner = self.lock();

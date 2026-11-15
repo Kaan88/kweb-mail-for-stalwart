@@ -360,6 +360,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.Settings -> SettingsScreen(
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
+                    onOpenNotificationButtons = { app.open(Route.NotificationButtons) },
                     onOpenAway = { app.open(Route.Away) },
                     onOpenFilters = { app.open(Route.Filters()) },
                     onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
@@ -375,6 +376,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onBack = app::back,
                     onOpen = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                 )
+                Route.NotificationButtons -> ovh.kweb.mail.ui.settings.NotificationButtonsScreen(onBack = app::back)
                 Route.DeliveryCheck -> DeliveryScreen(
                     onBack = app::back,
                     onSignInAgain = { app.open(Route.SignInAgain) },

@@ -112,6 +112,27 @@ async fn delete_in_trash_queues_a_destroy_and_elsewhere_a_move() {
     assert_eq!(server.roles_of(E3), ["trash"], "moved");
 }
 
+/// What the Delete button of a notification submits: it must never destroy, wherever the mail is.
+#[tokio::test]
+async fn a_move_to_trash_never_destroys_even_for_mail_already_in_trash() {
+    let (server, conn, store) = setup().await;
+    server.move_to(E2, "trash");
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+
+    let to_trash = |id: &str| Action::Move { message_id: id.into(), mailbox_id: TRASH_ID.into() };
+    actions::submit(&store, ACCOUNT, &to_trash(E2)).unwrap();
+    actions::submit(&store, ACCOUNT, &to_trash(E1)).unwrap();
+    let queued: Vec<Action> = store.outbox_pending(ACCOUNT).unwrap().into_iter().map(|r| r.1).collect();
+    assert_eq!(queued, [to_trash(E2), to_trash(E1)]);
+    assert_eq!(store.get_message(ACCOUNT, E2).unwrap().unwrap().mailbox_ids, vec![TRASH_ID.to_string()]);
+    assert!(!notifiable_ids(&store).contains(&E1.to_string()), "out of the Inbox at once");
+
+    actions::flush(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(server.roles_of(E2), ["trash"], "still there");
+    assert_eq!(server.roles_of(E1), ["trash"], "moved");
+    assert_eq!(pending(&store), 0);
+}
+
 #[tokio::test]
 async fn destroy_submitted_directly_removes_the_message() {
     let (server, conn, store) = setup().await;

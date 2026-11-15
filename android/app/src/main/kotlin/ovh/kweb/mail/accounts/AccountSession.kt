@@ -18,7 +18,8 @@ import uniffi.kweb_core.Reminder
  * connection last reported and a counter for "the cache changed".
  *
  * The listener lives here and not in the service: the core keeps a listener beyond `stop()`, so it must not
- * belong to a service instance. It arrives on the core's own threads and must return quickly.
+ * belong to a service instance. It arrives on the core's own threads and must return quickly. It is the only
+ * place a plan of the core is applied ([Notifier.apply]).
  */
 class AccountSession internal constructor(
     record: AccountRecord,
@@ -60,6 +61,13 @@ class AccountSession internal constructor(
         override fun notifications(plan: Plan) = guarded("notifications") { Notifier(app).apply(record, plan) }
         override fun cacheChanged() = guarded("cacheChanged") { publishCacheChanged() }
         override fun reminder(reminder: Reminder) = guarded("reminder") { Notifier(app).showReminder(record, reminder) }
+    }
+
+    init {
+        // From the first moment, also in a process a push or a worker started: every pass of the core then hands its
+        // plan to this listener while it still holds the pass lock, so plans reach the screen in the order they were
+        // made and each one once. Nobody applies the plan a check or a push message returns.
+        core.listen(listener)
     }
 
     private fun guarded(what: String, block: () -> Unit) {

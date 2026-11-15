@@ -3,6 +3,7 @@ package ovh.kweb.mail.background
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GoogleRegistrationTest {
@@ -39,6 +40,27 @@ class GoogleRegistrationTest {
     fun anErrorIsARefusalWithOrWithoutAnAccount() {
         assertEquals(RegistrationReply.Error(null, "SERVICE_NOT_AVAILABLE"), GoogleRegistration.parseReply(null, "SERVICE_NOT_AVAILABLE", "p"))
         assertEquals(RegistrationReply.Error("a", "X"), GoogleRegistration.parseReply("|ID|a|:", "X", "p"))
+    }
+
+    @Test
+    fun anErrorThatCarriesTheKidNamesItsAccount() {
+        assertEquals(RegistrationReply.Error("acct1", "SERVICE_NOT_AVAILABLE"), GoogleRegistration.parseReply(null, "|ID|acct1|:SERVICE_NOT_AVAILABLE", "p"))
+        // So it reaches only that account's request, never the one of another account that happens to wait.
+        val err = RegistrationReply.Error("acct1", "E")
+        assertNull(GoogleRegistration.answerFor(err, "acct2", delete = false))
+        assertEquals(RegistrationResult.Refused("E"), GoogleRegistration.answerFor(err, "acct1", delete = false))
+    }
+
+    @Test
+    fun anErrorWithoutAnAccountRightAfterAnUnansweredRequestIsNotTrusted() {
+        val bare = RegistrationReply.Error(null, "SERVICE_NOT_AVAILABLE")
+        assertFalse("no request was left unanswered", GoogleRegistration.mayBeStray(bare, null))
+        assertTrue(GoogleRegistration.mayBeStray(bare, 0))
+        assertTrue(GoogleRegistration.mayBeStray(bare, GoogleRegistration.STRAY_WINDOW_MS - 1))
+        assertFalse(GoogleRegistration.mayBeStray(bare, GoogleRegistration.STRAY_WINDOW_MS))
+        // What names its account is always delivered.
+        assertFalse(GoogleRegistration.mayBeStray(RegistrationReply.Error("a", "E"), 0))
+        assertFalse(GoogleRegistration.mayBeStray(RegistrationReply.Token("a", "t"), 0))
     }
 
     @Test

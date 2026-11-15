@@ -11,6 +11,17 @@ import uniffi.kweb_core.Reminder
 import uniffi.kweb_core.WebPushMessage
 
 class PushMessageHandlerTest {
+    @Test
+    fun aMessageWithoutABodyEndsInACheckWhenItMayMeanNews() {
+        // Google discarded pending messages: no account is named, news may be lost.
+        org.junit.Assert.assertTrue(PushMessageHandler.dropNeedsCheck("deleted_messages", accountKnown = false))
+        // A known account, the body missing.
+        org.junit.Assert.assertTrue(PushMessageHandler.dropNeedsCheck(null, accountKnown = true))
+        // For nobody we know: a plain drop, so another sender's noise costs nothing.
+        org.junit.Assert.assertFalse(PushMessageHandler.dropNeedsCheck(null, accountKnown = false))
+        org.junit.Assert.assertFalse(PushMessageHandler.dropNeedsCheck("gcm", accountKnown = false))
+    }
+
     private val executor = Executors.newCachedThreadPool { r -> Thread(r).apply { isDaemon = true } }
     private val plan = Plan(post = emptyList(), cancel = emptyList())
     private val reminder = Reminder("e", "a", null, false, "Title", "", null, null, false)

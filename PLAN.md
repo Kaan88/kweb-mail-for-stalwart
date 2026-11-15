@@ -72,7 +72,7 @@ Details that make it hold:
 - A notification's Android id is derived from the message id, so posting twice updates instead of duplicating.
 - A swipe-away is recorded, so that mail is not posted again.
 - Removal is silent. Only a genuinely new message makes a sound.
-- Actions (Archive, Mark read, Reply) go through the core, also when the app was not running.
+- Actions (the user's choice of up to three from Archive, Delete, Mark read, Reply; default Delete, Mark read, Reply) go through the core, also when the app was not running.
 
 Android pieces:
 
@@ -337,6 +337,16 @@ Postern (MIT, same author) already has, in Rust: the OAuth flow with client regi
 ### Decided without asking (2026-11-14 onwards): the owner's to confirm or change
 
 The owner asked for the milestones to go on without stopping for questions. Each line is a choice made on the way; the code follows it until the owner says otherwise.
+
+Notification buttons (owner, 2026-11-15: the buttons of a mail notification become a setting; default Delete, Mark read, Reply, also for installs that never chose)
+- Per account, like the three notification switches beside it: stored in the account's own settings file (`notification_actions`, the keys `archive`, `delete`, `read`, `reply` in order). The first account added after a sign-out of an old single-account install takes the old choice over with the switches.
+- Nothing stored means "never chose" and reads as the default, so there is no migration step: an existing install gets Delete, Mark read, Reply on its next notification. "Use the default" removes the stored value again, so such an account would follow a later change of the default.
+- Up to three; fewer or none are allowed. None gives a notification without buttons (a tap still opens the mail, a swipe still dismisses it). With three on, the fourth switch is disabled and says "switch another off first".
+- Where: Settings, group "This app", the row "Notification buttons" under "Delivery check" (its quiet line names the buttons). The screen has a small preview of a notification, then one group of four rows: the shown actions in their order, each with arrows to move it and a switch, then the others. An action switched on becomes the last button. With several accounts the screen says whose it is.
+- Delete moves the mail to Trash as the list and the thread do, through the same path as Archive (`ActionReceiver`): the notification is removed at once, the action is applied to the cache and queued for the server, and a check is scheduled when no live connection runs (closed app, Google mode). The notification's Delete never deletes for good: the receiver submits a move to the Trash folder (`NotificationActionRules.deleteAction`), not `Action::Delete`, which the core turns into a permanent delete for mail already in Trash. A notification can outlive its mail's move to Trash ("Remove when read elsewhere" off, or the moment before the removal is applied); the button then only removes the notification and the mail stays in Trash. For mail outside Trash the move does on the server exactly what Delete does.
+- Notifications already on screen get the new buttons silently, half a second after the last change of the setting (`Notifier.refreshActionsSoon`): each posted mail notification carries its message id and its buttons in its extras and is posted again from what it shows. Only those whose buttons differ are posted, one every 0.3 seconds, because Android drops updates that come faster than about five a second; each is looked up again just before, so one that went away meanwhile is not put back. A notification posted by a version before this one has no such extra and keeps its old buttons, which still work, until it goes away.
+- The rules (default, order, at most three, reading and storing, the rows of the screen) are `background/NotificationActionRules.kt` with `NotificationActionRulesTest`.
+- Checked on the emulator (both accounts, permanent connection, 2026-11-15): the screen opens in light and dark and shows the default; a new mail has Delete, Mark read, Reply; Delete with the activity swiped from recents moved the mail to Trash on the server within 3 seconds, the notification went and stayed away after the next mail; Mark read and Reply work; after a change the three notifications on screen and the next mail had the new buttons; with "Remove when read elsewhere" off, Delete on the notification of a mail already moved to Trash elsewhere left it in Trash; Delete on the second account's notification moved the mail in the second account. Not checked: Delete in Google push mode on a device (the same code path as Archive), a process that is truly dead (the connection service keeps it alive), more than a handful of notifications on screen during a change, the real phone.
 
 M3
 - Bodies come from the server's parsed parts, not the raw message (M9 fetches the raw blob when it needs it).

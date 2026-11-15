@@ -3,10 +3,15 @@ package ovh.kweb.mail.background
 import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
+import android.os.Bundle
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import ovh.kweb.mail.R
 import ovh.kweb.mail.accounts.AccountLabels
 import ovh.kweb.mail.accounts.AccountRecord
@@ -18,10 +23,10 @@ import uniffi.kweb_core.Reminder
 /**
  * Turns the core's [Plan]s and [Reminder]s into Android notifications.
  *
- * Applying a plan is idempotent: posting an id that is on screen only refreshes it, silently,
- * and cancelling a missing id does nothing. That matters because a check hands its plan to its
- * caller and to the service's listener, so the same plan can arrive twice. Cancelling never
- * makes a sound. All methods may be called from any thread.
+ * Posting an id that is on screen only refreshes it, silently, and cancelling a missing id does
+ * nothing. A plan is applied once, by the account's listener inside the pass that made it
+ * ([ovh.kweb.mail.accounts.AccountSession]); the copy a check or a push message returns is not
+ * applied again. Cancelling never makes a sound. All methods may be called from any thread.
  *
  * Every notification belongs to an account: Android identifies it by (tag, id), and [NotificationKeys] says
  * which tag, group and intent URIs an account has (the migrated account keeps the old ones, no tag). With
@@ -40,7 +45,9 @@ class Notifier(context: Context) {
         val settings = Settings.of(context, record)
         val allowed = plan.honouring(settings.mailEnabled, settings.removeWhenReadElsewhere)
         if (allowed.post.isEmpty() && allowed.cancel.isEmpty()) return
-        synchronized(LOCK) { applyAllowed(record, allowed) }
+        // Under the lock [cancelAccount] takes: a plan of a pass that was in flight when its account was removed
+        // either lands before the removal clears it or is dropped.
+        synchronized(LOCK) { if (!Settings.isGone(record)) applyAllowed(record, allowed) }
     }
 
     private fun applyAllowed(record: AccountRecord, allowed: Plan) {
@@ -48,7 +55,8 @@ class Notifier(context: Context) {
         val tag = NotificationKeys.tag(record)
         val label = labelOf(record)
         allowed.cancel.forEach { manager.cancel(tag, it.androidId) }
-        allowed.post.forEach { manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen))) }
+        val actions = Settings.of(context, record).notificationActions
+        allowed.post.forEach { manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen), actions)) }
         updateSummary(record, idsAfter(onScreen, allowed).size)
     }
 
@@ -106,7 +114,7 @@ class Notifier(context: Context) {
 
     /** Shows a calendar or task reminder of [record], unless the user turned reminders off for it. */
     fun showReminder(record: AccountRecord, reminder: Reminder) {
-        if (!Settings.of(context, record).remindersEnabled) return
+        if (Settings.isGone(record) || !Settings.of(context, record).remindersEnabled) return
         val id = ReminderRules.notificationId(reminder.eventId, reminder.alertId)
         // The live loop and the push both bring a fired alert: it alerts once.
         val key = NotificationKeys.tag(record) + "/" + id
@@ -149,7 +157,71 @@ class Notifier(context: Context) {
         return manager.areNotificationsEnabled()
     }
 
-    private fun mailNotification(record: AccountRecord, n: MailNotification, label: String?, silent: Boolean): Notification {
+    /**
+     * Gives the mail notifications of [record] that are on screen the buttons the account's setting says, a
+     * moment after the last change: the screen calls this on every tap, and only the last call within
+     * [REFRESH_DELAY_MILLIS] does the work. It runs on a thread of its own, so it also finishes after the
+     * screen was left.
+     */
+    fun refreshActionsSoon(record: AccountRecord) {
+        synchronized(pendingRefreshes) {
+            pendingRefreshes.remove(record.id)?.cancel(false)
+            pendingRefreshes[record.id] = refresher.schedule({
+                try {
+                    refreshActions(record)
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "refreshing the notification buttons failed", e)
+                }
+            }, REFRESH_DELAY_MILLIS, TimeUnit.MILLISECONDS)
+        }
+    }
+
+    /**
+     * Posts again, silently and without moving them, the mail notifications of [record] whose buttons are not
+     * what the account's setting now says ([NotificationActionRules.needsRefresh]). A notification says in its
+     * extras which message it is for and which buttons it has; one posted by a version from before the setting
+     * does not, and keeps the buttons it has (they still work) until it goes away.
+     *
+     * One at a time with a pause between them: Android drops updates of a package that come faster than about
+     * five a second, and a dropped one would keep its old buttons. Each is looked up again under the lock just
+     * before it is posted, so one that went away meanwhile is not put back and a newer choice is the one used.
+     * Blocks for [REFRESH_GAP_MILLIS] per notification.
+     */
+    fun refreshActions(record: AccountRecord) {
+        val tried = HashSet<Int>()
+        while (synchronized(LOCK) { refreshNext(record, tried) }) Thread.sleep(REFRESH_GAP_MILLIS)
+    }
+
+    /** Posts one notification that needs it and is not in [tried] yet; false when none is left. */
+    private fun refreshNext(record: AccountRecord, tried: MutableSet<Int>): Boolean {
+        if (Settings.isGone(record)) return false
+        val actions = Settings.of(context, record).notificationActions
+        val shown = try {
+            manager.activeNotifications.filter { it.id >= NotificationKeys.FIRST_MAIL_ID && NotificationKeys.owns(record, it.tag, it.id) }
+        } catch (_: RuntimeException) {
+            emptyList()
+        }
+        val entry = shown.firstOrNull {
+            val extras = it.notification.extras
+            it.id !in tried &&
+                NotificationActionRules.needsRefresh(extras.getString(EXTRA_SHOWN_MESSAGE_ID), extras.getString(EXTRA_SHOWN_ACTIONS), actions)
+        } ?: return false
+        tried += entry.id
+        val extras = entry.notification.extras
+        val again = MailNotification(
+            messageId = extras.getString(EXTRA_SHOWN_MESSAGE_ID).orEmpty(),
+            androidId = entry.id,
+            from = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
+            subject = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty(),
+            preview = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
+            receivedAt = entry.notification.`when` / 1000,
+            silent = true,
+        )
+        manager.notify(entry.tag, entry.id, mailNotification(record, again, labelOf(record), silent = true, actions = actions))
+        return true
+    }
+
+    private fun mailNotification(record: AccountRecord, n: MailNotification, label: String?, silent: Boolean, actions: List<MailAction>): Notification {
         val builder = NotificationCompat.Builder(context, Channels.MAIL)
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(n.from)
@@ -167,9 +239,21 @@ class Notifier(context: Context) {
             .setAutoCancel(true)
             .setContentIntent(NotificationIntents.openApp(context, record, n.androidId, "message", n.messageId, EXTRA_MESSAGE_ID))
             .setDeleteIntent(NotificationIntents.forMessage(context, record, ActionReceiver.ACTION_SWIPED, n.androidId, n.messageId))
-            .addAction(0, context.getString(R.string.action_archive), forMessage(record, ActionReceiver.ACTION_ARCHIVE, n))
-            .addAction(0, context.getString(R.string.action_mark_read), forMessage(record, ActionReceiver.ACTION_MARK_READ, n))
-            .addAction(0, context.getString(R.string.action_reply), NotificationIntents.reply(context, record, n.androidId, n.messageId))
+            // Which message this is and which buttons it has, so [refreshActions] can post it again with other buttons.
+            .addExtras(
+                Bundle().apply {
+                    putString(EXTRA_SHOWN_MESSAGE_ID, n.messageId)
+                    putString(EXTRA_SHOWN_ACTIONS, NotificationActionRules.encode(actions))
+                },
+            )
+        for (action in NotificationActionRules.clean(actions)) {
+            when (action) {
+                MailAction.Archive -> builder.addAction(0, context.getString(R.string.action_archive), forMessage(record, ActionReceiver.ACTION_ARCHIVE, n))
+                MailAction.Delete -> builder.addAction(0, context.getString(R.string.action_delete), forMessage(record, ActionReceiver.ACTION_DELETE, n))
+                MailAction.MarkRead -> builder.addAction(0, context.getString(R.string.action_mark_read), forMessage(record, ActionReceiver.ACTION_MARK_READ, n))
+                MailAction.Reply -> builder.addAction(0, context.getString(R.string.action_reply), NotificationIntents.reply(context, record, n.androidId, n.messageId))
+            }
+        }
         label?.let { builder.setSubText(it) }
         return builder.build()
     }
@@ -229,6 +313,24 @@ class Notifier(context: Context) {
 
         /** Extra of the intent that opens the app from a mail notification: the JMAP message id (String). */
         const val EXTRA_MESSAGE_ID = "ovh.kweb.mail.extra.MESSAGE_ID"
+
+        /** In the extras of a posted mail notification itself (not of an intent): the JMAP message id it is for (String). */
+        internal const val EXTRA_SHOWN_MESSAGE_ID = "ovh.kweb.mail.extra.SHOWN_MESSAGE_ID"
+
+        /** Next to [EXTRA_SHOWN_MESSAGE_ID]: the buttons the notification was built with, as the setting stores them (String). */
+        internal const val EXTRA_SHOWN_ACTIONS = "ovh.kweb.mail.extra.SHOWN_ACTIONS"
+
+        /** How long after the last change of the buttons setting the notifications on screen follow. */
+        private const val REFRESH_DELAY_MILLIS = 500L
+
+        /** The pause between two notifications posted again: under four a second, below Android's limit of five. */
+        private const val REFRESH_GAP_MILLIS = 300L
+
+        /** Runs [refreshActionsSoon]'s work, one account after the other. */
+        private val refresher = Executors.newSingleThreadScheduledExecutor { Thread(it, "kweb-notification-buttons").apply { isDaemon = true } }
+
+        /** The refresh that waits for its moment, by account id. */
+        private val pendingRefreshes = HashMap<String, ScheduledFuture<*>>()
 
         /** Extra of the intent behind the Reply button of a mail notification: the JMAP message id (String). */
         const val EXTRA_REPLY_MESSAGE_ID = "ovh.kweb.mail.extra.REPLY_MESSAGE_ID"

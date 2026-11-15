@@ -9,8 +9,11 @@ import uniffi.kweb_core.Exception as CoreException
 sealed interface RegistrationResult {
     data class Token(val token: String) : RegistrationResult
 
-    /** The intent threw, or nothing answered in time. */
-    data class NoPlayServices(val detail: String?) : RegistrationResult
+    /**
+     * The intent threw, or nothing answered in time. [absent]: Play services is not there to ask (no such service,
+     * or the intent threw), which no waiting cures; false when it only stayed silent.
+     */
+    data class NoPlayServices(val detail: String?, val absent: Boolean = false) : RegistrationResult
 
     /** Play services answered with an `error` extra. */
     data class Refused(val error: String) : RegistrationResult
@@ -49,8 +52,11 @@ interface PushBackend {
 sealed interface SwitchOutcome {
     data object Done : SwitchOutcome
 
-    /** Switching on did not work; nothing was changed. [reason] is also kept in the settings. */
-    data class Failed(val reason: FallbackReason, val detail: String?) : SwitchOutcome
+    /**
+     * Switching on did not work; nothing was changed. [reason] is also kept in the settings. [dead]: the failure
+     * itself shows that nothing can arrive through Google any more (Play services is not there).
+     */
+    data class Failed(val reason: FallbackReason, val detail: String?, val dead: Boolean = false) : SwitchOutcome
 
     /** Switching off: the service did not start or no connection came up, so the account stays in Google mode. */
     data object ConnectionNotUp : SwitchOutcome
@@ -136,22 +142,39 @@ class GoogleSwitch(private val settings: Settings, private val backend: PushBack
      * Registers again for a Google-mode account (token missing, new version, 30 days, key changed, nothing
      * subscribed), or finishes a setup that was cut short. `pushSetup` stays true until it worked, so the next start or
      * check tries again. A failure that proves nothing about the road that worked before (Play services silent, the
-     * server out of reach) leaves that road alone; only a road that is dead (not verified, key gone) falls back.
+     * server out of reach) leaves that road alone; only a road that is dead (not verified, key gone, Play services
+     * not there) falls back. Play services staying silent or refusing is let pass [ModeRules.REGISTER_FAILURES] - 1
+     * times in a row and then counts as dead too, so an account never stays in Google mode for good with a
+     * registration nobody answers for and no reason shown.
      */
     suspend fun reregister(): SwitchOutcome {
         settings.pushSetup = true
         settings.pushTries = 0
         val failure = establish()
         if (failure != null) {
-            val stillWorks = runCatching { backend.state() is WebPushState.Registered }.getOrDefault(false)
-            val deadRoad = failure.reason == FallbackReason.NotVerified || failure.reason == FallbackReason.NoServerKey
-            val passing = failure.reason == FallbackReason.Unreachable || (stillWorks && !deadRoad)
-            if (!passing) fallBack(failure.reason, failure.detail)
+            if (ModeRules.fallsBack(failure.reason, failure.dead, stillWorks(), failuresAfter(failure))) {
+                // The setup is over, so the fallback is a whole one: it starts the service and, once the connection
+                // is up, ends what is left of the registration. Left true, the clean-up would be skipped and the next
+                // app start would silently try to switch on again.
+                settings.pushSetup = false
+                settings.pushFailures = 0
+                fallBack(failure.reason, failure.detail)
+            }
             return failure
         }
         settings.pushSetup = false
+        settings.pushFailures = 0
         backend.modeChanged()
         return SwitchOutcome.Done
+    }
+
+    private fun stillWorks(): Boolean = runCatching { backend.state() is WebPushState.Registered }.getOrDefault(false)
+
+    /** Counts a failure of Play services itself (not of the server or the network) and returns the count in a row. */
+    private fun failuresAfter(failure: SwitchOutcome.Failed): Int {
+        val playServices = failure.reason == FallbackReason.NoPlayServices || failure.reason == FallbackReason.RegistrationRefused
+        if (playServices) settings.pushFailures = settings.pushFailures + 1
+        return settings.pushFailures
     }
 
     /** A step of the 15-minute check for a Google-mode account. */
@@ -194,7 +217,7 @@ class GoogleSwitch(private val settings: Settings, private val backend: PushBack
         } ?: return SwitchOutcome.Failed(FallbackReason.NoServerKey, null)
 
         when (val r = backend.register(registration)) {
-            is RegistrationResult.NoPlayServices -> return SwitchOutcome.Failed(FallbackReason.NoPlayServices, r.detail)
+            is RegistrationResult.NoPlayServices -> return SwitchOutcome.Failed(FallbackReason.NoPlayServices, r.detail, dead = r.absent)
             is RegistrationResult.Refused -> return SwitchOutcome.Failed(FallbackReason.RegistrationRefused, r.error)
             is RegistrationResult.Token -> settings.recordPushRegistration(
                 registration.subtype, registration.sender, r.token, backend.nowMillis(), backend.versionCode(),

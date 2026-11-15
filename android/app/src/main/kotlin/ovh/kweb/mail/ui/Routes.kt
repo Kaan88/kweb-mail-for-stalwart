@@ -107,6 +107,9 @@ sealed interface Route {
 
     data object DeliveryCheck : Route
 
+    /** Which buttons a mail notification of the account has, reached from Settings. */
+    data object NotificationButtons : Route
+
     data object Settings : Route
 
     /** One screen of the admin area (server administration), reached from Settings. */

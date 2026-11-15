@@ -54,6 +54,7 @@ Settings keys (per account, in that account's settings file):
 | `push_token`, `push_token_at` | the token Play services gave, and when (ms) |
 | `push_app_version` | the app's version code at that registration |
 | `push_tries` | verification tries used (0 to 3) |
+| `push_failures` | failures of Play services in a row while registering again; at the third the account falls back |
 | `push_fallback`, `push_fallback_at`, `push_fallback_detail` | why the account went back to the connection, when, and the error name from Play services if any |
 
 Fallback reasons (`push_fallback`): `no_play_services`, `no_server_key`, `registration_refused`, `not_verified`, `subscription_gone`. The subscription id and expiry are the core's (kv `web_push`); the keys are in the account's secret store (`web_push_private_key`, `web_push_auth`).
@@ -82,7 +83,7 @@ A stop in steps 2 to 5 leaves `delivery_mode` at `connection`, so nothing was ev
 1. `setResultCode(Activity.RESULT_OK)`, `goAsync()`, a thread.
 2. Find the account whose `push_subtype` equals the `subtype` extra. None, or no `rawData`: drop (log the fact only).
 3. `webPushReceive(rawData, Shade.Ids(notifier.activeMailIds(record)))`.
-   - `Checked`: `Notifier.apply(record, plan)`, `settings.recordCheck`.
+   - `Checked`: `settings.recordCheck`. The plan was applied inside the pass by the account's listener (`core.listen` in `AccountSession`); the returned copy is not applied again (2026-11-15: applying it twice, or seconds later, brought back dismissed notifications and lost alerts).
    - `Reminder`: `Notifier.showReminder(record, reminder)`.
    - `Verified`: tell `GooglePush` (step 5 above).
    - `Ignored`, `Undecryptable`: nothing.
