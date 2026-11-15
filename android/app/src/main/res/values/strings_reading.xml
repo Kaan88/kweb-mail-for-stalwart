@@ -63,6 +63,10 @@
     <string name="thread_saved">Saved</string>
     <string name="thread_save_failed">The file could not be saved.</string>
     <string name="thread_download_failed">The file could not be downloaded. You may be offline.</string>
+    <string name="thread_download_failed_why">The file could not be downloaded: %1$s</string>
+    <string name="thread_download_failed_sign_in">The file could not be downloaded. Sign in again first.</string>
+    <string name="thread_download_failed_unknown">The file could not be downloaded.</string>
+    <string name="download_of">%1$s of %2$s</string>
     <string name="thread_no_app_for_file">No app on this phone can open this file.</string>
     <string name="thread_no_app_for_link">No app on this phone can open this link.</string>
     <string name="thread_read_failed">The conversation could not be read.</string>

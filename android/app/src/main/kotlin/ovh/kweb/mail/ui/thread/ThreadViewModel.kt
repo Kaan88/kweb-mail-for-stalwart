@@ -3,6 +3,7 @@ package ovh.kweb.mail.ui.thread
 import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
+import ovh.kweb.mail.ui.transfer.ActiveTransfer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -117,6 +118,9 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     /** The Unsubscribe chips of the opened messages. */
     val unsubscribe = UnsubscribeController(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
 
+    /** The attachment being downloaded for opening or saving, and how far it is. Ended when the screen is left. */
+    val transfer = ActiveTransfer()
+
     /** The attachment the system file picker is open for. Lives here so a rotation does not lose it. */
     var pendingSave: Attachment? = null
 
@@ -142,6 +146,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
 
     /** The screen was left for good: stop everything and forget the cards, the bodies and what was marked read. */
     fun reset() {
+        transfer.cancel()
         session?.cancel()
         session = null
         markedRead = false

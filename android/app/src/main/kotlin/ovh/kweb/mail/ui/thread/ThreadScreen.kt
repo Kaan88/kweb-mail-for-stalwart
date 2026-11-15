@@ -66,7 +66,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import ovh.kweb.mail.ui.transfer.ActiveTransfer
+import ovh.kweb.mail.ui.transfer.DownloadFailure
+import ovh.kweb.mail.ui.transfer.DownloadRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -111,7 +115,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     var confirmingDelete by remember { mutableStateOf(false) }
     // The message whose sender is asked about; saved, so a rotation keeps the question.
     var blockingId by rememberSaveable { mutableStateOf<String?>(null) }
-    var busyBlobId by remember { mutableStateOf<String?>(null) }
+    // The attachment being downloaded (one at a time, kept by the view model so that leaving the screen can end it).
+    val activeDownload by vm.transfer.state.collectAsStateWithLifecycle()
+    val busyBlobId = activeDownload?.key
     // Saved, so a rotation keeps the sheet and the questions: the message whose labels are edited ("*": the whole thread),
     // whether the new-label dialog is open, and the message whose unsubscribing is asked about.
     var labelsTarget by rememberSaveable { mutableStateOf<String?>(null) }
@@ -123,6 +129,17 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
 
     fun say(textRes: Int) {
         scope.launch { snackbar.showSnackbar(resources.getString(textRes)) }
+    }
+
+    /** Why a download failed, in the core's words; "you may be offline" only when the server could not be reached. */
+    fun sayDownloadFailed(error: Throwable) {
+        val text = when (val failure = DownloadRules.describe(error)) {
+            DownloadFailure.Offline -> resources.getString(R.string.thread_download_failed)
+            is DownloadFailure.Words -> resources.getString(R.string.thread_download_failed_why, failure.text)
+            DownloadFailure.SignIn -> resources.getString(R.string.thread_download_failed_sign_in)
+            DownloadFailure.Unknown -> resources.getString(R.string.thread_download_failed_unknown)
+        }
+        scope.launch { snackbar.showSnackbar(text) }
     }
 
     LaunchedEffect(vm) { vm.start() }
@@ -169,17 +186,22 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
 
     val files = remember { BlobFiles(context.applicationContext, accountSession.record.id) }
 
-    /** The file of an attachment, downloaded if it is not there. */
-    suspend fun fetch(attachment: Attachment) = withContext(Dispatchers.IO) {
-        files.ensure(accountSession.core, attachment.blobId, files.attachmentFile(attachment.blobId, attachment.name))
+    /** The file of an attachment, downloaded if it is not there; null when the user cancelled the download. */
+    suspend fun fetch(attachment: Attachment, run: ActiveTransfer.Run): File? = withContext(Dispatchers.IO) {
+        files.ensureTracked(
+            accountSession.core,
+            attachment.blobId,
+            files.attachmentFile(attachment.blobId, attachment.name),
+            run.stop,
+        ) { done, total -> vm.transfer.report(run, done, total) }
     }
 
     fun openAttachment(attachment: Attachment) {
-        if (busyBlobId != null) return
-        busyBlobId = attachment.blobId
+        // A tap while a download is under way (this file or another) starts nothing.
+        val run = vm.transfer.begin(attachment.blobId, DownloadRules.expected(attachment.size.toLong())) ?: return
         scope.launch {
             try {
-                val file = fetch(attachment)
+                val file = fetch(attachment, run) ?: return@launch
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 val intent = Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, attachment.mimeType.ifBlank { "application/octet-stream" })
@@ -192,9 +214,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                say(R.string.thread_download_failed)
+                sayDownloadFailed(e)
             } finally {
-                busyBlobId = null
+                vm.transfer.finish(run)
             }
         }
     }
@@ -218,10 +240,28 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             }
             return@rememberLauncherForActivityResult
         }
-        busyBlobId = attachment.blobId
+        val run = vm.transfer.begin(attachment.blobId, DownloadRules.expected(attachment.size.toLong()))
+        if (run == null) {
+            // Another download is under way: the empty document the picker made must not stay.
+            scope.launch { withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } } }
+            return@rememberLauncherForActivityResult
+        }
         scope.launch {
             try {
-                val file = fetch(attachment)
+                val file = try {
+                    fetch(attachment, run)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } }
+                    sayDownloadFailed(e)
+                    return@launch
+                }
+                if (file == null) {
+                    // Cancelled: the empty document the picker made must not stay.
+                    withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } }
+                    return@launch
+                }
                 withContext(Dispatchers.IO) {
                     val out = context.contentResolver.openOutputStream(target) ?: throw java.io.IOException("no output stream")
                     out.use { sink -> file.inputStream().use { it.copyTo(sink) } }
@@ -232,7 +272,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             } catch (e: Exception) {
                 say(R.string.thread_save_failed)
             } finally {
-                busyBlobId = null
+                vm.transfer.finish(run)
             }
         }
     }
@@ -366,6 +406,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                         remoteAllowed = header.id in state.remoteAllowed,
                         myAddress = state.myAddress,
                         busyBlobId = busyBlobId,
+                        download = activeDownload?.progress,
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
                         actions = CardActions(
@@ -382,6 +423,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                     saver.launch(FileNames.safe(it.name))
                                 }
                             },
+                            onCancelDownload = vm.transfer::cancel,
                             onReply = { vm.startDraft(DraftKind.Reply(header.id)) },
                             onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
                             onForward = { vm.startDraft(DraftKind.Forward(header.id)) },

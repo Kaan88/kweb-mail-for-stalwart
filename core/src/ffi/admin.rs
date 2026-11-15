@@ -227,7 +227,7 @@ impl Core {
         }
         if !info.opens_something() {
             return Err(Error::invalid(
-                "this key opens no admin area: make it with the permissions for the queue, accounts, blocked addresses, logs or maintenance",
+                "this key opens no admin area. Administration needs the key of an administrator account, made in the server's web interface with all of that account's rights. A key made inside this app has fewer rights and an ordinary account has no admin rights to give it",
             ));
         }
         self.store_admin_key(key)?;

@@ -22,7 +22,7 @@ mod state;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -114,6 +114,12 @@ struct Shared {
     webpush: Mutex<PushSubs>,
     /// The `maxSizeUpload` the session states, and the upload endpoint enforces.
     upload_limit: AtomicU64,
+    /// Downloads answer with this status (0: as usual).
+    download_status: AtomicU16,
+    /// Downloads arrive in pieces of 64 KiB, this many milliseconds apart (0: all at once).
+    download_pause_ms: AtomicU64,
+    /// A paced download does not say how long it is.
+    download_unsized: AtomicBool,
     /// See [`MockServer::lose_next_submission_answer`].
     lose_submission_answer: AtomicBool,
     /// How many more requests that ask `EmailSubmission/query` are answered with a 500, unexecuted.
@@ -172,6 +178,9 @@ impl MockServer {
             admin: Mutex::new(admin_mock::Admin::default()),
             webpush: Mutex::new(PushSubs::default()),
             upload_limit: AtomicU64::new(50_000_000),
+            download_status: AtomicU16::new(0),
+            download_pause_ms: AtomicU64::new(0),
+            download_unsized: AtomicBool::new(false),
             lose_submission_answer: AtomicBool::new(false),
             fail_submission_queries: AtomicUsize::new(0),
             redirect_session: AtomicBool::new(false),
@@ -620,6 +629,23 @@ impl MockServer {
 
     /// The largest upload the server takes, in bytes (the session says so and the upload
     /// endpoint answers 413 above it). Set it before a client connects.
+    /// Every download is answered with this HTTP status (0 to serve as usual).
+    pub fn set_download_status(&self, status: u16) {
+        self.shared.download_status.store(status, Ordering::SeqCst);
+    }
+
+    /// Downloads come in pieces of 64 KiB with `ms` between them (0 for all at once); `unsized_`
+    /// leaves out the length, as a server that streams does.
+    pub fn pace_downloads(&self, ms: u64, unsized_: bool) {
+        self.shared.download_pause_ms.store(ms, Ordering::SeqCst);
+        self.shared.download_unsized.store(unsized_, Ordering::SeqCst);
+    }
+
+    /// The server stops listening: later connections are refused.
+    pub fn shut_down(&self) {
+        self.task.abort();
+    }
+
     pub fn set_upload_limit(&self, bytes: u64) {
         self.shared.upload_limit.store(bytes, Ordering::SeqCst);
     }
@@ -1441,8 +1467,30 @@ async fn download(
             None
         }
     };
+    let status = s.download_status.load(Ordering::SeqCst);
+    if status != 0 {
+        return StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR).into_response();
+    }
     match found {
-        Some((mime_type, bytes)) => (StatusCode::OK, [(header::CONTENT_TYPE, mime_type)], bytes).into_response(),
+        Some((mime_type, bytes)) => {
+            let pause = s.download_pause_ms.load(Ordering::SeqCst);
+            if pause == 0 {
+                return (StatusCode::OK, [(header::CONTENT_TYPE, mime_type)], bytes).into_response();
+            }
+            let length = bytes.len();
+            let pieces: Vec<Bytes> = bytes.chunks(65_536).map(Bytes::copy_from_slice).collect();
+            let stream = futures_util::stream::unfold(pieces.into_iter(), move |mut rest| async move {
+                let piece = rest.next()?;
+                tokio::time::sleep(Duration::from_millis(pause)).await;
+                Some((Ok::<Bytes, Infallible>(piece), rest))
+            });
+            let mut response = Response::new(Body::from_stream(stream));
+            response.headers_mut().insert(header::CONTENT_TYPE, mime_type.parse().unwrap());
+            if !s.download_unsized.load(Ordering::SeqCst) {
+                response.headers_mut().insert(header::CONTENT_LENGTH, length.to_string().parse().unwrap());
+            }
+            response
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }

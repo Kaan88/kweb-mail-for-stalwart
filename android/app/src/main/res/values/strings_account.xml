@@ -126,7 +126,11 @@
     <string name="security_expiry_30_days">In 30 days</string>
     <string name="security_expiry_1_year">In 1 year</string>
     <string name="security_make">Make</string>
-    <string name="security_api_key_text">An API key has all the rights of your account.</string>
+    <string name="security_api_key_text">An API key lets another program act as you, without your password. The server may give a key made here fewer rights than your account has.</string>
+    <string name="security_secret_key_narrowed">The server gave this key only the rights of this app\'s sign-in: mail, calendars, contacts, files and your account settings. It cannot open Server administration. A key for that has to be made in the server\'s web interface, with full rights.</string>
+    <string name="security_secret_app_password_narrowed">The server gave this app password only the rights of this app\'s sign-in, not all of your account\'s.</string>
+    <string name="security_not_allowed">Not allowed for this account.</string>
+    <string name="security_not_allowed_note">The server does not let this account manage the parts marked above. Your server\'s administrator can give it that permission.</string>
     <string name="security_secret_title_app_password">Your new app password</string>
     <string name="security_secret_title_api_key">Your new API key</string>
     <string name="security_secret_text">Copy it now. It will not be shown again.</string>

@@ -582,8 +582,8 @@ pub struct AccountFeatures {
     pub edition: String,
     /// Masked addresses can be used: the permission is there and the server answered a read.
     pub masked_email: bool,
-    /// The account's own security settings can be read (password, two-step codes, app
-    /// passwords, API keys, passkeys, connected apps).
+    /// At least one part of the account's own security settings can be read (password, two-step codes,
+    /// app passwords, API keys, passkeys, connected apps).
     pub security: bool,
     /// The server offers these things but this sign-in was made before the app asked for them:
     /// signing in again is all it takes. When true, the two flags above are false.
@@ -629,6 +629,10 @@ pub struct Credential {
 pub struct NewSecret {
     pub id: String,
     pub secret: String,
+    /// The server refused to give it all of the account's rights (this sign-in has fewer), so it was made
+    /// with the rights this sign-in has: it cannot open Server administration.
+    #[uniffi(default = false)]
+    pub narrowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -660,6 +664,26 @@ pub struct AccountSecurity {
     pub api_keys: Vec<Credential>,
     pub passkeys: Vec<Passkey>,
     pub connected_apps: Vec<ConnectedApp>,
+    /// Which of the parts the server lets this account read. A part that is not allowed is empty here.
+    pub access: SecurityAccess,
+}
+
+/// Which parts of the account's security settings the server lets this account read: its role may lack
+/// the permission for any of them (an administrator can grant it).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct SecurityAccess {
+    pub password: bool,
+    pub app_passwords: bool,
+    pub api_keys: bool,
+    pub passkeys: bool,
+    pub connected_apps: bool,
+}
+
+impl SecurityAccess {
+    /// At least one part can be read.
+    pub fn any(&self) -> bool {
+        self.password || self.app_passwords || self.api_keys || self.passkeys || self.connected_apps
+    }
 }
 
 /// What an authenticator app needs to start making two-step codes.

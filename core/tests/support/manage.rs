@@ -89,6 +89,9 @@ pub struct Manage {
     pub masked_permissions: bool,
     /// Every `x:` method answers with this method error kind (a failing server, not a refusal).
     pub method_failure: Option<&'static str>,
+    /// Objects (`"Passkey"`, `"ApiKey"` ...) the account's role has no permission for: every method of them is
+    /// a plain `forbidden`, as for a user whose role predates the permission.
+    pub denied: Vec<&'static str>,
     /// `/api/account` answers with this HTTP status.
     pub account_status: Option<u16>,
     /// The metadata address answers 503.
@@ -116,6 +119,7 @@ impl Default for Manage {
             inherit_refused: false,
             masked_permissions: true,
             method_failure: None,
+            denied: Vec::new(),
             account_status: None,
             metadata_down: false,
             masked: Vec::new(),
@@ -302,6 +306,9 @@ impl Manage {
         }
         let (object, method) =
             name.strip_prefix("x:").and_then(|n| n.split_once('/')).ok_or_else(|| refuse("unknownMethod", name))?;
+        if self.denied.contains(&object) {
+            return Err(refuse("forbidden", NOT_AUTHORIZED));
+        }
         match (object, method) {
             ("MaskedEmail", _) => {
                 if self.edition == Edition::Unlicensed {

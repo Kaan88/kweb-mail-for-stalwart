@@ -29,7 +29,7 @@ use super::{
 use crate::{
     model::{
         AccountFeatures, AccountSecurity, ConnectedApp, Credential, MaskedAddress, MaskedAddresses, NewSecret, Passkey,
-        TwoStepSetup,
+        SecurityAccess, TwoStepSetup,
     },
     Error, Result,
 };
@@ -41,6 +41,17 @@ const MAX_PASSKEY_NAME: usize = 64;
 const ENTERPRISE_TEXT: &str = "only available in the Enterprise edition";
 const NOT_GRANTED_TEXT: &str = "not authorized to grant permissions";
 const SINGLETON: &str = "singleton";
+/// What every refused security call says, in the app's words: the account's role lacks the permission.
+pub const SECURITY_NOT_ALLOWED: &str =
+    "The server does not allow this account to manage this. Your server's administrator can give it that permission.";
+/// The same refusal when the sign-in lacks the security scope: this one signing in again mends.
+pub const SECURITY_SIGN_IN_AGAIN: &str =
+    "The security settings are not available with this sign-in. Sign in again to allow them.";
+
+/// Whether `msg` is the refusal of a security call (see [`SECURITY_NOT_ALLOWED`]).
+pub fn is_security_refusal(msg: &str) -> bool {
+    msg == SECURITY_NOT_ALLOWED
+}
 
 /// What `GET /api/account` says about the signed-in account.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -145,8 +156,18 @@ impl Connection {
             let probe = json!({ "accountId": self.account_id(), "limit": 1 });
             features.masked_email = probe_offered(&self.x_calls(&[("x:MaskedEmail/query", probe)]).await?[0])?;
         }
-        let probe = json!({ "accountId": self.account_id(), "ids": [SINGLETON] });
-        features.security = probe_offered(&self.x_calls(&[("x:AccountPassword/get", probe)]).await?[0])?;
+        // Any one of the five parts is enough for the page to be of use: each is asked on its own terms.
+        let account = self.account_id();
+        let probes = [
+            ("x:AccountPassword/get", json!({ "accountId": account, "ids": [SINGLETON] })),
+            ("x:AppPassword/get", json!({ "accountId": account, "ids": [] })),
+            ("x:ApiKey/get", json!({ "accountId": account, "ids": [] })),
+            ("x:Passkey/get", json!({ "accountId": account, "ids": [] })),
+            ("x:OAuthGrant/get", json!({ "accountId": account, "ids": [] })),
+        ];
+        for answer in self.x_calls(&probes).await? {
+            features.security |= probe_offered(&answer)?;
+        }
         Ok(features)
     }
 
@@ -259,7 +280,9 @@ impl Connection {
 
     /// The password setting (two-step codes), app passwords, API keys, passkeys and connected
     /// apps in one request. `client_id` is the id this sign-in was made with: it marks the
-    /// app's own grant among the connected apps.
+    /// app's own grant among the connected apps. A part the server refuses (the account's role
+    /// lacks the permission) is left empty and marked in `access`; the others are still read. It
+    /// is an error when the server refuses all of them, or when any part fails for another reason.
     pub async fn account_security(&self, client_id: &str) -> Result<AccountSecurity> {
         let account = self.account_id();
         let all = json!({ "accountId": account, "ids": null });
@@ -272,16 +295,34 @@ impl Connection {
         ];
         let mut lists = Vec::new();
         for answer in self.x_calls(&calls).await? {
-            lists.push(answer.map_err(|r| security_refusal(&r))?);
+            lists.push(match answer {
+                Ok(list) => Some(list),
+                Err(r) if is_refusal(&r) => None,
+                Err(r) => return Err(security_refusal(&r)),
+            });
         }
-        let [password, app, key, passkey, grant] = <[Value; 5]>::try_from(lists)
+        let [password, app, key, passkey, grant] = <[Option<Value>; 5]>::try_from(lists)
             .map_err(|_| Error::temporary("the server's answer does not match the request"))?;
+        let access = SecurityAccess {
+            password: password.is_some(),
+            app_passwords: app.is_some(),
+            api_keys: key.is_some(),
+            passkeys: passkey.is_some(),
+            connected_apps: grant.is_some(),
+        };
+        if !access.any() {
+            return Err(Error::invalid(SECURITY_NOT_ALLOWED));
+        }
+        let none = Value::Null;
         Ok(AccountSecurity {
-            two_step: password["list"][0]["otpAuth"].as_object().is_some_and(|o| !o.is_empty()),
-            app_passwords: credentials_from(&app),
-            api_keys: credentials_from(&key),
-            passkeys: passkeys_from(&passkey),
-            connected_apps: apps_from(&grant, client_id),
+            two_step: password
+                .as_ref()
+                .is_some_and(|p| p["list"][0]["otpAuth"].as_object().is_some_and(|o| !o.is_empty())),
+            app_passwords: credentials_from(app.as_ref().unwrap_or(&none)),
+            api_keys: credentials_from(key.as_ref().unwrap_or(&none)),
+            passkeys: passkeys_from(passkey.as_ref().unwrap_or(&none)),
+            connected_apps: apps_from(grant.as_ref().unwrap_or(&none), client_id),
+            access,
         })
     }
 
@@ -379,6 +420,7 @@ impl Connection {
         };
         let method = format!("{}/set", kind.object());
         let mut set = self.x_one(&method, make(json!({ "@type": "Inherit" }))).await.map_err(security_failure)?;
+        let mut narrowed = false;
         if set["notCreated"].get("new").is_some_and(is_not_granted) {
             // The account's own rights are more than this sign-in has. It may make what it has.
             let held = self.account_info().await?.permissions;
@@ -386,10 +428,11 @@ impl Connection {
                 let replace: Map<String, Value> = held.into_iter().map(|p| (p, json!(true))).collect();
                 let rights = json!({ "@type": "Replace", "permissions": replace });
                 set = self.x_one(&method, make(rights)).await.map_err(security_failure)?;
+                narrowed = true;
             }
         }
         match (set["created"]["new"]["id"].as_str(), set["created"]["new"]["secret"].as_str()) {
-            (Some(id), Some(secret)) => Ok(NewSecret { id: id.to_string(), secret: secret.to_string() }),
+            (Some(id), Some(secret)) => Ok(NewSecret { id: id.to_string(), secret: secret.to_string(), narrowed }),
             _ => Err(match set["notCreated"].get("new") {
                 Some(e) => credential_create_error(kind, e),
                 None => Error::temporary("the server's answer does not say whether it was created"),
@@ -486,12 +529,16 @@ fn security_failure(f: XFailure) -> Error {
 
 /// A method of the security settings that the server refused as a whole.
 fn security_refusal(r: &MethodRefusal) -> Error {
-    match r.kind.as_str() {
-        "forbidden" | "unknownMethod" => {
-            Error::invalid("The security settings are not available with this sign-in. Sign in again to allow them.")
-        }
-        _ => Error::temporary(format!("security settings: {}", words(r))),
+    if is_refusal(r) {
+        Error::invalid(SECURITY_NOT_ALLOWED)
+    } else {
+        Error::temporary(format!("security settings: {}", words(r)))
     }
+}
+
+/// The server says it does not allow the call (as opposed to failing at it).
+fn is_refusal(r: &MethodRefusal) -> bool {
+    matches!(r.kind.as_str(), "forbidden" | "unknownMethod")
 }
 
 fn words(r: &MethodRefusal) -> &str {
@@ -527,7 +574,7 @@ fn credential_create_error(kind: CredentialKind, e: &Value) -> Error {
             None => Error::invalid(format!("You have reached the limit of {} the server allows.", kind.plural())),
         },
         Some("forbidden") if is_not_granted(e) => Error::invalid(
-            "This sign-in has fewer rights than the account, so it cannot make one. Sign in again to allow it.",
+            "The server will not let this sign-in make one: it has fewer rights than the account. Make it in the server's web interface instead.",
         ),
         _ => super::send::set_error(e),
     }

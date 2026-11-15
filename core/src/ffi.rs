@@ -6,12 +6,14 @@
 
 mod admin;
 mod admin_link;
+mod download;
 mod enterprise;
 
 pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
     ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
 };
+pub use download::{DownloadCancel, DownloadListener};
 #[doc(hidden)]
 pub use enterprise::probe;
 pub use enterprise::{
@@ -451,6 +453,19 @@ impl Core {
     /// `Some(account)` for a file space (`Some(None)`: the user's own). The part file is made
     /// anew for each try, so a retry after a 401 starts from an empty file.
     fn download_to_path(&self, space: Option<Option<&str>>, blob_id: &str, dest_path: &str) -> Result<()> {
+        self.download_to_path_tracked(space, blob_id, dest_path, &jmap::DownloadWatch::default(), None).map(|_| ())
+    }
+
+    /// [`Core::download_to_path`] with progress and a way to stop. `Ok(false)` when it was cancelled; the part
+    /// file is removed then, as it is after any failure, and `dest_path` is not touched.
+    fn download_to_path_tracked(
+        &self,
+        space: Option<Option<&str>>,
+        blob_id: &str,
+        dest_path: &str,
+        watch: &jmap::DownloadWatch,
+        listener: Option<&dyn download::DownloadListener>,
+    ) -> Result<bool> {
         static SERIAL: AtomicU64 = AtomicU64::new(0);
         self.account_id()?;
         let part = format!("{dest_path}.{}-{}.part", std::process::id(), SERIAL.fetch_add(1, Ordering::Relaxed));
@@ -461,12 +476,25 @@ impl Core {
                     None => conn.account_id(),
                     Some(account) => conn.file_download_account(account).await?,
                 };
+                if watch.is_cancelled() {
+                    return Ok(jmap::DownloadOutcome::Cancelled);
+                }
                 let mut file =
                     fs::File::create(part_path).map_err(|e| Error::store(format!("saving the file: {e}")))?;
-                conn.download_from(&url_account, blob_id, &mut file).await
+                let mut report = |done: u64, total: Option<u64>| {
+                    if let Some(listener) = listener {
+                        listener.progress(done, total);
+                    }
+                };
+                conn.download_tracked(&url_account, blob_id, &mut file, watch, &mut report).await
             })
-            .and_then(|()| fs::rename(&part, dest_path).map_err(|e| Error::store(format!("saving the file: {e}"))));
-        if done.is_err() {
+            .and_then(|outcome| match outcome {
+                jmap::DownloadOutcome::Complete => fs::rename(&part, dest_path)
+                    .map(|()| true)
+                    .map_err(|e| Error::store(format!("saving the file: {e}"))),
+                jmap::DownloadOutcome::Cancelled => Ok(false),
+            });
+        if !matches!(done, Ok(true)) {
             let _ = fs::remove_file(&part);
         }
         done
@@ -2411,7 +2439,7 @@ impl Core {
     pub fn account_security(&self) -> Result<AccountSecurity> {
         let (client, _) = self.sign_in_facts()?;
         let client_id = &client.client_id;
-        self.with_connection(|conn| async move { conn.account_security(client_id).await })
+        self.security_call(|conn| async move { conn.account_security(client_id).await })
     }
 
     /// Changes the account's password. The server checks `current`; a wrong one, or a new one
@@ -2427,7 +2455,7 @@ impl Core {
     /// `Error::Invalid` saying that one of the two is not right.
     pub fn change_password_with_code(&self, current: String, new: String, code: Option<String>) -> Result<()> {
         let (current, new, code) = (&current, &new, code.as_deref());
-        self.with_connection(|conn| async move { conn.change_password(current, new, code).await })
+        self.security_call(|conn| async move { conn.change_password(current, new, code).await })
     }
 
     /// A fresh secret for two-step codes, made on this device. Nothing is sent or stored: the
@@ -2461,7 +2489,7 @@ impl Core {
     ) -> Result<()> {
         let (password, url, code, old) = (&current_password, &otpauth_url, &code, old_code.as_deref());
         let at = now().max(0) as u64;
-        self.with_connection(|conn| async move { conn.enable_two_step(password, url, code, at, old).await })
+        self.security_call(|conn| async move { conn.enable_two_step(password, url, code, at, old).await })
     }
 
     /// Switches two-step codes off. With them on the server wants a current code, so this
@@ -2473,7 +2501,7 @@ impl Core {
     /// As [`Core::disable_two_step`], with the current code from the authenticator app.
     pub fn disable_two_step_with_code(&self, current_password: String, code: Option<String>) -> Result<()> {
         let (password, code) = (&current_password, code.as_deref());
-        self.with_connection(|conn| async move { conn.disable_two_step(password, code).await })
+        self.security_call(|conn| async move { conn.disable_two_step(password, code).await })
     }
 
     /// Makes an app password for another mail program. `expires_at` in Unix seconds, or `None`
@@ -2485,7 +2513,7 @@ impl Core {
 
     pub fn delete_app_password(&self, id: String) -> Result<()> {
         let id = &id;
-        self.with_connection(|conn| async move { conn.delete_credential(jmap::CredentialKind::AppPassword, id).await })
+        self.security_call(|conn| async move { conn.delete_credential(jmap::CredentialKind::AppPassword, id).await })
     }
 
     /// Makes an API key. It has the account's own rights when the sign-in has them all; a
@@ -2499,19 +2527,19 @@ impl Core {
 
     pub fn delete_api_key(&self, id: String) -> Result<()> {
         let id = &id;
-        self.with_connection(|conn| async move { conn.delete_credential(jmap::CredentialKind::ApiKey, id).await })
+        self.security_call(|conn| async move { conn.delete_credential(jmap::CredentialKind::ApiKey, id).await })
     }
 
     pub fn rename_passkey(&self, id: String, name: String) -> Result<()> {
         let (id, name) = (&id, &name);
-        self.with_connection(|conn| async move { conn.rename_passkey(id, name).await })
+        self.security_call(|conn| async move { conn.rename_passkey(id, name).await })
     }
 
     /// Deletes a passkey. The host warns first: without another way to sign in the user may
     /// be locked out.
     pub fn delete_passkey(&self, id: String) -> Result<()> {
         let id = &id;
-        self.with_connection(|conn| async move { conn.delete_passkey(id).await })
+        self.security_call(|conn| async move { conn.delete_passkey(id).await })
     }
 
     /// Takes an app's access to the account away. For this app's own sign-in
@@ -2519,7 +2547,7 @@ impl Core {
     pub fn revoke_connected_app(&self, id: String) -> Result<()> {
         let (client, _) = self.sign_in_facts()?;
         let (id, client_id) = (&id, &client.client_id);
-        self.with_connection(|conn| async move { conn.revoke_connected_app(id, client_id).await })
+        self.security_call(|conn| async move { conn.revoke_connected_app(id, client_id).await })
     }
 }
 
@@ -2531,6 +2559,31 @@ impl Core {
         Ok((session.tokens.client().clone(), session.account.server_url.clone()))
     }
 
+    /// [`Core::with_connection`] for the account's security settings. The server answers a refusal the same
+    /// way whether the sign-in lacks the security scope or the account's role lacks the permission; only the
+    /// first can be mended by signing in again, so the words say which of the two it is.
+    fn security_call<T, F, Fut>(&self, f: F) -> Result<T>
+    where
+        F: Fn(Arc<Connection>) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        match self.with_connection(f) {
+            Err(Error::Invalid { msg }) if jmap::is_security_refusal(&msg) && self.security_scope_missing() => {
+                Err(Error::invalid(jmap::SECURITY_SIGN_IN_AGAIN))
+            }
+            other => other,
+        }
+    }
+
+    /// The server offers the security scope and this sign-in was made without it.
+    fn security_scope_missing(&self) -> bool {
+        let Ok((client, server_url)) = self.sign_in_facts() else { return false };
+        match self.rt.block_on(auth::account_scopes_offered(&server_url)) {
+            Ok(offered) => offered.security && !client.was_granted(auth::SECURITY_SCOPE),
+            Err(_) => false,
+        }
+    }
+
     fn create_credential(
         &self,
         kind: jmap::CredentialKind,
@@ -2539,6 +2592,6 @@ impl Core {
     ) -> Result<NewSecret> {
         let description = &description;
         let at = now();
-        self.with_connection(|conn| async move { conn.create_credential(kind, description, expires_at, at).await })
+        self.security_call(|conn| async move { conn.create_credential(kind, description, expires_at, at).await })
     }
 }

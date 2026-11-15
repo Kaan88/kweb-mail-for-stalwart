@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
@@ -181,8 +182,17 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
             }
             val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
+            // What a screen remembers (its scroll position) is kept while another screen is over it and dropped when its route leaves the stack.
+            val stateHolder = rememberSaveableStateHolder()
+            val keptKeys = remember { arrayOf(emptySet<String>()) }
+            LaunchedEffect(stack, account) {
+                RouteStateRules.gone(keptKeys[0], account, stack).forEach { stateHolder.removeState(it) }
+                keptKeys[0] = RouteStateRules.keys(account, stack)
+            }
+            val route = stack.last()
             CompositionLocalProvider(LocalOpenShare provides openShare) {
-            when (val route = stack.last()) {
+            stateHolder.SaveableStateProvider(RouteStateRules.key(account, route)) {
+            when (route) {
                 Route.MailList -> MailListScreen(
                     onOpenThread = { threadId, mailboxId -> app.open(Route.Thread(threadId, mailboxId, null)) },
                     onOpenSearch = { app.open(Route.Search) },
@@ -388,6 +398,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.AddAccount -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) { AddAccount(app) }
                 }
+            }
             }
             }
             // The root screens put it above their bottom bar themselves.

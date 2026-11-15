@@ -569,6 +569,7 @@ fn a_sign_in_with_fewer_rights_than_the_account_makes_a_key_with_the_rights_it_h
         [rig.core.create_api_key("k".into(), None).unwrap(), rig.core.create_app_password("a".into(), None).unwrap()]
     {
         assert!(!made.secret.is_empty());
+        assert!(made.narrowed, "the host is told that this key has fewer rights than the account");
     }
     let sent = rig.server.manage(|m| m.create_permissions.clone());
     // Each was first asked for with all the account's rights, then with the ones the sign-in has.
@@ -578,6 +579,13 @@ fn a_sign_in_with_fewer_rights_than_the_account_makes_a_key_with_the_rights_it_h
     assert_eq!(sent[1].1["permissions"]["sysApiKeyGet"], true);
     assert_eq!(sent[2].1, json!({ "@type": "Inherit" }));
     assert_eq!(sent[3].1["@type"], "Replace");
+}
+
+#[test]
+fn a_key_with_the_accounts_own_rights_is_not_marked_narrowed() {
+    let rig = Rig::new();
+    assert!(!rig.core.create_api_key("k".into(), None).unwrap().narrowed);
+    assert!(!rig.core.create_app_password("a".into(), None).unwrap().narrowed);
 }
 
 #[test]
@@ -653,6 +661,57 @@ fn the_security_settings_are_refused_in_words_without_the_scope() {
     ] {
         assert!(invalid(e).contains("Sign in again"));
     }
+}
+
+// ---- an account whose role lacks some of the permissions ----
+
+#[test]
+fn the_parts_the_account_may_read_are_shown_when_others_are_refused() {
+    let rig = Rig::new();
+    rig.server.manage(|m| {
+        m.add_credential(false, "phone mail", None);
+        m.add_passkey("Pixel", 1_700_000_000);
+        m.denied = vec!["ApiKey", "Passkey", "OAuthGrant"];
+    });
+    let f = rig.core.account_features().unwrap();
+    assert!(f.security && !f.needs_sign_in, "one part is enough for the row");
+    let s = rig.core.account_security().unwrap();
+    assert!(s.access.password && s.access.app_passwords);
+    assert!(!s.access.api_keys && !s.access.passkeys && !s.access.connected_apps);
+    assert_eq!(s.app_passwords.len(), 1);
+    assert!(s.api_keys.is_empty() && s.passkeys.is_empty() && s.connected_apps.is_empty());
+    // What was refused is not asked again by the actions, and the refusal of one says so in plain words.
+    let words = invalid(rig.core.delete_passkey("p1".into()).unwrap_err());
+    assert!(words.contains("does not allow this account") && !words.contains("Sign in again"), "{words}");
+    let words = invalid(rig.core.create_api_key("k".into(), None).unwrap_err());
+    assert!(words.contains("does not allow this account") && !words.contains("Sign in again"), "{words}");
+}
+
+#[test]
+fn the_row_shows_when_only_one_part_is_allowed() {
+    let rig = Rig::new();
+    rig.server.manage(|m| m.denied = vec!["AccountPassword", "AppPassword", "ApiKey", "Passkey"]);
+    assert!(rig.core.account_features().unwrap().security);
+    let s = rig.core.account_security().unwrap();
+    assert!(!s.access.password && s.access.connected_apps);
+    assert!(!s.two_step);
+}
+
+#[test]
+fn an_account_that_may_read_none_of_it_is_told_the_server_does_not_allow_it() {
+    let rig = Rig::new();
+    rig.server.manage(|m| m.denied = vec!["AccountPassword", "AppPassword", "ApiKey", "Passkey", "OAuthGrant"]);
+    let f = rig.core.account_features().unwrap();
+    assert!(!f.security && !f.needs_sign_in);
+    let words = invalid(rig.core.account_security().unwrap_err());
+    assert!(words.contains("does not allow this account") && !words.contains("Sign in again"), "{words}");
+}
+
+#[test]
+fn a_part_that_fails_for_another_reason_is_an_error_not_a_refusal() {
+    let rig = Rig::new();
+    rig.server.manage(|m| m.method_failure = Some("serverFail"));
+    assert!(matches!(rig.core.account_security(), Err(Error::Temporary { .. })));
 }
 
 #[test]

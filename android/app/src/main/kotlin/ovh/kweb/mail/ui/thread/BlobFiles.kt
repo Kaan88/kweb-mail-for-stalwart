@@ -3,6 +3,8 @@ package ovh.kweb.mail.ui.thread
 import android.content.Context
 import java.io.File
 import ovh.kweb.mail.accounts.AccountPaths
+import ovh.kweb.mail.ui.transfer.CoreDownloads
+import ovh.kweb.mail.ui.transfer.DownloadStop
 import uniffi.kweb_core.Core
 
 /**
@@ -36,6 +38,16 @@ class BlobFiles(context: Context, accountId: String) {
             if (account == null) core.downloadBlob(blobId, file.absolutePath) else core.fileDownload(account, blobId, file.absolutePath)
         }
         return file
+    }
+
+    /**
+     * As [ensure], with progress and a way to stop: null when [stop] ended the download (nothing is left of it).
+     * [onProgress] is called on this thread. Blocks; call it off the main thread.
+     */
+    fun ensureTracked(core: Core, blobId: String, file: File, stop: DownloadStop, onProgress: (Long, Long?) -> Unit): File? {
+        if (file.isFile) return file
+        file.parentFile?.mkdirs()
+        return if (CoreDownloads.blob(core, blobId, file.absolutePath, stop, onProgress)) file else null
     }
 
     companion object {

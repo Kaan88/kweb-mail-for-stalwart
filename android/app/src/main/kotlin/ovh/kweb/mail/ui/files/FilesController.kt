@@ -18,6 +18,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
+import ovh.kweb.mail.ui.transfer.DownloadProgress
+import ovh.kweb.mail.ui.transfer.DownloadRules
+import ovh.kweb.mail.ui.transfer.DownloadStop
 import uniffi.kweb_core.Exception as CoreException
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
@@ -80,6 +83,8 @@ data class FilesState(
     val opening: String? = null,
     /** The download is for "Save to device", not for opening in another app. */
     val openingToSave: Boolean = false,
+    /** How far that download is; its total is null when neither the server nor the list says. */
+    val openingProgress: DownloadProgress? = null,
     val upload: UploadState? = null,
 ) {
     /** The listing is for the top level or a folder, not the choice of spaces. */
@@ -134,6 +139,8 @@ class FilesController(
     private var searchJob: Job? = null
     private var openJob: Job? = null
     private var openGen = 0
+    /** Ends the core's download of the file being opened. */
+    private var openStop: DownloadStop? = null
     /** The search text to go back to from a folder opened out of a search whose place is not yet confirmed. */
     private var returnQuery: String? = null
     private var uploadJob: Job? = null
@@ -403,19 +410,29 @@ class FilesController(
             say(R.string.files_failed)
             return
         }
-        flow.update { it.copy(opening = entry.name, openingToSave = saving) }
+        val stop = DownloadStop()
+        openStop = stop
+        flow.update { it.copy(opening = entry.name, openingToSave = saving, openingProgress = DownloadProgress(0, DownloadRules.expected(entry.size.toLong()))) }
         val gen = ++openGen
         openJob = scope.launch {
             try {
                 val result = call {
                     val file = platform.cacheFile(space.accountId, entry)
+                    var complete = true
                     if (!file.isFile) {
                         file.parentFile?.mkdirs()
-                        backend.download(space.accountId, blobId, file.absolutePath)
+                        complete = backend.download(space.accountId, blobId, file.absolutePath, stop) { done, total ->
+                            if (gen == openGen) {
+                                flow.update { now ->
+                                    if (now.opening == null) now else now.copy(openingProgress = DownloadProgress(done, total ?: now.openingProgress?.total))
+                                }
+                            }
+                        }
                     }
-                    file
+                    // Null: stopped by the user, nothing is left of the file.
+                    if (complete) file else null
                 }
-                result.onSuccess { then(it) }.onFailure { e ->
+                result.onSuccess { file -> if (file != null) then(file) else call(onFail) }.onFailure { e ->
                     call(onFail)
                     say(FilesWords.message(e))
                 }
@@ -425,16 +442,21 @@ class FilesController(
             } finally {
                 // A cancelled download ends late (the core call cannot be interrupted): by then the window may
                 // belong to the next file.
-                if (gen == openGen) flow.update { it.copy(opening = null, openingToSave = false) }
+                if (gen == openGen) {
+                    openStop = null
+                    flow.update { it.copy(opening = null, openingToSave = false, openingProgress = null) }
+                }
             }
         }
     }
 
-    /** The user closed the "Opening" window: the file is not opened when it arrives. */
+    /** The user closed the "Opening" window: the download stops and the file is not opened. */
     fun cancelOpening() {
+        openStop?.stop()
+        openStop = null
         openJob?.cancel()
         openGen++
-        flow.update { it.copy(opening = null, openingToSave = false) }
+        flow.update { it.copy(opening = null, openingToSave = false, openingProgress = null) }
     }
 
     // ---- dialogs and changes
