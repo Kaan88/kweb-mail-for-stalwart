@@ -1,22 +1,34 @@
-//! The AI assistant (M7, stage 1): summarise, draft a reply, rewrite. The core calls the
-//! service the user chose, from here, and nothing is sent unless the assistant is on, the user
-//! agreed to this exact service, and this kind of task is allowed.
+//! The AI assistant (M7). Stage 1: summarise, draft a reply, rewrite. Stage 2: reply ideas,
+//! to-dos and dates, explain. Stages 3 and 4: the chat, which reads with tools and only ever
+//! suggests changes. The core calls the service the user chose, from here, and nothing is sent
+//! unless the assistant is on, the user agreed to this exact service, and this kind of task is
+//! allowed.
 //!
 //! [`settings`] holds the rules for what may be set, [`request`] and [`prompts`] decide what is
-//! sent and in what words, [`provider`] and [`sse`] speak to the service. This file keeps the
-//! settings in the cache and the key in the host's secret store, and guards the one task that
-//! may run at a time.
+//! sent and in what words, [`provider`] and [`sse`] speak to the service, [`insights`] reads the
+//! stage 2 answers. [`wire`] is what the provider and the chat loop pass each other, [`chat`] is
+//! the loop, [`tools`] what it may read and [`changes`] what a suggestion does once the user
+//! approves it. This file keeps the settings in the cache and the key in the host's secret store,
+//! and guards the one task that may run at a time.
 
+pub mod changes;
+pub mod chat;
+pub mod insights;
 pub mod models;
 pub mod prompts;
 pub mod provider;
 pub mod request;
 pub mod settings;
 pub mod sse;
+pub mod tools;
+pub mod wire;
 
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use tokio::sync::Notify;
@@ -79,6 +91,10 @@ fn move_old_key(secrets: &dyn SecretStore, old_provider: Option<AiProvider>) -> 
 /// A change of this service's address or model clears its `consented` (the host asks again and
 /// saves once more with the same values), and a key that is kept is dropped when the scheme,
 /// host or port of the address changes, so it is never sent somewhere it was not meant for.
+///
+/// The yes for the chat is never taken from `new.chat_consented`: it stays only while it was
+/// stored and the first yes survived this save, so a new address or model, or a withdrawn yes,
+/// clears it too. Only [`chat_consent`] gives it.
 pub fn save(
     store: &Store,
     secrets: &dyn SecretStore,
@@ -103,8 +119,19 @@ pub fn save(
     stored.allow_summaries = new.allow_summaries;
     stored.allow_drafts = new.allow_drafts;
     stored.allow_rewrites = new.allow_rewrites;
-    *stored.profile_mut(provider) =
-        Profile { base_url: new.base_url, model: new.model, effort: new.effort, consented: new.consented };
+    stored.allow_ideas = new.allow_ideas;
+    stored.allow_extract = new.allow_extract;
+    stored.allow_explain = new.allow_explain;
+    stored.allow_chat = new.allow_chat;
+    stored.actions = new.actions;
+    *stored.profile_mut(provider) = Profile {
+        base_url: new.base_url,
+        model: new.model,
+        effort: new.effort,
+        consented: new.consented,
+        // Never taken from the caller: the yes for the chat lives only as long as the first one.
+        chat_consented: before.chat_consented && new.consented,
+    };
     let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
     match key {
         Some(k) if k.is_empty() => secrets.delete(key_name(provider).into()).map_err(|_| key_store_error())?,
@@ -112,6 +139,17 @@ pub fn save(
         None => {}
     }
     store.kv_set(account_id, SETTINGS_KEY, &json)?;
+    load(store, secrets, account_id)
+}
+
+/// Puts the account's assistant settings back to how it is before the user has done anything
+/// (off, nothing agreed to), and removes every stored key, the stage 1 one included. The keys go
+/// first: when one cannot be removed nothing else changes and the error says so, so the screen
+/// never shows settings that look reset while a key is still stored. Local: sends nothing, and
+/// no key is read.
+pub fn reset(store: &Store, secrets: &dyn SecretStore, account_id: &str) -> Result<AiSettings> {
+    forget_key(secrets)?;
+    store.kv_delete(account_id, SETTINGS_KEY)?;
     load(store, secrets, account_id)
 }
 
@@ -176,8 +214,59 @@ pub fn check_allowed(s: &AiSettings, task: &AiTask) -> Result<()> {
             Err(Error::invalid("drafting replies is switched off in the settings"))
         }
         AiTask::Rewrite { .. } if !s.allow_rewrites => Err(Error::invalid("rewriting is switched off in the settings")),
-        _ => Ok(()),
+        AiTask::ReplyIdeas { .. } if !s.allow_ideas => {
+            Err(Error::invalid("reply ideas are switched off in the settings"))
+        }
+        AiTask::Extract { .. } | AiTask::ExtractThread { .. } if !s.allow_extract => {
+            Err(Error::invalid("finding to-dos and dates is switched off in the settings"))
+        }
+        AiTask::Explain { .. } if !s.allow_explain => Err(Error::invalid("explaining is switched off in the settings")),
+        AiTask::SummarizeMessage { .. }
+        | AiTask::SummarizeThread { .. }
+        | AiTask::DraftReply { .. }
+        | AiTask::Rewrite { .. }
+        | AiTask::ReplyIdeas { .. }
+        | AiTask::Extract { .. }
+        | AiTask::ExtractThread { .. }
+        | AiTask::Explain { .. } => Ok(()),
     }
+}
+
+/// Whether the chat may send anything under these settings: the assistant is on, the user agreed
+/// to exactly this service, the chat is switched on, and the user gave the chat its own yes (it
+/// chooses itself what it reads and sends there).
+pub fn check_chat(s: &AiSettings) -> Result<()> {
+    if !s.enabled {
+        return Err(Error::invalid("the assistant is switched off in the settings"));
+    }
+    if !s.consented {
+        return Err(Error::invalid("you have not yet agreed to send mail to this service"));
+    }
+    if !s.allow_chat {
+        return Err(Error::invalid("the chat is switched off in the settings"));
+    }
+    if !s.chat_consented {
+        return Err(Error::invalid("you have not yet agreed to let the chat read your mail and calendar"));
+    }
+    Ok(())
+}
+
+/// Gives (`agree`) or takes back the yes for the chat, for the service in use, and returns the
+/// settings. Giving it needs `consented` (else Invalid "you have not yet agreed to send mail to
+/// this service"). Only this function sets `Profile::chat_consented`; a save never does. Local.
+pub fn chat_consent(store: &Store, secrets: &dyn SecretStore, account_id: &str, agree: bool) -> Result<AiSettings> {
+    let mut stored = read(store, secrets, account_id)?;
+    let provider = stored.provider;
+    let profile = stored.profile_mut(provider);
+    if agree && !profile.consented {
+        return Err(Error::invalid("you have not yet agreed to send mail to this service"));
+    }
+    if profile.chat_consented != agree {
+        profile.chat_consented = agree;
+        let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
+        store.kv_set(account_id, SETTINGS_KEY, &json)?;
+    }
+    view(&stored, provider, secrets)
 }
 
 /// Where requests go: the settings, and the key if there is one.
@@ -197,8 +286,9 @@ const REMEMBERED: usize = 16;
 
 #[derive(Default)]
 struct SlotState {
-    /// The run that holds the slot: its id and the way to stop it.
-    running: Option<(String, Arc<Notify>)>,
+    /// The run that holds the slot: its id, the way to stop it while it waits, and the flag that
+    /// stays set once it was stopped.
+    running: Option<(String, Arc<Notify>, Arc<AtomicBool>)>,
     /// Runs that were told to stop before they began, newest last.
     stopped: VecDeque<String>,
 }
@@ -224,8 +314,9 @@ impl Slot {
             return Err(Error::invalid("the assistant is already working on something"));
         }
         let cancel = Arc::new(Notify::new());
-        state.running = Some((run_id.to_string(), cancel.clone()));
-        Ok(Running { slot: self, cancel })
+        let stopped = Arc::new(AtomicBool::new(false));
+        state.running = Some((run_id.to_string(), cancel.clone(), stopped.clone()));
+        Ok(Running { slot: self, cancel, stopped })
     }
 
     /// Stops the run `run_id` if it is the one running (a stop that comes before it first looks
@@ -234,7 +325,10 @@ impl Slot {
     pub fn cancel(&self, run_id: &str) {
         let mut state = self.state();
         match &state.running {
-            Some((id, cancel)) if id == run_id => cancel.notify_one(),
+            Some((id, cancel, stopped)) if id == run_id => {
+                stopped.store(true, Ordering::SeqCst);
+                cancel.notify_one();
+            }
             _ => {
                 if !state.stopped.iter().any(|id| id == run_id) {
                     if state.stopped.len() == REMEMBERED {
@@ -248,7 +342,8 @@ impl Slot {
 
     /// Stops whatever runs (sign-out), whatever its name.
     pub fn cancel_all(&self) {
-        if let Some((_, cancel)) = &self.state().running {
+        if let Some((_, cancel, stopped)) = &self.state().running {
+            stopped.store(true, Ordering::SeqCst);
             cancel.notify_one();
         }
     }
@@ -258,6 +353,15 @@ impl Slot {
 pub struct Running<'a> {
     slot: &'a Slot,
     pub cancel: Arc<Notify>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl Running<'_> {
+    /// Sticky: true from the first cancel on (the Notify permit is single use, so a loop that
+    /// waits on `cancel` more than once asks here between its steps).
+    pub fn is_cancelled(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
 }
 
 impl Drop for Running<'_> {
@@ -270,7 +374,7 @@ impl Drop for Running<'_> {
 mod tests {
     use super::*;
     use crate::{
-        model::{Account, AiEffort},
+        model::{Account, AiActionMode, AiEffort},
         secrets::MemorySecrets,
     };
 
@@ -488,6 +592,30 @@ mod tests {
     }
 
     #[test]
+    fn a_reset_puts_back_the_defaults_and_removes_every_key_and_consent() {
+        let (store, secrets) = rig();
+        agreed(&store, &secrets, other(), Some("sk-o".into()));
+        agreed(&store, &secrets, AiSettings { allow_ideas: true, allow_chat: true, ..on() }, Some("sk-a".into()));
+        chat_consent(&store, &secrets, "a", true).unwrap();
+        secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
+        assert!(load(&store, &secrets, "a").unwrap().chat_consented);
+
+        let after = reset(&store, &secrets, "a").unwrap();
+        assert_eq!(after, settings::defaults());
+        for name in [OPENAI, ANTHROPIC, LEGACY_KEY_NAME] {
+            assert_eq!(key(&secrets, name), None, "{name}");
+        }
+        // Both services are back to empty, with no consent left on either.
+        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+            let s = service(&store, &secrets, "a", provider).unwrap();
+            assert!(!s.has_key && !s.consented && !s.chat_consented && s.model.is_empty(), "{provider:?}");
+        }
+        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None);
+        // Doing it again changes nothing and is not an error.
+        assert_eq!(reset(&store, &secrets, "a").unwrap(), settings::defaults());
+    }
+
+    #[test]
     fn sign_out_removes_every_key() {
         let (_store, secrets) = rig();
         for name in [OPENAI, ANTHROPIC, LEGACY_KEY_NAME] {
@@ -561,8 +689,12 @@ mod tests {
         slot.cancel("zzz");
         assert!(!waits(&rt, &running, 50));
         // Its own does, even before it looks.
+        assert!(!running.is_cancelled());
         slot.cancel("a");
         assert!(waits(&rt, &running, 1000));
+        // The permit is used up, the flag stays.
+        assert!(!waits(&rt, &running, 50));
+        assert!(running.is_cancelled());
         drop(running);
         assert!(slot.begin("b").is_ok(), "freed again");
     }
@@ -608,5 +740,250 @@ mod tests {
         assert!(!waits(&rt, &running, 50));
         slot.cancel_all();
         assert!(waits(&rt, &running, 1000));
+        assert!(running.is_cancelled());
+    }
+
+    #[test]
+    fn the_chat_needs_both_yeses_and_its_switch() {
+        let ready = AiSettings { allow_chat: true, chat_consented: true, ..on() };
+        assert!(check_chat(&ready).is_ok());
+        let refused = |s: AiSettings| check_chat(&s).unwrap_err().to_string();
+        assert!(refused(AiSettings { enabled: false, ..ready.clone() })
+            .ends_with("the assistant is switched off in the settings"));
+        assert!(refused(AiSettings { consented: false, ..ready.clone() })
+            .ends_with("you have not yet agreed to send mail to this service"));
+        assert!(refused(AiSettings { allow_chat: false, ..ready.clone() })
+            .ends_with("the chat is switched off in the settings"));
+        assert!(refused(AiSettings { chat_consented: false, ..ready })
+            .ends_with("you have not yet agreed to let the chat read your mail and calendar"));
+    }
+
+    /// The yes for the chat, for the service in use.
+    fn chat_yes(store: &Store, secrets: &MemorySecrets) -> AiSettings {
+        chat_consent(store, secrets, "a", true).unwrap()
+    }
+
+    fn said(result: Result<AiSettings>) -> String {
+        match result {
+            Err(Error::Invalid { msg }) => msg,
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_new_switches_are_stored_shared_and_off_until_set() {
+        let (store, secrets) = rig();
+        let first = agreed(&store, &secrets, on(), None);
+        assert!(!first.allow_ideas && !first.allow_extract && !first.allow_explain && !first.allow_chat);
+        assert_eq!(first.actions, AiActionMode::AskFirst);
+        let wanted = AiSettings {
+            allow_ideas: true,
+            allow_extract: true,
+            allow_explain: true,
+            allow_chat: true,
+            actions: AiActionMode::Off,
+            ..on()
+        };
+        let saved = save(&store, &secrets, "a", wanted.clone(), None).unwrap();
+        assert_eq!(saved, wanted, "switching them on changes nothing else, and keeps the consent");
+        assert_eq!(load(&store, &secrets, "a").unwrap(), wanted);
+        // Shared by both services, like the stage 1 switches.
+        let there = service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap();
+        assert!(there.allow_ideas && there.allow_extract && there.allow_explain && there.allow_chat);
+        assert_eq!(there.actions, AiActionMode::Off);
+        // Each is its own switch.
+        let one = save(&store, &secrets, "a", AiSettings { allow_extract: true, ..on() }, None).unwrap();
+        assert!(one.allow_extract && !one.allow_ideas && !one.allow_explain && !one.allow_chat);
+        assert_eq!(one.actions, AiActionMode::AskFirst);
+    }
+
+    #[test]
+    fn stored_settings_from_before_the_chat_read_with_everything_new_off() {
+        // What the app stored before stage 2: profiles, and none of the new fields.
+        let (store, secrets) = rig();
+        let old = r#"{"enabled":true,"provider":"Anthropic","allow_summaries":true,"allow_drafts":false,
+            "allow_rewrites":true,"openai":{"base_url":"","model":"","effort":"Default","consented":false},
+            "anthropic":{"base_url":"https://api.example.com/v1","model":"m","effort":"Default","consented":true}}"#;
+        store.kv_set("a", SETTINGS_KEY, old).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert_eq!(loaded, AiSettings { allow_drafts: false, ..on() });
+        assert!(!loaded.chat_consented && !loaded.allow_chat);
+        // The flat stage 1 form, even one that claims the new things, gives none of them.
+        let flat = r#"{"enabled":true,"provider":"Anthropic","base_url":"https://api.example.com/v1","model":"m",
+            "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":true,"allow_rewrites":true,
+            "allow_chat":true,"chat_consented":true,"allow_ideas":true,"actions":"Off"}"#;
+        store.kv_set("a", SETTINGS_KEY, flat).unwrap();
+        assert_eq!(load(&store, &secrets, "a").unwrap(), on());
+        assert!(check_chat(&load(&store, &secrets, "a").unwrap()).is_err());
+    }
+
+    #[test]
+    fn the_chat_yes_needs_the_first_yes_and_only_its_own_call_gives_it() {
+        let (store, secrets) = rig();
+        // Nothing set up, and set up but not agreed: refused with the stage 1 sentence.
+        let sentence = "you have not yet agreed to send mail to this service";
+        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
+        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None, "a refusal stores nothing");
+        save(&store, &secrets, "a", on(), None).unwrap();
+        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
+        // A save that says yes for the chat does not give it, before or after the first yes.
+        let claims = AiSettings { chat_consented: true, allow_chat: true, ..on() };
+        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
+        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
+        let waiting = load(&store, &secrets, "a").unwrap();
+        assert!(waiting.consented && waiting.allow_chat);
+        assert_eq!(
+            check_chat(&waiting).unwrap_err().to_string().split(": ").last(),
+            Some("you have not yet agreed to let the chat read your mail and calendar")
+        );
+        // Its own call does, and it is what the next load says.
+        let given = chat_yes(&store, &secrets);
+        assert!(given.chat_consented && given.consented && given.allow_chat);
+        assert_eq!(load(&store, &secrets, "a").unwrap(), given);
+        assert!(check_chat(&given).is_ok());
+        // A save that leaves the service alone keeps it, whatever the caller puts in the field.
+        let quiet = AiSettings { chat_consented: false, allow_drafts: false, effort: AiEffort::High, ..claims };
+        assert!(save(&store, &secrets, "a", quiet, None).unwrap().chat_consented);
+        // Taking it back is always possible, and is no refusal when there is nothing to take.
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(load(&store, &secrets, "a").unwrap().consented, "the first yes stays");
+    }
+
+    #[test]
+    fn the_chat_yes_goes_with_a_new_model_a_new_address_and_a_withdrawn_yes() {
+        let changes = [
+            AiSettings { model: "m2".into(), ..on() },
+            AiSettings { base_url: "https://other.example.com/v1".into(), ..on() },
+            AiSettings { consented: false, ..on() },
+        ];
+        for changed in changes {
+            let (store, secrets) = rig();
+            agreed(&store, &secrets, on(), None);
+            assert!(chat_yes(&store, &secrets).chat_consented);
+            // The caller copies the old yes for the chat: it does not count.
+            let changed = AiSettings { chat_consented: true, ..changed };
+            let after = save(&store, &secrets, "a", changed.clone(), None).unwrap();
+            assert!(!after.chat_consented && !after.consented, "{changed:?}");
+            // Agreeing to the service again does not bring the chat's yes back...
+            let again = save(&store, &secrets, "a", AiSettings { consented: true, ..changed.clone() }, None).unwrap();
+            assert!(again.consented && !again.chat_consented, "{changed:?}");
+            // ...and neither does going back to the old values.
+            assert!(!agreed(&store, &secrets, AiSettings { chat_consented: true, ..on() }, None).chat_consented);
+        }
+    }
+
+    #[test]
+    fn the_chat_yes_belongs_to_one_service_and_the_other_keeps_its_own() {
+        let (store, secrets) = rig();
+        agreed(&store, &secrets, on(), None);
+        chat_yes(&store, &secrets);
+        // The other service becomes the one in use: it has no yes for the chat of its own.
+        let second = agreed(&store, &secrets, other(), None);
+        assert!(second.consented && !second.chat_consented);
+        assert!(service(&store, &secrets, "a", AiProvider::Anthropic).unwrap().chat_consented);
+        // Giving it here is for this service only; changing this one's model clears only its own.
+        assert!(chat_yes(&store, &secrets).chat_consented);
+        let moved = save(&store, &secrets, "a", AiSettings { model: "o2".into(), ..other() }, None).unwrap();
+        assert!(!moved.chat_consented);
+        let first = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
+        assert!(first.chat_consented && first.consented);
+        // Taking it back in the one in use leaves the other alone too.
+        agreed(&store, &secrets, other(), None);
+        chat_yes(&store, &secrets);
+        assert!(save(&store, &secrets, "a", on(), None).unwrap().chat_consented);
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap().chat_consented);
+    }
+
+    #[test]
+    fn every_refusal_of_a_task_has_its_exact_sentence() {
+        let all = AiSettings { allow_ideas: true, allow_extract: true, allow_explain: true, ..on() };
+        let day = || ("2026-11-15".to_string(), "UTC".to_string());
+        let tasks = [
+            (AiTask::SummarizeMessage { message_id: "m".into() }, "summaries are switched off in the settings"),
+            (AiTask::SummarizeThread { thread_id: "t".into() }, "summaries are switched off in the settings"),
+            (
+                AiTask::DraftReply { message_id: "m".into(), instruction: String::new() },
+                "drafting replies is switched off in the settings",
+            ),
+            (
+                AiTask::Rewrite { text: "x".into(), style: crate::model::RewriteStyle::Improve },
+                "rewriting is switched off in the settings",
+            ),
+            (AiTask::ReplyIdeas { message_id: "m".into() }, "reply ideas are switched off in the settings"),
+            (
+                AiTask::Extract { message_id: "m".into(), today: day().0, time_zone: day().1 },
+                "finding to-dos and dates is switched off in the settings",
+            ),
+            (
+                AiTask::ExtractThread { thread_id: "t".into(), today: day().0, time_zone: day().1 },
+                "finding to-dos and dates is switched off in the settings",
+            ),
+            (
+                AiTask::Explain { message_id: Some("m".into()), text: String::new() },
+                "explaining is switched off in the settings",
+            ),
+            (AiTask::Explain { message_id: None, text: "x".into() }, "explaining is switched off in the settings"),
+        ];
+        let refused = |s: &AiSettings, t: &AiTask| match check_allowed(s, t) {
+            Err(Error::Invalid { msg }) => msg,
+            other => panic!("expected Invalid, got {other:?}"),
+        };
+        for (task, off) in &tasks {
+            assert!(check_allowed(&all, task).is_ok(), "{task:?}");
+            // Off and not agreed come first, in that order, for every task.
+            let dark = AiSettings { enabled: false, consented: false, ..all.clone() };
+            assert_eq!(refused(&dark, task), "the assistant is switched off in the settings");
+            let unasked = AiSettings { consented: false, ..all.clone() };
+            assert_eq!(refused(&unasked, task), "you have not yet agreed to send mail to this service");
+            let none = AiSettings {
+                allow_summaries: false,
+                allow_drafts: false,
+                allow_rewrites: false,
+                // The chat's switch and its yes open no task.
+                allow_chat: true,
+                chat_consented: true,
+                ..on()
+            };
+            assert_eq!(refused(&none, task), *off, "{task:?}");
+        }
+    }
+
+    #[test]
+    fn the_chat_is_refused_in_the_order_of_its_four_gates() {
+        let refused = |s: &AiSettings| match check_chat(s) {
+            Err(Error::Invalid { msg }) => msg,
+            other => panic!("expected Invalid, got {other:?}"),
+        };
+        let nothing = AiSettings { enabled: false, consented: false, ..on() };
+        assert_eq!(refused(&nothing), "the assistant is switched off in the settings");
+        let enabled = AiSettings { enabled: true, ..nothing };
+        assert_eq!(refused(&enabled), "you have not yet agreed to send mail to this service");
+        let agreed = AiSettings { consented: true, ..enabled };
+        assert_eq!(refused(&agreed), "the chat is switched off in the settings");
+        let switched = AiSettings { allow_chat: true, ..agreed };
+        assert_eq!(refused(&switched), "you have not yet agreed to let the chat read your mail and calendar");
+        // The stage 2 switches and the action mode are not gates of the chat.
+        let ready = AiSettings { chat_consented: true, actions: AiActionMode::Off, ..switched };
+        assert!(check_chat(&ready).is_ok());
+    }
+
+    #[test]
+    fn the_stage_two_tasks_are_off_until_switched_on() {
+        let day = || ("2026-11-15".to_string(), "UTC".to_string());
+        let ideas = AiTask::ReplyIdeas { message_id: "m".into() };
+        let extract = AiTask::Extract { message_id: "m".into(), today: day().0, time_zone: day().1 };
+        let thread = AiTask::ExtractThread { thread_id: "t".into(), today: day().0, time_zone: day().1 };
+        let explain = AiTask::Explain { message_id: None, text: "x".into() };
+        let refused = |t: &AiTask| check_allowed(&on(), t).unwrap_err().to_string();
+        assert!(refused(&ideas).ends_with("reply ideas are switched off in the settings"));
+        assert!(refused(&extract).ends_with("finding to-dos and dates is switched off in the settings"));
+        assert!(refused(&thread).ends_with("finding to-dos and dates is switched off in the settings"));
+        assert!(refused(&explain).ends_with("explaining is switched off in the settings"));
+        let all = AiSettings { allow_ideas: true, allow_extract: true, allow_explain: true, ..on() };
+        assert!([&ideas, &extract, &thread, &explain].iter().all(|t| check_allowed(&all, t).is_ok()));
+        // The stage 1 switches do not open them, and they do not close the stage 1 tasks.
+        assert!(check_allowed(&all, &AiTask::SummarizeMessage { message_id: "m".into() }).is_ok());
     }
 }

@@ -64,7 +64,12 @@ pub fn run(core: &Arc<Core>, what: Admin) -> Result<(), String> {
         }
         Admin::Connect => {
             let key = std::env::var("KWEB_ADMIN_KEY").map_err(|_| "set $KWEB_ADMIN_KEY to the admin API key first")?;
-            let access = core.admin_connect(key).map_err(failed)?;
+            // The key was put into the environment on purpose: its account is agreed to, and named.
+            let owner = core.admin_key_owner(key.clone()).map_err(failed)?;
+            if owner.other_account {
+                println!("This key acts as {}.", owner.username);
+            }
+            let access = core.admin_connect(key, Some(owner.username)).map_err(failed)?;
             println!("The key is stored.\n{}", access_text(&access));
             Ok(())
         }

@@ -85,6 +85,7 @@ import uniffi.kweb_core.Quota
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
+    onOpenNotificationButtons: () -> Unit,
     onOpenAway: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenAssistant: () -> Unit,
@@ -198,21 +199,28 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_app))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 3),
+                    Groups.shape(0, 4),
                     stringResource(R.string.theme_title),
                     stringResource(themeName(theme)),
                     icon = { Icon(painterResource(R.drawable.ic_palette), contentDescription = null) },
                     onClick = { pickingTheme = true },
                 )
                 SettingsRow(
-                    Groups.shape(1, 3),
+                    Groups.shape(1, 4),
                     stringResource(R.string.delivery_check_title),
                     stringResource(R.string.settings_delivery_detail),
                     icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
                     onClick = onOpenDeliveryCheck,
                 )
                 SettingsRow(
-                    Groups.shape(2, 3),
+                    Groups.shape(2, 4),
+                    stringResource(R.string.notif_buttons_title),
+                    notificationButtonsLine(state.notificationActions),
+                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
+                    onClick = onOpenNotificationButtons,
+                )
+                SettingsRow(
+                    Groups.shape(3, 4),
                     stringResource(R.string.push_title),
                     pushRowLine(deliveryState.push),
                     icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
@@ -396,7 +404,7 @@ private fun QuotaRow(shape: Shape, quota: Quota) {
 
 /** The rows of one group, a small gap apart. */
 @Composable
-private fun Group(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+internal fun Group(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Column(modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) { content() }
 }
 
@@ -440,7 +448,7 @@ private fun SettingsRow(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(
         text.uppercase(ComposeLocale.current.platformLocale),
         modifier = Modifier.fillMaxWidth().padding(start = 32.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
@@ -450,3 +458,8 @@ private fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
+
+/** The quiet line of the notification buttons row: "Delete, Mark read, Reply", or "None". */
+@Composable
+private fun notificationButtonsLine(actions: List<ovh.kweb.mail.background.MailAction>): String =
+    if (actions.isEmpty()) stringResource(R.string.notif_buttons_none) else actions.map { stringResource(mailActionName(it)) }.joinToString(", ")

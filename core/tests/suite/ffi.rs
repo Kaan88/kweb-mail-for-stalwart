@@ -177,6 +177,22 @@ fn check_once_fills_the_cache_with_the_seeded_mail() {
 }
 
 #[test]
+fn a_listener_that_only_listens_is_given_the_plan_of_a_check_without_a_connection() {
+    let rig = Rig::signed_in();
+    rig.core.check_once(Shade::Unknown).unwrap();
+    let rec = Arc::new(Recorder::default());
+    rig.core.listen(rec.clone());
+    assert!(matches!(rig.core.status(), ConnectionStatus::Offline { .. }), "listening starts no connection");
+
+    let id = rig.server.deliver("Dora", "dora@example.test", "Checked one", "found by a check");
+    let plan = rig.core.check_once(Shade::Ids { ids: vec![] }).unwrap();
+    // The listener got the plan inside the pass, with its alert: the host shows that one.
+    assert_eq!(rec.posted(&id), Some(false));
+    assert_eq!(rec.plans(), vec![plan]);
+    assert!(matches!(rig.core.status(), ConnectionStatus::Offline { .. }));
+}
+
+#[test]
 fn live_mail_is_posted_and_read_elsewhere_is_cancelled() {
     let rig = Rig::signed_in();
     rig.core.check_once(Shade::Unknown).unwrap();

@@ -15,7 +15,8 @@ import uniffi.kweb_core.Shade
  * holds). The broadcast is ordered and the receiver has 10 seconds: the result is set to OK at once, the work runs
  * on a thread under `goAsync()`, and if the pass is not finished in 8 seconds or fails the expedited one-off
  * check takes over. Which account the message is for follows from its `subtype` extra. A message for no known
- * account is dropped; nothing of it is logged but that it was dropped.
+ * account is dropped; nothing of it is logged but that it was dropped. A message without a body that may still
+ * mean news (see [PushMessageHandler.dropNeedsCheck]) ends in one check.
  */
 class PushMessageReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -24,10 +25,11 @@ class PushMessageReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         val subtype = intent.getStringExtra(GoogleRegistration.EXTRA_SUBTYPE)
         val body = intent.getByteArrayExtra(GoogleRegistration.EXTRA_RAW_DATA)
+        val messageType = intent.getStringExtra(GoogleRegistration.EXTRA_MESSAGE_TYPE)
         val pending = goAsync()
         thread(name = "kweb-push-message") {
             try {
-                handle(app, subtype, body)
+                handle(app, subtype, body, messageType)
             } catch (e: Exception) {
                 Log.e(Background.TAG, "a push message could not be handled", e)
                 runCatching { CheckScheduler.checkSoon(app) }
@@ -37,12 +39,16 @@ class PushMessageReceiver : BroadcastReceiver() {
         }
     }
 
-    private fun handle(app: Context, subtype: String?, body: ByteArray?) {
+    private fun handle(app: Context, subtype: String?, body: ByteArray?, messageType: String?) {
         val records = Accounts.load(app)
         val id = PushMessageHandler.accountFor(subtype, records.map { it.id to Settings.of(app, it).pushSubtype })
         val record = records.firstOrNull { it.id == id }
         if (record == null || body == null) {
-            Log.w(Background.TAG, "dropped a push message for no known account")
+            // Google's notice that it threw messages away, or a message of a known account without its body: there
+            // may be news nobody will tell us about, so one check looks (a waiting one is kept, not doubled).
+            val check = PushMessageHandler.dropNeedsCheck(messageType, record != null)
+            if (check) CheckScheduler.checkSoon(app)
+            Log.w(Background.TAG, if (check) "a push message had no body: checking instead" else "dropped a push message for no known account")
             return
         }
         val notifier = Notifier(app)
@@ -54,10 +60,9 @@ class PushMessageReceiver : BroadcastReceiver() {
                 val core = Accounts.session(record.id)?.core ?: error("no session")
                 core.webPushReceive(body, Shade.Ids(notifier.activeMailIds(record)))
             },
-            apply = { plan ->
-                notifier.apply(record, plan)
-                settings.recordCheck(System.currentTimeMillis(), null)
-            },
+            // The account's listener applied the plan inside the pass; applying the returned copy again could bring
+            // back a notification the user dismissed in between.
+            apply = { settings.recordCheck(System.currentTimeMillis(), null) },
             showReminder = { notifier.showReminder(record, it) },
             checkSoon = { CheckScheduler.checkSoon(app) },
         ).run()

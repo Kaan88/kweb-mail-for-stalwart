@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,7 +49,7 @@ import uniffi.kweb_core.DashboardHistory
  * goes to the background) or is left.
  */
 @Composable
-fun DashboardScreen(onBack: () -> Unit, vm: DashboardViewModel = viewModel()) {
+fun DashboardScreen(onBack: () -> Unit, onOpenAdmin: (() -> Unit)? = null, vm: DashboardViewModel = viewModel()) {
     val c = vm.controller
     val state by c.state.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -81,8 +83,14 @@ fun DashboardScreen(onBack: () -> Unit, vm: DashboardViewModel = viewModel()) {
                 ),
                 bad = false,
                 dot = state.live == LiveStatus.LIVE,
-                modifier = Modifier.padding(end = 16.dp),
+                modifier = Modifier.padding(end = if (onOpenAdmin == null) 16.dp else 4.dp),
             )
+            // Opened from the drawer, the rest of administration is one tap away.
+            if (onOpenAdmin != null) {
+                IconButton(onClick = onOpenAdmin) {
+                    Icon(Icons.Filled.Lock, contentDescription = stringResource(R.string.admin_title))
+                }
+            }
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {

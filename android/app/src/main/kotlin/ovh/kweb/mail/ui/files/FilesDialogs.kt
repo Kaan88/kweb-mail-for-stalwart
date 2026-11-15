@@ -33,6 +33,7 @@ import ovh.kweb.mail.ui.list.Groups
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalResources
+import ovh.kweb.mail.ui.transfer.DownloadRules
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
@@ -79,7 +80,25 @@ internal fun FilesDialogHost(state: FilesState, c: FilesController) {
         AlertDialog(
             onDismissRequest = c::cancelOpening,
             title = { Text(stringResource(if (state.openingToSave) R.string.files_saving else R.string.files_opening, name), maxLines = 2, overflow = TextOverflow.Ellipsis) },
-            text = { LinearProgressIndicator(Modifier.fillMaxWidth()) },
+            text = {
+                val progress = state.openingProgress
+                val fraction = progress?.let { DownloadRules.fraction(it) }
+                val resources = LocalResources.current
+                val locale = remember { java.util.Locale.getDefault() }
+                Column {
+                    // Filled where the size is known, else a bar that only shows that something is going on.
+                    if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth(), drawStopIndicator = {})
+                    else LinearProgressIndicator(Modifier.fillMaxWidth())
+                    if (progress != null && progress.done > 0) {
+                        Text(
+                            DownloadRules.line(progress, locale) { done, total -> resources.getString(R.string.download_of, done, total) },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
+            },
             confirmButton = { TextButton(onClick = c::cancelOpening) { Text(stringResource(R.string.cancel)) } },
         )
     }

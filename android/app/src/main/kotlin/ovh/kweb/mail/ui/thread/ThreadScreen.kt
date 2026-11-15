@@ -1,7 +1,6 @@
 package ovh.kweb.mail.ui.thread
 
 import ovh.kweb.mail.ui.accounts.LocalAccountSession
-import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.DocumentsContract
@@ -49,10 +48,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -60,13 +63,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
-import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
+import java.time.LocalDate
+import java.time.ZoneId
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import ovh.kweb.mail.ui.transfer.ActiveTransfer
+import ovh.kweb.mail.ui.transfer.DownloadFailure
+import ovh.kweb.mail.ui.transfer.DownloadRules
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,6 +83,7 @@ import ovh.kweb.mail.ui.assistant.AssistantEvent
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
+import ovh.kweb.mail.ui.calendar.EventPrefill
 import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
@@ -95,13 +102,25 @@ import uniffi.kweb_core.DraftKind
 /** One conversation: its messages oldest first as cards, and what can be done with the thread. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: String) -> Unit, onFilterLike: (messageId: String) -> Unit = {}, onOpenFilters: () -> Unit = {}) {
+fun ThreadScreen(
+    /** The conversation's own view model (the pager keeps one per page). */
+    vm: ThreadViewModel,
+    route: Route.Thread,
+    /** This is the page the user is on. A neighbour that is only loaded does not mark mail read, close the screen or say anything. */
+    active: Boolean,
+    onBack: () -> Unit,
+    onCompose: (draftId: String) -> Unit,
+    onFilterLike: (messageId: String) -> Unit = {},
+    onOpenFilters: () -> Unit = {},
+    /** Opens the form for a new calendar entry that starts with something the assistant found here; the user saves it himself. */
+    onAddToCalendar: (EventPrefill) -> Unit = {},
+    /** What TalkBack offers on the subject to go to the conversation before or after this one (the pager has no buttons for it). */
+    stepActions: List<CustomAccessibilityAction> = emptyList(),
+) {
     val context = LocalContext.current
     val accountSession = LocalAccountSession.current
-    val vm: ThreadViewModel = viewModel(
-        key = "thread:${route.threadId}:${route.mailboxId}:${route.messageId}",
-        factory = viewModelFactory { initializer { ThreadViewModel(this[APPLICATION_KEY] as Application, accountSession, route) } },
-    )
+    val latestActive by rememberUpdatedState(active)
+    LaunchedEffect(vm, active) { vm.setActive(active) }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
@@ -111,7 +130,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     var confirmingDelete by remember { mutableStateOf(false) }
     // The message whose sender is asked about; saved, so a rotation keeps the question.
     var blockingId by rememberSaveable { mutableStateOf<String?>(null) }
-    var busyBlobId by remember { mutableStateOf<String?>(null) }
+    // The attachment being downloaded (one at a time, kept by the view model so that leaving the screen can end it).
+    val activeDownload by vm.transfer.state.collectAsStateWithLifecycle()
+    val busyBlobId = activeDownload?.key
     // Saved, so a rotation keeps the sheet and the questions: the message whose labels are edited ("*": the whole thread),
     // whether the new-label dialog is open, and the message whose unsubscribing is asked about.
     var labelsTarget by rememberSaveable { mutableStateOf<String?>(null) }
@@ -125,6 +146,17 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         scope.launch { snackbar.showSnackbar(resources.getString(textRes)) }
     }
 
+    /** Why a download failed, in the core's words; "you may be offline" only when the server could not be reached. */
+    fun sayDownloadFailed(error: Throwable) {
+        val text = when (val failure = DownloadRules.describe(error)) {
+            DownloadFailure.Offline -> resources.getString(R.string.thread_download_failed)
+            is DownloadFailure.Words -> resources.getString(R.string.thread_download_failed_why, failure.text)
+            DownloadFailure.SignIn -> resources.getString(R.string.thread_download_failed_sign_in)
+            DownloadFailure.Unknown -> resources.getString(R.string.thread_download_failed_unknown)
+        }
+        scope.launch { snackbar.showSnackbar(text) }
+    }
+
     LaunchedEffect(vm) { vm.start() }
 
     // The AI assistant: one task at a time for the app; this screen shows only the session that is its own.
@@ -132,22 +164,27 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
     val assistantState by assistant.state.collectAsStateWithLifecycle()
     val owner = "thread:${route.threadId}"
     val offered = remember(assistantState.settings) { AssistantRules.visible(assistantState.settings) }
-    LifecycleResumeEffect(assistant) {
-        assistant.refreshSettings()
+    LifecycleResumeEffect(assistant, active) {
+        if (active) assistant.refreshSettings()
         onPauseOrDispose { }
     }
     // Leaving the thread for good ends its task and closes its sheet; a rotation keeps both.
     DisposableEffect(assistant, owner) { onDispose { if (activity?.isChangingConfigurations != true) assistant.release(owner) } }
     LaunchedEffect(assistant, owner) {
         assistant.events.collect { event ->
-            // A draft someone else's sheet made is not for this screen.
-            if (event is AssistantEvent.OpenDraft && event.owner == owner) onCompose(event.draftId)
+            // A draft or a calendar form someone else's sheet asked for is not for this screen.
+            when (event) {
+                is AssistantEvent.OpenDraft -> if (event.owner == owner) onCompose(event.draftId)
+                is AssistantEvent.OpenEvent -> if (event.owner == owner) onAddToCalendar(event.prefill)
+            }
         }
     }
     // Leaving the screen for good drops what it holds; a rotation keeps it.
     DisposableEffect(vm) { onDispose { if (activity?.isChangingConfigurations != true) vm.reset() } }
     LaunchedEffect(vm) {
         vm.events.collect { event ->
+            // A page that is only next to the shown one says nothing and does not leave.
+            if (!latestActive) return@collect
             when (event) {
                 is ThreadEvent.Message -> snackbar.showSnackbar(resources.getString(event.textRes))
                 is ThreadEvent.Text -> snackbar.showSnackbar(event.message.resolve(resources))
@@ -169,17 +206,22 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
 
     val files = remember { BlobFiles(context.applicationContext, accountSession.record.id) }
 
-    /** The file of an attachment, downloaded if it is not there. */
-    suspend fun fetch(attachment: Attachment) = withContext(Dispatchers.IO) {
-        files.ensure(accountSession.core, attachment.blobId, files.attachmentFile(attachment.blobId, attachment.name))
+    /** The file of an attachment, downloaded if it is not there; null when the user cancelled the download. */
+    suspend fun fetch(attachment: Attachment, run: ActiveTransfer.Run): File? = withContext(Dispatchers.IO) {
+        files.ensureTracked(
+            accountSession.core,
+            attachment.blobId,
+            files.attachmentFile(attachment.blobId, attachment.name),
+            run.stop,
+        ) { done, total -> vm.transfer.report(run, done, total) }
     }
 
     fun openAttachment(attachment: Attachment) {
-        if (busyBlobId != null) return
-        busyBlobId = attachment.blobId
+        // A tap while a download is under way (this file or another) starts nothing.
+        val run = vm.transfer.begin(attachment.blobId, DownloadRules.expected(attachment.size.toLong())) ?: return
         scope.launch {
             try {
-                val file = fetch(attachment)
+                val file = fetch(attachment, run) ?: return@launch
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 val intent = Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, attachment.mimeType.ifBlank { "application/octet-stream" })
@@ -192,9 +234,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                say(R.string.thread_download_failed)
+                sayDownloadFailed(e)
             } finally {
-                busyBlobId = null
+                vm.transfer.finish(run)
             }
         }
     }
@@ -218,10 +260,28 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             }
             return@rememberLauncherForActivityResult
         }
-        busyBlobId = attachment.blobId
+        val run = vm.transfer.begin(attachment.blobId, DownloadRules.expected(attachment.size.toLong()))
+        if (run == null) {
+            // Another download is under way: the empty document the picker made must not stay.
+            scope.launch { withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } } }
+            return@rememberLauncherForActivityResult
+        }
         scope.launch {
             try {
-                val file = fetch(attachment)
+                val file = try {
+                    fetch(attachment, run)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } }
+                    sayDownloadFailed(e)
+                    return@launch
+                }
+                if (file == null) {
+                    // Cancelled: the empty document the picker made must not stay.
+                    withContext(Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) } }
+                    return@launch
+                }
                 withContext(Dispatchers.IO) {
                     val out = context.contentResolver.openOutputStream(target) ?: throw java.io.IOException("no output stream")
                     out.use { sink -> file.inputStream().use { it.copyTo(sink) } }
@@ -232,7 +292,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
             } catch (e: Exception) {
                 say(R.string.thread_save_failed)
             } finally {
-                busyBlobId = null
+                vm.transfer.finish(run)
             }
         }
     }
@@ -312,6 +372,18 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                     onClick = { menuOpen = false; assistant.open(owner, AssistantRules.Kind.SUMMARY, AiTask.SummarizeThread(route.threadId)) },
                                 )
                             }
+                            if (AssistantRules.Kind.EXTRACT in offered) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.assistant_find_dates)) },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
+                                    enabled = hasMessages,
+                                    onClick = {
+                                        menuOpen = false
+                                        // The phone's date and zone are part of what is sent, so "tomorrow" in a message can be read.
+                                        assistant.open(owner, AssistantRules.Kind.EXTRACT, AiTask.ExtractThread(route.threadId, LocalDate.now().toString(), ZoneId.systemDefault().id))
+                                    },
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.labels_menu)) },
                                 leadingIcon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
@@ -347,7 +419,9 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
             Text(
                 state.subject.ifEmpty { stringResource(R.string.list_no_subject) },
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
+                modifier = Modifier
+                    .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp)
+                    .semantics { customActions = stepActions },
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Medium,
             )
@@ -366,6 +440,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                         remoteAllowed = header.id in state.remoteAllowed,
                         myAddress = state.myAddress,
                         busyBlobId = busyBlobId,
+                        download = activeDownload?.progress,
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
                         actions = CardActions(
@@ -382,6 +457,7 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                                     saver.launch(FileNames.safe(it.name))
                                 }
                             },
+                            onCancelDownload = vm.transfer::cancel,
                             onReply = { vm.startDraft(DraftKind.Reply(header.id)) },
                             onReplyAll = { vm.startDraft(DraftKind.ReplyAll(header.id)) },
                             onForward = { vm.startDraft(DraftKind.Forward(header.id)) },
@@ -398,6 +474,21 @@ fun ThreadScreen(route: Route.Thread, onBack: () -> Unit, onCompose: (draftId: S
                             },
                             onDraftReply = if (AssistantRules.Kind.DRAFT in offered) {
                                 { assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(header.id, "")) }
+                            } else {
+                                null
+                            },
+                            onReplyIdeas = if (AssistantRules.Kind.IDEAS in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.IDEAS, AiTask.ReplyIdeas(header.id)) }
+                            } else {
+                                null
+                            },
+                            onFindDates = if (AssistantRules.Kind.EXTRACT in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.EXTRACT, AiTask.Extract(header.id, LocalDate.now().toString(), ZoneId.systemDefault().id)) }
+                            } else {
+                                null
+                            },
+                            onExplain = if (AssistantRules.Kind.EXPLAIN in offered) {
+                                { assistant.open(owner, AssistantRules.Kind.EXPLAIN, AiTask.Explain(header.id, "")) }
                             } else {
                                 null
                             },

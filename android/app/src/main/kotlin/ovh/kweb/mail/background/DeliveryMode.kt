@@ -88,6 +88,22 @@ object ModeRules {
             isStuck(state, nowMillis)
         )
 
+    /** After this many failures of Play services in a row, registering again gives the road up. */
+    const val REGISTER_FAILURES = 3
+
+    /**
+     * Whether a registering again that failed ends on the permanent connection. Never for a server out of reach
+     * (that says nothing about Google). Always when the road is dead: not verified, no key on the server, Play
+     * services not there ([dead]), or nothing subscribed that still works ([stillWorks] false). Otherwise (Play
+     * services silent or refusing while the old subscription still stands) only at the [failuresInARow]th time.
+     */
+    fun fallsBack(reason: FallbackReason, dead: Boolean, stillWorks: Boolean, failuresInARow: Int): Boolean = when {
+        reason == FallbackReason.Unreachable -> false
+        dead || reason == FallbackReason.NotVerified || reason == FallbackReason.NoServerKey -> true
+        !stillWorks -> true
+        else -> failuresInARow >= REGISTER_FAILURES
+    }
+
     /** A state that nothing will get out of by itself: no subscription, or an unverified one that is overdue. */
     fun isStuck(state: WebPushState, nowMillis: Long): Boolean = when (state) {
         is WebPushState.Off -> true
@@ -141,10 +157,13 @@ object DueRules {
      * [fromWorker]: asked at the end of a pass. Work owed *now* after a pass means the pass could not do it, so the
      * retry waits a minute, then two, four, eight ([attempt] counts the retries so far), and then stops (null): the
      * 15-minute check carries on. Work owed a few seconds from now (an Undo window, a send time) is no failure and
-     * is scheduled for its real time, as when the app asked.
+     * is scheduled for its real time, as when the app asked. [fresh]: the pass that asks was not itself a pass for
+     * owed work and every account's check went well, so what is owed now was not there when it looked (an action
+     * the user tapped while it ran, whose own request for a check was dropped because this one was running): that is
+     * no failure either and gets one pass at once. That pass is a pass for owed work, so it cannot ask this again.
      */
-    fun plan(inMs: Long, fromWorker: Boolean = false, attempt: Int = 0): DuePlan? {
-        if (fromWorker && inMs <= 0L) return retryDelay(attempt)?.let { DuePlan.Delayed(it) }
+    fun plan(inMs: Long, fromWorker: Boolean = false, attempt: Int = 0, fresh: Boolean = false): DuePlan? {
+        if (fromWorker && inMs <= 0L) return if (fresh) DuePlan.Expedited(0) else retryDelay(attempt)?.let { DuePlan.Delayed(it) }
         return if (inMs <= ModeRules.EXPEDITED_WINDOW_MS) DuePlan.Expedited(inMs.coerceAtLeast(0)) else DuePlan.Delayed(inMs)
     }
 

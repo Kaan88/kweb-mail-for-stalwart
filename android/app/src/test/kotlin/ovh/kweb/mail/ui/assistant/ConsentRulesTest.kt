@@ -5,6 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiPreview
 import uniffi.kweb_core.AiProvider
@@ -21,7 +22,7 @@ class ConsentRulesTest {
 
     private fun preview(messages: UInt, characters: UInt, cut: Boolean = false) = AiPreview("api.openai.com", "gpt-x", messages, characters, cut)
 
-    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true)
+    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true, allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = false, chatConsented = false, actions = AiActionMode.ASK_FIRST)
 
     @Test fun theFirstTaskAsksAndLaterOnesDoNot() {
         assertTrue(ConsentRules.isNeeded(settings(consented = false)))
@@ -70,6 +71,33 @@ class ConsentRulesTest {
     @Test fun nothingIsAskedWhileTheAssistantIsOff() {
         assertFalse(ConsentRules.isNeededAfterSave(settings(consented = false).copy(enabled = false)))
     }
+
+    // ---- the chat's own question ----
+
+    private fun chat(consented: Boolean = true, chatConsented: Boolean = false, allowChat: Boolean = true, enabled: Boolean = true) =
+        settings(consented).copy(enabled = enabled, allowChat = allowChat, chatConsented = chatConsented)
+
+    @Test fun theChatIsAskedAboutOnceItIsOnAndTheServiceIsAgreedTo() = assertTrue(ConsentRules.isChatNeededAfterSave(chat()))
+
+    @Test fun theChatIsNotAskedAboutBeforeTheServiceIsAgreedTo() {
+        // The first dialog comes first; the chat's follows its Agree.
+        val returned = chat(consented = false)
+        assertTrue(ConsentRules.isNeededAfterSave(returned))
+        assertFalse(ConsentRules.isChatNeededAfterSave(returned))
+        assertTrue(ConsentRules.isChatNeededAfterSave(ConsentRules.granted(returned)))
+    }
+
+    @Test fun aChatAgreedToBeforeIsNotAskedAboutAgain() = assertFalse(ConsentRules.isChatNeededAfterSave(chat(chatConsented = true)))
+
+    @Test fun nothingIsAskedAboutAChatThatIsOff() {
+        assertFalse(ConsentRules.isChatNeededAfterSave(chat(allowChat = false)))
+        assertFalse(ConsentRules.isChatNeededAfterSave(chat(enabled = false)))
+    }
+
+    @Test fun decliningTheServiceLeavesNoQuestionAboutTheChat() =
+        assertFalse(ConsentRules.isChatNeededAfterSave(ConsentRules.declined(chat(consented = false))))
+
+    @Test fun agreeingToTheServiceNeverAgreesToTheChat() = assertFalse(ConsentRules.granted(chat(consented = false)).chatConsented)
 
     @Test fun decliningSavesTheSameValuesSwitchedOff() {
         val returned = settings(consented = false)

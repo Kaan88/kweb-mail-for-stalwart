@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::{
-    model::{AiEffort, AiProvider, AiSettings},
+    model::{AiActionMode, AiEffort, AiProvider, AiSettings},
     Error, Result,
 };
 
@@ -35,6 +35,9 @@ pub struct Profile {
     pub model: String,
     pub effort: AiEffort,
     pub consented: bool,
+    /// The second yes, for the chat: it sends what it looks up to this service and model. Never
+    /// true without `consented`.
+    pub chat_consented: bool,
 }
 
 /// What is stored under [`SETTINGS_KEY`]: the shared switches, the service in use, and a
@@ -47,6 +50,11 @@ pub struct Stored {
     pub allow_summaries: bool,
     pub allow_drafts: bool,
     pub allow_rewrites: bool,
+    pub allow_ideas: bool,
+    pub allow_extract: bool,
+    pub allow_explain: bool,
+    pub allow_chat: bool,
+    pub actions: AiActionMode,
     pub openai: Profile,
     pub anthropic: Profile,
 }
@@ -59,6 +67,11 @@ impl Default for Stored {
             allow_summaries: true,
             allow_drafts: true,
             allow_rewrites: true,
+            allow_ideas: false,
+            allow_extract: false,
+            allow_explain: false,
+            allow_chat: false,
+            actions: AiActionMode::default(),
             openai: Profile::default(),
             anthropic: Profile::default(),
         }
@@ -101,6 +114,12 @@ impl Stored {
             allow_summaries: self.allow_summaries,
             allow_drafts: self.allow_drafts,
             allow_rewrites: self.allow_rewrites,
+            allow_ideas: self.allow_ideas,
+            allow_extract: self.allow_extract,
+            allow_explain: self.allow_explain,
+            allow_chat: self.allow_chat,
+            chat_consented: p.consented && p.chat_consented,
+            actions: self.actions,
         }
     }
 }
@@ -122,8 +141,13 @@ pub fn parse(json: &str) -> Option<(Stored, Option<AiProvider>)> {
         allow_rewrites: old.allow_rewrites,
         ..Stored::default()
     };
-    *stored.profile_mut(old.provider) =
-        Profile { base_url: old.base_url, model: old.model, effort: old.effort, consented: old.consented };
+    *stored.profile_mut(old.provider) = Profile {
+        base_url: old.base_url,
+        model: old.model,
+        effort: old.effort,
+        consented: old.consented,
+        chat_consented: false,
+    };
     Some((stored, Some(old.provider)))
 }
 
@@ -364,6 +388,87 @@ mod tests {
         let json = serde_json::to_string(&stored).unwrap();
         assert_eq!(parse(&json), Some((stored, None)));
         assert_eq!(parse("{not json"), None);
+    }
+
+    #[test]
+    fn the_flat_stage_one_form_gives_none_of_the_new_things() {
+        // Also when the text claims them: stage 1 never wrote these, so they are not believed.
+        let flat = r#"{"enabled":true,"provider":"OpenAiCompatible","base_url":"https://a.example/v1","model":"m",
+            "has_key":true,"consented":true,"allow_summaries":false,"allow_drafts":true,"allow_rewrites":true,
+            "allow_ideas":true,"allow_extract":true,"allow_explain":true,"allow_chat":true,"chat_consented":true,
+            "actions":"Off"}"#;
+        let (stored, old) = parse(flat).unwrap();
+        assert_eq!(old, Some(AiProvider::OpenAiCompatible));
+        assert!(!stored.allow_ideas && !stored.allow_extract && !stored.allow_explain && !stored.allow_chat);
+        assert_eq!(stored.actions, AiActionMode::AskFirst);
+        assert!(stored.openai.consented && !stored.openai.chat_consented);
+        let view = stored.view(AiProvider::OpenAiCompatible);
+        assert!(view.consented && !view.chat_consented && !view.allow_chat && !view.has_key && !view.allow_summaries);
+        assert_eq!(stored.anthropic, Profile::default());
+    }
+
+    #[test]
+    fn stored_settings_from_before_the_new_fields_read_with_them_off() {
+        let old = r#"{"enabled":true,"provider":"Anthropic","allow_summaries":true,"allow_drafts":false,
+            "allow_rewrites":true,"openai":{"base_url":"http://localhost:1/v1","model":"o","effort":"High",
+            "consented":true},"anthropic":{"base_url":"https://a.example/v1","model":"m","effort":"Default",
+            "consented":false}}"#;
+        let (stored, legacy) = parse(old).unwrap();
+        assert_eq!(legacy, None);
+        let wanted = Stored {
+            enabled: true,
+            provider: AiProvider::Anthropic,
+            allow_drafts: false,
+            openai: Profile {
+                base_url: "http://localhost:1/v1".into(),
+                model: "o".into(),
+                effort: AiEffort::High,
+                consented: true,
+                chat_consented: false,
+            },
+            anthropic: Profile { base_url: "https://a.example/v1".into(), model: "m".into(), ..Profile::default() },
+            ..Stored::default()
+        };
+        assert_eq!(stored, wanted);
+        assert!(!stored.allow_ideas && !stored.allow_extract && !stored.allow_explain && !stored.allow_chat);
+        assert_eq!(stored.actions, AiActionMode::AskFirst);
+    }
+
+    #[test]
+    fn the_new_form_round_trips_with_every_new_field() {
+        let stored = Stored {
+            enabled: true,
+            provider: AiProvider::Anthropic,
+            allow_ideas: true,
+            allow_extract: true,
+            allow_explain: true,
+            allow_chat: true,
+            actions: AiActionMode::Off,
+            anthropic: Profile {
+                base_url: "https://a.example/v1".into(),
+                model: "m".into(),
+                effort: AiEffort::Max,
+                consented: true,
+                chat_consented: true,
+            },
+            ..Stored::default()
+        };
+        let json = serde_json::to_string(&stored).unwrap();
+        assert_eq!(parse(&json), Some((stored.clone(), None)));
+        let view = stored.view(AiProvider::Anthropic);
+        assert!(view.allow_ideas && view.allow_extract && view.allow_explain && view.allow_chat && view.chat_consented);
+        assert_eq!(view.actions, AiActionMode::Off);
+        // The other service shares the switches and has no yes of its own.
+        let other = stored.view(AiProvider::OpenAiCompatible);
+        assert!(other.allow_chat && !other.consented && !other.chat_consented);
+        // A stored chat yes without the first one is never shown as one.
+        let mut odd = stored;
+        odd.anthropic.consented = false;
+        assert!(!odd.view(AiProvider::Anthropic).chat_consented);
+        // Before anything is set, everything new is off and changes ask first.
+        let d = defaults();
+        assert!(!d.allow_ideas && !d.allow_extract && !d.allow_explain && !d.allow_chat && !d.chat_consented);
+        assert_eq!(d.actions, AiActionMode::AskFirst);
     }
 
     #[test]

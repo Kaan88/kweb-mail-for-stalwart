@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -123,9 +125,13 @@ object GooglePush {
         for (record in Accounts.load(context)) {
             try {
                 val session = Accounts.session(record.id) ?: continue
+                val before = session.settings.deliveryMode
                 val job = scope.async { lock(record.id).withLock { startOne(context, session) } }
                 track(record.id, job)
                 job.await()
+                // A switch-on a dead process left was finished here, perhaps with the app away: as after a switch from
+                // a screen, the loop the service started for it must not go on without an owner.
+                if (before != DeliveryMode.Google && session.settings.deliveryMode == DeliveryMode.Google) LiveWindow.settle(context)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -161,13 +167,20 @@ object GooglePush {
     suspend fun renewStep(context: Context, record: AccountRecord) {
         try {
             val session = Accounts.session(record.id) ?: return
-            if (session.settings.deliveryMode != DeliveryMode.Google) {
-                if (session.settings.pushSubtype != null) lock(record.id).withLock { switchOf(context, session).finishCleanUp() }
-                return
+            val needed = session.settings.deliveryMode == DeliveryMode.Google || session.settings.pushSubtype != null
+            if (!needed) return
+            // On the scope of its own and tracked, so the removal of the account cancels it like every other sequence.
+            val job = scope.async {
+                lock(record.id).withLock {
+                    val switch = switchOf(context, session)
+                    if (session.settings.deliveryMode == DeliveryMode.Google) switch.renewStep() else switch.finishCleanUp()
+                }
             }
-            lock(record.id).withLock { switchOf(context, session).renewStep() }
+            track(record.id, job)
+            job.await()
         } catch (e: CancellationException) {
-            throw e
+            // The step was cancelled because its account is being removed: the worker itself goes on.
+            if (!currentCoroutineContext().isActive) throw e
         } catch (e: Exception) {
             Log.w(Background.TAG, "the push renewal step failed", e)
         }

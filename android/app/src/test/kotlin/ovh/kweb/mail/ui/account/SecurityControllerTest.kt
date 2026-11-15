@@ -37,7 +37,7 @@ class SecurityControllerTest {
 
     @Before fun setUp() {
         backend = FakeAccountBackend()
-        backend.security = AccountSecurity(false, listOf(appPassword), listOf(key), listOf(phone, laptop), listOf(thisApp, other))
+        backend.security = AccountSecurity(false, listOf(appPassword), listOf(key), listOf(phone, laptop), listOf(thisApp, other), uniffi.kweb_core.SecurityAccess(true, true, true, true, true))
         c = SecurityController(scope, pool.asCoroutineDispatcher(), backend, clock = { 1000L })
     }
 

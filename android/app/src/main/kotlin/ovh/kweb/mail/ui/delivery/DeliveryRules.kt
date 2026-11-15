@@ -1,6 +1,7 @@
 package ovh.kweb.mail.ui.delivery
 
 import ovh.kweb.mail.background.CheckRecord
+import ovh.kweb.mail.background.DeliveryMode
 
 enum class AgeUnit { Seconds, Minutes, Hours, Days }
 
@@ -29,6 +30,19 @@ object SafetyCheck {
     /** True when the last check went well and is recent. No check yet is not on time. */
     fun isOnTime(last: CheckRecord?, nowMillis: Long): Boolean =
         last != null && last.error == null && nowMillis - last.atMillis < LATE_AFTER_MILLIS
+}
+
+/** The battery row of the Delivery check screen. */
+object BatteryRule {
+    /**
+     * Whether the row is in order. The exemption keeps the permanent connection alive; an account on push through
+     * Google has none to keep (Google's urgent push wakes the app, also in idle), so without the exemption nothing
+     * is late there and the row is not a fault. That holds only while the push really works ([pushWorking]: the
+     * subscription is registered) and Android does not keep the app from running in the background altogether
+     * ([backgroundRestricted]: the user or the phone maker restricted it), where Google does not deliver either.
+     */
+    fun isOk(exempt: Boolean, mode: DeliveryMode, pushWorking: Boolean, backgroundRestricted: Boolean): Boolean =
+        exempt || (mode == DeliveryMode.Google && pushWorking && !backgroundRestricted)
 }
 
 /** What to do when the user taps the notification permission row, or whether to ask on arrival. */

@@ -41,6 +41,8 @@
     <string name="push_detail_off">Not registered</string>
     <string name="push_detail_key_changed">Your server\'s key changed; the app registers again the next time it is opened</string>
     <string name="push_detail_gone">Your server no longer has the subscription</string>
+    <string name="push_pill_not_needed">Not needed</string>
+    <string name="push_battery_not_needed">Push through Google wakes the app</string>
     <string name="push_hint_open">Open the app to register again</string>
     <string name="push_fallback_line">Went back to the permanent connection: %1$s</string>
     <string name="push_fallback_detail">%1$s (%2$s)</string>

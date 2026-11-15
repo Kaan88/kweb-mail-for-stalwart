@@ -1,13 +1,28 @@
 package ovh.kweb.mail.ui.assistant
 
+import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiSettings
 
 /** The rules of the AI assistant that need no Android: which entries show, the default address, the state line, the form. */
 object AssistantRules {
-    /** The three kinds of task, each with its own switch in the settings. */
-    enum class Kind { SUMMARY, DRAFT, REWRITE }
+    /** The kinds of task of the sheet, each with its own switch in the settings. */
+    enum class Kind { SUMMARY, DRAFT, REWRITE, IDEAS, EXTRACT, EXPLAIN }
+
+    /** Whether the chat can be used, and if not, what is in the way. */
+    enum class ChatGate {
+        READY,
+
+        /** The assistant is off as a whole, or its settings are not known. */
+        OFF,
+
+        /** The assistant is on, the chat is switched off. */
+        CHAT_OFF,
+
+        /** The chat is on, but the user has not agreed to the service, or not to what the chat reads. */
+        NOT_AGREED,
+    }
 
     const val OPENAI_ADDRESS = "https://api.openai.com/v1"
     const val ANTHROPIC_ADDRESS = "https://api.anthropic.com/v1"
@@ -17,10 +32,24 @@ object AssistantRules {
         Kind.SUMMARY -> settings.allowSummaries
         Kind.DRAFT -> settings.allowDrafts
         Kind.REWRITE -> settings.allowRewrites
+        Kind.IDEAS -> settings.allowIdeas
+        Kind.EXTRACT -> settings.allowExtract
+        Kind.EXPLAIN -> settings.allowExplain
     }
 
     /** The kinds whose entries are shown now. */
     fun visible(settings: AiSettings?): Set<Kind> = Kind.entries.filterTo(LinkedHashSet()) { isAllowed(settings, it) }
+
+    /**
+     * What stands between the user and the chat, in the order the core checks it: the assistant as a whole, the chat's
+     * switch, then the two agreements (to the service, and to the chat choosing what it reads).
+     */
+    fun chatReady(settings: AiSettings?): ChatGate = when {
+        settings == null || !settings.enabled -> ChatGate.OFF
+        !settings.allowChat -> ChatGate.CHAT_OFF
+        !settings.consented || !settings.chatConsented -> ChatGate.NOT_AGREED
+        else -> ChatGate.READY
+    }
 
     fun defaultAddress(provider: AiProvider): String = when (provider) {
         AiProvider.OPEN_AI_COMPATIBLE -> OPENAI_ADDRESS
@@ -67,12 +96,20 @@ object AssistantRules {
         val allowSummaries: Boolean,
         val allowDrafts: Boolean,
         val allowRewrites: Boolean,
+        val allowIdeas: Boolean = false,
+        val allowExtract: Boolean = false,
+        val allowExplain: Boolean = false,
+        /** The chat, in which the assistant itself chooses what it reads. */
+        val allowChat: Boolean = false,
+        /** What the chat may do about changes; it has no effect while the chat is off. */
+        val actions: AiActionMode = AiActionMode.ASK_FIRST,
         /** The stored key is to be removed on Save. */
         val removeKey: Boolean = false,
     ) {
         /**
          * The settings to send: [stored] with the form's values. Consent is kept only while the service and the model
          * are the same as the stored ones (address compared without spaces and a trailing slash); saving never grants it.
+         * The same holds for the chat's own agreement, which only the core's `aiChatConsent` gives.
          */
         fun toSettings(stored: AiSettings): AiSettings {
             val sameService = provider == stored.provider && sameAddress(baseUrl, stored.baseUrl) && model.trim() == stored.model.trim()
@@ -86,6 +123,12 @@ object AssistantRules {
                 allowSummaries = allowSummaries,
                 allowDrafts = allowDrafts,
                 allowRewrites = allowRewrites,
+                allowIdeas = allowIdeas,
+                allowExtract = allowExtract,
+                allowExplain = allowExplain,
+                allowChat = allowChat,
+                chatConsented = stored.chatConsented && stored.consented && sameService,
+                actions = actions,
             )
         }
 
@@ -102,6 +145,11 @@ object AssistantRules {
             allowSummaries = allowSummaries,
             allowDrafts = allowDrafts,
             allowRewrites = allowRewrites,
+            allowIdeas = allowIdeas,
+            allowExtract = allowExtract,
+            allowExplain = allowExplain,
+            allowChat = allowChat,
+            actions = actions,
             removeKey = false,
         )
     }
@@ -118,6 +166,11 @@ object AssistantRules {
         allowSummaries = stored.allowSummaries,
         allowDrafts = stored.allowDrafts,
         allowRewrites = stored.allowRewrites,
+        allowIdeas = stored.allowIdeas,
+        allowExtract = stored.allowExtract,
+        allowExplain = stored.allowExplain,
+        allowChat = stored.allowChat,
+        actions = stored.actions,
     )
 
     /** Anything to lose by leaving: the form differs from [initial], or a key was typed. */

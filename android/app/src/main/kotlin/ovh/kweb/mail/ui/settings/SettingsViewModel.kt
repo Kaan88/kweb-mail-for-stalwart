@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.MailAction
+import ovh.kweb.mail.background.NotificationActionRules
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.account.AccountRules
 import ovh.kweb.mail.ui.account.FeaturesRow
@@ -69,6 +71,8 @@ data class SettingsState(
     /** Masked addresses in use and the server's limit (null: not read or not given). */
     val maskedUsed: Int? = null,
     val maskedLimit: Int? = null,
+    /** The buttons of this account's mail notifications, in order. */
+    val notificationActions: List<MailAction> = NotificationActionRules.DEFAULT,
 )
 
 /** What the Settings screen shows: the account from the core and the quotas from the server. */
@@ -98,6 +102,7 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
     /** Reads the account and asks the server for the quotas; called each time the screen comes up. */
     fun load() {
         val asked = generation
+        stateFlow.update { it.copy(notificationActions = session.settings.notificationActions) }
         viewModelScope.launch {
             val account = withContext(Dispatchers.IO) { session.core.account() }
             if (asked != generation) return@launch

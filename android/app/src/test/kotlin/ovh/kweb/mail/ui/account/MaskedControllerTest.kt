@@ -37,7 +37,7 @@ class FakeAccountBackend : AccountBackend {
     /** Held only by a change of a masked address, not by a read. */
     @Volatile var updateGate: (() -> Unit)? = null
     @Volatile var secretGate: (() -> Unit)? = null
-    @Volatile var security = AccountSecurity(false, emptyList(), emptyList(), emptyList(), emptyList())
+    @Volatile var security = AccountSecurity(false, emptyList(), emptyList(), emptyList(), emptyList(), uniffi.kweb_core.SecurityAccess(true, true, true, true, true))
     var lastExpires: Long? = null
     var otpauthSeen: String? = null
     var codeSeen: String? = null

@@ -16,12 +16,29 @@ sealed interface ScopePart {
     data class Raw(val name: String) : ScopePart
 }
 
+/** What the dialog that shows a new secret adds about the rights it has. */
+enum class SecretNote { NONE, KEY_NARROWED, APP_PASSWORD_NARROWED }
+
 /** Why a password form cannot be sent yet. */
 enum class PasswordProblem { CURRENT_EMPTY, NEW_EMPTY, MISMATCH }
 
 /** Pure decisions of the account security screen. Nothing here keeps or logs a secret. */
 object SecurityRules {
     private const val SCOPE_PREFIX = "urn:stalwart:oauth:scope:"
+
+    /**
+     * What to tell about a new secret. The server gave it fewer rights than the account when [narrowed]: it
+     * works for what this sign-in may do, and an API key made so cannot open Server administration.
+     */
+    fun secretNote(kind: CredentialKind, narrowed: Boolean): SecretNote = when {
+        !narrowed -> SecretNote.NONE
+        kind == CredentialKind.API_KEY -> SecretNote.KEY_NARROWED
+        else -> SecretNote.APP_PASSWORD_NARROWED
+    }
+
+    /** At least one part of the page is refused to this account (its role lacks the permission). */
+    fun someNotAllowed(access: uniffi.kweb_core.SecurityAccess): Boolean =
+        !(access.password && access.appPasswords && access.apiKeys && access.passkeys && access.connectedApps)
 
     /** When an app password or key made now ends; null for none. */
     fun expiresAt(choice: Expiry, nowSeconds: Long): Long? = when (choice) {

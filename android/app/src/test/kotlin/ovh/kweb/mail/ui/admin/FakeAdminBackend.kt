@@ -95,9 +95,20 @@ class FakeAdminBackend : AdminBackend {
         return accessNow
     }
 
-    override fun connect(apiKey: String): AdminAccess {
+    /** Whose key the pasted one is; null: the signed-in account's. */
+    var keyOf: String? = null
+    var lastAgreed: String? = null
+
+    override fun keyOwner(apiKey: String): uniffi.kweb_core.AdminKeyOwner {
+        calls += "keyOwner"
+        connectFails?.let { throw it }
+        return uniffi.kweb_core.AdminKeyOwner(username = keyOf ?: "me@example.test", otherAccount = keyOf != null)
+    }
+
+    override fun connect(apiKey: String, agreedAccount: String?): AdminAccess {
         calls += "connect"
         lastKey = apiKey
+        lastAgreed = agreedAccount
         connectFails?.let { throw it }
         accessNow = connectResult
         return connectResult

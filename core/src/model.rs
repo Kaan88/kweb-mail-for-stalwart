@@ -521,6 +521,36 @@ pub struct AiSettings {
     pub allow_summaries: bool,
     pub allow_drafts: bool,
     pub allow_rewrites: bool,
+    /// Reply ideas for a message.
+    #[serde(default)]
+    pub allow_ideas: bool,
+    /// Finding to-dos and dates in a message or conversation.
+    #[serde(default)]
+    pub allow_extract: bool,
+    /// Explaining a message or a piece of text.
+    #[serde(default)]
+    pub allow_explain: bool,
+    /// The chat, whose model itself chooses which mail, folders and calendar entries it reads.
+    #[serde(default)]
+    pub allow_chat: bool,
+    /// The user agreed that the chat sends what it looks up to exactly this service and model. Like
+    /// `has_key` this is an answer only: `set_ai_settings` ignores what the caller puts here. Set by
+    /// `ai_chat_consent`, cleared by the core with `consented` (address or model change).
+    #[serde(default)]
+    pub chat_consented: bool,
+    /// What the chat may do about changes. See [`AiActionMode`].
+    #[serde(default)]
+    pub actions: AiActionMode,
+}
+
+/// What the chat may do about changes. There is no "automatic": every change waits for a tap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AiActionMode {
+    /// The model is given no change tools.
+    Off,
+    /// The model may suggest changes; each is done only when the user approves its card.
+    #[default]
+    AskFirst,
 }
 
 /// How a text is to be changed.
@@ -558,6 +588,173 @@ pub enum AiTask {
         text: String,
         style: RewriteStyle,
     },
+    /// Up to three short directions a reply could take.
+    ReplyIdeas {
+        message_id: String,
+    },
+    /// To-dos and dates in one message. `today` is the phone's local date "YYYY-MM-DD" and `time_zone`
+    /// its IANA zone: both are part of the request text, so the preview shows exactly what is sent.
+    Extract {
+        message_id: String,
+        today: String,
+        time_zone: String,
+    },
+    /// The same for the newest messages of a conversation.
+    ExtractThread {
+        thread_id: String,
+        today: String,
+        time_zone: String,
+    },
+    /// `text` not blank: explain that text (only it is sent). `text` blank and `message_id` given:
+    /// explain that message. Neither: Error::Invalid "there is nothing to explain".
+    Explain {
+        message_id: Option<String>,
+        text: String,
+    },
+}
+
+/// One thing found by Extract.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AiFinding {
+    Todo {
+        text: String,
+    },
+    /// `start` is local "YYYY-MM-DDTHH:MM:SS" (00:00:00 when `all_day`).
+    Date {
+        title: String,
+        start: String,
+        all_day: bool,
+    },
+}
+
+/// The four risk classes. Read and Ui run at once; Change and Confirm never run without the user's tap.
+/// Confirm is a change the card must warn about (more than 10 messages).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiRisk {
+    Read,
+    Ui,
+    Change,
+    Confirm,
+}
+
+/// The closed list of tools. There is none that sends, deletes, reports spam, or touches contacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiToolKind {
+    SearchMail,
+    ListMessages,
+    ReadMessage,
+    ReadThread,
+    ListFolders,
+    ListLabels,
+    ListEvents,
+    ReadEvent,
+    OpenMessage,
+    DraftReply,
+    Archive,
+    Move,
+    Mark,
+    Tag,
+    AddEvent,
+}
+
+/// A tool the model is using now. `detail` is plain text of at most 80 characters (the query, a subject,
+/// a folder name, a count); never a mail body.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiStep {
+    pub tool: AiToolKind,
+    pub risk: AiRisk,
+    pub detail: String,
+}
+
+/// A message named on a card or a chip; every field comes from this account's cache.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiMessageRef {
+    pub id: String,
+    pub thread_id: String,
+    pub subject: String,
+    pub from: String,
+    pub mailbox_name: String,
+}
+
+/// Exactly what a suggestion would do. The card is drawn from this record and the same record is applied.
+/// Every message is listed (at most 50).
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AiChange {
+    Archive {
+        messages: Vec<AiMessageRef>,
+    },
+    Move {
+        messages: Vec<AiMessageRef>,
+        mailbox_id: String,
+        mailbox_name: String,
+    },
+    MarkRead {
+        messages: Vec<AiMessageRef>,
+        read: bool,
+    },
+    Star {
+        messages: Vec<AiMessageRef>,
+        on: bool,
+    },
+    Tag {
+        messages: Vec<AiMessageRef>,
+        label_id: String,
+        label_name: String,
+        on: bool,
+    },
+    /// A new event or task; `input.repeat` is always None and nobody is invited.
+    AddEvent {
+        input: EventInput,
+        calendar_name: String,
+    },
+}
+
+/// A change the chat suggests. It is done only by `ai_apply` with this `id`, once.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiProposal {
+    pub id: String,
+    pub risk: AiRisk,
+    pub change: AiChange,
+}
+
+/// Something the user may open by tapping; nothing opens by itself.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AiLink {
+    Message {
+        message: AiMessageRef,
+    },
+    /// A reply to `message` with this text; recipients come from the app's own reply rules.
+    ReplyDraft {
+        message: AiMessageRef,
+        text: String,
+    },
+}
+
+/// Why a chat send ended. The limits end it with what there is, never silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiChatEnd {
+    Answered,
+    StepLimit,
+    SizeLimit,
+}
+
+/// The outcome of one user message. `text` is the authoritative answer (the host replaces what it heard).
+/// `tools_off`: the service takes no tools, the chat answers from the conversation only.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiChatTurn {
+    pub text: String,
+    pub proposals: Vec<AiProposal>,
+    pub links: Vec<AiLink>,
+    pub steps: u32,
+    pub end: AiChatEnd,
+    pub tools_off: bool,
+}
+
+/// What `ai_apply` did. `event_id`: the event an AddEvent made.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiApplied {
+    pub can_undo: bool,
+    pub event_id: Option<String>,
 }
 
 /// What a task would send, for the user to see before it is sent.
@@ -582,8 +779,8 @@ pub struct AccountFeatures {
     pub edition: String,
     /// Masked addresses can be used: the permission is there and the server answered a read.
     pub masked_email: bool,
-    /// The account's own security settings can be read (password, two-step codes, app
-    /// passwords, API keys, passkeys, connected apps).
+    /// At least one part of the account's own security settings can be read (password, two-step codes,
+    /// app passwords, API keys, passkeys, connected apps).
     pub security: bool,
     /// The server offers these things but this sign-in was made before the app asked for them:
     /// signing in again is all it takes. When true, the two flags above are false.
@@ -629,6 +826,10 @@ pub struct Credential {
 pub struct NewSecret {
     pub id: String,
     pub secret: String,
+    /// The server refused to give it all of the account's rights (this sign-in has fewer), so it was made
+    /// with the rights this sign-in has: it cannot open Server administration.
+    #[uniffi(default = false)]
+    pub narrowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -660,6 +861,26 @@ pub struct AccountSecurity {
     pub api_keys: Vec<Credential>,
     pub passkeys: Vec<Passkey>,
     pub connected_apps: Vec<ConnectedApp>,
+    /// Which of the parts the server lets this account read. A part that is not allowed is empty here.
+    pub access: SecurityAccess,
+}
+
+/// Which parts of the account's security settings the server lets this account read: its role may lack
+/// the permission for any of them (an administrator can grant it).
+#[derive(Debug, Clone, Copy, PartialEq, uniffi::Record)]
+pub struct SecurityAccess {
+    pub password: bool,
+    pub app_passwords: bool,
+    pub api_keys: bool,
+    pub passkeys: bool,
+    pub connected_apps: bool,
+}
+
+impl SecurityAccess {
+    /// At least one part can be read.
+    pub fn any(&self) -> bool {
+        self.password || self.app_passwords || self.api_keys || self.passkeys || self.connected_apps
+    }
 }
 
 /// What an authenticator app needs to start making two-step codes.

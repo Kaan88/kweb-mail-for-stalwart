@@ -378,6 +378,101 @@ class GoogleSwitchTest {
     }
 
     @Test
+    fun aFallbackOutOfRegisteringAgainIsAWholeOneTheServiceStartsAndTheRestIsCleanedUp() {
+        google()
+        backend.subscribeStates += WebPushState.Verifying(1)
+        backend.subscribeStates += WebPushState.Verifying(1)
+        backend.subscribeStates += WebPushState.Verifying(1)
+        val r = runBlocking { switch.reregister() }
+        assertEquals(SwitchOutcome.Failed(FallbackReason.NotVerified, null), r)
+        assertEquals(DeliveryMode.Connection, settings.deliveryMode)
+        assertEquals(FallbackReason.NotVerified, settings.pushFallback?.reason)
+        assertFalse("left true, the next app start would switch on again unasked", settings.pushSetup)
+        // The service is asked for, and with the connection up the subscription, the registration and the keys go.
+        assertEquals(
+            listOf("service", "drop", "unregister:wp:https://mail.example/#id:SENDER", "forget"),
+            backend.log.dropWhile { it != "service" },
+        )
+        assertNull(settings.pushToken)
+    }
+
+    @Test
+    fun aFallbackOutOfRegisteringAgainWithoutAConnectionKeepsTheRegistrationForTheNextCleanUp() {
+        google()
+        backend.registerResult = RegistrationResult.NoPlayServices(null)
+        backend.serviceStarts = false
+        runBlocking { switch.reregister() }
+        assertEquals(DeliveryMode.Connection, settings.deliveryMode)
+        assertFalse(settings.pushSetup)
+        assertTrue("service" in backend.log)
+        assertFalse("drop" in backend.log)
+        // Later, with the connection up, the clean-up is not held back by a setup flag.
+        backend.serviceStarts = true
+        runBlocking { switch.finishCleanUp() }
+        assertTrue("drop" in backend.log)
+        assertNull(settings.pushSubtype)
+    }
+
+    @Test
+    fun playServicesThatIsNotThereEndsOnTheConnectionAlthoughTheServerStillListsTheSubscription() {
+        google()
+        backend.state = WebPushState.Registered(5, null)
+        backend.registerResult = RegistrationResult.NoPlayServices("no service", absent = true)
+        runBlocking { switch.reregister() }
+        assertEquals(DeliveryMode.Connection, settings.deliveryMode)
+        assertEquals(FallbackReason.NoPlayServices, settings.pushFallback?.reason)
+        assertEquals("no service", settings.pushFallback?.detail)
+        assertFalse(settings.pushSetup)
+        assertTrue("service" in backend.log)
+    }
+
+    @Test
+    fun playServicesSilentOrRefusingIsLetPassTwiceAndThenTheRoadIsGivenUp() {
+        for (result in listOf(RegistrationResult.NoPlayServices("no answer"), RegistrationResult.Refused("SERVICE_NOT_AVAILABLE"))) {
+            val settings = Settings(FakeValues())
+            val backend = FakeBackend(settings)
+            val switch = GoogleSwitch(settings, backend)
+            settings.deliveryMode = DeliveryMode.Google
+            settings.recordPushRegistration("wp:https://mail.example/#id", "SENDER", "tok", 1, 7)
+            backend.state = WebPushState.Registered(5, null)
+            backend.registerResult = result
+            repeat(2) {
+                runBlocking { switch.reregister() }
+                assertEquals(DeliveryMode.Google, settings.deliveryMode)
+                assertNull(settings.pushFallback)
+            }
+            runBlocking { switch.reregister() }
+            assertEquals(DeliveryMode.Connection, settings.deliveryMode)
+            assertNotNull("the reason is kept for the Delivery check", settings.pushFallback)
+            assertTrue("service" in backend.log)
+        }
+    }
+
+    @Test
+    fun aRegistrationThatWorksAgainForgetsTheEarlierFailures() {
+        google()
+        backend.state = WebPushState.Registered(5, null)
+        backend.registerResult = RegistrationResult.NoPlayServices("no answer")
+        repeat(2) { runBlocking { switch.reregister() } }
+        backend.registerResult = RegistrationResult.Token("tok2")
+        backend.subscribeStates += WebPushState.Registered(5, null)
+        assertEquals(SwitchOutcome.Done, runBlocking { switch.reregister() })
+        backend.registerResult = RegistrationResult.NoPlayServices("no answer")
+        repeat(2) { runBlocking { switch.reregister() } }
+        assertEquals(DeliveryMode.Google, settings.deliveryMode)
+    }
+
+    @Test
+    fun anUnreachableServerNeverCountsAgainstPlayServices() {
+        google()
+        backend.state = WebPushState.Registered(5, null)
+        backend.prepareError = CoreException.Temporary("offline")
+        repeat(5) { runBlocking { switch.reregister() } }
+        assertEquals(DeliveryMode.Google, settings.deliveryMode)
+        assertNull(settings.pushFallback)
+    }
+
+    @Test
     fun registeringAgainWithAnUnreachableServerStaysInGoogleModeAndTriesLater() {
         google()
         backend.prepareError = CoreException.Temporary("offline")

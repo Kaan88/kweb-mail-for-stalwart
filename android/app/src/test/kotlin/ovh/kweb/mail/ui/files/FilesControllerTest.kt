@@ -18,6 +18,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import ovh.kweb.mail.ui.transfer.DownloadStop
 import uniffi.kweb_core.Exception as CoreException
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
@@ -73,10 +74,21 @@ private class FakeBackend : FilesBackend {
         calls += "delete:$id"
     }
 
-    override fun download(account: String?, blobId: String, destPath: String) {
+    /** What the next download reports before it ends, and whether it ends the way a stop does. */
+    var downloadReports: List<Pair<Long, Long?>> = emptyList()
+    var downloadStopped = false
+
+    override fun download(account: String?, blobId: String, destPath: String, stop: DownloadStop, onProgress: (Long, Long?) -> Unit): Boolean {
+        downloadReports.forEach { (done, total) -> onProgress(done, total) }
         downloadGate?.invoke(blobId)
+        if (stop.stopped) {
+            downloadStopped = true
+            calls += "stopped:$blobId"
+            return false
+        }
         File(destPath).writeText("x")
         calls += "download:$blobId"
+        return true
     }
 }
 
@@ -337,6 +349,51 @@ class FilesControllerTest {
         c.open(f)
         await("download") { backend.calls.contains("download:blob-f") && c.state.value.opening == null }
         assertTrue(platform.cacheFile(null, f).isFile)
+    }
+
+    @Test fun theWindowShowsHowFarTheDownloadIsAndTheSizeFromTheList() {
+        shown()
+        val release = CountDownLatch(1)
+        val reported = CountDownLatch(1)
+        backend.downloadReports = listOf(2L to null)
+        backend.downloadGate = { reported.countDown(); release.await(5, TimeUnit.SECONDS) }
+        c.open(entry(id = "fa", name = "a.bin", size = 1000uL))
+        assertTrue(reported.await(5, TimeUnit.SECONDS))
+        // The list said how big the file is, so the total is known before the core says.
+        await("progress") { c.state.value.openingProgress?.done == 2L }
+        assertEquals(1000L, c.state.value.openingProgress?.total)
+        release.countDown()
+        await("done") { c.state.value.opening == null }
+        assertNull(c.state.value.openingProgress)
+    }
+
+    @Test fun cancellingStopsTheCoreDownloadAndOpensNothing() {
+        shown()
+        val inDownload = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        backend.downloadGate = { inDownload.countDown(); release.await(5, TimeUnit.SECONDS) }
+        c.open(entry(id = "fa", name = "a.bin"))
+        assertTrue(inDownload.await(5, TimeUnit.SECONDS))
+        c.cancelOpening()
+        assertNull(c.state.value.opening)
+        assertNull(c.state.value.openingProgress)
+        release.countDown()
+        await("core call ended") { backend.downloadStopped }
+        assertTrue(backend.calls.none { it.startsWith("download:") })
+        assertTrue(!platform.cacheFile(null, entry(id = "fa", name = "a.bin")).isFile)
+    }
+
+    @Test fun aSecondTapOnTheFileBeingDownloadedStartsNothing() {
+        shown()
+        val release = CountDownLatch(1)
+        backend.downloadGate = { release.await(5, TimeUnit.SECONDS) }
+        val f = entry(id = "fa", name = "a.bin")
+        c.open(f)
+        c.open(f)
+        c.open(f)
+        release.countDown()
+        await("done") { c.state.value.opening == null }
+        assertEquals(1, backend.calls.count { it == "download:blob-fa" })
     }
 
     @Test fun anItemTheAppCannotOpenSaysSo() {

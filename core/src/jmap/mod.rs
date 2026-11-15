@@ -13,6 +13,7 @@ mod calendars;
 mod clock;
 mod contacts;
 mod convert;
+mod download;
 mod enterprise;
 mod errors;
 mod features;
@@ -50,17 +51,24 @@ use crate::{
     model::{Action, Mailbox, MessageBody, MessageHeader},
     Error, Result,
 };
+/// The instant at which the wall clock of a zone shows a local time (the chat's calendar tools).
+pub(crate) use clock::unix as local_unix;
 pub use contacts::is_no_such_contact;
 use convert::{
     batch_size, body_part_properties, body_properties, header_properties, mailbox_properties, merge_pages,
     order_by_ids, to_body, to_header, to_keywords, to_mailbox, Page,
 };
+use download::Outcome;
+pub use download::{DownloadWatch, Outcome as DownloadOutcome, OFFLINE as DOWNLOAD_OFFLINE};
 use errors::from_jmap;
 pub use errors::{is_cannot_calculate_changes, is_forbidden, is_unauthorized};
 pub use features::RawSnippet;
 pub use files::UploadResume;
 pub use jscal::{check_span, sort as sort_agenda};
-pub use manage::{check_prefix as check_masked_prefix, new_two_step, AccountInfo, CredentialKind};
+pub use manage::{
+    check_prefix as check_masked_prefix, is_security_refusal, new_two_step, AccountInfo, CredentialKind,
+    SECURITY_NOT_ALLOWED, SECURITY_SIGN_IN_AGAIN,
+};
 pub use pushsub::{format_utc, normalize_key, NewSubscription, SubscriptionInfo, Verification};
 pub use send::{CopyState, HeaderIds, Uploaded};
 pub use send_later::reply_to_json;
@@ -375,26 +383,11 @@ impl Connection {
     /// Like [`Connection::download_to`], for a blob of the account `account` (the one the URL
     /// names: a file in a shared space).
     pub async fn download_from(&self, account: &str, blob_id: &str, file: &mut dyn Write) -> Result<()> {
-        let failed = |e: &dyn std::fmt::Display| Error::temporary(format!("download: {e}"));
-        let mut headers = self.client.headers().clone();
-        headers.remove(reqwest::header::CONTENT_TYPE);
-        let mut response = self
-            .downloads
-            .get(self.download_url(account, blob_id))
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|e| failed(&e))?;
-        match response.status().as_u16() {
-            200..=299 => {}
-            401 => return Err(errors::unauthorized("download")),
-            404 => return Err(Error::invalid("the server does not have this file")),
-            status => return Err(failed(&format!("the server answered {status}"))),
+        match self.download_tracked(account, blob_id, file, &DownloadWatch::default(), &mut |_, _| {}).await? {
+            Outcome::Complete => Ok(()),
+            // Nothing cancels this one.
+            Outcome::Cancelled => Err(Error::temporary("download: stopped")),
         }
-        while let Some(chunk) = response.chunk().await.map_err(|e| failed(&e))? {
-            file.write_all(&chunk).map_err(|e| Error::store(format!("saving the file: {e}")))?;
-        }
-        Ok(())
     }
 
     /// The session's download URL with its placeholders filled in, as jmap-client does it.

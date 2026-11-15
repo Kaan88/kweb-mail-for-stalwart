@@ -31,6 +31,13 @@ object ConsentRules {
      */
     fun isNeededAfterSave(returned: AiSettings): Boolean = returned.enabled && !returned.consented
 
+    /**
+     * After a save, once the service itself is agreed to: the chat is on and its own agreement is missing. That one is
+     * asked separately, because in the chat the assistant chooses what it reads. Declining it changes nothing: the chat
+     * stays switched on and says it is not agreed to.
+     */
+    fun isChatNeededAfterSave(returned: AiSettings): Boolean = returned.enabled && returned.allowChat && returned.consented && !returned.chatConsented
+
     /** What "Decline" stores after a save: the values as returned, switched off. */
     fun declined(returned: AiSettings): AiSettings = returned.copy(enabled = false)
 
