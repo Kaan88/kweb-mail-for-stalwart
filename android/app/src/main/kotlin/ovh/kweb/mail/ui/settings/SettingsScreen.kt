@@ -86,6 +86,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
     onOpenNotificationButtons: () -> Unit,
+    onOpenCrypto: () -> Unit,
     onOpenAway: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenAssistant: () -> Unit,
@@ -162,41 +163,48 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 6),
+                    Groups.shape(0, 7),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
                     icon = { Icon(painterResource(R.drawable.ic_schedule), contentDescription = null) },
                     onClick = onOpenAway,
                 )
                 SettingsRow(
-                    Groups.shape(1, 6),
+                    Groups.shape(1, 7),
                     stringResource(R.string.filters_title),
                     filtersLine(state.filters),
                     icon = { Icon(painterResource(R.drawable.ic_filter), contentDescription = null) },
                     onClick = onOpenFilters,
                 )
                 SettingsRow(
-                    Groups.shape(2, 6),
+                    Groups.shape(2, 7),
                     stringResource(R.string.scheduled_title),
                     state.scheduled?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.scheduled_count, it, it) },
                     icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
                     onClick = onOpenScheduled,
                 )
                 SettingsRow(
-                    Groups.shape(3, 6),
+                    Groups.shape(3, 7),
                     stringResource(R.string.senders_title),
                     icon = { Icon(Icons.Filled.Person, contentDescription = null) },
                     onClick = onOpenSenders,
                 )
                 SettingsRow(
-                    Groups.shape(4, 6),
+                    Groups.shape(4, 7),
                     stringResource(R.string.notifications_title),
                     stringResource(R.string.notifications_settings_detail),
                     icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
                     onClick = onOpenNotifications,
                 )
                 SettingsRow(
-                    Groups.shape(5, 6),
+                    Groups.shape(5, 7),
+                    stringResource(R.string.crypto_title),
+                    stringResource(R.string.crypto_settings_detail),
+                    icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                    onClick = onOpenCrypto,
+                )
+                SettingsRow(
+                    Groups.shape(6, 7),
                     stringResource(R.string.assistant_title),
                     assistantLine(state.assistant),
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },

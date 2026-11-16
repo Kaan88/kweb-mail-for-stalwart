@@ -8,6 +8,7 @@ mod bodies;
 mod bookkeeping;
 mod calendar;
 mod contacts;
+mod crypto;
 mod drafts;
 mod keywords;
 mod mailboxes;
@@ -19,6 +20,7 @@ mod tests;
 mod threads;
 mod waiting;
 
+pub use crypto::StoredKey;
 pub use drafts::{DraftRow, DraftState, Threading, DIRECTORY_EVERY};
 pub use outbox::Job;
 

@@ -144,6 +144,8 @@ fun ThreadScreen(
     var unsubscribeId by rememberSaveable { mutableStateOf<String?>(null) }
     val labelsState by vm.labels.state.collectAsStateWithLifecycle()
     val unsubscribes by vm.unsubscribe.state.collectAsStateWithLifecycle()
+    val cryptos by vm.crypto.state.collectAsStateWithLifecycle()
+    var cryptoId by rememberSaveable { mutableStateOf<String?>(null) }
 
     fun say(textRes: Int) {
         scope.launch { snackbar.showSnackbar(resources.getString(textRes)) }
@@ -454,7 +456,9 @@ fun ThreadScreen(
                         download = activeDownload?.progress,
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
+                        crypto = cryptos[header.id],
                         actions = CardActions(
+                            onCryptoChip = { cryptoId = header.id },
                             onLabels = { labelsTarget = header.id },
                             onUnsubscribe = { unsubscribeId = header.id },
                             onToggle = { vm.toggle(header.id) },
@@ -567,6 +571,19 @@ fun ThreadScreen(
                     onEdit = vm.labels::clearError,
                 )
             }
+        }
+    }
+    cryptoId?.let { id ->
+        val ui = cryptos[id]
+        if (ui == null) {
+            cryptoId = null
+        } else {
+            ovh.kweb.mail.ui.crypto.CryptoDialog(
+                ui = ui,
+                onDismiss = { cryptoId = null },
+                onRetry = { vm.crypto.recheck(id) },
+                onTakeOffer = { offer -> vm.crypto.takeOffer(id, offer) { say(R.string.crypto_offer_failed) } },
+            )
         }
     }
     unsubscribeId?.let { id ->

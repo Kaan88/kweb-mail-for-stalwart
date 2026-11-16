@@ -124,6 +124,9 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     /** The labels of the thread's messages and the user's list. */
     val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
 
+    /** The status of signed and encrypted messages among the opened ones (nothing is asked while the feature is off). */
+    val crypto = ovh.kweb.mail.ui.crypto.CryptoController(viewModelScope, Dispatchers.IO) { acct.core }
+
     /** The Unsubscribe chips of the opened messages. */
     val unsubscribe = UnsubscribeController(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
 
@@ -176,6 +179,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         pendingSave = null
         labels.reset()
         unsubscribe.reset()
+        crypto.reset()
         stateFlow.value = ThreadState()
         // Nothing queued for the last visit may reach the next one.
         while (reloads.tryReceive().isSuccess) { }
@@ -190,6 +194,13 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         stateFlow.update { it.copy(expanded = if (messageId in it.expanded) it.expanded - messageId else it.expanded + messageId) }
         fetchMissingBodies()
         askUnsubscribe()
+        askCrypto()
+    }
+
+    /** Each opened message is looked at once for a signature or encryption; plain mail stays plain and nothing is shown for it. */
+    private fun askCrypto() {
+        if (session == null) return
+        for (id in stateFlow.value.expanded) crypto.check(id)
     }
 
     /** An opened message of someone else's may come from a list: ask, once, whether it can be left. A failure shows nothing. */
@@ -390,6 +401,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
             }
             fetchMissingBodies()
             askUnsubscribe()
+            askCrypto()
             labels.refreshLabels()
             labels.load(messages.map { it.id })
             val s = stateFlow.value

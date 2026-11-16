@@ -5,6 +5,7 @@ mod admin;
 mod ai;
 mod args;
 mod commands;
+mod crypto;
 mod enterprise;
 mod push;
 mod secrets;

@@ -39,6 +39,8 @@ Usage:
   kweb label set <message-id> <label-id> on|off
                               put a label on a message or take it off
   kweb label show <label-id>  list the mail that has the label
+  kweb crypto status|on|off|keys|import <file>|rm <id>|check <message-id>|take <message-id> <key-id>
+                              S/MIME and OpenPGP: keyring, and the signature status of a message
   kweb watch                  follow live changes until Ctrl+C
   kweb read <message-id>      mark a message read
   kweb unread <message-id>    mark a message unread
@@ -214,6 +216,7 @@ pub enum Command {
     Unschedule { id: String },
     Identity(Identity),
     Ai(Ai),
+    Crypto(crate::crypto::Crypto),
     Admin(crate::admin::Admin),
     SignOut,
 }
@@ -380,6 +383,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             [word] if word == "status" => Ok(Command::PushStatus),
             _ => Err("push takes one word: status".into()),
         },
+        "crypto" => crate::crypto::parse(rest).map(Command::Crypto),
         "features" => no_args(rest, Command::Features),
         "security" => no_args(rest, Command::Security),
         "masked" => masked(rest).map(Command::Masked),

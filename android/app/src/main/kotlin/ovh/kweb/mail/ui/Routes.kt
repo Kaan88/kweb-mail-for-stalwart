@@ -123,6 +123,9 @@ sealed interface Route {
 
     data object Settings : Route
 
+    /** The keys and the switch of the encryption feature (S/MIME and OpenPGP), reached from Settings. */
+    data object Crypto : Route
+
     /** One screen of the admin area (server administration), reached from Settings. */
     data class Admin(val screen: ovh.kweb.mail.ui.admin.AdminScreen) : Route
 

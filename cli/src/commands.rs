@@ -63,6 +63,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Unschedule { id } => unschedule(core, id),
         Command::Identity(what) => identity(core, what),
         Command::Ai(what) => ai::run(core, what, std::env::var(ai::KEY_VARIABLE).ok()),
+        Command::Crypto(what) => crate::crypto::run(core, what),
         Command::SignOut => sign_out(core),
     }
 }

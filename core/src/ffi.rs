@@ -7,6 +7,7 @@
 mod admin;
 mod admin_link;
 mod ai_chat;
+mod crypto;
 mod download;
 mod enterprise;
 
@@ -131,6 +132,8 @@ pub struct Core {
     /// The one conversation with the assistant, of the signed-in account. Memory only: it holds
     /// the suggestions and what can be undone, and goes on sign-out (see `ffi/ai_chat.rs`).
     chat: Mutex<Option<assistant::chat::Chat>>,
+    /// What the encryption feature keeps in memory (see `ffi/crypto.rs`).
+    crypto: crate::crypto::State,
 }
 
 #[uniffi::export]
@@ -157,6 +160,7 @@ impl Core {
             inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })),
             ai: assistant::Slot::default(),
             chat: Mutex::new(None),
+            crypto: crate::crypto::State::default(),
         }))
     }
 

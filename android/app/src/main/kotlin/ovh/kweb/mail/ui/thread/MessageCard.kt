@@ -67,6 +67,9 @@ import ovh.kweb.mail.ui.list.Preview
 import ovh.kweb.mail.ui.list.RowTime
 import ovh.kweb.mail.ui.list.Sender
 import ovh.kweb.mail.ui.list.rowTimeText
+import ovh.kweb.mail.ui.crypto.CryptoChip
+import ovh.kweb.mail.ui.crypto.CryptoRules
+import ovh.kweb.mail.ui.crypto.CryptoUi
 import ovh.kweb.mail.ui.mailextras.MessageChips
 import ovh.kweb.mail.ui.mailextras.UnsubEntry
 import uniffi.kweb_core.Address
@@ -107,6 +110,8 @@ class CardActions(
     val showMenu: Boolean = true,
     /** The Cancel on the attachment that is being downloaded. */
     val onCancelDownload: () -> Unit = {},
+    /** A tap on the status chip of a signed or encrypted message (it opens the explanation). */
+    val onCryptoChip: () -> Unit = {},
 )
 
 /**
@@ -131,6 +136,8 @@ fun MessageCard(
     labelNames: List<String> = emptyList(),
     /** The Unsubscribe chip; null for none. */
     unsubscribe: UnsubEntry? = null,
+    /** The status of a signed or encrypted message; null for plain mail. */
+    crypto: CryptoUi? = null,
     /** A thread of one message is drawn flat on the page (subject, sender, body, files), as in the owner's sheet, not as a card. */
     flat: Boolean = false,
 ) {
@@ -174,9 +181,13 @@ fun MessageCard(
                 )
             }
         } else {
-            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe)
+            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe, crypto)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
-                BodyView(header, body, remoteAllowed, busyBlobId, download, actions, account, flatNow)
+                // Mail the core opened (decrypted, or taken out of opaque signed data) is shown from the core's copy alone;
+                // remote content stays off for it when the core says so, whatever the user allowed.
+                val view = (crypto as? CryptoUi.Ready)?.view
+                val shown = if (body is BodyState.Loaded && view != null) BodyState.Loaded(CryptoRules.displayBody(body.body, view)) else body
+                BodyView(header, shown, CryptoRules.remoteAllowed(remoteAllowed, view), busyBlobId, download, actions, account, flatNow, CryptoRules.remoteOffered(view))
             }
         }
     }
@@ -192,6 +203,7 @@ private fun ExpandedHeader(
     actions: CardActions,
     labelNames: List<String>,
     unsubscribe: UnsubEntry?,
+    crypto: CryptoUi?,
 ) {
     var showDetails by remember(header.id) { mutableStateOf(false) }
     val loaded = (body as? BodyState.Loaded)?.body
@@ -240,6 +252,7 @@ private fun ExpandedHeader(
             onUnsubscribe = actions.onUnsubscribe,
             modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
         )
+        if (crypto != null) CryptoChip(crypto, onClick = actions.onCryptoChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
         if (showDetails) {
             SelectionContainer {
                 Column(Modifier.padding(top = 8.dp)) {
@@ -361,6 +374,7 @@ private fun BodyView(
     actions: CardActions,
     account: String?,
     flat: Boolean,
+    remoteOffered: Boolean = true,
 ) {
     when (state) {
         null, BodyState.Loading -> Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -372,7 +386,7 @@ private fun BodyView(
             Text(stringResource(R.string.thread_body_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = actions.onRetryBody) { Text(stringResource(R.string.retry)) }
         }
-        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, download, actions, account, flat)
+        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, download, actions, account, flat, remoteOffered)
     }
 }
 
@@ -386,11 +400,12 @@ private fun LoadedBody(
     actions: CardActions,
     account: String?,
     flat: Boolean,
+    remoteOffered: Boolean = true,
 ) {
     val html = body.html
     if (html != null) {
         var blocked by remember(header.id) { mutableStateOf(false) }
-        if (blocked && !remoteAllowed) {
+        if (blocked && !remoteAllowed && remoteOffered) {
             Row(
                 Modifier
                     .fillMaxWidth()

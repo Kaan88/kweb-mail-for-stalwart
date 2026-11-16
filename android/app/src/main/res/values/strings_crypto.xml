@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="crypto_title">Encryption (S/MIME and OpenPGP)</string>
+    <string name="crypto_settings_detail">Signed and encrypted mail, and your keys</string>
+    <string name="crypto_switch">Read signed and encrypted mail</string>
+    <string name="crypto_switch_detail">Off by default. When on, a mail that is signed or encrypted shows a status, and the whole message is fetched to check it.</string>
+    <string name="crypto_off_note">Nothing is checked while this is off, and no mail is looked at for it.</string>
+    <string name="crypto_not_searchable">Mail that is encrypted, by its sender or by the server for storage, cannot be searched by its text on the server.</string>
+
+    <string name="crypto_own_keys">Your keys</string>
+    <string name="crypto_own_empty">No private key yet. Import one to read mail that is encrypted for you.</string>
+    <string name="crypto_import_own">Import a private key</string>
+    <string name="crypto_import_own_detail">An armored OpenPGP key file, or a PKCS#12 file (.p12, .pfx)</string>
+    <string name="crypto_other_keys">Other people\'s keys and certificates</string>
+    <string name="crypto_other_empty">None yet. Keys are only added when you choose to: from a file, from a message, or by pasting.</string>
+    <string name="crypto_import_public">Import a public key or certificate</string>
+    <string name="crypto_import_public_detail">From a file</string>
+    <string name="crypto_paste_public">Paste a public key</string>
+    <string name="crypto_paste_hint">-----BEGIN PGP PUBLIC KEY BLOCK-----</string>
+    <string name="crypto_paste_add">Add</string>
+    <string name="crypto_remove_title">Remove this key?</string>
+    <string name="crypto_remove_own_body">The private part is deleted from this phone. Mail that is encrypted for this key can no longer be opened here unless you import it again.</string>
+    <string name="crypto_remove_other_body">Signatures made with it can no longer be checked here until you add it again.</string>
+    <string name="crypto_remove">Remove</string>
+    <string name="crypto_forget_all">Remove all keys and switch off</string>
+    <string name="crypto_forget_title">Remove every key?</string>
+    <string name="crypto_forget_body">All keys and certificates, yours with their private parts, are deleted from this phone, and the feature is switched off.</string>
+    <string name="crypto_import_failed">The file could not be added: %1$s</string>
+    <string name="crypto_imported">Added: %1$s</string>
+    <string name="crypto_load_failed">The keys could not be loaded.</string>
+    <string name="crypto_kind_pgp">OpenPGP</string>
+    <string name="crypto_kind_smime">S/MIME</string>
+    <string name="crypto_fingerprint">Fingerprint %1$s</string>
+    <string name="crypto_from_file">From a file</string>
+    <string name="crypto_from_paste">Pasted</string>
+    <string name="crypto_from_mail">From a message of %1$s</string>
+    <string name="crypto_from_own">Your key</string>
+    <string name="crypto_expires">Valid until %1$s</string>
+    <string name="crypto_locked">Protected by a passphrase</string>
+    <string name="crypto_unlocked">Kept unlocked on this phone</string>
+    <string name="crypto_unlock_keep">Keep unlocked on this phone</string>
+    <string name="crypto_unlock_keep_detail">The passphrase is stored in the phone\'s protected storage, so mail opens without asking. Anyone who can unlock this phone can then read mail encrypted for this key.</string>
+    <string name="crypto_forget_passphrase">Ask for the passphrase again</string>
+
+    <string name="crypto_passphrase_title">Passphrase</string>
+    <string name="crypto_passphrase_body">The key %1$s is protected by a passphrase. It is used for this message only unless you keep it unlocked.</string>
+    <string name="crypto_passphrase_hint">Passphrase</string>
+    <string name="crypto_passphrase_keep">Keep unlocked on this phone</string>
+    <string name="crypto_passphrase_open">Open</string>
+    <string name="crypto_import_passphrase_body">This file is protected by a passphrase. It is only used to read the key now.</string>
+    <string name="crypto_wrong_passphrase">That passphrase does not open the key.</string>
+
+    <string name="crypto_chip_checking">Checking…</string>
+    <string name="crypto_chip_verified">Signed by %1$s</string>
+    <string name="crypto_chip_key_changed">Signed, but with a different key than before</string>
+    <string name="crypto_chip_cert_not_checked">Signed, certificate not checked</string>
+    <string name="crypto_chip_other_address">Signed by someone else</string>
+    <string name="crypto_chip_no_key">Signed, cannot check</string>
+    <string name="crypto_chip_invalid">Signature is not valid</string>
+    <string name="crypto_chip_key_expired">Signed with an expired key</string>
+    <string name="crypto_chip_key_revoked">Signed with a revoked key</string>
+    <string name="crypto_chip_unsupported">Signed, cannot check</string>
+    <string name="crypto_chip_unreadable">Signature cannot be read</string>
+    <string name="crypto_chip_decrypted">Encrypted, opened</string>
+    <string name="crypto_chip_decrypted_signed">Encrypted and signed by %1$s</string>
+    <string name="crypto_chip_need_key">Encrypted, no key to open it</string>
+    <string name="crypto_chip_need_passphrase">Encrypted, passphrase needed</string>
+    <string name="crypto_chip_wrong_passphrase">Encrypted, wrong passphrase</string>
+    <string name="crypto_chip_no_integrity">Encrypted without protection</string>
+    <string name="crypto_chip_enc_unsupported">Encrypted, cannot open</string>
+    <string name="crypto_chip_enc_failed">Encrypted, could not be opened</string>
+    <string name="crypto_chip_failed">Could not check</string>
+
+    <string name="crypto_why_title">About this message</string>
+    <string name="crypto_close">Close</string>
+    <string name="crypto_retry">Try again</string>
+    <string name="crypto_enter_passphrase">Enter passphrase</string>
+    <string name="crypto_signer">Signer: %1$s</string>
+    <string name="crypto_signer_addresses">Addresses on the key: %1$s</string>
+    <string name="crypto_from_line">The message says it is from %1$s.</string>
+    <string name="crypto_in_keyring">This key is in your keyring.</string>
+    <string name="crypto_not_in_keyring">This key came with the message and is not in your keyring.</string>
+    <string name="crypto_whole">The check covers the whole message.</string>
+    <string name="crypto_part">The check covers only one part of the message. Anything outside that part is not covered, whatever it looks like.</string>
+
+    <string name="crypto_why_verified">The signature is valid, nothing was changed after signing, and the address of the key is the address the message is from. Keep in mind that you added this key yourself: the check is only as good as that.</string>
+    <string name="crypto_why_key_changed">The signature is valid, but the key is not the one this sender used first. It may be a new key of the same person, or someone else. Check with the sender in another way before you rely on it.</string>
+    <string name="crypto_why_cert_not_checked">The signature is valid, and the certificate names the address the message is from. But the certificate came with the message and is not checked against an authority, so anyone could have made it. To rely on it, add it to your keys only if you know it is right.</string>
+    <string name="crypto_why_other_address">The signature is valid, but the key belongs to a different address than the one the message is from. Do not take the message to be from its sender.</string>
+    <string name="crypto_why_no_key">The message is signed, but you have no key or certificate for the signer, so nothing can be said about it.</string>
+    <string name="crypto_why_invalid">The signature does not fit the message. It was changed after it was signed, or the signature is false. Do not trust it.</string>
+    <string name="crypto_why_key_expired">The signature is valid, but the key had run out when it was used.</string>
+    <string name="crypto_why_key_revoked">The signature is valid, but the key was revoked by its owner, usually because it is no longer safe.</string>
+    <string name="crypto_why_unsupported">The message is signed in a way this app cannot check: %1$s</string>
+    <string name="crypto_why_unreadable">The signature data could not be read.</string>
+    <string name="crypto_why_decrypted">The message was encrypted for you and has been opened here. It is shown on its own and is not stored on this phone.</string>
+    <string name="crypto_why_need_key">The message is encrypted, but none of your private keys is one it was made for. Import the key to open it.</string>
+    <string name="crypto_why_need_passphrase">The message is encrypted for a key of yours that is protected by a passphrase.</string>
+    <string name="crypto_why_wrong_passphrase">That passphrase does not open the key.</string>
+    <string name="crypto_why_no_integrity">The message is encrypted in an old way that cannot tell whether it was changed on the way, which attackers can use to read it. It is not opened.</string>
+    <string name="crypto_why_enc_unsupported">The message is encrypted in a way this app cannot open: %1$s</string>
+    <string name="crypto_why_enc_failed">The encrypted data is damaged or could not be read.</string>
+    <string name="crypto_why_no_detail">no further detail</string>
+
+    <string name="crypto_note_remote_blocked">Pictures and other content from the internet stay blocked in this message, whatever you chose. Content like that can be used to read encrypted mail.</string>
+    <string name="crypto_note_unsigned_hidden">Text around the signed part was left out because the signature does not cover it.</string>
+    <string name="crypto_note_signature_expired">The signature itself had expired.</string>
+    <string name="crypto_note_signed_inside">The message was signed inside the encryption.</string>
+    <string name="crypto_note_not_searchable">Encrypted mail cannot be searched by its text on the server.</string>
+    <string name="crypto_note_smime_no_revocation">For S/MIME no chain of trust and no revocation list is checked.</string>
+
+    <string name="crypto_offer_title">A key came with this message</string>
+    <string name="crypto_offer_add">Add to my keys</string>
+    <string name="crypto_offer_known">Already in your keys</string>
+    <string name="crypto_offer_failed">The key could not be added.</string>
+    <string name="crypto_offer_line">%1$s (%2$s)</string>
+
+    <string name="crypto_attachments">Files in the encrypted message</string>
+    <string name="crypto_attachment_failed">The file could not be opened.</string>
+    <string name="crypto_attachment_note">Opened from memory and removed again when you leave; nothing of it is kept.</string>
+</resources>

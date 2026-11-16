@@ -249,6 +249,37 @@ pub(super) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, address)
     );
     ",
+    // 9: M9 (OpenPGP and S/MIME). The keyring: public keys and certificates (never a private part;
+    // those live in the host's secret store) and the fingerprint first seen for each address.
+    // Additive: nothing is fetched again. `material` is an OpenPGP transferable public key or a DER
+    // certificate. `has_secret` and `needs_passphrase` only say that the private part exists in the
+    // secret store and whether it is locked.
+    "
+    CREATE TABLE crypto_keys (
+        account_id       TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        id               TEXT NOT NULL,
+        kind             TEXT NOT NULL,
+        label            TEXT NOT NULL,
+        emails           TEXT NOT NULL,
+        fingerprint      TEXT NOT NULL,
+        origin           TEXT NOT NULL,
+        origin_detail    TEXT NOT NULL DEFAULT '',
+        added_at         INTEGER NOT NULL,
+        material         BLOB NOT NULL,
+        has_secret       INTEGER NOT NULL DEFAULT 0,
+        needs_passphrase INTEGER NOT NULL DEFAULT 0,
+        expires_at       INTEGER,
+        PRIMARY KEY (account_id, id)
+    );
+
+    CREATE TABLE crypto_first_seen (
+        account_id  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        address     TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        seen_at     INTEGER NOT NULL,
+        PRIMARY KEY (account_id, address)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.
