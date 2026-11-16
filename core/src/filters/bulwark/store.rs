@@ -217,7 +217,7 @@ async fn view(conn: &Connection, ins: &Inspect) -> Result<View> {
         script_name: ins.chosen.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
         active,
         kind,
-        raw_text: if ins.locked() { ins.text.clone() } else { String::new() },
+        raw_text: ins.text.clone(),
         rules,
         external,
         differs,

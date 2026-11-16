@@ -59,7 +59,7 @@ pub struct FiltersState {
     pub opaque: bool,
     /// A script that has no metadata comment (another tool's): `raw_text` is shown, never rewritten.
     pub foreign: bool,
-    /// The script's text when it is opaque or foreign.
+    /// The script's text as the server has it (shown when it is opaque or foreign; the raw editor starts from it).
     pub raw_text: String,
     /// Bulwark's JSON list of rules (the old script's, converted, while `migration_pending`).
     pub rules_json: String,

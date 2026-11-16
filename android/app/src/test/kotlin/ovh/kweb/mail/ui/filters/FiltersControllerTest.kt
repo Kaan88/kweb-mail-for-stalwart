@@ -1,9 +1,8 @@
 package ovh.kweb.mail.ui.filters
 
+import java.time.ZoneId
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,49 +17,65 @@ import org.junit.Test
 import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.Exception as CoreException
 import uniffi.kweb_core.FilterRule
-import uniffi.kweb_core.Filters
+import uniffi.kweb_core.FiltersState
+import uniffi.kweb_core.Label
 import uniffi.kweb_core.Mailbox
 
+private const val A = """{"id":"a","name":"A","enabled":true,"matchType":"all","conditions":[{"field":"from","comparator":"contains","value":"a@x.org"}],"actions":[{"type":"move","value":"Work","mailboxId":"work"}],"stopProcessing":false}"""
+private const val B = """{"id":"b","name":"B","enabled":true,"matchType":"all","conditions":[{"field":"subject","comparator":"is","value":"hi"}],"actions":[{"type":"star"}],"stopProcessing":false}"""
+
+private val utc = ZoneId.of("UTC")
+
 private class FakeBackend : FiltersBackend {
-    var current: Filters = ovh.kweb.mail.ui.filters.filters()
+    var current: FiltersState = coreState("[$A,$B]")
     var mailboxes: List<Mailbox> = listOf(box("work", "Work"), box("in", "Inbox", role = "inbox"))
     val calls = CopyOnWriteArrayList<String>()
     var failWith: Exception? = null
-    var failSaveOnce: Exception? = null
-    var gate: (() -> Unit)? = null
-    var fromMessage: FilterRule = FilterRules.newRule()
-    var saved: List<FilterRule> = emptyList()
+    var failOnce: Exception? = null
+    var seed: FilterRule? = null
 
-    override fun filters(): Filters {
-        val before = current
-        gate?.invoke()
-        calls += "filters"
+    private fun write(call: String, next: () -> FiltersState): FiltersState {
+        calls += call
+        failOnce?.let { failOnce = null; throw it }
         failWith?.let { throw it }
-        return before
-    }
-
-    override fun saveFilters(rules: List<FilterRule>, activate: Boolean, overwrite: Boolean): Filters {
-        calls += "save:${rules.size}:activate=$activate:overwrite=$overwrite"
-        failSaveOnce?.let { failSaveOnce = null; throw it }
-        failWith?.let { throw it }
-        saved = rules
-        current = current.copy(rules = rules.mapIndexed { i, r -> if (r.id.isEmpty()) r.copy(id = "new$i") else r })
+        current = next()
         return current
     }
 
-    override fun setFiltersActive(active: Boolean): Filters {
-        calls += "active:$active"
+    private fun rules() = RuleModel.parseList(current.rulesJson, utc)
+
+    override fun state(): FiltersState {
+        calls += "state"
         failWith?.let { throw it }
-        current = current.copy(isActive = active, awayIsOn = false, otherActive = null)
         return current
     }
 
-    override fun filterFromMessage(messageId: String): FilterRule {
-        calls += "from:$messageId"
-        return fromMessage
+    override fun save(rulesJson: String) = write("save") { current.copy(rulesJson = rulesJson, active = true, scriptName = "filters", migrationPending = false) }
+    override fun setEnabled(on: Boolean) = write("enabled:$on") { current.copy(active = on, vacationConflict = false) }
+    override fun toggle(id: String, enabled: Boolean) = write("toggle:$id:$enabled") {
+        current.copy(rulesJson = RuleModel.listToJson(rules().map { if (it.id == id) it.copy(enabled = enabled) else it }, utc))
     }
-
+    override fun move(id: String, up: Boolean) = write("move:$id:$up") {
+        val list = rules().toMutableList()
+        val i = list.indexOfFirst { it.id == id }
+        val j = if (up) i - 1 else i + 1
+        if (i >= 0 && j in list.indices) {
+            val x = list[i]
+            list[i] = list[j]
+            list[j] = x
+        }
+        current.copy(rulesJson = RuleModel.listToJson(list, utc))
+    }
+    override fun delete(id: String) = write("delete:$id") { current.copy(rulesJson = RuleModel.listToJson(rules().filter { it.id != id }, utc)) }
+    override fun rawSave(text: String) = write("raw") { current.copy(rawText = text) }
+    override fun resetToVisual() = write("reset") { current.copy(rulesJson = "[]", opaque = false, foreign = false, rawText = "") }
+    override fun migrateOld() = write("migrate") { current.copy(oldScriptPresent = false) }
     override fun mailboxes() = mailboxes
+    override fun labels() = listOf(Label("Imp", "Imp"))
+    override fun seed(messageId: String): FilterRule {
+        calls += "seed:$messageId"
+        return seed!!
+    }
 }
 
 class FiltersControllerTest {
@@ -71,7 +86,7 @@ class FiltersControllerTest {
 
     @Before fun setUp() {
         backend = FakeBackend()
-        c = FiltersController(scope, pool.asCoroutineDispatcher(), backend)
+        c = FiltersController(scope, pool.asCoroutineDispatcher(), backend, utc)
     }
 
     @After fun tearDown() {
@@ -86,22 +101,28 @@ class FiltersControllerTest {
         }
     }
 
-    private fun ready() {
-        c.start(null)
+    private fun ready(from: String? = null) {
+        c.start(from)
         waitFor("ready") { c.state.value.phase == FiltersPhase.READY }
     }
 
     private fun idle() = waitFor("idle") { !c.state.value.busy }
 
-    @Test fun loadsRulesAndFolders() {
-        backend.current = filters(listOf(rule("a"), rule("b")), active = true)
+    @Test fun loadsRulesFoldersAndLabels() {
         ready()
-        assertEquals(2, c.state.value.rules.size)
+        assertEquals(listOf("a", "b"), c.state.value.rules.map { it.id })
         assertEquals(2, c.state.value.folders.size)
-        assertTrue(c.state.value.filters!!.isActive)
+        assertEquals(listOf("Imp"), c.state.value.labels.map { it.name })
     }
 
-    @Test fun aServerWithoutFiltersSaysSoInTheCoresWords() {
+    @Test fun aServerWithoutFiltersSaysSo() {
+        backend.current = coreState(supported = false)
+        c.start(null)
+        waitFor("none") { c.state.value.phase == FiltersPhase.NONE }
+        assertNotNull(c.state.value.unsupported)
+    }
+
+    @Test fun theCoresWordsAreShownWhenTheServerRefuses() {
         backend.failWith = CoreException.Invalid("this server has no mail filters")
         c.start(null)
         waitFor("none") { c.state.value.phase == FiltersPhase.NONE }
@@ -117,270 +138,196 @@ class FiltersControllerTest {
         waitFor("ready") { c.state.value.phase == FiltersPhase.READY }
     }
 
-    @Test fun movingARuleSavesAtOnceWithoutActivatingOrOverwriting() {
-        backend.current = filters(listOf(rule("a"), rule("b")))
+    @Test fun movingARuleAndTheRuleSwitchSaveAtOnce() {
         ready()
-        c.moveRule(0, 1)
+        c.moveRule("a", up = false)
         idle()
-        assertEquals("save:2:activate=false:overwrite=false", backend.calls.last())
         assertEquals(listOf("b", "a"), c.state.value.rules.map { it.id })
-    }
-
-    @Test fun theRuleSwitchSavesAtOnce() {
-        backend.current = filters(listOf(rule("a")))
-        ready()
-        c.setRuleEnabled(0, false)
+        c.setRuleEnabled("b", false)
         idle()
-        assertEquals(false, c.state.value.rules[0].enabled)
+        assertEquals(false, c.state.value.rules.first { it.id == "b" }.enabled)
+        assertEquals(listOf("state", "move:a:false", "toggle:b:false"), backend.calls.toList())
     }
 
-    @Test fun switchingOnWithTheAwayMessageOnAsksFirst() {
-        backend.current = filters(listOf(rule("a")), away = true)
+    @Test fun deletingOffersUndoWhichSavesTheListAsItWas() {
         ready()
-        c.setActive(true)
-        assertEquals(FiltersDialog.SwitchOn(listOf(SwitchOff.Away)), c.state.value.dialog)
-        assertTrue(backend.calls.none { it.startsWith("active") })
+        val before = c.state.value.core!!.rulesJson
+        c.deleteRule("a")
+        idle()
+        assertEquals(listOf("b"), c.state.value.rules.map { it.id })
+        assertEquals(UndoDelete("A", before), c.state.value.undo)
+        c.undoDelete()
+        idle()
+        assertEquals(listOf("a", "b"), c.state.value.rules.map { it.id })
+        assertNull(c.state.value.undo)
+        assertEquals("save", backend.calls.last())
+    }
+
+    @Test fun switchingOnWithTheAwayMessageInTheWayAsksFirst() {
+        backend.current = coreState("[$A]", active = false, vacationConflict = true)
+        ready()
+        c.setEnabled(true)
+        assertEquals(FiltersDialog.SwitchOn, c.state.value.dialog)
+        assertTrue(backend.calls.none { it.startsWith("enabled") })
         c.confirmSwitchOn()
         idle()
-        assertEquals("active:true", backend.calls.last())
-        assertNull(c.state.value.dialog)
-        assertEquals(false, c.state.value.filters!!.awayIsOn)
+        assertEquals("enabled:true", backend.calls.last())
+        assertTrue(c.state.value.core!!.active)
     }
 
-    @Test fun switchingOnWithNothingElseOnAsksNothingAndOffNeverAsks() {
-        backend.current = filters(listOf(rule("a")))
+    @Test fun switchingOnOrOffAsksNothingElse() {
+        backend.current = coreState("[$A]", active = false)
         ready()
-        c.setActive(true)
+        c.setEnabled(true)
         idle()
-        assertEquals("active:true", backend.calls.last())
-        c.setActive(false)
+        assertEquals("enabled:true", backend.calls.last())
+        c.setEnabled(false)
         idle()
-        assertEquals("active:false", backend.calls.last())
+        assertEquals("enabled:false", backend.calls.last())
     }
 
-    @Test fun savingANewRuleAddsItAtTheTopAndClosesTheEditor() {
-        backend.current = filters(listOf(rule("a")))
+    @Test fun withNoScriptYetSwitchingOnSavesTheRulesWhichMakesIt() {
+        backend.current = coreState("[]", active = false, scriptName = "")
+        ready()
+        c.setEnabled(true)
+        idle()
+        assertEquals("save", backend.calls.last())
+        assertTrue(c.state.value.core!!.active)
+    }
+
+    @Test fun savingANewRuleAddsItAndClosesTheEditor() {
         ready()
         c.addRule()
-        c.edit { it.copy(name = "N", conditions = listOf(it.conditions[0].copy(value = "x")), markRead = true) }
+        c.edit { it.copy(name = "N", conditions = listOf(it.conditions[0].copy(value = "x")), actions = listOf(ActDraft("star"))) }
         assertNull(c.problem())
         c.saveEditor()
         idle()
-        assertEquals("N", backend.saved.first().name)
-        assertEquals(2, backend.saved.size)
+        assertEquals(listOf("a", "b"), c.state.value.rules.map { it.id }.take(2))
+        assertEquals("N", c.state.value.rules.last().name)
         assertNull(c.state.value.editor)
     }
 
     @Test fun anIncompleteRuleIsNotSent() {
         ready()
         c.addRule()
-        assertEquals(RuleProblem.BlankValue(0), c.problem())
+        assertEquals(RuleProblem.EmptyName, c.problem())
         c.saveEditor()
-        assertTrue(backend.calls.none { it.startsWith("save") })
+        assertTrue(backend.calls.none { it == "save" })
         assertNotNull(c.state.value.editor)
     }
 
-    @Test fun theCoresRefusalIsShownAsItIsAndTheEditorStaysOpen() {
-        backend.current = filters(listOf(rule("a", moveTo = "work")))
+    @Test fun theCoresRefusalIsShownAndTheEditorStaysOpen() {
         ready()
-        c.openRule(0)
-        c.edit { it.copy(star = true) }
-        backend.failWith = CoreException.Invalid("rule Boss: the folder is gone")
+        c.openRule("a")
+        c.edit { it.copy(stop = true) }
+        backend.failWith = CoreException.Invalid("The rule A has no folder to put mail in.")
         c.saveEditor()
         idle()
-        assertEquals(UiMessage.Text("rule Boss: the folder is gone"), c.state.value.error)
+        assertEquals(UiMessage.Text("The rule A has no folder to put mail in."), c.state.value.error)
         assertNotNull(c.state.value.editor)
-        assertEquals(false, c.state.value.rules[0].star)
+        assertEquals(false, c.state.value.rules.first { it.id == "a" }.stop)
+    }
+
+    @Test fun aRuleThatNamesAFolderByPathOnlyGetsItsId() {
+        backend.current = coreState("[${A.replace(""","mailboxId":"work"""", "")}]")
+        ready()
+        c.openRule("a")
+        assertEquals("work", c.state.value.editor!!.rule.actions[0].mailboxId)
+        assertNull(c.problem())
     }
 
     @Test fun changedElsewhereReadsAgainAndSaysSo() {
-        backend.current = filters(listOf(rule("a")))
         ready()
-        backend.current = filters(listOf(rule("a"), rule("z")))
-        backend.failSaveOnce = CoreException.Invalid("the filters changed elsewhere")
-        c.setRuleEnabled(0, false)
-        waitFor("reloaded") { c.state.value.info != null }
-        assertEquals(2, c.state.value.rules.size)
-        assertNull(c.state.value.error)
-        assertTrue(c.state.value.info is UiMessage.Res)
+        backend.current = coreState("[$A,$B]")
+        backend.failOnce = CoreException.Invalid("The filters changed elsewhere. Read them again.")
+        c.setRuleEnabled("a", false)
+        waitFor("info") { c.state.value.info != null && !c.state.value.busy }
+        assertEquals("state", backend.calls.last())
     }
 
     @Test fun leavingTheEditorAsksOnlyWhenSomethingChanged() {
-        backend.current = filters(listOf(rule("a")))
         ready()
-        c.openRule(0)
+        c.openRule("a")
         c.leaveEditor()
         assertNull(c.state.value.editor)
-        c.openRule(0)
-        c.edit { it.copy(name = "other") }
+        c.openRule("a")
+        c.edit { it.copy(name = "Z") }
         c.leaveEditor()
         assertEquals(FiltersDialog.DiscardEditor, c.state.value.dialog)
-        assertNotNull(c.state.value.editor)
         c.discardEditor()
         assertNull(c.state.value.editor)
-        assertNull(c.state.value.dialog)
     }
 
-    @Test fun deletingARuleAsksThenSavesTheListWithoutIt() {
-        backend.current = filters(listOf(rule("a"), rule("b")))
+    @Test fun anOpaqueScriptOffersTextOnly() {
+        backend.current = coreState("[]", opaque = true, rawText = "# odd\nkeep;")
         ready()
-        c.openRule(1)
-        c.askDeleteRule()
-        assertEquals(FiltersDialog.DeleteRule, c.state.value.dialog)
-        c.confirmDeleteRule()
-        idle()
-        assertEquals(listOf("a"), backend.saved.map { it.id })
+        assertTrue(c.state.value.textOnly)
+        c.addRule()
         assertNull(c.state.value.editor)
-    }
-
-    @Test fun startingOverSavesAnEmptyListWithOverwrite() {
-        backend.current = filters(edited = true)
-        ready()
-        c.askStartOver()
-        assertEquals(FiltersDialog.StartOver, c.state.value.dialog)
-        c.confirmStartOver()
+        c.openRaw()
+        assertEquals("# odd\nkeep;", c.state.value.raw!!.text)
+        c.editRaw("keep;")
+        c.saveRaw()
         idle()
-        assertEquals("save:0:activate=false:overwrite=true", backend.calls.last())
+        assertEquals("raw", backend.calls.last())
+        assertNull(c.state.value.raw)
     }
 
-    @Test fun updateSavesTheRulesAgain() {
-        backend.current = filters(listOf(rule("a")), stale = true)
+    @Test fun resetToVisualAsksFirst() {
+        backend.current = coreState("[]", foreign = true, rawText = "keep;")
         ready()
-        c.update()
+        c.askReset()
+        assertEquals(FiltersDialog.ResetToVisual, c.state.value.dialog)
+        assertTrue(backend.calls.none { it == "reset" })
+        c.confirmReset()
         idle()
-        assertEquals("save:1:activate=false:overwrite=false", backend.calls.last())
+        assertEquals("reset", backend.calls.last())
+        assertTrue(!c.state.value.textOnly)
     }
 
-    @Test fun aRuleFromAMessageOpensTheEditorAsNew() {
-        backend.fromMessage = rule("", name = "", conditions = listOf(uniffi.kweb_core.FilterCondition(uniffi.kweb_core.FilterField.From, uniffi.kweb_core.FilterMatch.CONTAINS, "a@b.c")))
+    @Test fun theRawEditorOfARuleScriptStartsFromTheScriptText() {
+        backend.current = coreState("[$A]", rawText = "# the script")
+        ready()
+        c.openRaw()
+        c.leaveRaw()
+        assertNull(c.state.value.raw)
+        c.openRaw()
+        c.editRaw("# changed")
+        c.leaveRaw()
+        assertEquals(FiltersDialog.DiscardRaw, c.state.value.dialog)
+    }
+
+    @Test fun migrationSavesTheConvertedRulesThenRemovesTheOldScript() {
+        backend.current = coreState("[$A]", active = false, scriptName = "", migrationPending = true, oldScriptPresent = true)
+        ready()
+        c.addRule()
+        assertNull(c.state.value.editor)
+        c.askMigrate()
+        assertEquals(FiltersDialog.Migrate(1), c.state.value.dialog)
+        c.confirmMigrate()
+        idle()
+        assertEquals(listOf("save", "migrate"), backend.calls.takeLast(2))
+        assertTrue(!c.state.value.core!!.migrationPending)
+    }
+
+    @Test fun filterMailLikeThisOpensTheEditorWithTheSender() {
+        backend.seed = FilterRule(
+            "", "Ann", true, true,
+            listOf(uniffi.kweb_core.FilterCondition(uniffi.kweb_core.FilterField.From, uniffi.kweb_core.FilterMatch.CONTAINS, "ann@x.org")),
+            null, false, false, false, false, false,
+        )
         c.start("m1")
         waitFor("editor") { c.state.value.editor != null }
-        assertEquals(true, c.state.value.editor!!.isNew)
-        assertEquals("a@b.c", c.state.value.editor!!.rule.conditions[0].value)
-        assertEquals(false, c.state.value.editor!!.dirty)
+        assertTrue(c.state.value.editor!!.isNew)
+        assertEquals("ann@x.org", c.state.value.editor!!.rule.conditions[0].value)
+        assertTrue(backend.calls.none { it == "save" })
     }
 
-    @Test fun aLateAnswerDoesNotReplaceANewerOne() {
-        backend.current = filters(listOf(rule("old")))
-        val release = CountDownLatch(1)
-        val entered = CountDownLatch(1)
-        backend.gate = {
-            entered.countDown()
-            release.await(5, TimeUnit.SECONDS)
-        }
-        c.start(null)
-        assertTrue(entered.await(5, TimeUnit.SECONDS))
-        // A newer read starts and finishes first; the older one is released afterwards.
-        backend.gate = null
-        backend.current = filters(listOf(rule("new")))
-        c.load()
-        waitFor("new answer") { c.state.value.rules.map { it.id } == listOf("new") }
-        release.countDown()
-        Thread.sleep(200)
-        assertEquals(listOf("new"), c.state.value.rules.map { it.id })
-    }
-
-    @Test fun aChangeIsRefusedWhileAnotherIsBeingSaved() {
-        backend.current = filters(listOf(rule("a"), rule("b")))
-        ready()
-        val release = CountDownLatch(1)
-        val entered = CountDownLatch(1)
-        backend.gate = null
-        val slow = object : FiltersBackend by backend {
-            override fun saveFilters(rules: List<FilterRule>, activate: Boolean, overwrite: Boolean): Filters {
-                entered.countDown()
-                release.await(5, TimeUnit.SECONDS)
-                return backend.saveFilters(rules, activate, overwrite)
-            }
-        }
-        val c2 = FiltersController(scope, pool.asCoroutineDispatcher(), slow)
-        c2.start(null)
-        waitFor("ready2") { c2.state.value.phase == FiltersPhase.READY }
-        c2.moveRule(0, 1)
-        assertTrue(entered.await(5, TimeUnit.SECONDS))
-        c2.moveRule(1, -1)
-        release.countDown()
-        waitFor("done") { !c2.state.value.busy }
-        assertEquals(1, backend.calls.count { it.startsWith("save") })
-    }
-
-    @Test fun switchingOnWithNoScriptYetSavesTheRulesActive() {
-        backend.current = filters(listOf(rule("a")), text = "")
-        ready()
-        c.setActive(true)
-        idle()
-        assertEquals("save:1:activate=true:overwrite=false", backend.calls.last())
-        assertTrue(backend.calls.none { it.startsWith("active") })
-    }
-
-    @Test fun switchingOnWithNoScriptAndAwayOnAsksThenSavesActive() {
-        backend.current = filters(away = true, text = "")
-        ready()
-        c.setActive(true)
-        assertNotNull(c.state.value.dialog)
-        c.confirmSwitchOn()
-        idle()
-        assertEquals("save:0:activate=true:overwrite=false", backend.calls.last())
-    }
-
-    @Test fun anEditedScriptOpensNoEditor() {
-        backend.current = filters(edited = true)
-        backend.fromMessage = rule("", name = "")
+    @Test fun filterMailLikeThisIsRefusedWithWordsWhenTheScriptIsText() {
+        backend.current = coreState("[]", foreign = true, rawText = "keep;")
         c.start("m1")
         waitFor("info") { c.state.value.info != null }
         assertNull(c.state.value.editor)
-        c.addRule()
-        assertNull(c.state.value.editor)
-    }
-
-    @Test fun aNewRuleAlreadySavedIsNotSavedTwiceAfterChangedElsewhere() {
-        backend.current = filters(listOf(rule("a")))
-        ready()
-        c.addRule()
-        c.edit { it.copy(name = "N", conditions = listOf(it.conditions[0].copy(value = "x")), markRead = true) }
-        val typed = c.state.value.editor!!.rule
-        // The first save was written but its answer was lost; the next one is refused.
-        backend.current = filters(listOf(typed.copy(id = "z"), rule("a")))
-        backend.failSaveOnce = CoreException.Invalid("the filters changed elsewhere")
-        c.saveEditor()
-        waitFor("closed") { c.state.value.editor == null && c.state.value.info != null }
-        assertEquals(2, c.state.value.rules.size)
-        assertEquals(1, backend.calls.count { it.startsWith("save") })
-    }
-
-    @Test fun nothingTypedWhileASaveRunsChangesTheEditor() {
-        backend.current = filters(listOf(rule("a")))
-        ready()
-        c.openRule(0)
-        c.edit { it.copy(star = true) }
-        val release = CountDownLatch(1)
-        val entered = CountDownLatch(1)
-        val slow = object : FiltersBackend by backend {
-            override fun saveFilters(rules: List<FilterRule>, activate: Boolean, overwrite: Boolean): Filters {
-                entered.countDown()
-                release.await(5, TimeUnit.SECONDS)
-                return backend.saveFilters(rules, activate, overwrite)
-            }
-        }
-        val c2 = FiltersController(scope, pool.asCoroutineDispatcher(), slow)
-        c2.start(null)
-        waitFor("r2") { c2.state.value.phase == FiltersPhase.READY }
-        c2.openRule(0)
-        c2.edit { it.copy(star = true) }
-        c2.saveEditor()
-        assertTrue(entered.await(5, TimeUnit.SECONDS))
-        c2.edit { it.copy(name = "late") }
-        assertEquals("Boss", c2.state.value.editor!!.rule.name)
-        release.countDown()
-    }
-
-    @Test fun aRefusedQuietReadKeepsTheListAndShowsAnError() {
-        backend.current = filters(listOf(rule("a"), rule("b")))
-        ready()
-        backend.failWith = CoreException.Invalid("the server does not have this file")
-        c.refresh()
-        waitFor("error") { c.state.value.error != null }
-        assertEquals(FiltersPhase.READY, c.state.value.phase)
-        assertEquals(2, c.state.value.rules.size)
+        assertTrue(backend.calls.none { it.startsWith("seed") })
     }
 }

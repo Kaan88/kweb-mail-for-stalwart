@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.filters
 
+import java.time.ZoneId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -11,48 +12,61 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.Exception as CoreException
-import uniffi.kweb_core.FilterRule
-import uniffi.kweb_core.Filters
+import uniffi.kweb_core.FiltersState
+import uniffi.kweb_core.Label
 import uniffi.kweb_core.Mailbox
 
 enum class FiltersPhase { LOADING, READY, FAILED, NONE }
 
 /** The rule that is open in the editor, with what it was when it was opened (to tell whether anything changed). */
-data class EditorState(val original: FilterRule, val rule: FilterRule, val isNew: Boolean) {
+data class EditorState(val original: RuleDraft, val rule: RuleDraft, val isNew: Boolean) {
     val dirty: Boolean get() = rule != original
 }
 
-/** A question or a read-only text on top of the screen. */
+/** The script's text being edited by hand. */
+data class RawState(val original: String, val text: String) {
+    val dirty: Boolean get() = text != original
+}
+
+/** What "Undo" puts back after a rule was deleted: the whole list as it was. */
+data class UndoDelete(val ruleName: String, val rulesJson: String)
+
+/** A question on top of the screen. */
 sealed interface FiltersDialog {
-    /** Switching on would switch these off. */
-    data class SwitchOn(val asks: List<SwitchOff>) : FiltersDialog
-
-    data object StartOver : FiltersDialog
-
-    data object DeleteRule : FiltersDialog
+    /** Switching on switches the away message off (the server cannot run both here). */
+    data object SwitchOn : FiltersDialog
 
     data object DiscardEditor : FiltersDialog
 
-    /** The text of a script, to read: [name] is null for the app's own. */
-    data class Script(val name: String?, val text: String) : FiltersDialog
+    data object DiscardRaw : FiltersDialog
+
+    data object ResetToVisual : FiltersDialog
+
+    data class Migrate(val count: Int) : FiltersDialog
+
+    data object RemoveOld : FiltersDialog
 }
 
-data class FiltersState(
+data class FiltersUi(
     val phase: FiltersPhase = FiltersPhase.LOADING,
-    val filters: Filters? = null,
+    /** What the core said last. */
+    val core: FiltersState? = null,
+    val rules: List<RuleDraft> = emptyList(),
     /** The user's own folders, as the core lists them. */
     val folders: List<Mailbox> = emptyList(),
-    /** The core's words when the server has no filters. */
+    val labels: List<Label> = emptyList(),
     val unsupported: UiMessage? = null,
     /** A change is being saved. */
     val busy: Boolean = false,
     val error: UiMessage? = null,
-    /** Something that is not a failure: what happened to the list. */
     val info: UiMessage? = null,
+    val undo: UndoDelete? = null,
     val editor: EditorState? = null,
+    val raw: RawState? = null,
     val dialog: FiltersDialog? = null,
 ) {
-    val rules: List<FilterRule> get() = filters?.rules.orEmpty()
+    /** The script cannot be shown as rules: only text is edited. */
+    val textOnly: Boolean get() = core?.let { it.opaque || it.foreign } == true
 }
 
 /**
@@ -63,14 +77,15 @@ class FiltersController(
     private val scope: CoroutineScope,
     private val io: CoroutineDispatcher,
     private val backend: FiltersBackend,
+    private val zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    private val stateFlow = MutableStateFlow(FiltersState())
+    private val stateFlow = MutableStateFlow(FiltersUi())
     private var started = false
 
     /** Counts requests; an answer is used only when no newer request was started. */
     private var ticket = 0
 
-    val state: StateFlow<FiltersState> get() = stateFlow
+    val state: StateFlow<FiltersUi> get() = stateFlow
 
     /** Reads the filters once; with [fromMessageId] the editor then opens for a new rule made from that message. */
     fun start(fromMessageId: String?) {
@@ -79,7 +94,12 @@ class FiltersController(
         scope.launch {
             readNow()
             if (fromMessageId != null && stateFlow.value.phase == FiltersPhase.READY) {
-                if (stateFlow.value.filters?.isEdited == true) noRuleWhileEdited() else openFromMessage(fromMessageId)
+                val s = stateFlow.value
+                if (s.textOnly || s.core?.migrationPending == true) {
+                    stateFlow.update { it.copy(info = UiMessage.Res(R.string.filters_no_add_now)) }
+                } else {
+                    openFromMessage(fromMessageId)
+                }
             }
         }
     }
@@ -87,7 +107,7 @@ class FiltersController(
     fun reset() {
         ticket++
         started = false
-        stateFlow.value = FiltersState()
+        stateFlow.value = FiltersUi()
     }
 
     /** Reads again (Retry, and the screen coming back). A form that is open stays open. */
@@ -97,53 +117,71 @@ class FiltersController(
 
     /** Reads the filters again without showing the loading state when they are on screen already. */
     fun refresh() {
-        if (stateFlow.value.phase != FiltersPhase.READY || stateFlow.value.busy) return
+        val s = stateFlow.value
+        if (s.phase != FiltersPhase.READY || s.busy || s.editor != null || s.raw != null) return
         scope.launch { readNow(quiet = true) }
+    }
+
+    private fun apply(s: FiltersUi, core: FiltersState): FiltersUi =
+        s.copy(phase = FiltersPhase.READY, core = core, rules = parse(core), unsupported = null)
+
+    private fun parse(core: FiltersState): List<RuleDraft> = try {
+        RuleModel.parseList(core.rulesJson, zone)
+    } catch (_: Json.ParseError) {
+        emptyList()
     }
 
     private suspend fun readNow(quiet: Boolean = false, info: UiMessage? = null) {
         val mine = ++ticket
-        if (!quiet) stateFlow.update { it.copy(phase = if (it.filters == null) FiltersPhase.LOADING else it.phase) }
+        if (!quiet) stateFlow.update { it.copy(phase = if (it.core == null) FiltersPhase.LOADING else it.phase) }
         try {
-            val (filters, folders) = withContext(io) { backend.filters() to backend.mailboxes() }
+            val (core, folders, labels) = withContext(io) {
+                val core = backend.state()
+                if (!core.supported) Triple(core, emptyList(), emptyList())
+                else Triple(core, backend.mailboxes(), runCatching { backend.labels() }.getOrDefault(emptyList()))
+            }
             if (mine != ticket) return
+            if (!core.supported) {
+                stateFlow.update { it.copy(phase = FiltersPhase.NONE, core = null, rules = emptyList(), unsupported = UiMessage.Res(R.string.filters_none)) }
+                return
+            }
             stateFlow.update {
-                it.copy(phase = FiltersPhase.READY, filters = filters, folders = folders, unsupported = null, error = null, info = info ?: it.info.takeIf { quiet })
+                apply(it, core).copy(folders = folders, labels = labels, error = null, info = info ?: it.info.takeIf { quiet })
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: CoreException.Invalid) {
             if (mine != ticket) return
-            // Filters that are on screen stay (a script gone between two requests is not "no filters").
-            if (stateFlow.value.filters != null) {
+            if (stateFlow.value.core != null) {
                 stateFlow.update { it.copy(error = UiMessage.of(e, R.string.filters_load_failed), info = info ?: it.info.takeIf { quiet }) }
                 return
             }
-            stateFlow.update { it.copy(phase = FiltersPhase.NONE, filters = null, unsupported = UiMessage.of(e, R.string.filters_none)) }
+            stateFlow.update { it.copy(phase = FiltersPhase.NONE, core = null, unsupported = UiMessage.of(e, R.string.filters_none)) }
         } catch (e: Exception) {
             if (mine != ticket) return
-            // Rules that are on screen stay; a failed read of a quiet refresh says so.
             stateFlow.update {
-                if (it.filters != null) it.copy(error = UiMessage.Res(R.string.filters_load_failed)) else it.copy(phase = FiltersPhase.FAILED)
+                if (it.core != null) it.copy(error = UiMessage.Res(R.string.filters_load_failed)) else it.copy(phase = FiltersPhase.FAILED)
             }
         }
     }
 
     fun dismissError() = stateFlow.update { it.copy(error = null) }
 
-    fun dismissInfo() = stateFlow.update { it.copy(info = null) }
+    fun dismissInfo() = stateFlow.update { it.copy(info = null, undo = null) }
 
     fun dismissDialog() = stateFlow.update { it.copy(dialog = null) }
 
     // ---- the list ----
 
-    /** The switch "Use these filters". Switching on asks first when it switches something else off. */
-    fun setActive(on: Boolean) {
-        val filters = stateFlow.value.filters ?: return
+    /** "Use these filters". Switching on asks first when it switches the away message off. */
+    fun setEnabled(on: Boolean) {
+        val core = stateFlow.value.core ?: return
         if (stateFlow.value.busy) return
-        if (!on) return run { backend.setFiltersActive(false) }
-        val asks = FilterRules.askBeforeSwitchingOn(filters)
-        if (asks.isEmpty()) switchOn() else stateFlow.update { it.copy(dialog = FiltersDialog.SwitchOn(asks)) }
+        if (!on) {
+            if (core.scriptName.isEmpty()) return
+            return run { backend.setEnabled(false) }
+        }
+        if (core.vacationConflict) stateFlow.update { it.copy(dialog = FiltersDialog.SwitchOn) } else switchOn()
     }
 
     fun confirmSwitchOn() {
@@ -151,69 +189,125 @@ class FiltersController(
         switchOn()
     }
 
-    /** With no script of the app's yet the core refuses to switch one on: the rules are saved, active, instead. */
+    /** With no script yet the core refuses to switch one on: the rules (none) are saved instead, which makes it and runs it. */
     private fun switchOn() {
-        val filters = stateFlow.value.filters ?: return
-        if (filters.text.isEmpty()) run { backend.saveFilters(filters.rules, activate = true, overwrite = false) } else run { backend.setFiltersActive(true) }
+        val core = stateFlow.value.core ?: return
+        if (core.scriptName.isEmpty()) run { backend.save(core.rulesJson) } else run { backend.setEnabled(true) }
     }
 
-    private fun noRuleWhileEdited() = stateFlow.update { it.copy(info = UiMessage.Res(R.string.filters_edited_no_add)) }
-
-    fun moveRule(index: Int, delta: Int) {
-        val rules = stateFlow.value.rules
-        val moved = FilterRules.move(rules, index, delta)
-        if (moved == rules) return
-        run { backend.saveFilters(moved, activate = false, overwrite = false) }
+    fun setRuleEnabled(id: String, enabled: Boolean) {
+        if (stateFlow.value.textOnly) return
+        run { backend.toggle(id, enabled) }
     }
 
-    fun setRuleEnabled(index: Int, enabled: Boolean) {
-        val rules = stateFlow.value.rules
-        if (index !in rules.indices) return
-        run { backend.saveFilters(FilterRules.withEnabled(rules, index, enabled), activate = false, overwrite = false) }
+    fun moveRule(id: String, up: Boolean) {
+        if (stateFlow.value.textOnly) return
+        run { backend.move(id, up) }
     }
 
-    /** "Update": saves the rules again, which brings the script up to date. */
+    /** Deletes at once; the notice offers Undo, which saves the list as it was. */
+    fun deleteRule(id: String, afterwards: () -> Unit = {}) {
+        val s = stateFlow.value
+        val core = s.core ?: return
+        val rule = s.rules.firstOrNull { it.id == id } ?: return
+        run(onDone = { afterwards() }, undo = UndoDelete(rule.name, core.rulesJson)) { backend.delete(id) }
+    }
+
+    fun undoDelete() {
+        val undo = stateFlow.value.undo ?: return
+        stateFlow.update { it.copy(undo = null) }
+        run { backend.save(undo.rulesJson) }
+    }
+
+    /** "Update": saves the rules again, which brings the script up to the way this editor writes it. */
     fun update() {
-        val rules = stateFlow.value.rules
-        run { backend.saveFilters(rules, activate = false, overwrite = false) }
+        val core = stateFlow.value.core ?: return
+        run { backend.save(core.rulesJson) }
     }
 
-    fun askStartOver() = stateFlow.update { it.copy(dialog = FiltersDialog.StartOver) }
+    fun askMigrate() {
+        val s = stateFlow.value
+        if (s.core?.migrationPending == true) stateFlow.update { it.copy(dialog = FiltersDialog.Migrate(s.rules.size)) }
+    }
 
-    fun confirmStartOver() {
+    /** Saves the converted rules as the new script, then has the old one removed. */
+    fun confirmMigrate() {
+        val core = stateFlow.value.core ?: return
         stateFlow.update { it.copy(dialog = null) }
-        run { backend.saveFilters(emptyList(), activate = false, overwrite = true) }
+        run { backend.save(core.rulesJson); backend.migrateOld() }
     }
 
-    fun showOwnScript() {
-        val text = stateFlow.value.filters?.text ?: return
-        stateFlow.update { it.copy(dialog = FiltersDialog.Script(null, text)) }
+    fun askRemoveOld() = stateFlow.update { it.copy(dialog = FiltersDialog.RemoveOld) }
+
+    fun confirmRemoveOld() {
+        stateFlow.update { it.copy(dialog = null) }
+        run { backend.migrateOld() }
     }
 
-    fun showOtherScript() {
-        val filters = stateFlow.value.filters ?: return
-        val text = filters.otherText ?: return
-        stateFlow.update { it.copy(dialog = FiltersDialog.Script(filters.otherActive.orEmpty(), text)) }
+    fun askReset() = stateFlow.update { it.copy(dialog = FiltersDialog.ResetToVisual) }
+
+    fun confirmReset() {
+        stateFlow.update { it.copy(dialog = null) }
+        run(onDone = { stateFlow.update { it.copy(raw = null) } }) { backend.resetToVisual() }
     }
 
-    // ---- the editor ----
+    // ---- the raw editor ----
+
+    fun openRaw() {
+        val core = stateFlow.value.core ?: return
+        if (stateFlow.value.busy) return
+        val text = core.rawText
+        stateFlow.update { it.copy(raw = RawState(text, text), error = null, info = null, undo = null) }
+    }
+
+    fun editRaw(text: String) = stateFlow.update { s -> if (s.busy) s else s.copy(raw = s.raw?.copy(text = text), error = null) }
+
+    fun leaveRaw() {
+        val raw = stateFlow.value.raw ?: return
+        if (stateFlow.value.busy) return
+        if (raw.dirty) stateFlow.update { it.copy(dialog = FiltersDialog.DiscardRaw) } else stateFlow.update { it.copy(raw = null) }
+    }
+
+    fun discardRaw() = stateFlow.update { it.copy(raw = null, dialog = null, error = null) }
+
+    fun saveRaw() {
+        val raw = stateFlow.value.raw ?: return
+        if (stateFlow.value.busy) return
+        run(onDone = { stateFlow.update { it.copy(raw = null) } }) { backend.rawSave(raw.text) }
+    }
+
+    // ---- the rule editor ----
 
     fun addRule() {
-        if (stateFlow.value.phase != FiltersPhase.READY) return
-        if (stateFlow.value.filters?.isEdited == true) return noRuleWhileEdited()
-        val rule = FilterRules.newRule()
-        stateFlow.update { it.copy(editor = EditorState(rule, rule, isNew = true), error = null, info = null) }
+        val s = stateFlow.value
+        if (s.phase != FiltersPhase.READY || s.textOnly || s.core?.migrationPending == true) return
+        val rule = RuleModel.newRule()
+        stateFlow.update { it.copy(editor = EditorState(rule, rule, isNew = true), error = null, info = null, undo = null) }
     }
 
-    fun openRule(index: Int) {
-        val rule = stateFlow.value.rules.getOrNull(index) ?: return
-        stateFlow.update { it.copy(editor = EditorState(rule, rule, isNew = false), error = null, info = null) }
+    fun openRule(id: String) {
+        val s = stateFlow.value
+        if (s.textOnly || s.core?.migrationPending == true || s.busy) return
+        val rule = s.rules.firstOrNull { it.id == id } ?: return
+        val resolved = resolveFolders(rule, RuleModel.folderTree(s.folders))
+        stateFlow.update { it.copy(editor = EditorState(resolved, resolved, isNew = false), error = null, info = null, undo = null) }
     }
+
+    /** A rule another client made may name a folder by path only: the id is found from the path. */
+    private fun resolveFolders(rule: RuleDraft, tree: List<FolderRow>): RuleDraft =
+        rule.copy(
+            actions = rule.actions.map { a ->
+                if (!RuleModel.usesFolder(a)) return@map a
+                val byId = a.mailboxId?.let { id -> tree.firstOrNull { it.id == id } }
+                val row = byId ?: tree.firstOrNull { it.path == a.value }
+                if (row != null) a.copy(mailboxId = row.id, value = row.path) else a
+            },
+        )
 
     private suspend fun openFromMessage(messageId: String) {
         try {
-            val rule = withContext(io) { backend.filterFromMessage(messageId) }
-            // Something else may have been opened meanwhile; it is not replaced.
+            val seed = withContext(io) { backend.seed(messageId) }
+            val rule = RuleModel.fromSeed(seed)
             stateFlow.update { if (it.editor != null) it else it.copy(editor = EditorState(rule, rule, isNew = true)) }
         } catch (e: CancellationException) {
             throw e
@@ -222,7 +316,7 @@ class FiltersController(
         }
     }
 
-    fun edit(change: (FilterRule) -> FilterRule) = stateFlow.update { s ->
+    fun edit(change: (RuleDraft) -> RuleDraft) = stateFlow.update { s ->
         // What is typed while a save runs would be thrown away when its answer arrives.
         if (s.busy) return@update s
         s.copy(editor = s.editor?.let { it.copy(rule = change(it.rule)) }, error = null)
@@ -232,8 +326,9 @@ class FiltersController(
     fun problem(): RuleProblem? {
         val s = stateFlow.value
         val editor = s.editor ?: return null
-        val count = FilterRules.withRule(s.rules, editor.rule).size
-        return FilterRules.check(editor.rule, FilterRules.folderTree(s.folders).mapTo(HashSet()) { it.id }, count)
+        val core = s.core ?: return null
+        val count = RuleModel.withRule(s.rules, editor.rule).size
+        return RuleModel.check(editor.rule, core.capabilities, RuleModel.folderTree(s.folders).mapTo(HashSet()) { it.id }, count, zone)
     }
 
     /** Leaving the editor: asks when something was changed. */
@@ -250,39 +345,31 @@ class FiltersController(
     fun saveEditor() {
         val s = stateFlow.value
         val editor = s.editor ?: return
-        if (s.busy || s.filters == null || problem() != null) return
-        val rules = FilterRules.withRule(s.rules, editor.rule)
-        run(onDone = { closeEditor() }) { backend.saveFilters(rules, activate = false, overwrite = false) }
+        if (s.busy || s.core == null || problem() != null) return
+        val json = RuleModel.listToJson(RuleModel.withRule(s.rules, editor.rule), zone)
+        run(onDone = { closeEditor() }) { backend.save(json) }
     }
 
-    fun askDeleteRule() {
+    /** Deletes the rule being edited (with Undo) and closes the editor. */
+    fun deleteEditedRule() {
         val editor = stateFlow.value.editor ?: return
         if (editor.isNew) return
-        stateFlow.update { it.copy(dialog = FiltersDialog.DeleteRule) }
-    }
-
-    fun confirmDeleteRule() {
-        val s = stateFlow.value
-        val editor = s.editor ?: return
-        stateFlow.update { it.copy(dialog = null) }
-        if (s.filters == null) return
-        val rules = FilterRules.withoutRule(s.rules, editor.original.id)
-        run(onDone = { closeEditor() }) { backend.saveFilters(rules, activate = false, overwrite = false) }
+        deleteRule(editor.original.id) { closeEditor() }
     }
 
     /** Runs one change on the server. The answer replaces the list; a failure says why; "changed elsewhere" reads again. */
-    private fun run(onDone: () -> Unit = {}, call: () -> Filters) {
+    private fun run(onDone: () -> Unit = {}, undo: UndoDelete? = null, call: () -> FiltersState) {
         if (stateFlow.value.busy) return
         val mine = ++ticket
-        stateFlow.update { it.copy(busy = true, error = null, info = null) }
+        stateFlow.update { it.copy(busy = true, error = null, info = null, undo = null) }
         scope.launch {
             try {
-                val filters = withContext(io) { call() }
+                val core = withContext(io) { call() }
                 if (mine != ticket) {
                     stateFlow.update { it.copy(busy = false) }
                     return@launch
                 }
-                stateFlow.update { it.copy(busy = false, filters = filters, phase = FiltersPhase.READY, error = null) }
+                stateFlow.update { apply(it, core).copy(busy = false, error = null, undo = undo) }
                 onDone()
             } catch (e: CancellationException) {
                 throw e
@@ -303,11 +390,7 @@ class FiltersController(
     /** A new rule whose save was written although its answer was lost is on the fresh list already: the editor closes. */
     private fun closeEditorIfSaved() = stateFlow.update { s ->
         val editor = s.editor
-        if (editor != null && editor.isNew && s.rules.any { it.copy(id = "", folderMissing = false) == editor.rule.copy(id = "", folderMissing = false) }) {
-            s.copy(editor = null, dialog = null)
-        } else {
-            s
-        }
+        if (editor != null && editor.isNew && s.rules.any { it.id == editor.rule.id }) s.copy(editor = null, dialog = null) else s
     }
 
     companion object {

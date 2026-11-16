@@ -44,6 +44,7 @@ internal val LIBRARY_LICENCES: List<Pair<String, String>> = listOf(
     "SQLite (through rusqlite)" to "Public domain, MIT",
     "rPGP, RustCrypto and the other crates of the encryption and signing code" to "MIT or Apache 2.0",
     "Material Symbols and Icons" to "Apache 2.0",
+    "Filter rule format compatible with Bulwark webmail (bulwarkmail/webmail)" to "AGPL-3.0, with an app store permission",
 )
 
 /**
