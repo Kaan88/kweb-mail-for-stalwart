@@ -13,6 +13,7 @@ mod crypto_trust;
 mod data;
 mod download;
 mod enterprise;
+mod filter_rules;
 
 pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
@@ -20,6 +21,7 @@ pub use admin::{
 };
 pub use ai_chat::{ai_parse_findings, ai_parse_ideas, AiChatListener};
 pub use download::{DownloadCancel, DownloadListener};
+pub use filter_rules::{ExternalBlock, FilterCapabilities, FiltersState, RuleMove};
 #[doc(hidden)]
 pub use enterprise::probe;
 pub use enterprise::{

@@ -27,6 +27,8 @@ pub struct SieveLimits {
     pub extensions: Vec<String>,
     /// The largest script in bytes; `None` when the server does not say.
     pub max_size: Option<u64>,
+    /// `maxNumberRedirects`: the forwards one message may cause; `None` when the server does not say.
+    pub max_redirects: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +67,7 @@ impl Connection {
         Ok(SieveLimits {
             extensions: extensions.filter_map(|e| e.as_str().map(str::to_string)).collect(),
             max_size: caps["maxSizeScript"].as_u64(),
+            max_redirects: caps["maxNumberRedirects"].as_u64(),
         })
     }
 
@@ -172,6 +175,18 @@ impl Connection {
         }
         let responses = self.call(&[SIEVE_CAPABILITY], &[("SieveScript/set", args)]).await.map_err(moved)?;
         response(&responses, "SieveScript/set").map(drop)
+    }
+
+    /// Deletes a script (not the away message's). An active one is refused by the server:
+    /// deactivate it first.
+    pub async fn sieve_destroy(&self, id: &str, state: &str) -> Result<()> {
+        let args = json!({ "accountId": self.sieve_account(), "ifInState": state, "destroy": [id] });
+        let responses = self.call(&[SIEVE_CAPABILITY], &[("SieveScript/set", args)]).await.map_err(moved)?;
+        let set = response(&responses, "SieveScript/set")?;
+        match set["notDestroyed"].get(id) {
+            Some(e) => Err(script_error(e)),
+            None => Ok(()),
+        }
     }
 
     /// The List-Id header of a message, as text; `None` when it has none or the server does

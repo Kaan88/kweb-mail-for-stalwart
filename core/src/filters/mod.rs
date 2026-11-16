@@ -8,6 +8,7 @@
 //!
 //! `check` and `script` are pure. This file puts them together with the server.
 
+pub mod bulwark;
 mod check;
 mod script;
 
