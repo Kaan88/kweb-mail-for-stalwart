@@ -86,6 +86,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
     onOpenNotificationButtons: () -> Unit,
+    onOpenReading: () -> Unit,
     onOpenCrypto: () -> Unit,
     onOpenAway: () -> Unit,
     onOpenFilters: () -> Unit,
@@ -159,6 +160,17 @@ fun SettingsScreen(
 
             SectionTitle(stringResource(R.string.settings_storage))
             StorageGroup(state.storage)
+
+            SectionTitle(stringResource(R.string.reading_title))
+            Group {
+                SettingsRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.reading_title),
+                    stringResource(R.string.reading_settings_detail),
+                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    onClick = onOpenReading,
+                )
+            }
 
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
@@ -426,7 +438,7 @@ internal fun Group(modifier: Modifier = Modifier, content: @Composable () -> Uni
 
 /** One row of a group. [onClick] null: not a button. [quiet]: only a muted line. */
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     shape: Shape,
     title: String,
     detail: String? = null,

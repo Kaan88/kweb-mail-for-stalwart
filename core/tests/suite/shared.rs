@@ -787,3 +787,27 @@ fn signed_out_is_sign_in_needed_or_invalid_not_a_panic() {
     assert!(core.shared_accounts().is_err());
     assert!(core.shared_mailboxes("sh1".into()).is_err());
 }
+
+// ---- remote pictures (M11) ---------------------------------------------------------------
+
+#[test]
+fn a_shared_account_ignores_the_picture_setting_and_the_allow_list() {
+    use kweb_core::reading::RemotePictures;
+    let rig = Rig::new();
+    let core = &rig.core;
+    assert_eq!(core.remote_pictures().unwrap(), RemotePictures::Off);
+    assert!(!core.remote_pictures_for("Boss@Example.test".into(), None, false).unwrap());
+    core.allow_remote_sender("Boss@Example.test".into()).unwrap();
+    assert_eq!(core.remote_allowed_senders().unwrap(), ["boss@example.test"]);
+    assert!(core.remote_pictures_for("boss@example.test".into(), None, false).unwrap(), "own account, allowed sender");
+    assert!(!core.remote_pictures_for("boss@example.test".into(), Some(OWNER.into()), false).unwrap(), "shared: no");
+    assert!(!core.remote_pictures_for("boss@example.test".into(), None, true).unwrap(), "S/MIME content: no");
+    core.set_remote_pictures(RemotePictures::Always).unwrap();
+    assert!(core.remote_pictures_for("anyone@else.test".into(), None, false).unwrap(), "always, own account");
+    assert!(!core.remote_pictures_for("anyone@else.test".into(), Some(OWNER.into()), false).unwrap(), "shared: no");
+    assert!(!core.remote_pictures_for("anyone@else.test".into(), None, true).unwrap(), "blocked: no");
+    core.forget_remote_sender("BOSS@example.test".into()).unwrap();
+    assert!(core.remote_allowed_senders().unwrap().is_empty());
+    core.set_remote_pictures(RemotePictures::Off).unwrap();
+    assert!(!core.remote_pictures_for("boss@example.test".into(), None, false).unwrap());
+}

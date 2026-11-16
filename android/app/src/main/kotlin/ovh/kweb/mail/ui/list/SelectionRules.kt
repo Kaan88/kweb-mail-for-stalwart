@@ -14,7 +14,14 @@ object SelectionRules {
     /** While rows are chosen a tap anywhere on a row chooses or lets go of it; otherwise it opens the conversation. */
     fun tap(selecting: Boolean): Tap = if (selecting) Tap.TOGGLE else Tap.OPEN
 
-    fun key(row: ThreadRow): String = row.newest.threadId
+    /**
+     * Set by the list while conversation view is off: its rows are single messages, several of which can be of one thread, so a
+     * row is known by its message id then. Conversation view (the default) knows a row by its thread id.
+     */
+    @Volatile
+    var byMessage: Boolean = false
+
+    fun key(row: ThreadRow): String = if (byMessage) row.newest.id else row.newest.threadId
 
     /** [id] chosen if it was not, let go of if it was. */
     fun toggle(selected: Set<String>, id: String): Set<String> = if (id in selected) selected - id else selected + id

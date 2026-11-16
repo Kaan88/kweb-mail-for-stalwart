@@ -18,6 +18,7 @@ pub mod labels;
 pub mod model;
 pub mod notify;
 pub mod push;
+pub mod reading;
 pub mod secrets;
 pub mod snippets;
 pub mod store;

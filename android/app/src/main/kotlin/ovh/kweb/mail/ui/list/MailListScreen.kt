@@ -151,7 +151,8 @@ import uniffi.kweb_core.ThreadRow
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MailListScreen(
-    onOpenThread: (threadId: String, mailboxId: String) -> Unit,
+    /** [messageId] is set when conversation view is off: the thread screen then shows only that message. */
+    onOpenThread: (threadId: String, mailboxId: String, messageId: String?) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -178,6 +179,9 @@ fun MailListScreen(
     var deletingChosen by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
     val selecting = state.selection.isNotEmpty()
+    val conversationView = ovh.kweb.mail.ui.UiPrefs(LocalContext.current).conversationView
+    // Settings may have changed how the list groups mail while this screen was away.
+    LaunchedEffect(conversationView) { vm.reload() }
     val chosenRows = remember(state.rows, state.selection) { SelectionRules.rowsOf(state.rows, state.selection) }
     // The label whose Delete was asked for; saved, so a rotation keeps the question.
     var deletingLabelId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -440,7 +444,7 @@ fun MailListScreen(
                         if (state.rows.isEmpty()) {
                             item { EmptyState(state, Modifier.fillParentMaxSize()) }
                         }
-                        itemsIndexed(state.rows, key = { _, row -> row.newest.threadId }) { index, row ->
+                        itemsIndexed(state.rows, key = { _, row -> SelectionRules.key(row) }) { index, row ->
                             key(state.swipeEpoch) {
                                 ConversationItem(
                                     row = row,
@@ -460,7 +464,7 @@ fun MailListScreen(
                                             if (ListRules.opensCompose(it.role)) {
                                                 vm.startDraft(DraftKind.Existing(row.newest.id))
                                             } else {
-                                                onOpenThread(row.newest.threadId, SubfolderRules.openFrom(row, it.id, state.mailboxes, state.scope))
+                                                onOpenThread(row.newest.threadId, SubfolderRules.openFrom(row, it.id, state.mailboxes, state.scope), if (conversationView) null else row.newest.id)
                                             }
                                         }
                                     },

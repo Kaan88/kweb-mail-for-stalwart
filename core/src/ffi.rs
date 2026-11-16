@@ -2799,3 +2799,40 @@ impl Core {
         self.security_call(|conn| async move { conn.create_credential(kind, description, expires_at, at).await })
     }
 }
+
+#[uniffi::export]
+impl Core {
+    /// The account-wide choice for remote pictures (default: ask for each message).
+    pub fn remote_pictures(&self) -> Result<crate::reading::RemotePictures> {
+        self.store.remote_pictures(&self.account_id()?)
+    }
+
+    pub fn set_remote_pictures(&self, mode: crate::reading::RemotePictures) -> Result<()> {
+        self.store.set_remote_pictures(&self.account_id()?, mode)
+    }
+
+    /// The senders the user allowed to show remote pictures, as lower-case addresses.
+    pub fn remote_allowed_senders(&self) -> Result<Vec<String>> {
+        self.store.remote_allowed_senders(&self.account_id()?)
+    }
+
+    pub fn allow_remote_sender(&self, sender: String) -> Result<()> {
+        self.store.remote_allow_sender(&self.account_id()?, &sender)
+    }
+
+    pub fn forget_remote_sender(&self, sender: String) -> Result<()> {
+        self.store.remote_forget_sender(&self.account_id()?, &sender)
+    }
+
+    /// Whether remote pictures in a message from `sender` may load without a tap. `shared_account` is the
+    /// id of another user's account when the message is from one (the answer is then always no: nothing of
+    /// the user's choices reaches a shared account), `blocked` is the core's "no remote content" for the
+    /// message (S/MIME content).
+    pub fn remote_pictures_for(&self, sender: String, shared_account: Option<String>, blocked: bool) -> Result<bool> {
+        let account_id = self.account_id()?;
+        let shared = shared_account.is_some();
+        let mode = self.store.remote_pictures(&account_id)?;
+        let allowed = self.store.remote_sender_allowed(&account_id, &sender)?;
+        Ok(crate::reading::may_load(shared, blocked, mode, allowed))
+    }
+}

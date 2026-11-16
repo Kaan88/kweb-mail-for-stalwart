@@ -110,6 +110,8 @@ fun ThreadScreen(
     /** This is the page the user is on. A neighbour that is only loaded does not mark mail read, close the screen or say anything. */
     active: Boolean,
     onBack: () -> Unit,
+    /** The thread was archived, deleted, moved or is gone: where to go next (the pager may step to a neighbour). */
+    onClosed: () -> Unit = onBack,
     onCompose: (draftId: String) -> Unit,
     onFilterLike: (messageId: String) -> Unit = {},
     onOpenFilters: () -> Unit = {},
@@ -219,7 +221,7 @@ fun ThreadScreen(
                     )
                     if (result == SnackbarResult.ActionPerformed) onOpenFilters()
                 }
-                ThreadEvent.Close -> onBack()
+                ThreadEvent.Close -> onClosed()
                 is ThreadEvent.OpenDraft -> onCompose(event.draftId)
             }
         }
@@ -486,6 +488,7 @@ fun ThreadScreen(
                             onToggle = { vm.toggle(header.id) },
                             onRetryBody = { vm.retryBody(header.id) },
                             onAllowRemote = { vm.allowRemote(header.id) },
+                            onAllowRemoteAlways = { vm.allowRemoteAlways(header.id) },
                             onOpenLink = ::openLink,
                             onOpenAttachment = ::openAttachment,
                             onSaveAttachment = {

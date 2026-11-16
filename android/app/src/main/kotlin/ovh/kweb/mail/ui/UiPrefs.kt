@@ -22,7 +22,37 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(TRANSLATE, null)
         set(value) = prefs.edit { putString(TRANSLATE, value) }
 
+    /** Conversation view: the list groups mail by conversation (true, today's way) or shows one row per message. */
+    var conversationView: Boolean
+        get() = prefs.getBoolean(CONVERSATIONS, true)
+        set(value) = prefs.edit { putBoolean(CONVERSATIONS, value) }
+
+    /** When an opened message is marked read. */
+    var markRead: ReadingRules.MarkRead
+        get() = ReadingRules.MarkRead.of(prefs.getString(MARK_READ, null))
+        set(value) = prefs.edit { putString(MARK_READ, value.key) }
+
+    /** Where Archive or Delete in the thread screen goes next. */
+    var afterAction: ReadingRules.AfterAction
+        get() = ReadingRules.AfterAction.of(prefs.getString(AFTER_ACTION, null))
+        set(value) = prefs.edit { putString(AFTER_ACTION, value.key) }
+
+    /** The size of a message's text. */
+    var textSize: ReadingRules.TextSize
+        get() = ReadingRules.TextSize.of(prefs.getString(TEXT_SIZE, null))
+        set(value) = prefs.edit { putString(TEXT_SIZE, value.key) }
+
+    /** How many lines of a message's start the list shows under the subject (0 to 3). */
+    var previewLines: Int
+        get() = ReadingRules.clampPreviewLines(prefs.getInt(PREVIEW_LINES, ReadingRules.DEFAULT_PREVIEW_LINES))
+        set(value) = prefs.edit { putInt(PREVIEW_LINES, ReadingRules.clampPreviewLines(value)) }
+
     private companion object {
+        const val CONVERSATIONS = "reading_conversation_view"
+        const val MARK_READ = "reading_mark_read"
+        const val AFTER_ACTION = "reading_after_action"
+        const val TEXT_SIZE = "reading_text_size"
+        const val PREVIEW_LINES = "reading_preview_lines"
         const val FILE = "ui"
         const val TRANSLATE = "assistant_translate_language"
         const val THEME = "theme"

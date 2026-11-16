@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -196,6 +197,8 @@ private fun RowText(row: RowContent, modifier: Modifier) {
     val time = rowTimeText(row.receivedAt)
     // What was found is drawn in the primary colour and bold, in the subject and in the text.
     val found = SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+    // The user's choice of lines under the subject (0 to 3).
+    val previewLines = ovh.kweb.mail.ui.UiPrefs(LocalContext.current).previewLines
     Column(modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -267,11 +270,11 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
             )
-        } else if (row.preview.isNotEmpty()) {
+        } else if (row.preview.isNotEmpty() && previewLines > 0) {
             Text(
                 row.preview,
                 color = muted,
-                maxLines = 1,
+                maxLines = previewLines,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,
             )

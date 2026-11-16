@@ -14,7 +14,13 @@ sealed interface Route {
      * Move act on), null when it was opened from a search. [messageId] is the message to show
      * first, if any.
      */
-    data class Thread(val threadId: String, val mailboxId: String?, val messageId: String?) : Route
+    data class Thread(
+        val threadId: String,
+        val mailboxId: String?,
+        val messageId: String?,
+        /** Conversation view is off: only [messageId] is shown, as a page of its own (no pager). */
+        val single: Boolean = false,
+    ) : Route
 
     /** The agenda: a root beside the mail list. */
     data object Calendar : Route
@@ -122,6 +128,12 @@ sealed interface Route {
     data object NotificationButtons : Route
 
     data object Settings : Route
+
+    /** Reading: pictures, the list and the message text, reached from Settings. */
+    data object Reading : Route
+
+    /** The senders whose pictures show with no tap, reached from Reading. */
+    data object RemoteSenders : Route
 
     /** The keys and the switch of the encryption feature (S/MIME and OpenPGP), reached from Settings. */
     data object Crypto : Route

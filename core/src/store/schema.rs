@@ -298,6 +298,15 @@ pub(super) const MIGRATIONS: &[&str] = &[
     ALTER TABLE messages ADD COLUMN recv_json TEXT;
     ALTER TABLE notifications_shown ADD COLUMN route TEXT NOT NULL DEFAULT '';
     ",
+    // 13: M11 stage 2. Senders the user allowed to show remote pictures (device only; by From address in
+    // lower case). Additive: nothing is fetched again.
+    "
+    CREATE TABLE remote_allow (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        sender     TEXT NOT NULL,
+        PRIMARY KEY (account_id, sender)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

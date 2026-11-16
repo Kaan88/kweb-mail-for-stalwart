@@ -82,6 +82,8 @@ class CardActions(
     val onToggle: () -> Unit,
     val onRetryBody: () -> Unit,
     val onAllowRemote: () -> Unit,
+    /** "Always from this sender" beside Show; null where it does not apply (a shared account never remembers pictures). */
+    val onAllowRemoteAlways: (() -> Unit)? = null,
     val onOpenLink: (String) -> Unit,
     val onOpenAttachment: (Attachment) -> Unit,
     val onSaveAttachment: (Attachment) -> Unit,
@@ -408,6 +410,7 @@ private fun LoadedBody(
     remoteOffered: Boolean = true,
 ) {
     val html = body.html
+    val size = ovh.kweb.mail.ui.UiPrefs(LocalContext.current).textSize
     if (html != null) {
         var blocked by remember(header.id) { mutableStateOf(false) }
         if (blocked && !remoteAllowed && remoteOffered) {
@@ -427,15 +430,31 @@ private fun LoadedBody(
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                     style = MaterialTheme.typography.labelLarge,
                 )
-                Button(
-                    onClick = actions.onAllowRemote,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                        contentColor = MaterialTheme.colorScheme.tertiaryContainer,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    modifier = Modifier.height(36.dp),
-                ) { Text(stringResource(R.string.thread_remote_show)) }
+                var menu by remember { mutableStateOf(false) }
+                val always = actions.onAllowRemoteAlways
+                Box {
+                    Button(
+                        onClick = { if (always == null) actions.onAllowRemote() else menu = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        modifier = Modifier.height(36.dp),
+                    ) { Text(stringResource(R.string.thread_remote_show)) }
+                    if (always != null) {
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.reading_show_once)) },
+                                onClick = { menu = false; actions.onAllowRemote() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.reading_show_always_sender)) },
+                                onClick = { menu = false; always() },
+                            )
+                        }
+                    }
+                }
             }
         }
         val context = LocalContext.current
@@ -450,6 +469,7 @@ private fun LoadedBody(
             // Flat: the text sits straight on the page, on its edge; otherwise on a light inset in the card.
             modifier = if (flat) Modifier else Modifier.clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.background),
             flat = flat,
+            textZoom = size.percent,
         )
     } else {
         // On the same light inset as HTML mail, so both kinds of message look alike.
@@ -465,7 +485,7 @@ private fun LoadedBody(
                         .background(MaterialTheme.colorScheme.background)
                         .padding(horizontal = 14.dp, vertical = 12.dp)
                 },
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyMedium.let { it.copy(fontSize = it.fontSize * size.factor, lineHeight = it.lineHeight * size.factor) },
             )
         }
     }

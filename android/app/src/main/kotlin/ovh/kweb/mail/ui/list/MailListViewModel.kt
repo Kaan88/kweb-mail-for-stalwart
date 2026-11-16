@@ -374,7 +374,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
      * position is applied when it comes up.
      */
     fun reveal(threadId: String) {
-        val index = stateFlow.value.rows.indexOfFirst { SelectionRules.key(it) == threadId }
+        val index = stateFlow.value.rows.indexOfFirst { it.newest.threadId == threadId }
         if (index < 0) return
         val shown = listState.layoutInfo.visibleItemsInfo
         if (shown.isNotEmpty() && index >= shown.first().index && index <= shown.last().index) return
@@ -622,10 +622,42 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         val current = mailboxes.firstOrNull { it.id == asked.selectedId } ?: Folders.withRole(mailboxes, "inbox")
         // A folder that lost its subfolders meanwhile is just itself.
         val scope = current?.let { SubfolderRules.scope(mailboxes, it.id, asked.withSubfolders) }.orEmpty()
+        SelectionRules.byMessage = !ovh.kweb.mail.ui.UiPrefs(getApplication()).conversationView
         val rows = current?.let {
+            if (SelectionRules.byMessage) return@let messageRows(core, scope.ifEmpty { listOf(it.id) }, asked)
             if (scope.size > 1) core.threadsIn(scope, asked.filter, asked.limit.toUInt(), 0u) else core.threads(it.id, asked.filter, asked.limit.toUInt(), 0u)
         }.orEmpty()
         return Read(core.account()?.username.orEmpty(), mailboxes, current, scope, rows)
+    }
+
+    /**
+     * Conversation view off: one row per message, newest first, from the cache's own message window (the cache is not changed
+     * for it). A row of one message acts on that message alone; a filter is applied here.
+     */
+    private fun messageRows(core: uniffi.kweb_core.Core, scope: List<String>, asked: MailListState): List<ThreadRow> {
+        val fetch = if (asked.filter == ListFilter.ALL) asked.limit else MESSAGE_FILTER_WINDOW
+        return scope.flatMap { core.messages(it, fetch.toUInt(), 0u) }
+            .distinctBy { it.id }
+            .filter {
+                when (asked.filter) {
+                    ListFilter.ALL -> true
+                    ListFilter.UNREAD -> it.isUnread
+                    ListFilter.FLAGGED -> it.isFlagged
+                    ListFilter.ATTACHMENTS -> it.hasAttachment
+                }
+            }
+            .sortedByDescending { it.receivedAt }
+            .take(asked.limit)
+            .map { m ->
+                ThreadRow(
+                    newest = m,
+                    messageIds = listOf(m.id),
+                    unreadCount = if (m.isUnread) 1u else 0u,
+                    isFlagged = m.isFlagged,
+                    hasAttachment = m.hasAttachment,
+                    senders = listOf(m.fromName.ifBlank { m.fromEmail }),
+                )
+            }
     }
 
     private fun MailListState.fresh(selectedId: String?, filter: ListFilter, withSubfolders: Boolean) = copy(
@@ -646,6 +678,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
 
     companion object {
         const val PAGE = 50
+        private const val MESSAGE_FILTER_WINDOW = 2000
         const val MAX_EMPTY_PAGES = 2
         private const val REFRESH_INDICATOR_MILLIS = 1_200L
     }

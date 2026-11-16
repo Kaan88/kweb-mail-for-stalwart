@@ -183,6 +183,11 @@ fun ThreadRoute(
             route = pageRoute,
             active = id == current,
             onBack = onBack,
+            onClosed = {
+                // The user's choice for after Archive or Delete: back to the list, or on to the next or the previous conversation.
+                val to = ovh.kweb.mail.ui.ReadingRules.pageAfter(ovh.kweb.mail.ui.UiPrefs(application).afterAction, index, pagesNow.size)
+                if (to == null) onBack() else scope.launch { pagerState.animateScrollToPage(to) }
+            },
             onCompose = onCompose,
             onFilterLike = onFilterLike,
             onOpenFilters = onOpenFilters,

@@ -65,6 +65,8 @@ fun MailWebView(
     modifier: Modifier = Modifier,
     /** Drawn straight on the page: no side padding in the document. */
     flat: Boolean = false,
+    /** The user's text size for message bodies, in percent. */
+    textZoom: Int = 100,
 ) {
     val dark = isSystemInDarkTheme()
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb().let { String.format("#%06x", it and 0xFFFFFF) }
@@ -125,6 +127,7 @@ fun MailWebView(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) view.settings.isAlgorithmicDarkeningAllowed = dark
                 // A second lock behind the request filter: the network is off unless the user said yes.
                 view.settings.blockNetworkLoads = !allowRemote
+                view.settings.textZoom = textZoom
                 val shown = listOf(html, allowRemote, textColor, flat)
                 if (view.tag != shown) {
                     view.tag = shown

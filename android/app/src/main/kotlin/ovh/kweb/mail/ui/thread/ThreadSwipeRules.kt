@@ -47,6 +47,7 @@ object ThreadSwipeRules {
      */
     fun sourceOf(stack: List<Route>): Source? {
         val thread = stack.lastOrNull() as? Route.Thread ?: return null
+        if (thread.single) return null
         return when (stack.getOrNull(stack.size - 2)) {
             Route.MailList -> if (thread.messageId == null) Source.LIST else null
             Route.Search -> Source.SEARCH

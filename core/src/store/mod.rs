@@ -14,6 +14,7 @@ mod keywords;
 mod mailboxes;
 mod messages;
 mod outbox;
+mod remote;
 mod schema;
 #[cfg(test)]
 mod tests;

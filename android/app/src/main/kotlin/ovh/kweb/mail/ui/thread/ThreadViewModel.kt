@@ -120,6 +120,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     private var blocking = false
 
     private val extras = CoreMailExtrasBackend { acct.core }
+    private val prefs = ovh.kweb.mail.ui.UiPrefs(app)
 
     /** The labels of the thread's messages and the user's list. */
     val labels = LabelStore(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
@@ -220,6 +221,23 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     }
 
     fun allowRemote(messageId: String) = stateFlow.update { it.copy(remoteAllowed = it.remoteAllowed + messageId) }
+
+    /** Shows the pictures of this message and of every later one from its sender (kept in the core, for this account). */
+    fun allowRemoteAlways(messageId: String) {
+        val sender = stateFlow.value.messages.firstOrNull { it.id == messageId }?.fromEmail.orEmpty()
+        allowRemote(messageId)
+        if (sender.isBlank()) return
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { acct.core.allowRemoteSender(sender) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "remembering a sender for pictures failed: ${e.javaClass.simpleName}")
+                eventChannel.send(ThreadEvent.Message(R.string.reading_sender_not_saved))
+            }
+        }
+    }
 
     // ---- Replying ----
 
@@ -369,7 +387,10 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         try {
             val read = withContext(Dispatchers.IO) {
                 val core = acct.core
-                Triple(core.threadMessages(route.threadId), core.mailboxes(), core.account()?.username)
+                // Conversation view off: the thread screen holds the one message that was opened.
+                val all = core.threadMessages(route.threadId)
+                val shown = if (route.single && route.messageId != null) all.filter { it.id == route.messageId } else all
+                Triple(shown, core.mailboxes(), core.account()?.username)
             }
             val (messages, mailboxes, me) = read
             val before = stateFlow.value.messages
@@ -426,8 +447,14 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
 
     private fun markRead(ids: List<String>) {
         if (ids.isEmpty()) return
+        // The user's choice: when opened, after a delay (only if the message is still the one being read) or never.
+        val wait = prefs.markRead.delayMillis ?: return
         viewModelScope.launch {
             try {
+                if (wait > 0) {
+                    kotlinx.coroutines.delay(wait)
+                    if (!active || session == null) return@launch
+                }
                 MailActions.submit(getApplication(), acct.core, MailActions.markRead(ids))
                 reload()
             } catch (e: CancellationException) {
@@ -446,15 +473,24 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         stateFlow.update { s -> s.copy(bodies = s.bodies + missing.associateWith { BodyState.Loading }) }
         missing.forEach { id ->
             scope.launch {
+                var always = false
                 val result = try {
-                    BodyState.Loaded(withContext(Dispatchers.IO) { acct.core.messageBody(id) })
+                    BodyState.Loaded(
+                        withContext(Dispatchers.IO) {
+                            val body = acct.core.messageBody(id)
+                            // The core decides whether pictures load with no tap: its own account only, never S/MIME content.
+                            val sender = stateFlow.value.messages.firstOrNull { it.id == id }?.fromEmail.orEmpty()
+                            always = body.html != null && sender.isNotBlank() && acct.core.remotePicturesFor(sender, null, false)
+                            body
+                        },
+                    )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Log.w(Background.TAG, "loading a message body failed", e)
                     BodyState.Failed
                 }
-                stateFlow.update { it.copy(bodies = it.bodies + (id to result)) }
+                stateFlow.update { it.copy(bodies = it.bodies + (id to result), remoteAllowed = if (always) it.remoteAllowed + id else it.remoteAllowed) }
             }
         }
     }
