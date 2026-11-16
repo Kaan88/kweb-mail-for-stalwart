@@ -36,7 +36,14 @@ import ovh.kweb.mail.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.text.format.Formatter
+import androidx.compose.runtime.DisposableEffect
 import ovh.kweb.mail.background.UpdateChecker
+import ovh.kweb.mail.background.UpdateDownloader
+import ovh.kweb.mail.background.UpdateFiles
+import ovh.kweb.mail.background.UpdateInstallActivity
+import ovh.kweb.mail.background.UpdateInstallRules
+import uniffi.kweb_core.DownloadCancel
 import ovh.kweb.mail.background.UpdateScheduler
 import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.list.Groups
@@ -79,6 +86,16 @@ fun AboutScreen(onBack: () -> Unit) {
     var latest by remember { mutableStateOf(prefs.updateLatest) }
     var newer by remember { mutableStateOf(prefs.updateNewer) }
     var pageUrl by remember { mutableStateOf(prefs.updatePageUrl) }
+    var apkUrl by remember { mutableStateOf(prefs.updateApkUrl) }
+    var apkSize by remember { mutableStateOf(prefs.updateApkSize) }
+    var auto by remember { mutableStateOf(prefs.updateAuto) }
+    var ready by remember { mutableStateOf(newer && UpdateInstallRules.safeVersion(latest) && UpdateFiles.file(context, latest).isFile) }
+    var downloading by remember { mutableStateOf<Pair<Long, Long?>?>(null) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    var cancel by remember { mutableStateOf<DownloadCancel?>(null) }
+    val downloadFailure = stringResource(R.string.update_failed_generic)
+    // Leaving the screen ends a download that is running here.
+    DisposableEffect(Unit) { onDispose { cancel?.cancel() } }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -117,8 +134,16 @@ fun AboutScreen(onBack: () -> Unit) {
                     },
                 )
             }
-            val download = newer && latest.isNotEmpty() && UpdateChecker.pageUri(pageUrl) != null
-            val updateRows = if (download) 3 else 2
+            val canInstall = newer && latest.isNotEmpty() && UpdateInstallRules.safeVersion(latest) && apkUrl.isNotEmpty()
+            val showPage = newer && latest.isNotEmpty() && UpdateChecker.pageUri(pageUrl) != null
+            val rowsList = buildList {
+                add("check")
+                if (canInstall) add("install")
+                if (showPage) add("page")
+                add("weekly")
+                add("auto")
+            }
+            val updateRows = rowsList.size
             Group(Modifier.padding(top = 16.dp)) {
                 val detail = when {
                     checking -> stringResource(R.string.update_checking)
@@ -127,53 +152,122 @@ fun AboutScreen(onBack: () -> Unit) {
                     latest.isEmpty() -> stringResource(R.string.update_last_none, DateUtils.getRelativeTimeSpanString(lastChecked).toString())
                     else -> stringResource(R.string.update_last, DateUtils.getRelativeTimeSpanString(lastChecked).toString(), latest)
                 }
-                SettingsRow(
-                    Groups.shape(0, updateRows),
-                    stringResource(R.string.update_check),
-                    detail,
-                    onClick = if (checking) null else ({
-                        checking = true
-                        failure = null
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) { UpdateChecker.run(context) }
-                            checking = false
-                            result.onSuccess { UpdateChecker.announce(context, it) }
-                            result.onFailure { failure = (it as? uniffi.kweb_core.Exception.Temporary)?.msg ?: genericFailure }
-                            lastChecked = prefs.updateLastChecked
-                            latest = prefs.updateLatest
-                            newer = prefs.updateNewer
-                            pageUrl = prefs.updatePageUrl
-                        }
-                    }),
-                    trailing = if (checking) ({ CircularProgressIndicator(Modifier.padding(4.dp), strokeWidth = 2.dp) }) else null,
-                )
-                if (download) {
-                    SettingsRow(
-                        Groups.shape(1, updateRows),
-                        stringResource(R.string.update_download, latest),
-                        stringResource(R.string.update_download_detail),
-                        onClick = {
-                            UpdateChecker.pageUri(pageUrl)?.let { page ->
-                                try {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                } catch (_: ActivityNotFoundException) {
-                                    // No browser: nothing to open.
+                rowsList.forEachIndexed { index, row ->
+                    val shape = Groups.shape(index, updateRows)
+                    when (row) {
+                        "check" -> SettingsRow(
+                            shape,
+                            stringResource(R.string.update_check),
+                            detail,
+                            onClick = if (checking) null else ({
+                                checking = true
+                                failure = null
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) { UpdateChecker.run(context) }
+                                    checking = false
+                                    result.onSuccess { UpdateChecker.announce(context, it) }
+                                    result.onFailure { failure = (it as? uniffi.kweb_core.Exception.Temporary)?.msg ?: genericFailure }
+                                    lastChecked = prefs.updateLastChecked
+                                    latest = prefs.updateLatest
+                                    newer = prefs.updateNewer
+                                    pageUrl = prefs.updatePageUrl
+                                    apkUrl = prefs.updateApkUrl
+                                    apkSize = prefs.updateApkSize
+                                    ready = UpdateInstallRules.safeVersion(latest) && UpdateFiles.file(context, latest).isFile
                                 }
+                            }),
+                            trailing = if (checking) ({ CircularProgressIndicator(Modifier.padding(4.dp), strokeWidth = 2.dp) }) else null,
+                        )
+                        "install" -> {
+                            val progress = downloading
+                            when {
+                                progress != null -> SettingsRow(
+                                    shape,
+                                    stringResource(R.string.update_downloading, latest),
+                                    UpdateInstallRules.percent(progress.first, progress.second)?.let {
+                                        stringResource(R.string.update_downloading_detail, it, Formatter.formatShortFileSize(context, progress.second ?: 0L))
+                                    } ?: stringResource(R.string.update_downloading_detail_unknown, Formatter.formatShortFileSize(context, progress.first)),
+                                    onClick = { cancel?.cancel() },
+                                    trailing = { Text(stringResource(R.string.update_cancel), color = MaterialTheme.colorScheme.primary) },
+                                )
+                                ready -> SettingsRow(
+                                    shape,
+                                    stringResource(R.string.update_install, latest),
+                                    stringResource(R.string.update_install_detail),
+                                    onClick = { context.startActivity(UpdateInstallActivity.intent(context, latest)) },
+                                )
+                                else -> SettingsRow(
+                                    shape,
+                                    stringResource(R.string.update_download, latest),
+                                    downloadError?.let { stringResource(R.string.update_failed_download, it) }
+                                        ?: if (apkSize > 0) stringResource(R.string.update_download_detail, Formatter.formatShortFileSize(context, apkSize))
+                                        else stringResource(R.string.update_download_detail_nosize),
+                                    onClick = {
+                                        val token = DownloadCancel()
+                                        cancel = token
+                                        downloading = 0L to apkSize.takeIf { it > 0 }
+                                        downloadError = null
+                                        val version = latest
+                                        scope.launch {
+                                            val outcome = withContext(Dispatchers.IO) {
+                                                UpdateDownloader.download(context, version, apkUrl, apkSize, prefs.updateApkSha, token) { done, total ->
+                                                    downloading = done to (total ?: apkSize.takeIf { it > 0 })
+                                                }
+                                            }
+                                            downloading = null
+                                            cancel = null
+                                            when (outcome) {
+                                                is UpdateDownloader.Outcome.Done -> {
+                                                    ready = true
+                                                    // The system's own prompt follows; nothing is installed without the user's tap there.
+                                                    context.startActivity(UpdateInstallActivity.intent(context, version))
+                                                }
+                                                is UpdateDownloader.Outcome.Refused -> downloadError = UpdateDownloader.refusalText(context, outcome.why)
+                                                is UpdateDownloader.Outcome.Failed -> downloadError = outcome.message ?: downloadFailure
+                                                UpdateDownloader.Outcome.Cancelled -> Unit
+                                            }
+                                        }
+                                    },
+                                )
                             }
-                        },
-                    )
+                        }
+                        "page" -> SettingsRow(
+                            shape,
+                            stringResource(R.string.update_page),
+                            stringResource(R.string.update_page_detail),
+                            onClick = {
+                                UpdateChecker.pageUri(pageUrl)?.let { page ->
+                                    try {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    } catch (_: ActivityNotFoundException) {
+                                        // No browser: nothing to open.
+                                    }
+                                }
+                            },
+                        )
+                        "weekly" -> SettingsRow(
+                            shape,
+                            stringResource(R.string.update_weekly),
+                            stringResource(R.string.update_weekly_detail),
+                            onClick = {
+                                weekly = !weekly
+                                prefs.updateWeekly = weekly
+                                UpdateScheduler.apply(context, weekly)
+                            },
+                            trailing = { Switch(checked = weekly, onCheckedChange = null) },
+                        )
+                        else -> SettingsRow(
+                            shape,
+                            stringResource(R.string.update_auto),
+                            stringResource(R.string.update_auto_detail),
+                            onClick = {
+                                auto = !auto
+                                prefs.updateAuto = auto
+                            },
+                            trailing = { Switch(checked = auto, onCheckedChange = null) },
+                        )
+                    }
                 }
-                SettingsRow(
-                    Groups.shape(updateRows - 1, updateRows),
-                    stringResource(R.string.update_weekly),
-                    stringResource(R.string.update_weekly_detail),
-                    onClick = {
-                        weekly = !weekly
-                        prefs.updateWeekly = weekly
-                        UpdateScheduler.apply(context, weekly)
-                    },
-                    trailing = { Switch(checked = weekly, onCheckedChange = null) },
-                )
             }
             Group(Modifier.padding(top = 16.dp)) {
                 SettingsRow(

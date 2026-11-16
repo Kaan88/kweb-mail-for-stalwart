@@ -31,6 +31,8 @@ class KwebApp : Application() {
         try {
             // The weekly update check is on by default, so it is scheduled here and not only from About (KEEP leaves a running schedule alone).
             UpdateScheduler.apply(this, UiPrefs(this).updateWeekly)
+            // A downloaded update that is no longer newer than the installed version (it was installed) goes.
+            ovh.kweb.mail.background.UpdateFiles.sweep(this)
             val accounts = Accounts.load(this)
             if (accounts.isEmpty()) return
             // Files of an opened encrypted message are only kept while its screen is open; a crash or kill may have left some.

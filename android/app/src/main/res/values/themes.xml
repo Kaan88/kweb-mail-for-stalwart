@@ -4,4 +4,11 @@
     <style name="Theme.KwebMail" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">#ffffff</item>
     </style>
+    <!-- The window of the install question: nothing of its own, the dialog floats on whatever is behind. -->
+    <style name="Theme.KwebMail.Transparent" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

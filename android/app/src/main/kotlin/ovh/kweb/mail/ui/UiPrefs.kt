@@ -112,6 +112,24 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(UPDATE_NOTIFIED, "").orEmpty()
         set(value) = prefs.edit { putString(UPDATE_NOTIFIED, value) }
 
+    /** Download a newer version by itself, on an unmetered network only. */
+    var updateAuto: Boolean
+        get() = prefs.getBoolean(UPDATE_AUTO, true)
+        set(value) = prefs.edit { putBoolean(UPDATE_AUTO, value) }
+
+    /** The newest release's file: address, size in bytes and SHA-256 (empty or 0 when it has none). */
+    var updateApkUrl: String
+        get() = prefs.getString(UPDATE_APK_URL, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_APK_URL, value) }
+
+    var updateApkSize: Long
+        get() = prefs.getLong(UPDATE_APK_SIZE, 0L)
+        set(value) = prefs.edit { putLong(UPDATE_APK_SIZE, value) }
+
+    var updateApkSha: String
+        get() = prefs.getString(UPDATE_APK_SHA, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_APK_SHA, value) }
+
     /** Puts the swipes, the delete question, the Undo time and the reply choice back as they were. */
     fun resetActions() = prefs.edit {
         remove(SWIPE_RIGHT)
@@ -133,6 +151,10 @@ class UiPrefs(context: Context) {
         const val UPDATE_PAGE = "update_page_url"
         const val UPDATE_NEWER = "update_newer"
         const val UPDATE_NOTIFIED = "update_notified"
+        const val UPDATE_AUTO = "update_auto"
+        const val UPDATE_APK_URL = "update_apk_url"
+        const val UPDATE_APK_SIZE = "update_apk_size"
+        const val UPDATE_APK_SHA = "update_apk_sha"
         const val CONVERSATIONS = "reading_conversation_view"
         const val MARK_READ = "reading_mark_read"
         const val AFTER_ACTION = "reading_after_action"

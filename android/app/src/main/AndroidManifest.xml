@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Installing a newer version of this app that was downloaded from the project's own release; always through the system's own prompt. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Device calendar: the calendar permission is asked for only when the user switches it on, after an explanation. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
@@ -59,6 +61,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Hands a downloaded update to the system installer, after the user's tap (no UI of its own beyond one question). -->
+        <activity
+            android:name=".background.UpdateInstallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.KwebMail.Transparent" />
+
         <!-- Where the browser comes back to after sign-in (ovh.kweb.mail:/oauth/callback). -->
         <activity
             android:name=".ui.signin.SignInReturnActivity"
@@ -84,6 +94,11 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- The Download button of the "update is available" notice. -->
+        <receiver
+            android:name=".background.UpdateActionReceiver"
+            android:exported="false" />
 
         <!-- Holds the live connection to the user's own mail server. -->
         <service

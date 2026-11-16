@@ -23,6 +23,7 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiPrefs
 import uniffi.kweb_core.UpdateInfo
 import uniffi.kweb_core.updateCheck
+import uniffi.kweb_core.updateCheckLocal
 
 /** What the update check decides without Android: whether to tell the user and where a link may lead. */
 object UpdateRules {
@@ -43,7 +44,9 @@ object UpdateChecker {
     fun run(context: Context): Result<UpdateInfo> {
         val prefs = UiPrefs(context)
         return try {
-            val info = updateCheck(BuildConfig.VERSION_NAME)
+            val origin = UpdateSource.debugOrigin(context)
+            val info = if (origin != null) updateCheckLocal(origin, BuildConfig.VERSION_NAME) else updateCheck(BuildConfig.VERSION_NAME)
+            prefs.rememberApk(info)
             prefs.updateLastChecked = System.currentTimeMillis()
             prefs.updateLatest = info.latest
             prefs.updatePageUrl = info.pageUrl
@@ -88,7 +91,26 @@ class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Channels.ensure(applicationContext)
         UpdateChecker.run(applicationContext).fold(
-            onSuccess = { UpdateChecker.announce(applicationContext, it); Result.success() },
+            onSuccess = { info ->
+                val prefs = UiPrefs(applicationContext)
+                if (info.newer && info.apkUrl.isNotEmpty() && UpdateInstallRules.safeVersion(info.latest)) {
+                    when {
+                        !prefs.updateAuto -> UpdateChecker.announce(applicationContext, info)
+                        UpdateInstallRules.mayDownloadNow(true, isUnmetered(applicationContext)) -> {
+                            // The download itself is queued on an unmetered network; the "ready" notice follows it.
+                            UpdateDownloadWorker.enqueue(applicationContext, info.latest, anyNetwork = false)
+                        }
+                        else -> {
+                            // Metered: announced with a Download button, and queued for the next unmetered network.
+                            UpdateNotices.available(applicationContext, info.latest)
+                            UpdateDownloadWorker.enqueue(applicationContext, info.latest, anyNetwork = false)
+                        }
+                    }
+                } else {
+                    UpdateChecker.announce(applicationContext, info)
+                }
+                Result.success()
+            },
             // A failed week is not retried hard: the next period tries again.
             onFailure = { Result.success() },
         )
