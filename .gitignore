@@ -7,3 +7,6 @@ local.properties
 .idea/
 *.iml
 .DS_Store
+
+keystore.properties
+*.jks

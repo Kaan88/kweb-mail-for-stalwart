@@ -1,6 +1,7 @@
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 import org.gradle.process.ExecOperations
 import java.io.ByteArrayOutputStream
+import java.util.Properties
 import javax.inject.Inject
 
 plugins {
@@ -148,6 +149,22 @@ val rustlsVerifierVersion: Provider<String> =
         lines.drop(at + 1).first { it.trimStart().startsWith("version = ") }.substringAfter('"').substringBefore('"')
     }
 
+// ---------------------------------------------------------------------------------------------
+// Version: the one place. versionCode goes up by one per release; versionName is the release name.
+// ---------------------------------------------------------------------------------------------
+
+val appVersionCode = 2
+val appVersionName = "0.1.0"
+
+// Release signing: the key lives outside the repository (see dev/README.md, "Release").
+val keystorePropertiesFile: File? =
+    (System.getenv("KWEB_KEYSTORE_PROPERTIES")?.takeIf { it.isNotBlank() }?.let(::File)
+        ?: File(System.getProperty("user.home"), "tools/kweb-release/keystore.properties"))
+        .takeIf { it.isFile }
+val keystoreProperties = Properties().also { props ->
+    keystorePropertiesFile?.inputStream()?.use { props.load(it) }
+}
+
 android {
     namespace = "ovh.kweb.mail"
     compileSdk = 36
@@ -156,10 +173,35 @@ android {
         applicationId = "ovh.kweb.mail"
         minSdk = minSdkVersion
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.0.1"
+        versionCode = appVersionCode
+        versionName = appVersionName
         // Also filters the ABIs of JNA's bundled libjnidispatch.
         ndk { abiFilters += rustAbis }
+    }
+
+    signingConfigs {
+        if (keystorePropertiesFile != null) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keystorePropertiesFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.lifecycle("kweb: no release keystore found; the release APK will be unsigned.")
+            }
+        }
     }
 
     buildFeatures {

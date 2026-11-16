@@ -137,3 +137,11 @@ disk priority with 4 test threads; `dev/gradle.sh` takes the same lock. So only 
 time, also across the working copies under `~/.cache/kweb-mail/`; a second one waits. Build output
 is on `/mnt/E/cargo-target/kweb-mail` when `/mnt/E` is mounted, else `~/.cache/kweb-mail/target`;
 `KWEB_TARGET_DIR` overrides it.
+
+## Release
+
+- The signing key is outside the repository: `~/tools/kweb-release/kweb-release.jks` (alias `kweb`), with its passwords in `~/tools/kweb-release/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). **Back both up somewhere safe.** Losing the key means a new app identity: nobody could update, they would have to uninstall.
+- Gradle reads the properties file from `KWEB_KEYSTORE_PROPERTIES` if set, else from the path above. If the file is missing the release APK is unsigned and Gradle prints one line saying so.
+- Version: `appVersionCode` and `appVersionName` at the top of `android/app/build.gradle.kts`. The code goes up by one per release (a new code makes the app register for push again after an update). Add an entry to `CHANGELOG.md`.
+- Build: `cd android && ./gradlew.bat assembleRelease` (shrinking on, arm64-v8a and x86_64 only); output `android/app/build/outputs/apk/release/`. Tag `vX.Y.Z` and make a draft GitHub release with the signed APK.
+- CI: the android job builds `assembleRelease` and uploads `kweb-mail-release-apk`. To have CI sign it, add two repository secrets: `KWEB_KEYSTORE_BASE64` (`base64 -w0 kweb-release.jks`) and `KWEB_KEYSTORE_PROPERTIES` (the contents of the properties file, with `storeFile` ignored: CI rewrites it to the decoded keystore). Without them the artifact is unsigned.
