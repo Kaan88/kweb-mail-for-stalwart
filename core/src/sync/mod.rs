@@ -5,6 +5,8 @@
 //! the queued actions are put back on the cache. A state string is stored only after the data
 //! it stands for is in the cache, so a failed pass is simply repeated by the next one.
 
+pub mod window;
+
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -20,6 +22,8 @@ pub const INBOX_WINDOW: usize = 500;
 /// Newest messages kept for every other mailbox on a full fetch.
 pub const OTHER_WINDOW: usize = 100;
 
+/// How many ids one query for a folder's newest mail asks for.
+const ID_PAGE: usize = 500;
 /// How many older messages one [`load_older`] fetches.
 pub const PAGE: usize = 50;
 /// How many of the newest Inbox messages [`prefetch_bodies`] keeps bodies for.
@@ -152,9 +156,10 @@ async fn full_messages(conn: &Connection, store: &Store, account_id: &str) -> Re
     let mut ids = Vec::new();
     // Per mailbox: the ids its query returned, and whether that was a full page.
     let mut found: Vec<(String, Vec<String>, bool)> = Vec::new();
+    let choice = window::get(store, account_id)?;
     for mailbox in store.list_mailboxes(account_id)? {
-        let window = if mailbox.role.as_deref() == Some("inbox") { INBOX_WINDOW } else { OTHER_WINDOW };
-        let page = conn.message_ids(&mailbox.id, 0, window).await?;
+        let window = choice.for_role(mailbox.role.as_deref());
+        let page = newest_ids(conn, &mailbox.id, window).await?;
         ids.extend(page.iter().cloned());
         let full = page.len() == window;
         found.push((mailbox.id, page, full));
@@ -166,6 +171,34 @@ async fn full_messages(conn: &Connection, store: &Store, account_id: &str) -> Re
     }
     store.set_state(account_id, EMAIL, &state)?;
     Ok(Outcome { changed: true, full_resync: true })
+}
+
+/// The ids of the newest `count` messages of a mailbox, asked for in pages of at most `ID_PAGE`
+/// (a server limits one query), fewer when the mailbox has fewer.
+async fn newest_ids(conn: &Connection, mailbox_id: &str, count: usize) -> Result<Vec<String>> {
+    let mut ids: Vec<String> = Vec::new();
+    while ids.len() < count {
+        let want = (count - ids.len()).min(ID_PAGE);
+        let page = conn.message_ids(mailbox_id, ids.len(), want).await?;
+        let short = page.len() < want;
+        ids.extend(page);
+        if short {
+            break;
+        }
+    }
+    Ok(ids)
+}
+
+/// A full fetch of the messages of every folder now, as a pass does when the server cannot give
+/// changes: what the user asked for with "Clear cache and resync". The cache is replaced in one
+/// write after everything was fetched, so a failure on the way leaves it as it was.
+pub async fn resync_messages(conn: &Connection, store: &Store, account_id: &str) -> Result<Outcome> {
+    let outcome = full_messages(conn, store, account_id).await?;
+    store.kv_set(account_id, KEYWORDS_KEY, "1")?;
+    // The other recipients and delivery headers are fetched again too, so that the per-address
+    // notification choices are not applied to mail without them.
+    fill_receivers(conn, store, account_id).await;
+    Ok(outcome)
 }
 
 /// A mailbox whose query filled its window may have older mail on the server: the cache holds

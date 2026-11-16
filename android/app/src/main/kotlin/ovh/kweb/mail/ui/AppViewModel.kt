@@ -214,7 +214,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun intoAccount(accountExtra: String?, then: suspend (AccountRecord) -> Unit) {
         val records = withContext(Dispatchers.IO) { Accounts.load(getApplication()) }
         val record = IntentAccount.resolve(accountExtra, records) ?: return
-        val labels = AccountLabels.of(records)
+        val labels = AccountLabels.of(records, Accounts.names.value)
         val label = labels[record.id] ?: record.username
         val same = sessionFlow.value?.record?.id == record.id
         when (SwitchRules.onIncoming(stackFlow.value.last(), same)) {

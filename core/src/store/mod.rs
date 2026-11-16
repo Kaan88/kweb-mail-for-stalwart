@@ -23,6 +23,7 @@ mod waiting;
 
 pub use crypto::StoredKey;
 pub use drafts::{DraftRow, DraftState, Threading, DIRECTORY_EVERY};
+pub use messages::WindowRow;
 pub use outbox::Job;
 
 use crate::model::Account;

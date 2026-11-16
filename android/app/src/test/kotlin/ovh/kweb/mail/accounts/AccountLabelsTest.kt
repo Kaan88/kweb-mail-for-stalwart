@@ -24,4 +24,16 @@ class AccountLabelsTest {
         assertEquals("Kaan · mail.example.org", labels["b"])
         assertEquals("bob", labels["c"])
     }
+
+    @Test
+    fun aNameTheUserGaveWinsAndIsShownEvenWithOneAccount() {
+        val a = record("a", user = "kaan")
+        val b = record("b", user = "bob")
+        assertEquals("Work", AccountLabels.of(listOf(a, b), mapOf("a" to "Work"))["a"])
+        assertEquals("bob", AccountLabels.of(listOf(a, b), mapOf("a" to "Work"))["b"])
+        assertEquals("Work", AccountLabels.forNotice(a, listOf(a), mapOf("a" to "Work")))
+        assertEquals(null, AccountLabels.forNotice(a, listOf(a), emptyMap()))
+        assertEquals("kaan", AccountLabels.forNotice(a, listOf(a, b), emptyMap()))
+        assertEquals("kaan", AccountLabels.forNotice(a, listOf(a, b), mapOf("a" to "  ")))
+    }
 }

@@ -95,7 +95,7 @@ private fun AccountRowItem(row: AccountRow, shape: Shape, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                if (row.needsSignIn) stringResource(R.string.accounts_sign_in_needed) else row.host,
+                if (row.needsSignIn) stringResource(R.string.accounts_sign_in_needed) else row.login ?: row.host,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (row.needsSignIn) colors.error else if (row.active) colors.onSecondaryContainer else colors.onSurfaceVariant,
                 maxLines = 1,

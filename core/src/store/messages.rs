@@ -197,3 +197,61 @@ pub(super) fn replace(c: &Connection, account_id: &str, msgs: &[MessageHeader]) 
     }
     upsert(c, account_id, msgs)
 }
+
+/// One message in one folder, as the window pruning reads them.
+#[derive(Debug, Clone)]
+pub struct WindowRow {
+    pub mailbox_id: String,
+    pub id: String,
+    pub received_at: i64,
+    pub is_unread: bool,
+    pub is_flagged: bool,
+}
+
+impl Store {
+    /// Every cached message with each folder it is in, folder by folder, newest first.
+    pub fn window_rows(&self, account_id: &str) -> Result<Vec<WindowRow>> {
+        self.read(|c| {
+            let mut stmt = c.prepare(
+                "SELECT mm.mailbox_id, m.id, m.received_at, m.is_unread, m.is_flagged
+                 FROM messages m JOIN message_mailboxes mm ON mm.account_id = m.account_id AND mm.message_id = m.id
+                 WHERE m.account_id = ?1 ORDER BY mm.mailbox_id, m.received_at DESC, m.id DESC",
+            )?;
+            let rows = stmt.query_map([account_id], |r| {
+                Ok(WindowRow {
+                    mailbox_id: r.get(0)?,
+                    id: r.get(1)?,
+                    received_at: r.get(2)?,
+                    is_unread: r.get(3)?,
+                    is_flagged: r.get(4)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
+    /// Deletes all cached message bodies of the account.
+    pub fn delete_bodies(&self, account_id: &str) -> Result<()> {
+        self.write(|c| {
+            c.execute("DELETE FROM message_bodies WHERE account_id = ?1", [account_id])?;
+            Ok(())
+        })
+    }
+
+    /// The ids of messages a queued action or a draft on the server refers to.
+    pub fn referenced_message_ids(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {
+        self.read(|c| {
+            let mut out = std::collections::HashSet::new();
+            for sql in [
+                "SELECT message_id FROM outbox WHERE account_id = ?1",
+                "SELECT server_id FROM drafts WHERE account_id = ?1 AND server_id IS NOT NULL",
+            ] {
+                let mut stmt = c.prepare(sql)?;
+                for id in stmt.query_map([account_id], |r| r.get::<_, String>(0))? {
+                    out.insert(id?);
+                }
+            }
+            Ok(out)
+        })
+    }
+}

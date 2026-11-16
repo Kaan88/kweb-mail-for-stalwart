@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Push through Google: Play services hands the server's Web Push to the app (no Firebase, no Google library). -->
@@ -87,6 +88,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the user's own JMAP EventSource connection to their mail server open so new mail and changes made on other devices are notified within seconds, without Google services or a relay server." />
         </service>
+
+        <!-- Carries a running download of an attachment or a file, so that it goes on when the app is left. -->
+        <service
+            android:name=".ui.transfer.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Buttons and swipes of notifications, and the end of a reminder snooze. -->
         <receiver

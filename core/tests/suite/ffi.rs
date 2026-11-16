@@ -293,3 +293,47 @@ fn sign_in_through_an_app_redirect() {
     // The same answer cannot be used twice.
     assert!(matches!(rig.core.complete_sign_in(callback), Err(Error::Invalid { .. })));
 }
+
+#[test]
+fn clearing_the_cache_fetches_it_again_and_announces_nothing_twice() {
+    let rig = Rig::signed_in();
+    let old = rig.server.deliver_at("Old", "old@example.test", "From before", "p", 1_000_000);
+    rig.core.check_once(Shade::Unknown).unwrap();
+    let rec = Arc::new(Recorder::default());
+    rig.core.listen(rec.clone());
+    let new = rig.server.deliver("Dora", "dora@example.test", "After sign-in", "p");
+    rig.core.check_once(Shade::Ids { ids: vec![] }).unwrap();
+    assert_eq!(rec.posted(&new), Some(false));
+    rig.core.message_body(new.clone()).unwrap();
+
+    rig.core.clear_cache_and_resync().unwrap();
+
+    let cached = rig.core.messages(INBOX_ID.into(), 20, 0).unwrap();
+    assert!(cached.iter().any(|m| m.id == old) && cached.iter().any(|m| m.id == new), "the mail is back");
+    rig.core.check_once(Shade::Unknown).unwrap();
+    let posts: Vec<_> = rec.plans().iter().flat_map(|p| p.post.iter().map(|n| n.message_id.clone())).collect();
+    assert_eq!(posts, vec![new.clone()], "the mail that was announced is not announced again, the old one never is");
+    assert!(!rec.cancelled(&new), "and its notification was not taken down");
+}
+
+#[test]
+fn clearing_the_cache_with_the_server_away_fails_and_leaves_the_cache_as_it_was() {
+    let rig = Rig::signed_in();
+    rig.core.check_once(Shade::Unknown).unwrap();
+    rig.core.message_body("e1".into()).unwrap();
+    rig.server.set_down(true);
+    assert!(rig.core.clear_cache_and_resync().is_err());
+    rig.server.set_down(false);
+    assert_eq!(rig.core.messages(INBOX_ID.into(), 20, 0).unwrap().len(), 3, "the mail is still there");
+}
+
+#[test]
+fn an_account_name_is_kept_and_cleared() {
+    let rig = Rig::signed_in();
+    assert_eq!(rig.core.account_name().unwrap(), None);
+    rig.core.set_account_name("  Work ".into()).unwrap();
+    assert_eq!(rig.core.account_name().unwrap().as_deref(), Some("Work"));
+    assert_eq!(rig.reopen().account_name().unwrap().as_deref(), Some("Work"));
+    rig.core.set_account_name("   ".into()).unwrap();
+    assert_eq!(rig.core.account_name().unwrap(), None);
+}

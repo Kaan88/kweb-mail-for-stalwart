@@ -241,3 +241,116 @@ async fn mailbox_counts_follow_incremental_passes() {
     let inbox = store.get_mailbox(ACCOUNT, INBOX_ID).unwrap().unwrap();
     assert_eq!(inbox.total_emails, 4);
 }
+
+use kweb_core::sync::window::{self, SyncWindow};
+use std::collections::HashSet;
+
+fn put_body(store: &Store, account: &str, id: &str) {
+    let body = kweb_core::model::MessageBody {
+        message_id: id.into(),
+        blob_id: "b".into(),
+        to: vec![],
+        cc: vec![],
+        bcc: vec![],
+        reply_to: vec![],
+        sent_at: None,
+        html: None,
+        text: Some("hello".into()),
+        attachments: vec![],
+        is_truncated: false,
+    };
+    assert!(store.put_body(account, &body).unwrap());
+}
+
+/// `n` messages in the Archive, received at 1_000_000 + i, all read.
+fn archive_of(server: &MockServer, n: i64) -> Vec<String> {
+    (0..n)
+        .map(|i| {
+            let id = server.deliver_at("Bulk", "bulk@example.test", &format!("a{i}"), "p", 1_000_000 + i);
+            server.move_to(&id, "archive");
+            server.mark_read(&id);
+            id
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_bigger_window_fetches_older_mail_on_the_next_sync() {
+    let server = MockServer::start().await;
+    archive_of(&server, OTHER_WINDOW as i64 + 40);
+    let conn = connect(&server).await;
+    let store = new_store(&server);
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(cached(&store, ARCHIVE_ID).len(), OTHER_WINDOW);
+    assert!(store.get_window(ACCOUNT, ARCHIVE_ID).unwrap().is_some());
+
+    assert!(window::set(&store, ACCOUNT, SyncWindow::Large).unwrap(), "the window grew");
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(cached(&store, ARCHIVE_ID).len(), OTHER_WINDOW + 40 + 1, "the seeded one too");
+    // Everything is cached now: no window is left.
+    assert_eq!(store.get_window(ACCOUNT, ARCHIVE_ID).unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_smaller_window_removes_only_what_may_go() {
+    let server = MockServer::start().await;
+    let ids = archive_of(&server, 70);
+    // The oldest is starred, the next is unread, the next is named by a queued action.
+    server.add_keyword(&ids[0], "$flagged");
+    server.mark_unread(&ids[1]);
+    let conn = connect(&server).await;
+    let store = new_store(&server);
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    assert_eq!(cached(&store, ARCHIVE_ID).len(), 71, "70 and the seeded one");
+    // A body is cached for an old and for a new message.
+    for id in [&ids[2], &ids[3], &ids[69]] {
+        put_body(&store, ACCOUNT, id);
+    }
+
+    window::set(&store, ACCOUNT, SyncWindow::Light).unwrap();
+    let keep: HashSet<String> = [ids[2].clone()].into();
+    let gone = window::prune(&store, ACCOUNT, SyncWindow::Light, &keep).unwrap();
+
+    // Light keeps the newest 50 of the Archive (the seeded one and ids[21..]); of the 21 older ones three stay.
+    assert_eq!(gone, 18);
+    let left = cached(&store, ARCHIVE_ID);
+    assert_eq!(left.len(), 53);
+    for kept in [&ids[0], &ids[1], &ids[2], &ids[21], &ids[69]] {
+        assert!(left.contains(kept), "{kept} should stay");
+    }
+    for gone in [&ids[3], &ids[20]] {
+        assert!(!left.contains(gone), "{gone} should be gone");
+    }
+    assert!(store.get_body(ACCOUNT, &ids[3]).unwrap().is_none(), "its body went with it");
+    assert!(store.get_body(ACCOUNT, &ids[69]).unwrap().is_some());
+    // The folder is cached back to the oldest of its newest 50, and "load older" can go on from there.
+    assert!(store.get_window(ACCOUNT, ARCHIVE_ID).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_resync_replaces_one_accounts_cache_and_leaves_the_other_alone() {
+    let (server, conn, store) = setup().await;
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    let other = Account { id: "other".into(), server_url: server.url(), username: "o".into(), signed_in_at: 0 };
+    store.save_account(&other).unwrap();
+    let mail = store.get_message(ACCOUNT, "e1").unwrap().unwrap();
+    let mut theirs = mail.clone();
+    theirs.id = "theirs".into();
+    store.upsert_messages("other", &[theirs]).unwrap();
+    store.set_state("other", "Email", "s-other").unwrap();
+    put_body(&store, "other", "theirs");
+    put_body(&store, ACCOUNT, "e1");
+    store.dismissed_add(ACCOUNT, "e1").unwrap();
+
+    server.deliver("New", "new@example.test", "After", "p");
+    sync::resync_messages(&conn, &store, ACCOUNT).await.unwrap();
+    store.delete_bodies(ACCOUNT).unwrap();
+
+    assert_eq!(cached(&store, INBOX_ID).len(), 4, "the cache was fetched again");
+    assert!(store.get_body(ACCOUNT, "e1").unwrap().is_none());
+    assert!(store.get_message("other", "theirs").unwrap().is_some());
+    assert!(store.get_body("other", "theirs").unwrap().is_some());
+    assert_eq!(store.get_state("other", "Email").unwrap().as_deref(), Some("s-other"));
+    assert!(store.is_dismissed(ACCOUNT, "e1").unwrap(), "what the user swiped away stays swiped");
+    assert_eq!(store.get_state(ACCOUNT, "Email").unwrap().unwrap(), server.email_state());
+}

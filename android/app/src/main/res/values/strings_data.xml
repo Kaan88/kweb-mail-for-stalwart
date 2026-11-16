@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Account name, sync window, clear cache (Settings) -->
+    <string name="settings_account_name">Name</string>
+    <string name="settings_account_name_none">Not set</string>
+    <string name="settings_account_name_hint">Name</string>
+    <string name="settings_account_name_help">Shown in the account list and in notifications, for example Work. Only on this phone.</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_name_failed">The name could not be saved.</string>
+    <string name="settings_window">Keep mail on the phone</string>
+    <string name="settings_window_light">Light: newest 200 in the Inbox, 50 in other folders</string>
+    <string name="settings_window_standard">Standard: newest 500 in the Inbox, 100 in other folders</string>
+    <string name="settings_window_large">Large: newest 2,000 in the Inbox, 500 in other folders</string>
+    <string name="settings_window_everything">Everything the server has</string>
+    <string name="settings_window_failed">The setting could not be changed.</string>
+    <string name="settings_clear">Clear cache and resync</string>
+    <string name="settings_clear_detail">Fetch the mail on the phone again</string>
+    <string name="settings_clearing">Fetching the mail again…</string>
+    <string name="settings_clear_text">The mail on this phone is dropped and fetched again from the server. Changes made on the phone that are still waiting are sent first. Mail you already read or swiped away is not announced again. This account only.</string>
+    <string name="settings_clear_confirm">Clear and fetch</string>
+    <string name="settings_clear_done">Fetching the mail again.</string>
+    <string name="settings_clear_failed">The cache could not be cleared. Nothing was changed.</string>
+
+    <!-- Downloads that go on when the app is left -->
+    <string name="channel_downloads">Downloads</string>
+    <string name="channel_downloads_description">How far a download of an attachment or a file is.</string>
+    <string name="download_title_attachment">Downloading an attachment</string>
+    <string name="download_title_file">Downloading a file</string>
+    <plurals name="download_title_many">
+        <item quantity="one">Downloading %d file</item>
+        <item quantity="other">Downloading %d files</item>
+    </plurals>
+    <string name="download_done_title">Download finished</string>
+    <string name="download_done_text">Open the app to use the file.</string>
+</resources>

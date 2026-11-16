@@ -50,10 +50,10 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
     private val addresses = MutableStateFlow<List<AddressChoice>?>(null)
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
 
-    val state: StateFlow<NotificationsState> = combine(settings.changes, addresses, Accounts.records) { _, list, records ->
+    val state: StateFlow<NotificationsState> = combine(settings.changes, addresses, Accounts.records, Accounts.names) { _, list, records, names ->
         val s = settings
         NotificationsState(
-            account = AccountLabels.of(records)[session.record.id].takeIf { records.size > 1 },
+            account = AccountLabels.forNotice(session.record, records, names),
             mailEnabled = s.mailEnabled,
             remindersEnabled = s.remindersEnabled,
             removeWhenReadElsewhere = s.removeWhenReadElsewhere,
@@ -134,7 +134,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
         val record = session.record
         val records = Accounts.records.value
         Channels.ensure(app)
-        Channels.ensureAccount(app, record, AccountLabels.of(records)[record.id].takeIf { records.size > 1 })
+        Channels.ensureAccount(app, record, AccountLabels.forNotice(record, records, Accounts.names.value))
         val id = when (kind) {
             ChannelKind.Mail -> ChannelRules.mail(record)
             ChannelKind.Reminders -> Channels.REMINDERS
@@ -149,7 +149,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
         val records = Accounts.records.value
         val key = NotificationsRules.key(choice.address)
         val quiet = choice.mode == AddressMode.SILENT
-        Channels.ensureAddress(app, record, AccountLabels.of(records)[record.id].takeIf { records.size > 1 }, key, quiet)
+        Channels.ensureAddress(app, record, AccountLabels.forNotice(record, records, Accounts.names.value), key, quiet)
         return Channels.settingsIntent(app, ChannelRules.forMail(record, quiet, key))
     }
 

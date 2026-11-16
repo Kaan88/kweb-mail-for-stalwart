@@ -887,8 +887,8 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
         Avatar(active?.initial ?: Sender.initial(username, ""), strong = true)
         Column(Modifier.weight(1f)) {
             Text(active?.label ?: username, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (AccountRows.showsAccountNames(ui.rows.size) && active != null) {
-                Text(active.host, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (active != null && (active.login != null || AccountRows.showsAccountNames(ui.rows.size))) {
+                Text(active.login ?: active.host, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = colors.onSurfaceVariant)

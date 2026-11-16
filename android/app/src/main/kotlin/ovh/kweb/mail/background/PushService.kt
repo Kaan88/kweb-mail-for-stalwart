@@ -174,7 +174,7 @@ class PushService : Service() {
     private fun render(summary: ConnectionSummary) {
         // The entry speaks of the connections the service holds; a Google-mode account is not one of them.
         val items = ModeRules.serviceItems(summary.items)
-        val labels = AccountLabels.of(summary.items.map { it.record })
+        val labels = AccountLabels.of(summary.items.map { it.record }, Accounts.names.value)
         render(ServiceEntryRules.plan(items.map { labels.getValue(it.record.id) to it.status }))
     }
 
@@ -254,7 +254,7 @@ class PushService : Service() {
         /** Every account as the service decision sees it (see [ModeRules.mustRunService]). Blocks a little (prefs). */
         fun deliveries(context: Context): List<ModeRules.Delivery> {
             val labels = Accounts.load(context)
-            val names = AccountLabels.of(labels)
+            val names = AccountLabels.of(labels, Accounts.names.value)
             return labels.map { ModeRules.Delivery(names.getValue(it.id), Settings.of(context, it).deliveryMode) }
         }
 

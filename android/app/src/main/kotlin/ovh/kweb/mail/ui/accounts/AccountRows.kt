@@ -7,6 +7,8 @@ import ovh.kweb.mail.accounts.AccountRecord
 data class AccountRow(
     val id: String,
     val label: String,
+    /** The login (with the host where two logins are alike) when the user named the account: the line under the name; else null. */
+    val login: String?,
     val host: String,
     val initial: String,
     /** Unread mail in the Inbox; null while it is not known yet. */
@@ -23,12 +25,15 @@ object AccountRows {
         activeId: String?,
         unread: Map<String, Int>,
         needsSignIn: Set<String>,
+        names: Map<String, String> = emptyMap(),
     ): List<AccountRow> {
-        val labels = AccountLabels.of(records)
+        val logins = AccountLabels.of(records)
+        val labels = AccountLabels.of(records, names)
         return records.map { r ->
             AccountRow(
                 id = r.id,
                 label = labels[r.id] ?: r.username,
+                login = if (names[r.id].isNullOrBlank()) null else logins[r.id],
                 host = AccountLabels.host(r.serverUrl),
                 initial = initial(r.username),
                 unread = unread[r.id],

@@ -10,6 +10,7 @@ mod ai_chat;
 mod crypto;
 mod crypto_send;
 mod crypto_trust;
+mod data;
 mod download;
 mod enterprise;
 

@@ -23,7 +23,8 @@ class AccountSwitcherViewModel(app: Application) : AndroidViewModel(app) {
         Accounts.active,
         Accounts.connection,
         Accounts.cacheTicks,
-    ) { records, active, connection, _ ->
+        Accounts.names,
+    ) { records, active, connection, _, names ->
         val needs = connection.items.filter { it.status == ConnectionStatus.SignInNeeded }.map { it.record.id }.toSet()
         // Opening a session may open its cache; reading the mailboxes is a cache read. Both off the main thread.
         val unread = HashMap<String, Int>()
@@ -31,6 +32,6 @@ class AccountSwitcherViewModel(app: Application) : AndroidViewModel(app) {
             val inbox = runCatching { Accounts.session(r.id)?.core?.mailboxes()?.firstOrNull { it.role == "inbox" } }.getOrNull()
             if (inbox != null) unread[r.id] = inbox.unreadEmails.toInt()
         }
-        AccountRows.build(records, active?.id, unread, needs)
+        AccountRows.build(records, active?.id, unread, needs, names)
     }.conflate().flowOn(Dispatchers.IO).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 }

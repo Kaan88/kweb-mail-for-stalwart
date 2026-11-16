@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.Channels
 import ovh.kweb.mail.background.DeliveryMode
 import ovh.kweb.mail.background.GooglePush
 import ovh.kweb.mail.background.KeystoreSecrets
@@ -53,7 +54,8 @@ object Accounts {
     private val activeFlow = MutableStateFlow<AccountRecord?>(null)
     private val statuses = MutableStateFlow<Map<String, ConnectionStatus>>(emptyMap())
     private val cacheCounts = MutableStateFlow<Map<String, Long>>(emptyMap())
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    /** The scope of work that belongs to the accounts and outlives any screen. */
+    val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val random = SecureRandom()
 
     /** Gives the object the application. Called once by `KwebApp`; later calls from anywhere are harmless. */
@@ -84,6 +86,27 @@ object Accounts {
 
     private val modeTicks = MutableStateFlow(0L)
 
+    private val namesFlow = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** The names the user gave the accounts, by account id (an account without a name is not in the map). Not blocking. */
+    val names: StateFlow<Map<String, String>> get() = namesFlow
+
+    /**
+     * Gives account [id] a name (blank removes it). The core keeps it; the channels and groups of the notifications
+     * follow at once. Blocks (a cache write): not on the main thread.
+     */
+    fun setName(id: String, name: String) {
+        val session = session(id) ?: return
+        session.core.setAccountName(name)
+        publishName(id, session.core)
+        Channels.ensure(app)
+    }
+
+    private fun publishName(id: String, core: Core) {
+        val name = runCatching { core.accountName() }.getOrNull()
+        namesFlow.update { if (name.isNullOrBlank()) it - id else it + (id to name) }
+    }
+
     /** Call after an account's delivery mode changed: the connection summary and the service entry follow. */
     fun modeChanged() {
         modeTicks.update { it + 1 }
@@ -91,6 +114,9 @@ object Accounts {
 
     /** One counter per account that grows with every "the cache changed" call of its core. Not blocking. */
     val cacheTicks: StateFlow<Map<String, Long>> get() = cacheCounts
+
+    /** The application, once [attach] has run; null before (and in a plain unit test). */
+    fun appContext(): Context? = if (::app.isInitialized) app else null
 
     /** Loads the registry (migrating and sweeping on the first call) and returns the accounts. Blocks. */
     fun load(context: Context): List<AccountRecord> {
@@ -208,6 +234,7 @@ object Accounts {
             onCache = { r -> cacheCounts.update { it + (r.id to ((it[r.id] ?: 0L) + 1)) } },
         )
         sessions[record.id] = session
+        publishName(record.id, core)
         statuses.update { it + (record.id to session.status.value) }
         return session
     }
@@ -359,6 +386,7 @@ object Accounts {
             sessions.remove(record.id)
         }
         statuses.update { it - record.id }
+        namesFlow.update { it - record.id }
         cacheCounts.update { it - record.id }
         publish(store!!.state)
         Background.afterAccountRemoved(app, record)

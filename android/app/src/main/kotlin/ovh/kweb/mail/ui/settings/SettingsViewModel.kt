@@ -3,6 +3,10 @@ package ovh.kweb.mail.ui.settings
 import ovh.kweb.mail.accounts.AccountSession
 import android.app.Application
 import android.util.Log
+import java.io.File
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
@@ -23,7 +27,12 @@ import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
+import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountPaths
+import ovh.kweb.mail.accounts.Accounts
+import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.Quota
+import uniffi.kweb_core.SyncWindow
 
 /** The storage section: not read yet, read, or not readable. */
 sealed interface StorageState {
@@ -58,6 +67,12 @@ sealed interface AssistantRowState {
 
 data class SettingsState(
     val name: String = "",
+    /** The name the user gave the account (empty: none). */
+    val accountName: String = "",
+    /** How much mail each folder keeps on the phone; null until read. */
+    val syncWindow: SyncWindow? = null,
+    /** "Clear cache and resync" is running. */
+    val clearing: Boolean = false,
     /** The server's host, empty until the account is read. */
     val server: String = "",
     val storage: StorageState = StorageState.Loading,
@@ -80,6 +95,69 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
     private val stateFlow = MutableStateFlow(SettingsState())
 
     val state: StateFlow<SettingsState> get() = stateFlow
+
+    private val messageChannel = Channel<UiMessage>(Channel.BUFFERED)
+
+    /** What to tell the user after a change of the data settings (a refusal says why). */
+    val messages: Flow<UiMessage> get() = messageChannel.receiveAsFlow()
+
+    /** Gives the account a name (blank removes it). */
+    fun setAccountName(text: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { Accounts.setName(session.record.id, text) }
+                stateFlow.update { it.copy(accountName = Accounts.names.value[session.record.id].orEmpty()) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "naming the account failed: ${e.javaClass.simpleName}")
+                messageChannel.trySend(UiMessage.Res(R.string.settings_name_failed))
+            }
+        }
+    }
+
+    /** Keeps [window] of mail on the phone: a smaller one cuts the cache back at once, a bigger one fetches the rest. */
+    fun setSyncWindow(window: SyncWindow) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { session.core.setSyncWindow(window) }
+                stateFlow.update { it.copy(syncWindow = window) }
+                session.publishCacheChanged()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "changing the sync window failed: ${e.javaClass.simpleName}")
+                messageChannel.trySend(UiMessage.of(e, R.string.settings_window_failed))
+            }
+        }
+    }
+
+    /** Drops the cached mail of this account and fetches it again; the core refuses, with the reason, while something waits to be sent. */
+    fun clearCache() {
+        if (stateFlow.value.clearing) return
+        stateFlow.update { it.copy(clearing = true) }
+        val app = getApplication<Application>()
+        // The work belongs to the account, not to the screen: leaving the screen does not stop it.
+        Accounts.scope.launch {
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    session.core.clearCacheAndResync()
+                    // What was downloaded to open or share is dropped too, of this account only.
+                    File(app.cacheDir, AccountPaths.blobs(session.record.id)).deleteRecursively()
+                    File(app.cacheDir, AccountPaths.attachments(session.record.id)).deleteRecursively()
+                }
+                session.publishCacheChanged()
+                UiMessage.Res(R.string.settings_clear_done)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "clearing the cache failed: ${e.javaClass.simpleName}")
+                UiMessage.of(e, R.string.settings_clear_failed)
+            }
+            stateFlow.update { it.copy(clearing = false) }
+            messageChannel.trySend(result)
+        }
+    }
 
     /** Counts sign-outs: a read started before one is about the old account and is dropped. */
     @Volatile
@@ -109,6 +187,10 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
             stateFlow.update {
                 it.copy(name = account?.username.orEmpty(), server = DeliveryViewModel.hostOf(account?.serverUrl).orEmpty())
             }
+            val named = withContext(Dispatchers.IO) { runCatching { session.core.accountName() }.getOrNull() }
+            val window = withContext(Dispatchers.IO) { runCatching { session.core.syncWindow() }.getOrNull() }
+            if (asked != generation) return@launch
+            stateFlow.update { it.copy(accountName = named.orEmpty(), syncWindow = window ?: it.syncWindow) }
         }
         viewModelScope.launch {
             val result = try {

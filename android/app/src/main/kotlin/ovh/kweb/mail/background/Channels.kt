@@ -24,6 +24,7 @@ object Channels {
     const val QUIET = "mail_quiet"
     const val REMINDERS = "reminders"
     const val CONNECTION = "connection"
+    const val DOWNLOADS = "downloads"
 
     /**
      * Creates the device's channels and those of every account the app knows. Creating an existing channel
@@ -46,14 +47,21 @@ object Channels {
                     },
             ),
         )
+        manager.createNotificationChannel(
+            NotificationChannel(DOWNLOADS, context.getString(R.string.channel_downloads), NotificationManager.IMPORTANCE_LOW)
+                .apply {
+                    description = context.getString(R.string.channel_downloads_description)
+                    setShowBadge(false)
+                },
+        )
         val records = Accounts.records.value
         if (records.isEmpty()) {
             // Nobody is signed in yet (or the registry is not read): the channel the old version had, so the
             // first account that arrives (the migrated one) finds it as it was.
             ensureMail(context, manager, null, null)
         } else {
-            val labels = AccountLabels.of(records)
-            records.forEach { ensureMail(context, manager, it, labels[it.id].takeIf { _ -> records.size > 1 }) }
+            val names = Accounts.names.value
+            records.forEach { ensureMail(context, manager, it, AccountLabels.forNotice(it, records, names)) }
         }
     }
 

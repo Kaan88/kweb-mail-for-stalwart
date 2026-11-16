@@ -20,6 +20,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import ovh.kweb.mail.BuildConfig
 import androidx.compose.material.icons.filled.Lock
@@ -37,7 +39,12 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.annotation.StringRes
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +81,7 @@ import ovh.kweb.mail.ui.theme.themeModeName
 import ovh.kweb.mail.ui.theme.ThemeState
 import ovh.kweb.mail.ui.theme.themeName
 import uniffi.kweb_core.Quota
+import uniffi.kweb_core.SyncWindow
 
 /**
  * The settings of the app in grouped rows: the account, how much storage is used, the theme, the
@@ -118,6 +126,8 @@ fun SettingsScreen(
     }
     // "Signing out did not work" comes back from the shared flow.
     LaunchedEffect(delivery) { delivery.messages.collect { snackbar.showSnackbar(resources.getString(it)) } }
+    LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(it.resolve(resources)) } }
+    var asking by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -143,10 +153,17 @@ fun SettingsScreen(
                 if (several && shown != null) stringResource(R.string.accounts_settings_account) + " · " + shown.label else stringResource(R.string.settings_account),
             )
             Group {
-                SettingsRow(Groups.shape(0, 3), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
-                SettingsRow(Groups.shape(1, 3), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
                 SettingsRow(
-                    Groups.shape(2, 3),
+                    Groups.shape(0, 4),
+                    stringResource(R.string.settings_account_name),
+                    state.accountName.ifEmpty { stringResource(R.string.settings_account_name_none) },
+                    icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                    onClick = { asking = "name" },
+                )
+                SettingsRow(Groups.shape(1, 4), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
+                SettingsRow(Groups.shape(2, 4), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
+                SettingsRow(
+                    Groups.shape(3, 4),
                     stringResource(if (several) R.string.accounts_remove else R.string.sign_out),
                     if (deliveryState.signingOut) stringResource(R.string.settings_signing_out) else null,
                     icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
@@ -159,6 +176,22 @@ fun SettingsScreen(
 
             SectionTitle(stringResource(R.string.settings_storage))
             StorageGroup(state.storage)
+            Group(Modifier.padding(top = 8.dp)) {
+                SettingsRow(
+                    Groups.shape(0, 2),
+                    stringResource(R.string.settings_window),
+                    state.syncWindow?.let { stringResource(windowLabel(it)) },
+                    icon = { Icon(painterResource(R.drawable.ic_sync), contentDescription = null) },
+                    onClick = { asking = "window" },
+                )
+                SettingsRow(
+                    Groups.shape(1, 2),
+                    stringResource(R.string.settings_clear),
+                    stringResource(if (state.clearing) R.string.settings_clearing else R.string.settings_clear_detail),
+                    icon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                    onClick = if (state.clearing) null else ({ asking = "clear" }),
+                )
+            }
 
             SectionTitle(stringResource(R.string.reading_title))
             Group {
@@ -275,6 +308,24 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    when (asking) {
+        "name" -> NameDialog(state.accountName, onSave = { vm.setAccountName(it); asking = null }, onDismiss = { asking = null })
+        "window" -> ChoiceDialog(
+            R.string.settings_window,
+            SyncWindow.entries.map { Option(it, windowLabel(it)) },
+            state.syncWindow ?: SyncWindow.STANDARD,
+            onPick = vm::setSyncWindow,
+            onDismiss = { asking = null },
+        )
+        "clear" -> AlertDialog(
+            onDismissRequest = { asking = null },
+            title = { Text(stringResource(R.string.settings_clear)) },
+            text = { Text(stringResource(R.string.settings_clear_text)) },
+            confirmButton = { TextButton(onClick = { vm.clearCache(); asking = null }) { Text(stringResource(R.string.settings_clear_confirm)) } },
+            dismissButton = { TextButton(onClick = { asking = null }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 
     signOutPrompt?.let {
@@ -490,5 +541,34 @@ internal fun SectionTitle(text: String) {
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.8.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@StringRes
+private fun windowLabel(window: SyncWindow): Int = when (window) {
+    SyncWindow.LIGHT -> R.string.settings_window_light
+    SyncWindow.STANDARD -> R.string.settings_window_standard
+    SyncWindow.LARGE -> R.string.settings_window_large
+    SyncWindow.EVERYTHING -> R.string.settings_window_everything
+}
+
+/** The account's name: one line of at most 40 characters; saving it blank removes it. */
+@Composable
+private fun NameDialog(current: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_account_name)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it.lines().joinToString(" ").take(40) },
+                singleLine = true,
+                label = { Text(stringResource(R.string.settings_account_name_hint)) },
+                supportingText = { Text(stringResource(R.string.settings_account_name_help)) },
+            )
+        },
+        confirmButton = { TextButton(onClick = { onSave(text) }) { Text(stringResource(R.string.settings_save)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

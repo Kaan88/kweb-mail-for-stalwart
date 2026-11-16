@@ -328,10 +328,10 @@ class Notifier(context: Context) {
     private fun snoozeIntent(record: AccountRecord, id: Int, reminder: Reminder) =
         NotificationIntents.forReminder(context, record, ActionReceiver.ACTION_SNOOZE, id, reminder)
 
-    /** The name to show on [record]'s notifications; null with one account, where nothing is added. */
+    /** The name to show on [record]'s notifications: the user's name for it, else its login with several accounts; null with one unnamed account. */
     private fun labelOf(record: AccountRecord): String? {
         val records = Accounts.records.value
-        return if (records.size > 1) AccountLabels.of(records)[record.id] else null
+        return AccountLabels.forNotice(record, records, Accounts.names.value)
     }
 
     private fun reminderTitle(r: Reminder): String = r.title.ifBlank {
