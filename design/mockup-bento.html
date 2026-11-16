@@ -58,21 +58,40 @@ td:first-child{font-weight:700;white-space:nowrap}tr:last-child td{border-bottom
 .ag{display:flex;gap:10px;padding:10px 14px;background:var(--scl);border-radius:6px;align-items:center}.ag:first-child{border-radius:24px 24px 6px 6px}
 .ag .tm{width:46px;font-size:12px;color:var(--var);flex:none}.ag .bar{width:4px;height:34px;border-radius:2px;background:var(--pri);flex:none}
 .days{display:flex;justify-content:space-between;padding:0 18px 8px;flex:none;color:var(--var);font-size:11px;text-align:center}.days b{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;font-size:14px;color:var(--fg);font-weight:500}.days .on b{background:var(--pri);color:var(--opri)}
+.t1.er{background:var(--err);color:var(--bg)}.t1.er h4,.t1.er .sub{color:inherit;opacity:.9}
+.t1.tall{grid-row:span 2}
+.tk{display:flex;gap:8px;align-items:center;font-size:13px}.tk i{width:14px;height:14px;border-radius:50%;border:2px solid var(--out);flex:none}
+.cs{display:flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:10px;background:var(--terc);color:var(--oterc);font-weight:600;font-size:12px;flex:none}
+.aic{background:var(--scl);border:1px solid var(--outv);border-radius:20px;padding:11px 12px;display:flex;flex-direction:column;gap:7px}
+.aic h5{margin:0;font-size:12.5px;font-weight:700;display:flex;gap:6px;align-items:center}.aic h5 .i{color:var(--pri);width:17px;height:17px}
+.aic .ar{display:flex;gap:8px;align-items:center;min-width:0}.aic .ar>div:first-child{flex:1;min-width:0}
+.aic .ar b{font-weight:600}.aic .meta{font-size:11px;color:var(--var)}
+.bt{height:28px;padding:0 12px;border-radius:14px;background:var(--pc);color:var(--opc);display:inline-flex;align-items:center;font-weight:600;font-size:12px;flex:none}
+.bt.f{background:var(--pri);color:var(--opri)}.bt.x{background:none;color:var(--pri);padding:0 8px}
+.aic .acts{display:flex;gap:6px;justify-content:flex-end}
+.lab{font-size:11.5px;font-weight:600;color:var(--var);padding:2px 6px 0}
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.45)}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:96px;background:var(--bg);border-radius:28px 28px 0 0;display:flex;flex-direction:column;padding:8px 12px 12px;gap:8px}
+.sheet .hd{width:34px;height:4px;border-radius:2px;background:var(--outv);align-self:center;flex:none}
+.bub{max-width:84%;padding:8px 12px;border-radius:18px;font-size:13px}.bub.u{align-self:flex-end;background:var(--pri);color:var(--opri);border-bottom-right-radius:6px}
+.bub.a{align-self:flex-start;background:var(--sch);border-bottom-left-radius:6px}
+.stp{align-self:flex-start;font-size:11px;color:var(--var);display:flex;gap:5px;align-items:center}.stp .i{width:13px;height:13px}
+.inp{display:flex;gap:8px;align-items:center;height:44px;border-radius:22px;background:var(--sch);padding:0 14px;color:var(--var);flex:none}
 @media(max-width:1240px){.variant{grid-template-columns:auto auto}.variant .cap{grid-column:1/-1}}
 @media(max-width:860px){.variant{grid-template-columns:auto}}
 </style>
 <body><div class="wrap">
-<header><h1>Bento home: four options</h1>
-<p class="lede">Crimson "Ward" palette, light and dark, 360 x 780 screens. Each variant uses data the core has today, except tiles marked <span class="tag ai">Assistant</span>, which need the opt-in assistant. Nothing here is built. Facts about other apps are from my own knowledge (late 2026) and were not re-checked online.</p></header>
+<header><h1>Bento home: A is the pick, E adds the assistant</h1>
+<p class="lede">Crimson "Ward" palette, light and dark, 360 x 780 screens. Each variant uses data the core has today, except tiles marked <span class="tag ai">Assistant</span>, which need the opt-in assistant. Nothing here is built. Variant A is the owner's pick (2026-11-16); variant E (assistant for calendar and tasks) is new. Facts about other apps are from my own knowledge (late 2026) and were not re-checked online.</p></header>
 
 <section><h2>Comparison</h2>
 <table>
-<tr><th></th><th>A. Honest bento</th><th>B. Assistant bento</th><th>C. Today strip</th><th>D. Calendar-first</th></tr>
-<tr><td>Taps to inbox</td><td>1 (Mail tab) if Home is first; 0 if the user sets Mail as start tab</td><td>Same as A</td><td>0 (Mail stays the start tab)</td><td>1 (Mail tab); the Inbox tile gives 1 too</td></tr>
-<tr><td>Screens to keep per theme</td><td>+1 (Home, 5 tabs)</td><td>+1, plus tile states (off, loading, no consent, error)</td><td>+0 (a row on an existing screen)</td><td>+0 (a header on an existing screen)</td></tr>
-<tr><td>Data needed</td><td>All in the cache today (files: one live call)</td><td>Assistant: one call per tile, own consent and service</td><td>All in the cache today</td><td>All in the cache today</td></tr>
-<tr><td>Others do today</td><td>Gmail and Outlook mobile have no home screen; the widget on the launcher does this job</td><td>Gmail has Gemini summaries; Spark has AI summaries and a digest; Proton has none</td><td>Gmail shows a few cards above the list (events, packages); Spark has a Pins row</td><td>Outlook mobile shows a short agenda on its Calendar tab; Gmail and Proton do not mix mail in</td></tr>
-<tr><td>Recommendation</td><td>Skip. It repeats each tab's first screen and the drawer's Delivery check.</td><td>Only if the assistant gets a daily digest; then it has a reason to exist.</td><td><b>Build first.</b> Cheap, shows only what needs attention, hides when empty.</td><td>Build as the Calendar tab's header. Small and useful; add the mail tile only if asked.</td></tr>
+<tr><th></th><th>A. Bento home (owner's pick, 2026-11-16)</th><th>B. Assistant bento</th><th>C. Today strip</th><th>D. Calendar-first</th><th>E. Assistant for calendar and tasks</th></tr>
+<tr><td>Taps to inbox</td><td>1 (Mail tab) if Home is first; 0 if Mail is the start tab</td><td>Same as A</td><td>0</td><td>1; the Inbox tile gives 1 too</td><td>No change (lives in Calendar and Tasks)</td></tr>
+<tr><td>Screens to keep per theme</td><td>+1 (Home, 5 tabs), two states</td><td>+1, plus tile states</td><td>+0</td><td>+0</td><td>+1 chat sheet, +3 cards on existing screens</td></tr>
+<tr><td>Data needed</td><td>Cache today; files one live call; Delivery and Away tiles only when there is something to show</td><td>Assistant: one call per tile</td><td>Cache today</td><td>Cache today</td><td>Agenda in the cache; mail found by the assistant on a tap; tasks need a new read tool</td></tr>
+<tr><td>Others do today</td><td>Gmail and Outlook mobile have no home; the launcher widget does this</td><td>Gmail Gemini summaries; Spark digest</td><td>Gmail cards above the list</td><td>Outlook mobile short agenda</td><td>Gmail suggests events from mail; Gemini and Copilot answer calendar questions</td></tr>
+<tr><td>Recommendation</td><td><b>Build, with conditional Delivery and Away tiles.</b></td><td>Held. Only with a daily digest.</td><td>Keep as a cheaper companion to A.</td><td>Keep as a cheaper companion to A (Calendar header).</td><td>Build in two steps: dates and chat first (little new core), tasks and Plan my day later.</td></tr>
 </table>
 <p class="small">Feature names for Gmail, Outlook, Proton and Spark are recollections and may be slightly off.</p></section>
 
@@ -92,11 +111,14 @@ const unread=tile('w hi',I('mail')+' Unread in Inbox','<div class="row"><div cla
 const ev=tile('',I('cal')+' Next event','<div class="mid">in 42 min</div><div class="sub ell">Standup, Room 2</div>');
 const tasks=tile('',I('chk')+' Due today','<div class="mid">3 tasks</div><div class="sub ell">Pay rent, call Ayse...</div>');
 const flag=tile('',I('star')+' Flagged','<div class="mid">5 mails</div><div class="sub ell">Oldest: 3 days</div>');
-const del=tile('',I('bell')+' Delivery','<div class="row"><span class="ok"></span><div class="mid">Live</div></div><div class="sub">Always-on, 2 s ago</div>');
+const del=tile('er w',I('bell')+' Delivery','<div class="mid" style="font-size:16px">No connection since 09:12</div><div class="sub">Tap to check</div>');
 const files=tile('w sc',I('fil')+' Recent files','<div class="row"><span class="pill">PDF</span><div class="ell">Contract-v3.pdf</div><span class="sub" style="margin-left:auto">Mon</span></div><div class="row"><span class="pill">XLS</span><div class="ell">Budget 2027.xlsx</div><span class="sub" style="margin-left:auto">Sun</span></div>');
-const away=tile('w',I('away')+' Away message','<div class="row"><div style="flex:1"><div class="mid">Off</div><div class="sub">Tap to set dates and text</div></div><div class="sw"></div></div>');
+const away=tile('w',I('away')+' Away message','<div class="row"><div style="flex:1"><div class="mid" style="font-size:16px">Away until Friday</div><div class="sub">Tap to edit</div></div><span class="pill">On</span></div>');
 const hdr=t=>'<div class="tb"><div class="t">'+t+'</div>'+I('srch')+'<div class="av">K</div></div>';
-const A=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+unread+ev+tasks+flag+del+files+away+'</div></div>'+nav('h',true);
+const evB=tile('',I('cal')+' Next event','<div class="mid">in 42 min</div><div class="sub ell">Standup, Room 2</div><div class="sub ell">Then: Lunch, 12:00</div>');
+const tasksB=tile('tall',I('chk')+' Due today','<div class="mid">3 tasks</div><div style="display:flex;flex-direction:column;gap:7px;margin-top:4px"><div class="tk"><i></i><span class="ell">Pay rent</span></div><div class="tk"><i></i><span class="ell">Call Ayse</span></div><div class="tk"><i></i><span class="ell">Send invoice</span></div></div><div class="sub" style="margin-top:auto">1 more tomorrow</div>');
+const A=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+unread+evB+tasksB+flag+files+'</div></div>'+nav('h',true);
+const A2=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+del+unread+evB+tasksB+flag+files+away+'</div></div>'+nav('h',true);
 const catchup=tile('w tc',I('spark')+' Catch me up '+ai,'<div style="font-size:13.5px">Mira wants a go on the release plan. Dan sent invoice 1042. Two newsletters can wait.</div><div class="sub">Summary of the last 24 h, made on tap</div>');
 const reply=tile('',I('pen')+' Needs a reply '+ai,'<div class="mid">4 mails</div><div class="sub ell">Mira, Dan, Ayse...</div>');
 const dates=tile('',I('cal')+' Dates in mail '+ai,'<div class="mid">2 found</div><div class="sub ell">Dinner Fri 19:30</div>');
@@ -114,15 +136,38 @@ tile('',I('mail')+' Inbox','<div class="mid">12 unread</div><div class="sub ell"
 '<div style="display:flex;flex-direction:column;gap:2px;margin-top:2px"><div class="ag"><div class="tm">09:30</div><div class="bar"></div><div><b>Standup</b><div class="sub">Room 2</div></div></div><div class="ag"><div class="tm">12:00</div><div class="bar" style="background:var(--terc)"></div><div><b>Lunch with Pia</b><div class="sub">Cafe Nord</div></div></div><div class="ag"><div class="tm">16:00</div><div class="bar"></div><div><b>Release review</b><div class="sub">Video call</div></div></div></div></div>'+
 '<div class="fab">'+I('plus')+' New entry</div>'+nav('c');
 const T='<span class="tag">Today</span>',AI='<span class="tag ai">Assistant</span>';
+const bt=(t,c)=>'<span class="bt '+(c||'')+'">'+t+'</span>';
+const agItem=(tm,t,sub,c)=>'<div class="ag"><div class="tm">'+tm+'</div><div class="bar"'+(c?' style="background:var(--terc)"':'')+'></div><div><b>'+t+'</b><div class="sub">'+sub+'</div></div></div>';
+const dRow=(n,w,when)=>'<div class="ar"><div><div class="ell"><b>'+w+'</b></div><div class="meta ell">'+n+' · '+when+'</div></div>'+bt('Add')+'</div>';
+const dayStrip='<div class="days"><div><div>M</div><b>16</b></div><div class="on"><div>T</div><b>17</b></div><div><div>W</div><b>18</b></div><div><div>T</div><b>19</b></div><div><div>F</div><b>20</b></div><div><div>S</div><b>21</b></div><div><div>S</div><b>22</b></div></div>';
+const calTb='<div class="tb"><div class="t">November</div><div class="cs">'+I('spark')+' Ask about your week</div><div class="av">K</div></div>';
+const cardDates='<div class="aic"><h5>'+I('spark')+' 3 dates found in recent mail</h5>'+dRow('Ayse Kaya','Dinner at Lokanta','Fri 20, 19:30')+dRow('Dr. Aksoy','Dentist check-up','Thu 19, 14:00')+dRow('Mira Costa','Release review','Mon 23, 10:00')+'<div class="row"><div class="meta" style="flex:1">Made 10:12 on your tap</div>'+bt('Add all','f')+'</div></div>';
+const cardOver='<div class="aic"><h5>'+I('clk')+' Thursday 14:00 overlaps: Dentist and Standup</h5><div class="meta">Found on the phone from your agenda; nothing was sent to the assistant.</div><div class="acts">'+bt('Dismiss','x')+bt('Move Standup?','f')+'</div></div>';
+const E1=()=>sb+calTb+dayStrip+'<div class="body" style="padding-top:0;gap:7px"><div class="lab">Today, Tuesday 17</div>'+cardDates+cardOver+'<div style="display:flex;flex-direction:column;gap:2px">'+agItem('09:30','Standup','Room 2')+agItem('12:00','Lunch with Pia','Cafe Nord',1)+'</div></div>'+nav('c');
+const proposal='<div class="aic" style="background:var(--terc);color:var(--oterc);border:0"><h5 style="color:inherit">'+I('cal')+' New event</h5><div><b>Call with Merve</b></div><div class="meta" style="color:inherit">Thu 19 Nov, 15:00 to 16:00 · Calendar: Personal</div><div class="acts">'+bt('Edit','x')+bt('Add','f')+'</div></div>';
+const E2=()=>'<div style="position:absolute;inset:0;display:flex;flex-direction:column">'+sb+calTb+dayStrip+'<div class="body" style="padding-top:0"><div class="ag"><div class="tm">09:30</div><div class="bar"></div><div><b>Standup</b></div></div></div></div><div class="scrim"></div><div class="sheet"><div class="hd"></div><div class="row"><div class="mid" style="flex:1;font-size:17px">Ask about your week</div>'+I('plus')+'</div><div class="meta" style="font-size:11px;color:var(--var)">Your calendar is read on the phone and sent to OpenAI, gpt-5, only for what you ask. Changes need your tap.</div>'+
+'<div class="bub u">When am I free Thursday afternoon for an hour?</div><div class="stp">'+I('srch')+' Looked at: your calendar, Thu 19</div>'+
+'<div class="bub a">Thursday afternoon you are busy 14:00 to 14:45 (Dentist) and 16:30 to 17:00 (Release review). Free for an hour:<br>- 12:30 to 14:00<br>- 15:00 to 16:30</div>'+
+'<div class="bub u">Put a call with Merve at 15:00</div>'+proposal+'<div style="flex:1"></div><div class="inp"><span style="flex:1">Ask about your calendar</span>'+I('plus')+'</div></div>';
+const sRow=(t,who)=>'<div><div class="ell"><b>'+t+'</b></div><div class="meta ell">'+who+'</div><div class="acts" style="justify-content:flex-start;margin-top:4px">'+bt('Add')+bt('Not now','x')+'</div></div>';
+const E3=()=>sb+'<div class="tb"><div class="t">Tasks</div><div class="cs">'+I('spark')+' Plan my day</div><div class="av">K</div></div><div class="chips"><div class="c">Agenda</div><div class="c on">Tasks</div></div>'+
+'<div class="body" style="padding-top:0;gap:7px"><div class="aic"><h5>'+I('spark')+' From your mail</h5>'+sRow('Send the menu choices to Ayse','Ayse Kaya · due Thu')+sRow('Sign and return Contract-v3','Dan Ortiz · due Fri')+sRow('Book a table for 6','Pia Lund · no date')+'</div>'+
+'<div class="aic" style="background:var(--terc);color:var(--oterc);border:0"><h5 style="color:inherit">'+I('spark')+' Plan my day</h5><div class="meta" style="color:inherit;font-size:12.5px;line-height:1.6">10:00 Pay rent (10 min)<br>10:30 Call Ayse (15 min)<br>13:00 Sign Contract-v3 (30 min)<br>15:00 Send menu choices (20 min)</div><div class="acts">'+bt('Dismiss','x')+bt('Add as events','f')+'</div></div>'+
+'<div class="tk" style="padding:4px 8px"><i></i>Pay rent<span class="sub" style="margin-left:auto">Today</span></div><div class="tk" style="padding:0 8px"><i></i>Call Ayse<span class="sub" style="margin-left:auto">Today</span></div></div>'+nav('c');
+const E4=()=>sb+'<div class="tb">'+I('menu')+'<div class="t" style="font-size:18px">Dinner Friday?</div><div class="av">A</div></div><div class="body" style="gap:8px"><div class="row"><div class="av">A</div><div><b>Ayse Kaya</b><div class="sub">to me · 08:50</div></div></div>'+
+'<div class="aic"><h5>'+I('spark')+' To-dos and dates</h5><div class="ar"><div><div class="ell"><b>Dinner at Lokanta</b></div><div class="meta">Fri 20 Nov, 19:30</div></div>'+bt('Add to calendar')+'</div><div class="ar"><div><div class="ell"><b>Pick up the keys</b></div><div class="meta">Sat 21 Nov, 10:00</div></div>'+bt('Add to calendar')+'</div><div class="meta">To-do: send the menu choices. Shown, not added.</div></div>'+
+'<div style="padding:4px 6px;font-size:13.5px;line-height:1.5">Hi! Booked a table for 19:30 at Lokanta on Friday. Can you send the menu choices before then? Also, the keys are ready on Saturday at 10:00.<br><br>Ayse</div></div>'+nav('m');
 const V=[
-['A. Honest bento','Home is the first tab. Off by default (Settings, Home).',A,[
- '<b>Unread</b>: Inbox unread count and the three newest unread senders and subjects. '+T,
- '<b>Next event</b>: the cached agenda, countdown computed on the phone. '+T,
- '<b>Due today</b>: tasks from the cache, due today or earlier. '+T,
+['A. Bento home, normal day',"Owner's pick (2026-11-16). Home is the first tab, off by default (Settings, Home). Delivery and Away are gone from the normal day; the free space goes to a taller Due today tile.",A,[
+ '<b>Unread</b>: Inbox count and the three newest unread senders. '+T,
+ '<b>Next event</b>: cached agenda, countdown on the phone, plus the one after. '+T,
+ '<b>Due today</b>: tasks from the cache; spans two rows so no hole is left. '+T,
  '<b>Flagged</b>: starred count and age of the oldest. '+T,
- '<b>Delivery</b>: the state of the drawer row and the Delivery check screen. '+T,
- '<b>Recent files</b>: the last two FileNodes, live from the server (one network call). '+T,
- '<b>Away message</b>: the vacation response on or off; a tap opens the editor. '+T]],
+ '<b>Recent files</b>: the last two FileNodes, one live call. '+T],"Owner's pick (2026-11-16)"],
+['A. Bento home, something to see','The same grid with two conditional tiles. Delivery shows (in the error colour) only when the connection is down or a permission is missing; Away shows only while an away message is on.',A2,[
+ '<b>Delivery</b>: appears only on a problem, with the time it began; a tap opens the Delivery check. '+T,
+ '<b>Away</b>: appears only when the vacation response is on, with its end date; a tap opens the editor. '+T,
+ 'Both tiles are conditional: the grid reflows without them (as in the normal day above) and nothing is reserved for them.'],"Owner's pick (2026-11-16)"],
 ['B. Assistant bento','A with three tiles that need the opt-in assistant. Without consent they do not appear and the home looks like A.',B,[
  '<b>Catch me up</b>: a summary of the last 24 h of mail, made on tap and sent to the chosen service. '+AI,
  '<b>Needs a reply</b>: mails the model judges to want an answer; count and names. '+AI,
@@ -140,8 +185,30 @@ const V=[
  '<b>Due today</b>: tasks from the cache. '+T,
  '<b>Agenda</b>: repeating events expanded in the core, unchanged. '+T,
  'The start tab can be set to Calendar in Settings; no new screen is needed.']]
+,
+
+['E.a Calendar agenda with assistant cards','The Calendar tab gets an entry point ("Ask about your week") and two cards under the day strip. The dates card starts from a tap on "Look for dates in recent mail"; the overlap card is found on the phone from the agenda, with no assistant call.',E1,[
+ '<b>Data</b>: the agenda (cache) for the overlap; recent mail text, sent to the chosen service, for the dates. '+AI,
+ "<b>Writes</b>: Add and Add all create new events through the core's apply path, each a tap on a card showing that exact change, with Undo. Existing events are never changed by the assistant, so Move Standup? opens the event editor with the new time filled in.",
+ '<b>Consent</b>: the first tap of "Ask about your week" or "Look for dates" asks for the service and model, as everywhere in the assistant; without consent neither the chip nor the dates card shows.',
+ '<b>Effort</b>: dates card about 1.5 days (the to-dos and dates result and the add-event apply exist; Add all and the entry are new); overlap card about 1 day, no model.'],'Assistant'],
+['E.b Chat sheet from the calendar','A sheet opened from the chip. The chat only reads (it can list events and read mail); the proposal card is the one tap that creates the event. Edit opens the event editor filled in.',E2,[
+ '<b>Data</b>: list_events and read_event over the days asked about; mail only if the user asks. Free slots are worked out by the model from the events, or better by a small new core helper. '+AI,
+ "<b>Writes</b>: the card shows exactly the new event; Add is the tap. With automatic changes switched on for this chat, a new entry in the user's own calendar may be added at once, with an Undo; nothing else.",
+ "<b>Consent</b>: the chat's own consent for this service and model, asked on first open; the line under the title says what leaves the phone.",
+ '<b>Effort</b>: about 1.5 days. The chat, its read tools, add_event and the card exist; new is the sheet in the Calendar tab and a calendar-first starting prompt.'],'Assistant'],
+['E.c Tasks list with suggestions and Plan my day',"Suggestions from mail sit in a card above the tasks; \"Plan my day\" turns today's tasks and free time into an ordered list that can become events.",E3,[
+ '<b>Data</b>: tasks (cache; the chat cannot read tasks today), recent mail for suggestions, the agenda for free time. '+AI,
+ '<b>Writes</b>: Add creates one task; Add as events creates events for the listed times. Each is a tap on a card that lists exactly what will be written; Not now only hides it.',
+ '<b>Consent</b>: same chat consent; both buttons start the call, nothing runs by itself.',
+ '<b>Effort</b>: about 4 to 5 days. New in the core: a read-tasks tool, an add-task change with the apply checks and Undo, a to-do extraction that returns tasks, and the planning prompt; then the two cards.'],'Assistant'],
+['E.d Thread screen (small, optional)','The result the assistant already gives for a mail, now with a button per date.',E4,[
+ '<b>Data</b>: the open mail only, sent on the tap that started it. '+AI,
+ '<b>Writes</b>: Add to calendar opens the card flow for that single date; to-dos stay a list until E.c exists.',
+ '<b>Consent</b>: the existing per-service consent.',
+ '<b>Effort</b>: about half a day; the result and add_event exist.'],'Assistant']
 ];
 const vs=document.getElementById('vs');
-V.forEach(([t,d,f,l])=>{const h=f();const e=document.createElement('section');e.className='variant';
- e.innerHTML='<div><div class="phone"><div class="s l">'+h+'</div></div><div class="lbl">Light</div></div><div><div class="phone"><div class="s d">'+h+'</div></div><div class="lbl">Dark</div></div><div class="cap"><h2 style="color:var(--fg)">'+t+'</h2>'+d+'<ul>'+l.map(x=>'<li>'+x+'</li>').join('')+'</ul></div>';vs.appendChild(e)});
+V.forEach(([t,d,f,l,pick])=>{const h=f();const e=document.createElement('section');e.className='variant';
+ e.innerHTML='<div><div class="phone"><div class="s l">'+h+'</div></div><div class="lbl">Light</div></div><div><div class="phone"><div class="s d">'+h+'</div></div><div class="lbl">Dark</div></div><div class="cap"><h2 style="color:var(--fg)">'+t+'</h2>'+(pick?'<span class="tag'+(pick=='Assistant'?' ai':'')+'">'+pick+'</span> ':'')+d+'<ul>'+l.map(x=>'<li>'+x+'</li>').join('')+'</ul></div>';vs.appendChild(e)});
 </script></body></html>
