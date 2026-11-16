@@ -12,7 +12,7 @@ mod calendar;
 mod mail;
 pub mod patterns;
 mod settings;
-mod slots;
+pub(crate) mod slots;
 mod tasks;
 
 use std::collections::{HashMap, HashSet};

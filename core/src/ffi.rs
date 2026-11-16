@@ -16,6 +16,7 @@ mod devcal;
 mod download;
 mod enterprise;
 mod filter_rules;
+mod sparkle;
 
 pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
@@ -139,6 +140,11 @@ pub struct Core {
     /// The one conversation with the assistant, of the signed-in account. Memory only: it holds
     /// the suggestions and what can be undone, and goes on sign-out (see `ffi/ai_chat.rs`).
     chat: Mutex<Option<assistant::chat::Chat>>,
+    /// The cards of the sparkle runs (`ffi/sparkle.rs`): one list for all runs of the signed-in account
+    /// and the service in use, each card named after its run. Memory only, like `chat`.
+    runs: Mutex<Option<assistant::chat::Chat>>,
+    /// What `ai_apply_all` did, so that `ai_undo_batch` can take all of it back.
+    batches: Mutex<sparkle::Batches>,
     /// What the encryption feature keeps in memory (see `ffi/crypto.rs`).
     crypto: crate::crypto::State,
 }
@@ -167,6 +173,8 @@ impl Core {
             inner: Arc::new(Mutex::new(Inner { session, ..Inner::default() })),
             ai: assistant::Slot::default(),
             chat: Mutex::new(None),
+            runs: Mutex::new(None),
+            batches: Mutex::default(),
             crypto: crate::crypto::State::default(),
         }))
     }

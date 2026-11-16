@@ -275,21 +275,31 @@ async fn record(s: &Shared, path: &str, query: &str, headers: &HeaderMap, body: 
     });
 }
 
+/// The token counts the mock reports: in the last chunk of an OpenAI-style stream that asked for them
+/// (`stream_options.include_usage`), always in an Anthropic-style one.
+pub const USAGE_IN: u32 = 123;
+pub const USAGE_OUT: u32 = 45;
+
+/// Whether the request asked for usage (`stream_options.include_usage`).
+fn asks_usage(body: &Bytes) -> bool {
+    serde_json::from_slice::<Value>(body).is_ok_and(|v| v["stream_options"]["include_usage"] == true)
+}
+
 /// Whether the request has a `tools` key.
 fn carries_tools(body: &Bytes) -> bool {
     serde_json::from_slice::<Value>(body).is_ok_and(|v| v.get("tools").is_some())
 }
 
 async fn openai(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
-    let tools = carries_tools(&body);
+    let (tools, usage) = (carries_tools(&body), asks_usage(&body));
     record(&s, "/v1/chat/completions", "", &headers, body).await;
-    respond(&s, &headers, false, tools)
+    respond(&s, &headers, false, tools, usage)
 }
 
 async fn anthropic(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
     let tools = carries_tools(&body);
     record(&s, "/v1/messages", "", &headers, body).await;
-    respond(&s, &headers, true, tools)
+    respond(&s, &headers, true, tools, false)
 }
 
 async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> Response {
@@ -353,7 +363,7 @@ enum Step {
     Pause,
 }
 
-fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool) -> Response {
+fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool, usage: bool) -> Response {
     let queued = s.queue.lock().unwrap().pop_front();
     let script = queued.unwrap_or_else(|| s.script.lock().unwrap().clone());
     let echoed = credentials(headers);
@@ -398,7 +408,7 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool) -> Res
             return (StatusCode::BAD_REQUEST, body.to_string()).into_response();
         }
     };
-    let events = if anthropic { anthropic_events(&pieces, &tail) } else { openai_events(&pieces, &tail) };
+    let events = if anthropic { anthropic_events(&pieces, &tail) } else { openai_events(&pieces, &tail, usage) };
     let split = *s.split_events.lock().unwrap();
     let mut steps = Vec::new();
     for event in events {
@@ -457,7 +467,7 @@ fn data(value: Value) -> String {
     format!("data: {value}\n\n")
 }
 
-fn openai_events(pieces: &[String], tail: &Tail) -> Vec<String> {
+fn openai_events(pieces: &[String], tail: &Tail, usage: bool) -> Vec<String> {
     let mut out = vec![
         data(json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]})),
         data(json!({"choices": [{"index": 0, "delta": {"reasoning_content": "private reasoning"}}]})),
@@ -466,6 +476,9 @@ fn openai_events(pieces: &[String], tail: &Tail) -> Vec<String> {
     match tail {
         Tail::Done => {
             out.push(data(json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})));
+            if usage {
+                out.push(data(json!({"choices": [], "usage": {"prompt_tokens": USAGE_IN, "completion_tokens": USAGE_OUT, "total_tokens": USAGE_IN + USAGE_OUT}})));
+            }
             out.push("data: [DONE]\n\n".into());
         }
         Tail::Length => {
@@ -484,6 +497,11 @@ fn openai_events(pieces: &[String], tail: &Tail) -> Vec<String> {
                     "function": {"arguments": second}}]}}]})));
             }
             out.push(data(json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})));
+            if usage {
+                out.push(data(
+                    json!({"choices": [], "usage": {"prompt_tokens": USAGE_IN, "completion_tokens": USAGE_OUT}}),
+                ));
+            }
             out.push("data: [DONE]\n\n".into());
         }
         Tail::Hang | Tail::Cut => {}
@@ -494,7 +512,10 @@ fn openai_events(pieces: &[String], tail: &Tail) -> Vec<String> {
 fn anthropic_events(pieces: &[String], tail: &Tail) -> Vec<String> {
     let event = |name: &str, value: Value| format!("event: {name}\n{}", data(value));
     let mut out = vec![
-        event("message_start", json!({"type": "message_start", "message": {"id": "msg_1", "role": "assistant"}})),
+        event(
+            "message_start",
+            json!({"type": "message_start", "message": {"id": "msg_1", "role": "assistant", "usage": {"input_tokens": USAGE_IN, "output_tokens": 1}}}),
+        ),
         event(
             "content_block_start",
             json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
@@ -518,7 +539,7 @@ fn anthropic_events(pieces: &[String], tail: &Tail) -> Vec<String> {
     match tail {
         Tail::Done => {
             out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 1})));
-            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}})));
+            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": USAGE_OUT}})));
             out.push(event("message_stop", json!({"type": "message_stop"})));
         }
         Tail::Length => {
@@ -553,7 +574,7 @@ fn anthropic_events(pieces: &[String], tail: &Tail) -> Vec<String> {
                 }
                 out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": index})));
             }
-            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}})));
+            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": USAGE_OUT}})));
             out.push(event("message_stop", json!({"type": "message_stop"})));
         }
         Tail::Hang | Tail::Cut => {}

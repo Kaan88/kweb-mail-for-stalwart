@@ -600,6 +600,8 @@ fn tool_name(kind: AiToolKind) -> &'static str {
         AiToolKind::Mark => "suggest marking",
         AiToolKind::Tag => "suggest a label",
         AiToolKind::AddEvent => "suggest a calendar entry",
+        AiToolKind::ListTasks => "list open tasks",
+        AiToolKind::AddTask => "suggest a task",
     }
 }
 

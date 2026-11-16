@@ -19,6 +19,7 @@ pub mod prompts;
 pub mod provider;
 pub mod request;
 pub mod settings;
+pub mod sparkle;
 pub mod sse;
 pub mod tools;
 pub mod wire;

@@ -16,6 +16,8 @@ mod assistant_chat;
 mod assistant_converse;
 #[path = "suite/attention.rs"]
 mod attention;
+#[path = "suite/attention_service.rs"]
+mod attention_service;
 #[path = "suite/bulwark_filters.rs"]
 mod bulwark_filters;
 #[path = "suite/calendar.rs"]

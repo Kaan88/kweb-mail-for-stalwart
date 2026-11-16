@@ -42,6 +42,10 @@ use crate::{
 /// The longest one tool, an apply or an undo waits for the mail server.
 const TOOL_BUDGET: Duration = Duration::from_secs(30);
 
+/// What the id of a card of a sparkle run starts with (`sparkle~<run id>:<number>`). A chat is never
+/// given an id that starts with it, so the two lists of cards never hold the same id.
+pub(super) const RUN_CARD: &str = "sparkle~";
+
 fn over() -> Error {
     Error::invalid("this conversation is over")
 }
@@ -50,7 +54,7 @@ fn gone() -> Error {
     Error::invalid("this suggestion is no longer there")
 }
 
-fn cancelled() -> Error {
+pub(super) fn cancelled() -> Error {
     Error::invalid("cancelled")
 }
 
@@ -64,9 +68,9 @@ fn still_signed_in<'a>(core: &Core, account_id: &'a str) -> Result<&'a str> {
 
 /// What the chat reads through: the cache and the server of one account, and nothing that
 /// changes mail, events or settings.
-struct CoreReader<'a> {
-    core: &'a Core,
-    account_id: String,
+pub(super) struct CoreReader<'a> {
+    pub(super) core: &'a Core,
+    pub(super) account_id: String,
 }
 
 impl CoreReader<'_> {
@@ -254,12 +258,12 @@ impl Model for Live<'_> {
 }
 
 /// "YYYY-MM-DD, Weekday" of `at` (Unix seconds) in `zone`.
-fn today_in(zone: chrono_tz::Tz, at: i64) -> String {
+pub(super) fn today_in(zone: chrono_tz::Tz, at: i64) -> String {
     let utc = chrono::DateTime::from_timestamp(at, 0).unwrap_or_default();
     zone.from_utc_datetime(&utc.naive_utc()).format("%Y-%m-%d, %A").to_string()
 }
 
-fn origin_of(settings: &AiSettings) -> Origin {
+pub(super) fn origin_of(settings: &AiSettings) -> Origin {
     Origin { provider: settings.provider, base_url: settings.base_url.clone(), model: settings.model.clone() }
 }
 
@@ -296,7 +300,7 @@ impl Core {
     /// drops the previous one with its suggestions and undo records. Memory only. Sends nothing.
     pub fn ai_chat_new(&self, chat_id: String) -> Result<()> {
         let account_id = self.account_id()?;
-        if chat_id.trim().is_empty() || chat_id.chars().count() > 100 {
+        if chat_id.trim().is_empty() || chat_id.chars().count() > 100 || chat_id.starts_with(RUN_CARD) {
             return Err(Error::invalid("the conversation needs a name"));
         }
         *self.chat_lock() = Some(Chat::new(&chat_id, &account_id));
@@ -507,7 +511,7 @@ impl Core {
 
     /// Marks it declined. Never fails, does not block.
     pub fn ai_decline(&self, proposal_id: String) {
-        let mut chat = self.chat_lock();
+        let mut chat = self.book_lock(&proposal_id);
         let Some(chat) = chat.as_mut() else { return };
         let entry = chat.entries.iter_mut().find(|e| e.proposal.id == proposal_id && e.state == State::Pending);
         if let Some(entry) = entry {
@@ -521,7 +525,7 @@ impl Core {
         let past = || Error::invalid("this can no longer be undone");
         let signed_in = self.account_id().ok();
         let (account_id, undo) = {
-            let mut chat = self.chat_lock();
+            let mut chat = self.book_lock(&proposal_id);
             let chat = chat.as_mut().filter(|c| Some(&c.account_id) == signed_in.as_ref()).ok_or_else(past)?;
             let account_id = chat.account_id.clone();
             let entry = chat.entries.iter_mut().find(|e| e.proposal.id == proposal_id).ok_or_else(past)?;
@@ -542,7 +546,7 @@ impl Core {
                 // An event that could not be deleted is still there and nothing else was done, so
                 // that one can be tried again. Mail that was partly moved back cannot.
                 if let Undo::Event { .. } = undo {
-                    let mut chat = self.chat_lock();
+                    let mut chat = self.book_lock(&proposal_id);
                     let entry = chat.as_mut().and_then(|c| c.entries.iter_mut().find(|e| e.proposal.id == proposal_id));
                     if let Some(State::Applied(record) | State::Failed(record)) = entry.map(|e| &mut e.state) {
                         *record = Some(undo);
@@ -560,11 +564,11 @@ impl Core {
     /// still have automatic changes on for this service and model and the kind must be in
     /// [`changes::automatic`], else it is left as it is (it waits for a tap) and the second value
     /// says so (true: still open).
-    fn apply_entry(&self, proposal_id: &str, automatic: bool) -> (Result<AiApplied>, bool) {
+    pub(super) fn apply_entry(&self, proposal_id: &str, automatic: bool) -> (Result<AiApplied>, bool) {
         // Asked before the chat is locked, so the two locks are never held together.
         let signed_in = self.account_id().ok();
         let claimed = (|| {
-            let mut chat = self.chat_lock();
+            let mut chat = self.book_lock(proposal_id);
             let chat = chat.as_mut().filter(|c| Some(&c.account_id) == signed_in.as_ref()).ok_or_else(gone)?;
             let (account_id, origin) = (chat.account_id.clone(), chat.origin.clone());
             let allowed_alone = chat.automatic();
@@ -586,7 +590,7 @@ impl Core {
         };
         let result = self.apply_claimed(proposal_id, account_id, origin, change, automatic);
         let open = self
-            .chat_lock()
+            .book_lock(proposal_id)
             .as_ref()
             .is_some_and(|c| c.entries.iter().any(|e| e.proposal.id == proposal_id && e.state == State::Pending));
         (result, open)
@@ -601,8 +605,14 @@ impl Core {
         automatic: bool,
     ) -> Result<AiApplied> {
         // Outside the lock, the gates again: what was allowed when it was suggested may not be now.
+        let of_a_run = proposal_id.starts_with(RUN_CARD);
         let allowed = assistant::load(&self.store, &*self.secrets, &account_id).and_then(|settings| {
-            assistant::check_chat(&settings)?;
+            // A card of a sparkle run was asked for with the yes of its own kind of action; the tap on
+            // it needs the assistant on and agreed to, and changes allowed. A chat's card needs the chat's yes.
+            match of_a_run {
+                true => assistant::sparkle::check_apply(&settings)?,
+                false => assistant::check_chat(&settings)?,
+            }
             if settings.actions != AiActionMode::AskFirst {
                 return Err(Error::invalid("actions are switched off in the settings"));
             }
@@ -640,10 +650,22 @@ impl Core {
         self.chat.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// The list of cards that holds `proposal_id`: a sparkle run's, or the chat's.
+    fn book_lock(&self, proposal_id: &str) -> MutexGuard<'_, Option<Chat>> {
+        match proposal_id.starts_with(RUN_CARD) {
+            true => self.runs_lock(),
+            false => self.chat_lock(),
+        }
+    }
+
+    pub(super) fn runs_lock(&self) -> MutexGuard<'_, Option<Chat>> {
+        self.runs.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Writes down where a suggestion stands now and, with `line`, tells the model with the next
     /// message. A suggestion of a conversation that is gone meanwhile is not found: nothing is kept.
     fn settle(&self, proposal_id: &str, state: State, line: Option<&str>) {
-        let mut chat = self.chat_lock();
+        let mut chat = self.book_lock(proposal_id);
         let Some(chat) = chat.as_mut() else { return };
         if let Some(entry) = chat.entries.iter_mut().find(|e| e.proposal.id == proposal_id) {
             entry.state = state;
@@ -656,5 +678,7 @@ impl Core {
     /// Sign-out: the conversation, its suggestions and undo records go.
     pub(super) fn ai_chat_forget(&self) {
         *self.chat_lock() = None;
+        *self.runs_lock() = None;
+        *self.batches.lock().unwrap_or_else(|e| e.into_inner()) = Default::default();
     }
 }

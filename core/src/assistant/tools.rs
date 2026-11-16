@@ -95,7 +95,7 @@ const SUGGESTED: &str = "Suggested to the user as a card; nothing was changed. I
 const LEFT_OUT: &str = "[Part of this message was left out to fit.]";
 
 /// The closed list: every tool there is, by the name the model uses.
-const TOOLS: [(&str, AiToolKind); 15] = [
+const TOOLS: [(&str, AiToolKind); 17] = [
     ("search_mail", AiToolKind::SearchMail),
     ("list_messages", AiToolKind::ListMessages),
     ("read_message", AiToolKind::ReadMessage),
@@ -111,6 +111,8 @@ const TOOLS: [(&str, AiToolKind); 15] = [
     ("mark_messages", AiToolKind::Mark),
     ("tag_messages", AiToolKind::Tag),
     ("add_event", AiToolKind::AddEvent),
+    ("list_tasks", AiToolKind::ListTasks),
+    ("add_task", AiToolKind::AddTask),
 ];
 
 /// The tools offered: read and ui always, change tools only with AskFirst.
@@ -145,11 +147,15 @@ pub fn risk_of(kind: AiToolKind) -> AiRisk {
         | AiToolKind::ListFolders
         | AiToolKind::ListLabels
         | AiToolKind::ListEvents
+        | AiToolKind::ListTasks
         | AiToolKind::ReadEvent => AiRisk::Read,
         AiToolKind::OpenMessage | AiToolKind::DraftReply => AiRisk::Ui,
-        AiToolKind::Archive | AiToolKind::Move | AiToolKind::Mark | AiToolKind::Tag | AiToolKind::AddEvent => {
-            AiRisk::Change
-        }
+        AiToolKind::Archive
+        | AiToolKind::Move
+        | AiToolKind::Mark
+        | AiToolKind::Tag
+        | AiToolKind::AddEvent
+        | AiToolKind::AddTask => AiRisk::Change,
     }
 }
 
@@ -167,6 +173,9 @@ fn description(kind: AiToolKind) -> &'static str {
         AiToolKind::ListEvents => {
             "Lists the user's calendar entries and tasks between two local dates (at most 62 days), and the \
              user's calendars."
+        }
+        AiToolKind::ListTasks => {
+            "Lists the user's open tasks (not done) between two local dates, with their ids, titles and due \n             times, and says whether a due time has a time of day. At most 62 days; 30 days back and 30 ahead \n             if the dates are left out. Own calendars only."
         }
         AiToolKind::ReadEvent => "Gives one calendar entry or task in full.",
         AiToolKind::OpenMessage => {
@@ -193,6 +202,9 @@ fn description(kind: AiToolKind) -> &'static str {
         AiToolKind::Tag => {
             "Suggests putting one of the user's labels on messages or taking it off. Labels cannot be created. \
              The user sees a card and decides; nothing is changed until the user approves it."
+        }
+        AiToolKind::AddTask => {
+            "Suggests a new task (a to-do) with a title and, if there is one, a due date or time. It does not \n             repeat. The user sees a card and decides; nothing is added until the user approves it."
         }
         AiToolKind::AddEvent => {
             "Suggests a new calendar entry or task. Nobody is invited and it does not repeat. The user sees a \
@@ -239,6 +251,22 @@ fn schema(kind: AiToolKind) -> Value {
                 "to": text("The last day, a local date. The same day as 'from' if left out."),
             }),
             &["from"],
+        ),
+        AiToolKind::ListTasks => (
+            json!({
+                "from": text("The first day, a local date such as 2026-11-12. 30 days back if left out."),
+                "to": text("The last day, a local date. 30 days ahead if left out."),
+            }),
+            &[],
+        ),
+        AiToolKind::AddTask => (
+            json!({
+                "title": text("The title of the task."),
+                "due": text("When it is due: a local date such as 2026-11-12 or a date and time such as 2026-11-12T10:00:00. Leave out for a task without a date."),
+                "description": text("Notes."),
+                "calendar_id": text("The id of a calendar, from list_events. The user's default if left out."),
+            }),
+            &["title"],
         ),
         AiToolKind::ReadEvent => (
             json!({
@@ -335,7 +363,11 @@ fn detail_of(kind: AiToolKind, args: &Value) -> String {
                 n => format!("{n} messages"),
             }
         }
-        AiToolKind::AddEvent => text("title"),
+        AiToolKind::AddEvent | AiToolKind::AddTask => text("title"),
+        AiToolKind::ListTasks => match (text("from"), text("to")) {
+            (from, to) if to.is_empty() || to == from => from,
+            (from, to) => format!("{from} to {to}"),
+        },
     };
     prompts::flatten(&raw).trim().chars().take(DETAIL_CHARS).collect()
 }
@@ -366,6 +398,7 @@ fn act(look: &Look<'_>, env: &Env<'_>, kind: AiToolKind, args: &Value) -> Result
         AiToolKind::ListFolders => list_folders(look)?,
         AiToolKind::ListLabels => list_labels(look)?,
         AiToolKind::ListEvents => list_events(look, env, args)?,
+        AiToolKind::ListTasks => list_tasks(look, env, args)?,
         AiToolKind::ReadEvent => read_event(look, args)?,
         AiToolKind::OpenMessage => {
             let message = known_message(look, args)?;
@@ -382,7 +415,12 @@ fn act(look: &Look<'_>, env: &Env<'_>, kind: AiToolKind, args: &Value) -> Result
             }
             return Ok(Outcome::Link(AiLink::ReplyDraft { message, text }, DRAFT_SHOWN.into()));
         }
-        AiToolKind::Archive | AiToolKind::Move | AiToolKind::Mark | AiToolKind::Tag | AiToolKind::AddEvent => {
+        AiToolKind::Archive
+        | AiToolKind::Move
+        | AiToolKind::Mark
+        | AiToolKind::Tag
+        | AiToolKind::AddEvent
+        | AiToolKind::AddTask => {
             if env.actions != AiActionMode::AskFirst {
                 return Err(Error::invalid(ACTIONS_OFF));
             }
@@ -775,6 +813,62 @@ fn list_events(look: &Look<'_>, env: &Env<'_>, args: &Value) -> Result<Vec<Strin
     }
     if agenda.entries.len() > EVENTS {
         lines.push(format!("The other {} were left out; ask for a shorter span.", agenda.entries.len() - EVENTS));
+    }
+    Ok(lines)
+}
+
+/// The open tasks between two local dates (30 days back and 30 ahead by default), from the
+/// agenda of the user's own calendars: id, due, whether it has a time of day, title.
+fn list_tasks(look: &Look<'_>, env: &Env<'_>, args: &Value) -> Result<Vec<String>> {
+    let zone = zone_of(env.zone)?;
+    let today = wall(env.now, zone).date();
+    let first = match text_arg(args, "from")? {
+        Some(text) if !text.trim().is_empty() => date_arg(text, "from")?,
+        _ => today - chrono::Duration::days(30),
+    };
+    let last = match text_arg(args, "to")? {
+        Some(text) if !text.trim().is_empty() => date_arg(text, "to")?,
+        _ => today + chrono::Duration::days(30),
+    };
+    if last < first {
+        return Err(Error::invalid("'to' must not be before 'from'"));
+    }
+    if (last - first).num_days() + 1 > SPAN_DAYS {
+        return Err(Error::invalid("the span is too long; ask for at most 62 days at a time"));
+    }
+    let after = last.succ_opt().ok_or_else(|| Error::invalid("the argument 'to' must be a date such as 2026-11-12"))?;
+    let midnight = |day: NaiveDate| unix(day.and_time(chrono::NaiveTime::MIN), zone);
+    let agenda = look.agenda(midnight(first), midnight(after), env.zone)?;
+    let calendars = look.calendars()?;
+    let tasks: Vec<&Occurrence> = agenda.entries.iter().filter(|o| o.is_task && !o.is_done).collect();
+
+    let mut lines = Vec::new();
+    if agenda.from_cache {
+        lines.push(
+            "The server could not be reached: this is what the phone has kept of the calendar; it may be \
+             incomplete or out of date."
+                .into(),
+        );
+    }
+    lines.push(match tasks.len() {
+        0 => format!("No open tasks from {first} to {last}."),
+        n => format!("{n} open tasks from {first} to {last}, local time:"),
+    });
+    for o in tasks.iter().take(EVENTS) {
+        let start = wall(o.starts_at, zone);
+        let due = if o.all_day {
+            format!("due {} (no time of day)", start.date())
+        } else {
+            format!("due {} (at a time of day)", minute(start))
+        };
+        let mut line = format!("id={} | {due} | {}", field(&o.event_id, ID_CHARS), field(&o.title, LINE_TEXT_CHARS));
+        if let Some(c) = calendars.iter().find(|c| c.id == o.calendar_id) {
+            line.push_str(&format!(" | calendar {}", field(&c.name, 80)));
+        }
+        lines.push(line);
+    }
+    if tasks.len() > EVENTS {
+        lines.push(format!("The other {} were left out; ask for a shorter span.", tasks.len() - EVENTS));
     }
     Ok(lines)
 }
@@ -1221,7 +1315,7 @@ mod tests {
         }
     }
 
-    const ALL: [AiToolKind; 15] = [
+    const ALL: [AiToolKind; 17] = [
         AiToolKind::SearchMail,
         AiToolKind::ListMessages,
         AiToolKind::ReadMessage,
@@ -1237,13 +1331,15 @@ mod tests {
         AiToolKind::Mark,
         AiToolKind::Tag,
         AiToolKind::AddEvent,
+        AiToolKind::ListTasks,
+        AiToolKind::AddTask,
     ];
 
     #[test]
     fn the_registry_is_closed() {
         let offered = specs(AiActionMode::AskFirst);
         let kinds: Vec<AiToolKind> = offered.iter().map(|s| kind_of(s.name).expect("a tool")).collect();
-        assert_eq!(kinds, ALL, "the names are exactly the fifteen kinds, once each");
+        assert_eq!(kinds, ALL, "the names are exactly the seventeen kinds, once each");
         for spec in &offered {
             let kind = kind_of(spec.name).unwrap();
             assert_ne!(risk_of(kind), AiRisk::Confirm, "{}", spec.name);
@@ -1263,7 +1359,7 @@ mod tests {
         // The model cannot choose recipients: no tool takes an address.
         for spec in &offered {
             for key in ["to", "cc", "bcc", "recipients", "recipient", "email", "address", "addresses"] {
-                let dates = spec.name == "list_events" && key == "to";
+                let dates = (spec.name == "list_events" || spec.name == "list_tasks") && key == "to";
                 assert!(dates || spec.schema["properties"].get(key).is_none(), "{} takes '{key}'", spec.name);
             }
         }
@@ -1272,7 +1368,7 @@ mod tests {
     #[test]
     fn off_offers_and_runs_no_change_tool() {
         let offered = specs(AiActionMode::Off);
-        assert_eq!(offered.len(), 10);
+        assert_eq!(offered.len(), 11);
         assert!(offered.iter().all(|s| matches!(risk_of(kind_of(s.name).unwrap()), AiRisk::Read | AiRisk::Ui)));
         let fake = Fake::with_mail(2);
         let calls = [
@@ -1281,6 +1377,7 @@ mod tests {
             ("mark_messages", json!({ "message_ids": ["m1"], "read": true })),
             ("tag_messages", json!({ "message_ids": ["m1"], "label_id": "todo", "on": true })),
             ("add_event", json!({ "title": "Lunch", "start": "2026-11-20T12:00:00" })),
+            ("add_task", json!({ "title": "Call Dan", "due": "2026-11-20" })),
         ];
         for (name, args) in calls {
             let off = run(&fake, &env(AiActionMode::Off), &call(name, args.clone())).unwrap();
@@ -1341,6 +1438,7 @@ mod tests {
             ("list_labels", json!({})),
             ("list_events", json!({ "from": "2026-11-16" })),
             ("read_event", json!({ "event_id": "e" })),
+            ("list_tasks", json!({ "from": "2026-11-16" })),
             ("open_message", json!({ "message_id": "m1" })),
             ("draft_reply", json!({ "message_id": "m1", "text": "Yes." })),
             ("archive", json!({ "message_ids": ["m1"] })),
@@ -1518,6 +1616,74 @@ mod tests {
 
     /// Midnight of 2026-11-16 in Istanbul (UTC+3).
     const MONDAY: i64 = 1_794_776_400;
+
+    #[test]
+    fn open_tasks_are_listed_with_their_due_time_and_nothing_else() {
+        let fake = Fake::new();
+        let mut timed = entry("t1", "Send <invoice>", MONDAY + 9 * 3_600, 0);
+        (timed.is_task, timed.calendar_id) = (true, "team".into());
+        let mut dated = entry("t2", "Pay rent", MONDAY + 86_400, 0);
+        (dated.is_task, dated.all_day) = (true, true);
+        let mut done = entry("t3", "Old thing", MONDAY + 3_600, 0);
+        (done.is_task, done.is_done) = (true, true);
+        let event = entry("e1", "Dentist", MONDAY + 10 * 3_600, 3_600);
+        *fake.entries.borrow_mut() = vec![timed, dated, done, event];
+
+        let out = text(&fake, "list_tasks", json!({ "from": "2026-11-16", "to": "2026-11-17" }));
+        assert_eq!(*fake.spans.borrow(), vec![(MONDAY, MONDAY + 2 * 86_400, ZONE.to_string())]);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines,
+            [
+                "2 open tasks from 2026-11-16 to 2026-11-17, local time:",
+                "id=t1 | due 2026-11-16 09:00 (at a time of day) | Send &lt;invoice&gt; | calendar Team",
+                "id=t2 | due 2026-11-17 (no time of day) | Pay rent | calendar Home",
+            ]
+        );
+        // Without dates: 30 days back and 30 ahead of the day of `now`.
+        fake.spans.borrow_mut().clear();
+        text(&fake, "list_tasks", json!({}));
+        let (from, to, _) = fake.spans.borrow()[0].clone();
+        assert_eq!((to - from) / 86_400, 61);
+        assert!(error(&fake, "list_tasks", json!({ "from": "2026-11-20", "to": "2026-11-16" })).contains("before"));
+        assert!(error(&fake, "list_tasks", json!({ "from": "2026-01-01", "to": "2026-12-31" })).contains("too long"));
+        fake.entries.borrow_mut().clear();
+        assert!(text(&fake, "list_tasks", json!({ "from": "2026-11-16" })).contains("No open tasks"));
+    }
+
+    #[test]
+    fn a_task_is_suggested_with_or_without_a_due_time_and_never_more() {
+        use crate::model::AiChange;
+        let fake = Fake::new();
+        let card = |args: Value| match ran(&fake, "add_task", args) {
+            Outcome::Proposal(AiChange::AddEvent { input, calendar_name }, _) => (input, calendar_name),
+            _ => panic!("no card"),
+        };
+        let (dated, name) =
+            card(json!({ "title": " Call\nDan ", "due": "2026-11-20", "description": "About the <contract>" }));
+        assert_eq!(name, "Home");
+        assert_eq!(
+            (dated.title.as_str(), dated.start.as_str(), dated.all_day, dated.is_task, dated.duration_secs),
+            ("Call Dan", "2026-11-20T00:00:00", true, true, 0)
+        );
+        assert!(dated.repeat.is_none() && dated.alert_minutes.is_empty() && dated.location.is_empty());
+        assert_eq!(dated.time_zone.as_deref(), Some(ZONE));
+        let (timed, _) = card(json!({ "title": "Pay", "due": "2026-11-20T17:30", "calendar_id": "team" }));
+        assert_eq!(
+            (timed.start.as_str(), timed.all_day, timed.calendar_id.as_str()),
+            ("2026-11-20T17:30:00", false, "team")
+        );
+        let (undated, _) = card(json!({ "title": "Someday" }));
+        assert_eq!((undated.start.as_str(), undated.all_day, undated.is_task), ("", false, true));
+        assert_eq!(error(&fake, "add_task", json!({})), "the argument 'title' is missing");
+        assert!(error(&fake, "add_task", json!({ "title": "x", "due": "soon" })).contains("'due' must be"));
+        assert!(error(&fake, "add_task", json!({ "title": "x", "calendar_id": "hol" })).contains("cannot be added to"));
+        assert!(error(&fake, "add_task", json!({ "title": "x".repeat(301) })).contains("too long"));
+        // A task is an automatic kind exactly as an event is; it is the same change.
+        let change = AiChange::AddEvent { input: undated, calendar_name: "Home".into() };
+        assert!(changes::automatic(&change, AiRisk::Change));
+        assert!(fake.calls.borrow().is_empty(), "suggesting writes nothing");
+    }
 
     #[test]
     fn events_are_asked_for_whole_local_days() {

@@ -687,6 +687,10 @@ pub enum AiToolKind {
     Mark,
     Tag,
     AddEvent,
+    /// Open tasks (id, title, due), own calendars only. Read-only.
+    ListTasks,
+    /// Suggests a new task (a title and an optional due time); a card, done only on the user's tap.
+    AddTask,
 }
 
 /// A tool the model is using now. `detail` is plain text of at most 80 characters (the query, a subject,
@@ -1325,4 +1329,137 @@ pub enum ConnectionStatus {
         reason: String,
     },
     SignInNeeded,
+}
+
+// ---- M12 stage 8, phase 2: the sparkle actions ----
+
+/// What a button with a sparkle sends to the service. Each variant names exactly the items it sends
+/// (the same ids the finding carries); nothing else of the mailbox or the calendar goes with it.
+/// `today` is "YYYY-MM-DD" and `time_zone` an IANA zone, the phone's.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum AiSparkle {
+    /// To-dos and dates in these mails (at most 5): sender, subject and text of each.
+    AddDates { message_ids: Vec<String>, today: String, time_zone: String },
+    /// That day's events (title, time, place) and the open tasks due by then (title, due). `day` is
+    /// "YYYY-MM-DD".
+    PlanMyDay { day: String, today: String, time_zone: String },
+    /// Looks for the place or meeting link of one event: its title and time, then the mails the
+    /// assistant chooses to read (read tools only, a few steps).
+    LookInMail { event_id: String, recurrence_id: Option<String>, today: String, time_zone: String },
+    /// Whether one mail finishes or changes one task: the task's title and that mail.
+    CheckTheMail { task_id: String, message_id: String, today: String, time_zone: String },
+    /// Three directions a reply to this mail could take (the stage 2 task, unchanged).
+    ReplyIdeas { message_id: String },
+}
+
+/// What a sparkle run would send, before it is sent. `text` is the request exactly as it goes out
+/// (the part after the system text); what the user sees is what is sent.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiSparklePreview {
+    pub host: String,
+    pub model: String,
+    /// Mails in it (0 for Plan my day and Look in mail).
+    pub messages: u32,
+    /// Calendar entries in it (events for Plan my day, the one event for Look in mail).
+    pub events: u32,
+    /// Tasks in it.
+    pub tasks: u32,
+    pub characters: u32,
+    pub is_cut: bool,
+    /// Who the mails are from ("Name <address>"), in order.
+    pub senders: Vec<String>,
+    /// The run may read more mail with the read tools (Look in mail): the chat's own yes is needed.
+    pub reads_mail: bool,
+    pub text: String,
+}
+
+/// Tokens as the service reported them; a field is `None` when it said nothing. Never a log line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, uniffi::Record)]
+pub struct AiUsage {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+}
+
+/// Whether a mail finishes or changes a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiVerdictKind {
+    /// The mail finishes the task (the user may mark it done).
+    Finishes,
+    /// The mail changes the task (a new time, a new place, other terms).
+    Changes,
+    /// The mail has nothing to do with it.
+    Unrelated,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiVerdict {
+    pub kind: AiVerdictKind,
+    /// One short sentence, as the service wrote it (data: shown as text only).
+    pub reason: String,
+}
+
+/// Where Look in mail found the place or link: the mail and the text. No change is made.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiFound {
+    pub message: AiMessageRef,
+    /// The place or meeting link, one line of at most 300 characters.
+    pub text: String,
+}
+
+/// What a sparkle run gave. Only the part that fits the action is filled.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiSparkleResult {
+    /// A plain sentence for the card when there is nothing else to show ("nothing found").
+    pub text: String,
+    /// Cards, registered under this run: applied only by `ai_apply` / `ai_apply_all` on a tap.
+    /// AddDates: new events and new tasks. PlanMyDay: new events.
+    pub proposals: Vec<AiProposal>,
+    /// ReplyIdeas.
+    pub ideas: Vec<String>,
+    /// LookInMail.
+    pub found: Option<AiFound>,
+    /// CheckTheMail.
+    pub verdict: Option<AiVerdict>,
+    /// The settings let a card be applied (the actions switch is on). When false, a card can only
+    /// be shown, and the host opens the editor with it filled in.
+    pub changes_allowed: bool,
+    pub usage: Option<AiUsage>,
+    pub host: String,
+    pub model: String,
+    /// What was sent: mails, characters (the first request; Look in mail may send more).
+    pub messages: u32,
+    pub characters: u32,
+    pub is_cut: bool,
+    /// Tool calls made (Look in mail).
+    pub steps: u32,
+}
+
+/// One suggestion `ai_apply_all` could not do.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiBatchFailure {
+    pub proposal_id: String,
+    pub message: String,
+}
+
+/// What `ai_apply_all` did. The ones that worked stay done, whatever failed.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiBatchApplied {
+    /// (proposal id, what `ai_apply` would have said), in order.
+    pub applied: Vec<AiBatchItem>,
+    pub failed: Vec<AiBatchFailure>,
+    /// One Undo for everything that was applied and can be taken back; `None` when nothing can.
+    pub undo_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiBatchItem {
+    pub proposal_id: String,
+    pub applied: AiApplied,
+}
+
+/// What `ai_undo_batch` did: every one it took back, and the ones it could not.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiBatchUndone {
+    pub undone: Vec<String>,
+    pub failed: Vec<AiBatchFailure>,
 }

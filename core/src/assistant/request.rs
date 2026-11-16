@@ -173,7 +173,49 @@ pub fn about_block(mails: Vec<MailInput>, earlier: usize) -> Result<(String, u32
     Ok((prompts::tool_frame(ABOUT_NAME, &text), packed.blocks.len() as u32, is_cut))
 }
 
-fn done(system: String, user: String, messages: usize, is_cut: bool) -> Prepared {
+/// The most mails one "Add dates" run reads.
+pub const SPARKLE_MAILS: usize = 5;
+/// The longest task title that is sent (characters).
+const TASK_TITLE_CHARS: usize = 300;
+
+/// The request of "Add dates": these mails (at most [`SPARKLE_MAILS`], the oldest first), each as a
+/// summary of a conversation sends its messages (header lines flattened and capped, body capped,
+/// quoted text dropped, escaped), with today's date and the zone.
+pub fn build_extract_mails(mails: Vec<MailInput>, today: &str, time_zone: &str) -> Result<Prepared> {
+    if mails.is_empty() {
+        return Err(Error::invalid("there is no mail to look through"));
+    }
+    if mails.len() > SPARKLE_MAILS {
+        return Err(Error::invalid("at most 5 mails can be looked through at once"));
+    }
+    if !day_is_usable(today, time_zone) {
+        return Err(Error::invalid(if insights::is_day(today) {
+            "the time zone is missing"
+        } else {
+            "today's date must be written like 2026-11-15"
+        }));
+    }
+    let head = format!("{}\n\n<mail>\n", prompts::extract_mails_line(today, time_zone));
+    let close = "</mail>";
+    let packed = pack(&mails, true, REQUEST_CHARS.saturating_sub(chars(&head) + chars(close)));
+    let user = format!("{head}{}{close}", packed.blocks.concat());
+    Ok(done(prompts::extract_mails_system(), user, packed.blocks.len(), packed.is_cut))
+}
+
+/// The request of "Check the mail": the task's title and that one mail.
+pub fn build_check(task_title: &str, mail: &MailInput) -> Result<Prepared> {
+    let (title, title_cut) = prompts::escape_cut(prompts::flatten(task_title).trim(), TASK_TITLE_CHARS);
+    if title.trim().is_empty() {
+        return Err(Error::invalid("the task has no title"));
+    }
+    let head = format!("{}\n\n<task>\n{title}\n</task>\n\n<mail>\n", prompts::check_line());
+    let close = "</mail>";
+    let packed = pack(std::slice::from_ref(mail), false, REQUEST_CHARS.saturating_sub(chars(&head) + chars(close)));
+    let user = format!("{head}{}{close}", packed.blocks.concat());
+    Ok(done(prompts::check_system(), user, packed.blocks.len(), packed.is_cut || title_cut))
+}
+
+pub(crate) fn done(system: String, user: String, messages: usize, is_cut: bool) -> Prepared {
     Prepared { system, characters: chars(&user) as u32, user, messages: messages as u32, is_cut }
 }
 

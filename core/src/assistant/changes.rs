@@ -80,7 +80,7 @@ fn refuse<T>(sentence: &str) -> Result<T> {
 }
 
 /// A message as a card or a chip names it, from the cache, with the name of its first folder.
-pub(super) fn message_ref(header: &MessageHeader, folders: &[Mailbox]) -> AiMessageRef {
+pub(crate) fn message_ref(header: &MessageHeader, folders: &[Mailbox]) -> AiMessageRef {
     let first = header.mailbox_ids.first();
     AiMessageRef {
         id: header.id.clone(),
@@ -102,6 +102,7 @@ pub fn propose(reader: &dyn Reader, env: &Env<'_>, kind: AiToolKind, args: &serd
     match kind {
         AiToolKind::Archive | AiToolKind::Move | AiToolKind::Mark | AiToolKind::Tag => {}
         AiToolKind::AddEvent => return new_event(&look, env, args),
+        AiToolKind::AddTask => return new_task(&look, env, args),
         _ => return refuse(NOT_A_CHANGE),
     }
     let ids = ids_arg(args)?;
@@ -291,6 +292,52 @@ fn new_event(look: &Look<'_>, env: &Env<'_>, args: &Value) -> Result<AiChange> {
     })
 }
 
+/// A new task: a title, a due date or time if there is one, no repeat, nobody invited, in a
+/// calendar the user may write to. The same change as an event with `is_task`, so it is applied,
+/// taken back and (in a chat the user switched to automatic) done by the same path.
+fn new_task(look: &Look<'_>, env: &Env<'_>, args: &Value) -> Result<AiChange> {
+    zone_of(env.zone)?;
+    let title = prompts::flatten(text_arg(args, "title")?.unwrap_or("")).trim().to_string();
+    if title.is_empty() {
+        return refuse("the argument 'title' is missing");
+    }
+    if title.chars().count() > TITLE_CHARS {
+        return refuse("the title is too long");
+    }
+    let description = text_arg(args, "description")?.unwrap_or("").trim().to_string();
+    if description.chars().count() > DESCRIPTION_CHARS {
+        return refuse("the description is too long; write at most 4,000 characters");
+    }
+    // No due time at all is a task without a date.
+    let (start, all_day) = match text_arg(args, "due")?.map(str::trim).filter(|t| !t.is_empty()) {
+        None => (String::new(), false),
+        Some(due) => match parse_start(due) {
+            Some((at, only_date)) => (at.format(LOCAL_FORMAT).to_string(), only_date),
+            None => {
+                return refuse("the argument 'due' must be a local date or date and time such as 2026-11-12T10:00:00")
+            }
+        },
+    };
+    let calendars = look.calendars()?;
+    let calendar = calendar_for(&calendars, optional_id(args, "calendar_id")?.as_deref())?;
+    Ok(AiChange::AddEvent {
+        input: EventInput {
+            calendar_id: calendar.id.clone(),
+            title,
+            location: String::new(),
+            description,
+            start,
+            time_zone: Some(env.zone.to_string()),
+            duration_secs: 0,
+            all_day,
+            is_task: true,
+            repeat: None,
+            alert_minutes: Vec::new(),
+        },
+        calendar_name: calendar.name.clone(),
+    })
+}
+
 fn messages_of(change: &AiChange) -> &[AiMessageRef] {
     match change {
         AiChange::Archive { messages }
@@ -316,7 +363,8 @@ pub fn risk(change: &AiChange) -> AiRisk {
 /// stays inside the mailbox, is not mailed to anyone and is taken back by [`undo`] is named, and
 /// not a change of more than [`CONFIRM_ABOVE`] messages (its card asks first, as always).
 ///
-/// A new calendar entry is named too (owner): it is made in the user's own calendar, has no
+/// A new calendar entry is named too (owner), a new task included (`add_task` makes the same
+/// `AddEvent` with `is_task`): it is made in the user's own calendar, has no
 /// participants (so saving mails no invitation: `EventInput` has no way to name any), does not
 /// repeat, and its Undo deletes it again. Changing or deleting an existing entry, an entry with
 /// guests and anything in a shared calendar are not changes of the chat at all, so they cannot be

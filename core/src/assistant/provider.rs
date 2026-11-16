@@ -182,6 +182,41 @@ pub async fn read_capped(
     }
 }
 
+/// Tokens as the service reported them for one or more requests. A field is `None` when the
+/// service said nothing. Only the numbers are read: nothing else of an event is kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub input: Option<u32>,
+    pub output: Option<u32>,
+}
+
+impl Usage {
+    /// Takes the token counts of one `data` payload of either protocol: `usage` of the event (OpenAI
+    /// style, the last chunk, or Anthropic's `message_delta`) and `message.usage` (Anthropic's
+    /// `message_start`). A later count of the same request replaces an earlier one.
+    fn note(&mut self, data: &str) {
+        if !data.contains("usage") {
+            return;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else { return };
+        for usage in [&event["usage"], &event["message"]["usage"]] {
+            let count =
+                |a: &str, b: &str| usage[a].as_u64().or(usage[b].as_u64()).map(|n| n.min(u64::from(u32::MAX)) as u32);
+            self.input = count("input_tokens", "prompt_tokens").or(self.input);
+            self.output = count("output_tokens", "completion_tokens").or(self.output);
+        }
+    }
+
+    /// The sum of two requests; a field one of them did not report counts for what the other did.
+    pub fn plus(self, other: Usage) -> Usage {
+        let sum = |a: Option<u32>, b: Option<u32>| match (a, b) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0).saturating_add(b.unwrap_or(0))),
+        };
+        Usage { input: sum(self.input, other.input), output: sum(self.output, other.output) }
+    }
+}
+
 /// What one event of the stream said.
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
@@ -297,10 +332,12 @@ struct Reader<'a> {
     sink: Sink<'a>,
     finished: bool,
     stopped: bool,
+    usage: Usage,
 }
 
 impl Reader<'_> {
     fn event(&mut self, data: &str) -> Result<()> {
+        self.usage.note(data);
         let parsed = (self.parse)(data)?;
         let shown = self.think.push(&parsed.text);
         if self.think.hidden > MAX_HIDDEN {
@@ -324,12 +361,29 @@ pub async fn complete(
     timeouts: Timeouts,
     on_text: &mut (dyn FnMut(&str) + Send),
 ) -> Result<String> {
+    complete_with_usage(ep, system, user, timeouts, on_text, false).await.map(|(answer, _)| answer)
+}
+
+/// [`complete`], and the tokens the service reported. With `ask_usage` an OpenAI-style request also
+/// carries `stream_options.include_usage` (without it such a service usually reports nothing); the
+/// body of every other request is unchanged.
+pub async fn complete_with_usage(
+    ep: &Endpoint,
+    system: &str,
+    user: &str,
+    timeouts: Timeouts,
+    on_text: &mut (dyn FnMut(&str) + Send),
+    ask_usage: bool,
+) -> Result<(String, Usage)> {
     let url = settings::check_base_url(&ep.base_url)?;
     let host = settings::host_label(&url);
     if ep.provider == AiProvider::Anthropic && ep.key.is_none() {
         return Err(Error::invalid("this service needs a key"));
     }
-    let parts = request_parts(ep, system, user);
+    let mut parts = request_parts(ep, system, user);
+    if ask_usage {
+        ask_for_usage(ep, &mut parts);
+    }
     let client = client(timeouts.connect, None)?;
     let mut request = client
         .post(&parts.url)
@@ -358,6 +412,7 @@ pub async fn complete(
         sink: Sink { answer: String::new(), chars: 0, on_text },
         finished: false,
         stopped: false,
+        usage: Usage::default(),
     };
     let one_piece = response
         .headers()
@@ -410,7 +465,14 @@ pub async fn complete(
     if answer.is_empty() {
         return Err(Error::temporary("the service sent an empty answer"));
     }
-    Ok(answer)
+    Ok((answer, reader.usage))
+}
+
+/// Asks an OpenAI-style service to report its token counts in the last chunk of the stream.
+fn ask_for_usage(ep: &Endpoint, parts: &mut Parts) {
+    if ep.provider == AiProvider::OpenAiCompatible {
+        parts.body["stream_options"] = json!({"include_usage": true});
+    }
 }
 
 /// The most calls taken from one turn; what the model asks for beyond them is dropped.
@@ -860,6 +922,7 @@ struct ChatReader<'a> {
     think: ThinkFilter,
     sink: Sink<'a>,
     gather: Gather,
+    usage: Usage,
 }
 
 impl<'a> ChatReader<'a> {
@@ -869,10 +932,12 @@ impl<'a> ChatReader<'a> {
             think: ThinkFilter::default(),
             sink: Sink { answer: String::new(), chars: 0, on_text },
             gather: Gather::default(),
+            usage: Usage::default(),
         }
     }
 
     fn event(&mut self, data: &str) -> Result<()> {
+        self.usage.note(data);
         let text = match self.provider {
             AiProvider::OpenAiCompatible => self.gather.openai(data)?,
             AiProvider::Anthropic => self.gather.anthropic(data)?,
@@ -946,6 +1011,21 @@ pub async fn converse(
     timeouts: Timeouts,
     on_text: &mut (dyn FnMut(&str) + Send),
 ) -> Result<(Reply, ToolsRefused)> {
+    converse_with_usage(ep, system, turns, tools, timeouts, on_text, false)
+        .await
+        .map(|(reply, refused, _)| (reply, refused))
+}
+
+/// [`converse`], and the tokens the service reported for this turn (see [`complete_with_usage`]).
+pub async fn converse_with_usage(
+    ep: &Endpoint,
+    system: &str,
+    turns: &[Turn],
+    tools: &[ToolSpec],
+    timeouts: Timeouts,
+    on_text: &mut (dyn FnMut(&str) + Send),
+    ask_usage: bool,
+) -> Result<(Reply, ToolsRefused, Usage)> {
     let url = settings::check_base_url(&ep.base_url)?;
     let host = settings::host_label(&url);
     if ep.provider == AiProvider::Anthropic && ep.key.is_none() {
@@ -953,7 +1033,14 @@ pub async fn converse(
     }
     let client = client(timeouts.connect, None)?;
     let mut refused = ToolsRefused::No;
-    let mut response = post(&client, chat_parts(ep, system, turns, tools), &host, timeouts).await?;
+    let parts = |tools: &[ToolSpec]| {
+        let mut parts = chat_parts(ep, system, turns, tools);
+        if ask_usage {
+            ask_for_usage(ep, &mut parts);
+        }
+        parts
+    };
+    let mut response = post(&client, parts(tools), &host, timeouts).await?;
     let status = response.status().as_u16();
     if status == 400 && ep.provider == AiProvider::OpenAiCompatible && !tools.is_empty() {
         // The only thing ever read of an error's body, and only for one word: nothing of it is
@@ -966,7 +1053,7 @@ pub async fn converse(
             return Err(status_error(400));
         }
         // The same endpoint, so the key goes where it went before, and only once more.
-        response = post(&client, chat_parts(ep, system, turns, &[]), &host, timeouts).await?;
+        response = post(&client, parts(&[]), &host, timeouts).await?;
         if !response.status().is_success() {
             // Still a 400 without tools: the model cannot be used for this at all, and that is the
             // fact to report. Any other status is that status.
@@ -1027,7 +1114,8 @@ pub async fn converse(
             _ => 0,
         })
         .sum();
-    Ok((reader.finish(prior)?, refused))
+    let usage = reader.usage;
+    Ok((reader.finish(prior)?, refused, usage))
 }
 
 #[cfg(test)]
@@ -1101,6 +1189,37 @@ mod tests {
         assert_eq!(parse_openai(whole).unwrap(), Parsed { text: "Hi".into(), finished: true, stop: false });
         let long = r#"{"choices":[{"message":{"content":"Hi"},"finish_reason":"length"}]}"#;
         assert!(matches!(parse_openai(long), Err(Error::Temporary { .. })));
+    }
+
+    #[test]
+    fn the_token_counts_are_read_from_either_protocol_and_nothing_else() {
+        let mut usage = Usage::default();
+        usage.note(r#"{"choices":[{"delta":{"content":"hi"}}]}"#);
+        assert_eq!(usage, Usage::default());
+        usage.note(r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#);
+        assert_eq!(usage, Usage { input: Some(12), output: Some(3) });
+        // Anthropic: the start gives the input, the delta the output so far (a later count replaces).
+        let mut usage = Usage::default();
+        usage.note(r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}"#);
+        usage.note(r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#);
+        assert_eq!(usage, Usage { input: Some(100), output: Some(40) });
+        usage.note("not json with usage in it");
+        usage.note(r#"{"usage":null}"#);
+        assert_eq!(usage, Usage { input: Some(100), output: Some(40) });
+        let sum = usage.plus(Usage { input: Some(5), output: None });
+        assert_eq!(sum, Usage { input: Some(105), output: Some(40) });
+        assert_eq!(Usage::default().plus(Usage::default()), Usage::default());
+    }
+
+    #[test]
+    fn only_a_request_that_asks_gets_stream_options() {
+        let mut parts = request_parts(&ep(AiProvider::OpenAiCompatible, None), "s", "u");
+        assert!(parts.body.get("stream_options").is_none());
+        ask_for_usage(&ep(AiProvider::OpenAiCompatible, None), &mut parts);
+        assert_eq!(parts.body["stream_options"], json!({"include_usage": true}));
+        let mut anthropic = request_parts(&ep(AiProvider::Anthropic, Some("k")), "s", "u");
+        ask_for_usage(&ep(AiProvider::Anthropic, Some("k")), &mut anthropic);
+        assert!(anthropic.body.get("stream_options").is_none());
     }
 
     #[test]
