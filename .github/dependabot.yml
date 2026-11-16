@@ -20,6 +20,35 @@ updates:
       # move it by hand together with the Kotlin side.
       - dependency-name: uniffi
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # The RustCrypto crates move as one generation, and rPGP (pgp) and cms pin theirs:
+      # a single bump does not build. Patch releases still come; a new generation is moved
+      # by hand when rPGP moves (see .cargo/audit.toml).
+      - dependency-name: "aes"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "aes-gcm"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "cbc"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "hkdf"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "sha1"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "sha2"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "p256"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "p384"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "rsa"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "cms"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "x509-cert"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "der"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "getrandom"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # Android: Gradle version catalog, plugins and the wrapper.
   - package-ecosystem: gradle
