@@ -48,7 +48,7 @@ import ovh.kweb.mail.ui.theme.KwebSwitch
 import uniffi.kweb_core.RemotePictures
 
 /** One choice of a list of choices: the value and the text the dialog shows for it. */
-private class Option<T>(val value: T, @StringRes val label: Int)
+internal class Option<T>(val value: T, @StringRes val label: Int)
 
 private val LINE_LABELS = intArrayOf(R.string.reading_preview_none, R.string.reading_lines_1, R.string.reading_lines_2, R.string.reading_lines_3)
 
@@ -185,7 +185,7 @@ fun ReadingScreen(onBack: () -> Unit, onOpenSenders: () -> Unit) {
 }
 
 @Composable
-private fun <T> ChoiceDialog(
+internal fun <T> ChoiceDialog(
     @StringRes title: Int,
     options: List<Option<T>>,
     selected: T,

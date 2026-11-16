@@ -695,6 +695,7 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
 
     private fun run(action: ComposeAction, passphrase: String?, keep: Boolean, mine: Int) {
         val context = getApplication<Application>()
+        val undoSeconds = ovh.kweb.mail.ui.UiPrefs(context).undoSeconds.toUInt()
         viewModelScope.launch {
             try {
                 val protected = state.protection.let { it.sign || it.encrypt }
@@ -704,8 +705,8 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
                             // Assembled once the save or upload in front of it has finished, so it carries what they changed.
                             lock.withLock {
                                 val draft = withBookkeeping(checkNotNull(assemble()))
-                                if (protected) acct.core.sendProtected(draft, ComposeRules.UNDO_SECONDS, passphrase, keep)
-                                else acct.core.send(draft, ComposeRules.UNDO_SECONDS)
+                                if (protected) acct.core.sendProtected(draft, undoSeconds, passphrase, keep)
+                                else acct.core.send(draft, undoSeconds)
                             }
                         }
                         // The message is with the core whatever became of the screen: the list must hear of it.

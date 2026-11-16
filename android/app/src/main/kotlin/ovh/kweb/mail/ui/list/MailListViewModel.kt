@@ -24,6 +24,7 @@ import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.ui.MailActions
 import ovh.kweb.mail.ui.SessionState
 import ovh.kweb.mail.ui.UiMessage
+import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.compose.Outbox
@@ -94,6 +95,9 @@ sealed interface ListEvent {
         /** In a list of a folder and its subfolders: the folder each message was shown in; undoing puts each back there. */
         val homes: Map<String, String> = emptyMap(),
     ) : ListEvent
+
+    /** A swipe changed read or star of messages, or moved them; [undo] (the opposite, or the move back) is what the Undo button does. */
+    data class UndoActions(val textRes: Int, val undo: List<Action>) : ListEvent
 
     /** A refusal in the core's own words, or any text that is not one of the app's strings. */
     data class Text(val message: UiMessage) : ListEvent
@@ -292,6 +296,41 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         removeFromFolder(row.messageIds, MailActions.delete(row.messageIds), if (inTrash) null else R.string.list_deleted, rows = listOf(row))
     }
 
+    /** A swipe: read when the conversation has unread mail, else unread, with an Undo that does the opposite. */
+    fun toggleRead(row: ThreadRow) {
+        val reads = SelectionRules.marksRead(listOf(row))
+        val ids = row.messageIds
+        submit(if (reads) MailActions.markRead(ids) else MailActions.markUnread(ids)) {
+            eventChannel.send(
+                ListEvent.UndoActions(
+                    if (reads) R.string.list_marked_read else R.string.list_marked_unread,
+                    if (reads) MailActions.markUnread(ids) else MailActions.markRead(ids),
+                ),
+            )
+        }
+    }
+
+    /** A swipe: star, or take the star off when the conversation is starred, with an Undo that does the opposite. */
+    fun toggleStar(row: ThreadRow) {
+        val unstars = SelectionRules.unstars(listOf(row))
+        val ids = row.messageIds
+        submit(MailActions.setFlagged(ids, !unstars)) {
+            eventChannel.send(
+                ListEvent.UndoActions(
+                    if (unstars) R.string.list_unstarred else R.string.list_starred,
+                    MailActions.setFlagged(ids, unstars),
+                ),
+            )
+        }
+    }
+
+    /** A swipe that chose a folder: moves the conversation, with an Undo that puts it back where the list showed it. */
+    fun moveSwiped(row: ThreadRow, mailboxId: String) =
+        removeFromFolder(row.messageIds, MailActions.move(row.messageIds, mailboxId), R.string.list_moved, rows = listOf(row))
+
+    /** Does what an Undo of [event] says (a swipe's read, star or move). */
+    fun undoActions(event: ListEvent.UndoActions) = submit(event.undo)
+
     // ---- Choosing conversations ----
 
     /** Chooses [threadId], or lets go of it; choosing the first one starts the selection and letting go of the last ends it. */
@@ -464,7 +503,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
      * it go. A timer here clears it, so a rotation or another event does not take the offer away.
      */
     private fun hold(pending: PendingSend) {
-        val left = SendRules.remainingMillis(pending.sendAt, System.currentTimeMillis())
+        val left = SendRules.remainingMillis(pending.sendAt, System.currentTimeMillis(), UiPrefs(getApplication()).undoSeconds)
         if (left <= 0) return
         if (stateFlow.value.holding == pending) return
         holdJob?.cancel()

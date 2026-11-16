@@ -125,6 +125,7 @@ import ovh.kweb.mail.ui.accounts.AccountSheet
 import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import ovh.kweb.mail.ui.ActionRules
 import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.delivery.NotificationFix
 import ovh.kweb.mail.ui.folders.FolderAction
@@ -178,6 +179,13 @@ fun MailListScreen(
     var moving by remember { mutableStateOf(false) }
     var deletingChosen by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ThreadRow?>(null) }
+    // Delete asked first (the setting): one swiped row, or the chosen rows. A swiped row that is to be moved waits for the folder.
+    var confirmingRow by remember { mutableStateOf<ThreadRow?>(null) }
+    var confirmingChosen by remember { mutableStateOf(false) }
+    var movingRow by remember { mutableStateOf<ThreadRow?>(null) }
+    // What the swipes do, read again when the app comes back from Settings.
+    val prefs = UiPrefs(LocalContext.current)
+    var swipes by remember { mutableStateOf(SwipeChoices(prefs.swipeRight, prefs.swipeLeft, prefs.confirmDelete)) }
     val selecting = state.selection.isNotEmpty()
     val conversationView = ovh.kweb.mail.ui.UiPrefs(LocalContext.current).conversationView
     // Settings may have changed how the list groups mail while this screen was away.
@@ -190,6 +198,7 @@ fun MailListScreen(
     // Coming back from a thread does not resume the activity, so ask for a fresh read here.
     LaunchedEffect(vm) { vm.reload() }
     LifecycleResumeEffect(vm) {
+        swipes = SwipeChoices(prefs.swipeRight, prefs.swipeLeft, prefs.confirmDelete)
         vm.reload()
         onPauseOrDispose { }
     }
@@ -232,6 +241,7 @@ fun MailListScreen(
         if (!selecting) {
             moving = false
             deletingChosen = false
+            confirmingChosen = false
         }
     }
     LaunchedEffect(vm) {
@@ -256,6 +266,14 @@ fun MailListScreen(
                             duration = SnackbarDuration.Long,
                         )
                         if (result == SnackbarResult.ActionPerformed) vm.undo(event)
+                    }
+                    is ListEvent.UndoActions -> {
+                        val result = snackbar.showSnackbar(
+                            resources.getString(event.textRes),
+                            actionLabel = resources.getString(R.string.action_undo),
+                            duration = SnackbarDuration.Long,
+                        )
+                        if (result == SnackbarResult.ActionPerformed) vm.undoActions(event)
                     }
                     is ListEvent.UndoSpam -> {
                         val result = snackbar.showSnackbar(
@@ -379,7 +397,13 @@ fun MailListScreen(
                                 allSelected = SelectionRules.allSelected(state.rows, state.selection),
                                 onClose = vm::clearSelection,
                                 onArchive = vm::archiveSelected,
-                                onDelete = { if (inTrash) deletingChosen = true else vm.deleteSelected() },
+                                onDelete = {
+                                    when (ActionRules.deleteAsk(inTrash, swipes.confirmDelete)) {
+                                        ActionRules.DeleteAsk.FOREVER -> deletingChosen = true
+                                        ActionRules.DeleteAsk.CONFIRM -> confirmingChosen = true
+                                        ActionRules.DeleteAsk.NONE -> vm.deleteSelected()
+                                    }
+                                },
                                 onMark = vm::markSelected,
                                 onMove = { moving = true },
                                 onStar = vm::flagSelected,
@@ -468,8 +492,22 @@ fun MailListScreen(
                                             }
                                         }
                                     },
-                                    onArchive = { vm.archive(row) },
-                                    onDelete = { if (inTrash) deleting = row else vm.delete(row) },
+                                    swipeRight = swipes.right,
+                                    swipeLeft = swipes.left,
+                                    onSwipe = { action ->
+                                        when (action) {
+                                            ActionRules.Swipe.ARCHIVE -> { vm.archive(row); true }
+                                            ActionRules.Swipe.DELETE -> when (ActionRules.deleteAsk(inTrash, swipes.confirmDelete)) {
+                                                ActionRules.DeleteAsk.FOREVER -> { deleting = row; false }
+                                                ActionRules.DeleteAsk.CONFIRM -> { confirmingRow = row; false }
+                                                ActionRules.DeleteAsk.NONE -> { vm.delete(row); true }
+                                            }
+                                            ActionRules.Swipe.READ -> { vm.toggleRead(row); false }
+                                            ActionRules.Swipe.STAR -> { vm.toggleStar(row); false }
+                                            ActionRules.Swipe.MOVE -> { movingRow = row; false }
+                                            ActionRules.Swipe.NONE -> false
+                                        }
+                                    },
                                 )
                             }
                         }
@@ -503,6 +541,37 @@ fun MailListScreen(
                 vm.moveSelected(it.id)
             },
             onDismiss = { moving = false },
+        )
+    }
+    movingRow?.let { row ->
+        MoveDialog(
+            folders = folders,
+            exclude = current?.id?.takeIf { !SubfolderRules.isCombined(state.scope) },
+            onPick = {
+                movingRow = null
+                vm.moveSwiped(row, it.id)
+            },
+            onDismiss = { movingRow = null },
+        )
+    }
+    confirmingRow?.let { row ->
+        ConfirmDeleteDialog(
+            count = 1,
+            onConfirm = {
+                confirmingRow = null
+                vm.delete(row)
+            },
+            onDismiss = { confirmingRow = null },
+        )
+    }
+    if (confirmingChosen) {
+        ConfirmDeleteDialog(
+            count = state.selection.size,
+            onConfirm = {
+                confirmingChosen = false
+                vm.deleteSelected()
+            },
+            onDismiss = { confirmingChosen = false },
         )
     }
     if (deletingChosen) {
@@ -937,7 +1006,8 @@ private fun EmptyState(state: MailListState, modifier: Modifier) {
 }
 
 /**
- * One conversation: the row inside a swipe box (right: archive, left: delete). A long press or a tap on the picture chooses it
+ * One conversation: the row inside a swipe box. What each direction does is the user's choice ([swipeRight], [swipeLeft];
+ * Settings, "Swipes and actions"); the swipe is handed to [onSwipe]. A long press or a tap on the picture chooses it
  * ([onToggleSelect]); while rows are chosen ([selecting]) a tap anywhere chooses or lets go, and the swipes are off.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -950,51 +1020,72 @@ private fun ConversationItem(
     folder: String?,
     selecting: Boolean,
     selected: Boolean,
+    swipeRight: ActionRules.Swipe,
+    swipeLeft: ActionRules.Swipe,
     onToggleSelect: () -> Unit,
     onOpen: () -> Unit,
-    onArchive: () -> Unit,
-    onDelete: () -> Unit,
+    /** Does the swipe; true when the row is on its way out of the list, false when it stays and must come back. */
+    onSwipe: (ActionRules.Swipe) -> Boolean,
 ) {
-    val canArchive = role != "archive"
-    val inTrash = role == "trash"
     val scope = rememberCoroutineScope()
     val swipe = rememberSwipeToDismissBoxState()
+    val done = remember { booleanArrayOf(false) }
     SwipeToDismissBox(
         state = swipe,
         modifier = Modifier.clip(shape),
-        enableDismissFromStartToEnd = canArchive && !selecting,
-        enableDismissFromEndToStart = !selecting,
+        enableDismissFromStartToEnd = ActionRules.enabled(swipeRight, role, selecting),
+        enableDismissFromEndToStart = ActionRules.enabled(swipeLeft, role, selecting),
         onDismiss = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> onArchive()
-                SwipeToDismissBoxValue.EndToStart -> {
-                    onDelete()
-                    // In Trash the row stays until the user has said "Delete forever".
-                    if (inTrash) scope.launch { swipe.reset() }
-                }
-                SwipeToDismissBoxValue.Settled -> Unit
+            val action = when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> swipeRight
+                SwipeToDismissBoxValue.EndToStart -> swipeLeft
+                SwipeToDismissBoxValue.Settled -> null
+            }
+            // The box calls this again on every frame while the row slides back, so one swipe is done once.
+            if (action != null && !done[0]) {
+                done[0] = true
+                // What does not take the row out of the list (a star, a question, a folder to choose) lets it come back.
+                if (!onSwipe(action)) scope.launch { swipe.reset(); done[0] = false }
             }
         },
         backgroundContent = {
-            val toArchive = swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+            val toRight = swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+            val action = if (toRight) swipeRight else swipeLeft
             val colors = MaterialTheme.colorScheme
+            val (container, tint) = when (action) {
+                ActionRules.Swipe.DELETE -> colors.errorContainer to colors.onErrorContainer
+                ActionRules.Swipe.ARCHIVE -> colors.primaryContainer to colors.onPrimaryContainer
+                ActionRules.Swipe.STAR -> colors.tertiaryContainer to colors.onTertiaryContainer
+                ActionRules.Swipe.READ, ActionRules.Swipe.MOVE -> colors.secondaryContainer to colors.onSecondaryContainer
+                ActionRules.Swipe.NONE -> colors.surfaceContainer to colors.onSurface
+            }
+            val label = when (action) {
+                ActionRules.Swipe.READ -> if (SelectionRules.marksRead(listOf(row))) R.string.action_mark_read else R.string.action_mark_unread
+                ActionRules.Swipe.STAR -> if (row.isFlagged) R.string.action_unstar else R.string.action_star
+                ActionRules.Swipe.MOVE -> R.string.action_move_title
+                ActionRules.Swipe.ARCHIVE -> R.string.action_archive
+                ActionRules.Swipe.DELETE -> R.string.action_delete
+                ActionRules.Swipe.NONE -> R.string.swipe_none
+            }
             // What the swipe will do, in words and in colour, under the row as it moves away.
             Row(
                 Modifier
                     .fillMaxSize()
-                    .background(if (toArchive) colors.primaryContainer else colors.errorContainer)
+                    .background(container)
                     .padding(horizontal = 20.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp, if (toArchive) Alignment.Start else Alignment.End),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, if (toRight) Alignment.Start else Alignment.End),
             ) {
-                val tint = if (toArchive) colors.onPrimaryContainer else colors.onErrorContainer
-                if (toArchive) {
-                    Icon(painterResource(R.drawable.ic_archive), contentDescription = null, tint = tint)
-                } else {
-                    Icon(Icons.Filled.Delete, contentDescription = null, tint = tint)
+                when (action) {
+                    ActionRules.Swipe.DELETE -> Icon(Icons.Filled.Delete, contentDescription = null, tint = tint)
+                    ActionRules.Swipe.STAR -> Icon(Icons.Filled.Star, contentDescription = null, tint = tint)
+                    ActionRules.Swipe.ARCHIVE -> Icon(painterResource(R.drawable.ic_archive), contentDescription = null, tint = tint)
+                    ActionRules.Swipe.READ -> Icon(painterResource(R.drawable.ic_mail), contentDescription = null, tint = tint)
+                    ActionRules.Swipe.MOVE -> Icon(painterResource(R.drawable.ic_folder), contentDescription = null, tint = tint)
+                    ActionRules.Swipe.NONE -> Unit
                 }
                 Text(
-                    stringResource(if (toArchive) R.string.action_archive else R.string.action_delete),
+                    stringResource(label),
                     color = tint,
                     style = MaterialTheme.typography.labelLarge,
                 )
@@ -1152,3 +1243,6 @@ private fun AskForNotificationsOnce() {
 
 /** How many rows from the end the list starts to fetch more. */
 private const val NEAR_END = 5
+
+/** What the swipes and the delete question are set to, as read from the preferences. */
+private data class SwipeChoices(val right: ActionRules.Swipe, val left: ActionRules.Swipe, val confirmDelete: Boolean)

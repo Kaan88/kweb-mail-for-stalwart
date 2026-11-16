@@ -453,6 +453,34 @@ fn a_message_held_back_leaves_nothing_until_its_time_and_can_be_taken_back() {
 }
 
 #[test]
+fn the_undo_window_is_the_one_asked_for_and_a_cancel_inside_it_works() {
+    // The app's choices are 5, 10, 20 and 30 seconds: each is the time the message is held, nothing more or less.
+    for delay in [5_u32, 30] {
+        let rig = Rig::synced();
+        let draft = rig.note("Window");
+        let before = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let pending = rig.core.send(draft.clone(), delay).unwrap();
+        let after = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let window = i64::from(delay);
+        assert!(
+            pending.send_at >= before + window && pending.send_at <= after + window + 1,
+            "{delay} s: held until {} (asked between {before} and {after})",
+            pending.send_at
+        );
+        rig.sync();
+        assert!(rig.server.submissions().is_empty(), "{delay} s: still inside the window");
+        assert_eq!(rig.core.pending_sends().unwrap().len(), 1);
+
+        let back = rig.core.undo_send(draft.id.clone()).unwrap();
+        assert_eq!(back.id, draft.id);
+        assert!(rig.core.pending_sends().unwrap().is_empty(), "{delay} s: taken back");
+        assert_eq!(rig.core.drafts().unwrap().len(), 1);
+        rig.sync();
+        assert!(rig.server.submissions().is_empty(), "{delay} s: never sent");
+    }
+}
+
+#[test]
 fn it_is_too_late_to_take_back_what_has_gone() {
     let rig = Rig::synced();
     let draft = rig.note("Gone");

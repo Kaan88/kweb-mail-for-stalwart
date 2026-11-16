@@ -34,14 +34,12 @@ object Outbox {
 
 /** How long Undo is offered, as the list works it out from the core's answer. */
 object SendRules {
-    private const val HOLD_MILLIS = 10_000L
-
     /**
-     * How much of the hold-back is left for a message that goes out at [sendAtSeconds]: at most the
-     * whole hold-back (a clock that is off must not keep the snackbar for minutes), zero when it has gone.
+     * How much of the hold-back of [holdSeconds] (the user's Undo time) is left for a message that goes out at [sendAtSeconds]: at most
+     * the whole hold-back (a clock that is off must not keep the bar for minutes), zero when it has gone.
      */
-    fun remainingMillis(sendAtSeconds: Long, nowMillis: Long): Long =
-        (sendAtSeconds * 1000 - nowMillis).coerceIn(0, HOLD_MILLIS)
+    fun remainingMillis(sendAtSeconds: Long, nowMillis: Long, holdSeconds: Int = ovh.kweb.mail.ui.ActionRules.DEFAULT_UNDO_SECONDS): Long =
+        (sendAtSeconds * 1000 - nowMillis).coerceIn(0, holdSeconds * 1000L)
 }
 
 /** Starts drafts for every way into the compose screen. */

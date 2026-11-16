@@ -80,7 +80,6 @@ class ComposeRulesTest {
 
     @Test fun theTimings() {
         assertEquals(2_000L, ComposeRules.AUTOSAVE_MILLIS)
-        assertEquals(10u, ComposeRules.UNDO_SECONDS)
         assertEquals(300L, ComposeRules.SUGGEST_MILLIS)
     }
 
@@ -88,6 +87,8 @@ class ComposeRulesTest {
         assertEquals(10_000L, SendRules.remainingMillis(sendAtSeconds = 110, nowMillis = 100_000))
         assertEquals(4_000L, SendRules.remainingMillis(sendAtSeconds = 104, nowMillis = 100_000))
         assertEquals(0L, SendRules.remainingMillis(sendAtSeconds = 99, nowMillis = 100_000))
+        assertEquals(30_000L, SendRules.remainingMillis(sendAtSeconds = 130, nowMillis = 100_000, holdSeconds = 30))
+        assertEquals(5_000L, SendRules.remainingMillis(sendAtSeconds = 130, nowMillis = 100_000, holdSeconds = 5))
     }
 
     @Test fun aClockThatIsOffDoesNotKeepTheSnackbarForMinutes() =

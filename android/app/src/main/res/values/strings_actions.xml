@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings: Swipes and actions -->
+    <string name="actions_title">Swipes and actions</string>
+    <string name="actions_settings_detail">What a swipe does, asking before deleting, Undo time, Reply all</string>
+    <string name="actions_swipes">Swipes in the list</string>
+    <string name="actions_swipe_right">Swipe right</string>
+    <string name="actions_swipe_left">Swipe left</string>
+    <string name="actions_deleting">Deleting</string>
+    <string name="actions_confirm_delete">Confirm before deleting</string>
+    <string name="actions_confirm_delete_on">Ask first when deleting from a swipe, a thread or a selection</string>
+    <string name="actions_confirm_delete_off">Delete at once, with Undo</string>
+    <string name="actions_sending">Sending and replying</string>
+    <string name="actions_undo_time">Undo time for sending</string>
+    <string name="actions_undo_seconds">%d seconds</string>
+    <string name="actions_undo_5">5 seconds</string>
+    <string name="actions_undo_10">10 seconds</string>
+    <string name="actions_undo_20">20 seconds</string>
+    <string name="actions_undo_30">30 seconds</string>
+    <string name="actions_reply_all">Reply all by default</string>
+    <string name="actions_reply_all_on">The main button is Reply all when a message has more than one recipient</string>
+    <string name="actions_reply_all_off">The main button is Reply</string>
+    <string name="actions_reset">Reset swipes and actions</string>
+    <string name="actions_reset_detail">Archive on the right, Delete on the left, the rest as first installed</string>
+    <string name="actions_swipes_note">A swipe that is set to None does nothing in that direction. Archive does nothing inside the Archive folder.</string>
+
+    <string name="swipe_read_unread">Mark read or unread</string>
+    <string name="swipe_star_unstar">Star or unstar</string>
+    <string name="swipe_move">Move to…</string>
+    <string name="swipe_none">None</string>
+
+    <string name="list_marked_read">Marked read</string>
+    <string name="list_marked_unread">Marked unread</string>
+    <string name="list_starred">Starred</string>
+    <string name="list_unstarred">Star removed</string>
+    <string name="list_moved">Moved</string>
+
+    <plurals name="delete_confirm_title">
+        <item quantity="one">Delete %d conversation?</item>
+        <item quantity="other">Delete %d conversations?</item>
+    </plurals>
+    <string name="delete_confirm_text">It goes to Trash, and Undo is offered.</string>
+</resources>

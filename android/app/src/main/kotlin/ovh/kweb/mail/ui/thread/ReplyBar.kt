@@ -26,7 +26,15 @@ import ovh.kweb.mail.R
  * all, and Forward as an icon, inside one rounded bar. The outer ends are round, the joins small.
  */
 @Composable
-fun ReplyBar(enabled: Boolean, onReply: () -> Unit, onReplyAll: () -> Unit, onForward: () -> Unit, modifier: Modifier = Modifier) {
+fun ReplyBar(
+    enabled: Boolean,
+    onReply: () -> Unit,
+    onReplyAll: () -> Unit,
+    onForward: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** The setting "Reply all by default" for a message with more than one recipient: Reply all is the filled button and Reply the other. */
+    replyAllFirst: Boolean = false,
+) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -41,13 +49,13 @@ fun ReplyBar(enabled: Boolean, onReply: () -> Unit, onReplyAll: () -> Unit, onFo
                 colors.primary,
                 colors.onPrimary,
                 enabled,
-                onReply,
+                if (replyAllFirst) onReplyAll else onReply,
             ) {
-                Icon(painterResource(R.drawable.ic_reply), contentDescription = null, modifier = Modifier.size(20.dp))
-                Text(stringResource(R.string.action_reply), style = MaterialTheme.typography.labelLarge)
+                Icon(painterResource(if (replyAllFirst) R.drawable.ic_reply_all else R.drawable.ic_reply), contentDescription = null, modifier = Modifier.size(20.dp))
+                Text(stringResource(if (replyAllFirst) R.string.action_reply_all else R.string.action_reply), style = MaterialTheme.typography.labelLarge)
             }
-            Segment(Modifier.weight(1.3f), RoundedCornerShape(8.dp), colors.surfaceContainer, colors.onSurface, enabled, onReplyAll) {
-                Text(stringResource(R.string.action_reply_all), style = MaterialTheme.typography.labelLarge)
+            Segment(Modifier.weight(1.3f), RoundedCornerShape(8.dp), colors.surfaceContainer, colors.onSurface, enabled, if (replyAllFirst) onReply else onReplyAll) {
+                Text(stringResource(if (replyAllFirst) R.string.action_reply else R.string.action_reply_all), style = MaterialTheme.typography.labelLarge)
             }
             Segment(
                 Modifier.weight(0.7f),

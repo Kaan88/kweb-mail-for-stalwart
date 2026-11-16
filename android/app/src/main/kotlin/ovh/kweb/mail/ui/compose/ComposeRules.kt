@@ -8,9 +8,6 @@ object ComposeRules {
     /** How long after the last change the draft is saved. */
     const val AUTOSAVE_MILLIS = 2_000L
 
-    /** How long a sent message is held back so Undo can take it back. */
-    const val UNDO_SECONDS = 10u
-
     /** The wait before the text in a recipient field is looked up. */
     const val SUGGEST_MILLIS = 300L
 

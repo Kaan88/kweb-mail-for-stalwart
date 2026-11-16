@@ -135,6 +135,9 @@ sealed interface Route {
     /** Appearance: colours, light or dark, pure black, reached from Settings. */
     data object Appearance : Route
 
+    /** Swipes and actions: what a swipe does, the delete question, the Undo time of a send, Reply all, reached from Settings. */
+    data object Actions : Route
+
     /** Reading: pictures, the list and the message text, reached from Settings. */
     data object Reading : Route
 

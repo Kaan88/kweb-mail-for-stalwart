@@ -87,6 +87,7 @@ fun SettingsScreen(
     onOpenDeliveryCheck: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenReading: () -> Unit,
+    onOpenActions: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenCrypto: () -> Unit,
     onOpenAway: () -> Unit,
@@ -167,6 +168,17 @@ fun SettingsScreen(
                     stringResource(R.string.reading_settings_detail),
                     icon = { Icon(painterResource(R.drawable.ic_article), contentDescription = null) },
                     onClick = onOpenReading,
+                )
+            }
+
+            SectionTitle(stringResource(R.string.actions_title))
+            Group {
+                SettingsRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.actions_title),
+                    stringResource(R.string.actions_settings_detail),
+                    icon = { Icon(painterResource(R.drawable.ic_archive), contentDescription = null) },
+                    onClick = onOpenActions,
                 )
             }
 

@@ -78,13 +78,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.ActionRules
 import ovh.kweb.mail.ui.Route
+import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.assistant.AssistantEvent
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
 import ovh.kweb.mail.ui.assistant.chat.ChatRules
 import ovh.kweb.mail.ui.calendar.EventPrefill
+import ovh.kweb.mail.ui.list.ConfirmDeleteDialog
 import ovh.kweb.mail.ui.list.DeleteForeverDialog
 import ovh.kweb.mail.ui.list.Folders
 import ovh.kweb.mail.ui.list.Groups
@@ -133,6 +136,9 @@ fun ThreadScreen(
     val activity = LocalActivity.current
     var moving by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    // The setting "Confirm before deleting": one question before the thread goes to Trash.
+    var confirmingTrash by remember { mutableStateOf(false) }
+    val actionPrefs = remember { UiPrefs(context) }
     // The message whose sender is asked about; saved, so a rotation keeps the question.
     var blockingId by rememberSaveable { mutableStateOf<String?>(null) }
     // The attachment being downloaded (one at a time, kept by the view model so that leaving the screen can end it).
@@ -345,6 +351,11 @@ fun ThreadScreen(
     val hasMessages = state.messages.isNotEmpty()
     // Reply, Reply all and Forward of the bar act on the newest message of the thread.
     val replyTarget = remember(state.messages, state.mailboxes) { ThreadRules.replyTarget(state.messages, state.mailboxes) }
+    // "Reply all by default" (Settings): the bar leads with Reply all when the message went to more than one person.
+    val replyAllFirst = replyTarget?.let { target ->
+        val body = (state.bodies[target.id] as? BodyState.Loaded)?.body
+        ActionRules.replyAllPrimary(actionPrefs.replyAllDefault, body?.let { it.to.size + it.cc.size } ?: target.to.size)
+    } ?: false
 
     Scaffold(
         topBar = {
@@ -363,7 +374,11 @@ fun ThreadScreen(
                     }
                     IconButton(
                         onClick = {
-                            if (ThreadRules.deletesForever(state.messages, targets, state.mailboxes)) confirmingDelete = true else vm.delete()
+                            when (ActionRules.deleteAsk(ThreadRules.deletesForever(state.messages, targets, state.mailboxes), actionPrefs.confirmDelete)) {
+                                ActionRules.DeleteAsk.FOREVER -> confirmingDelete = true
+                                ActionRules.DeleteAsk.CONFIRM -> confirmingTrash = true
+                                ActionRules.DeleteAsk.NONE -> vm.delete()
+                            }
                         },
                         enabled = canAct,
                     ) {
@@ -545,6 +560,7 @@ fun ThreadScreen(
             onReplyAll = { replyTarget?.let { vm.startDraft(DraftKind.ReplyAll(it.id)) } },
             onForward = { replyTarget?.let { vm.startDraft(DraftKind.Forward(it.id)) } },
             modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
+            replyAllFirst = replyAllFirst,
         )
         }
     }
@@ -659,6 +675,16 @@ fun ThreadScreen(
                 dismissButton = { TextButton(onClick = { blockingId = null }) { Text(stringResource(R.string.cancel)) } },
             )
         }
+    }
+    if (confirmingTrash) {
+        ConfirmDeleteDialog(
+            count = 1,
+            onConfirm = {
+                confirmingTrash = false
+                vm.delete()
+            },
+            onDismiss = { confirmingTrash = false },
+        )
     }
     if (confirmingDelete) {
         DeleteForeverDialog(

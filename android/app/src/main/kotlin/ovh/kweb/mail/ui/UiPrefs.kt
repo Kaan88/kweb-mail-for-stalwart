@@ -57,7 +57,46 @@ class UiPrefs(context: Context) {
         get() = ReadingRules.clampPreviewLines(prefs.getInt(PREVIEW_LINES, ReadingRules.DEFAULT_PREVIEW_LINES))
         set(value) = prefs.edit { putInt(PREVIEW_LINES, ReadingRules.clampPreviewLines(value)) }
 
+    /** What swiping a conversation right does in the mail list. */
+    var swipeRight: ActionRules.Swipe
+        get() = ActionRules.Swipe.of(prefs.getString(SWIPE_RIGHT, null), ActionRules.DEFAULT_RIGHT)
+        set(value) = prefs.edit { putString(SWIPE_RIGHT, value.key) }
+
+    /** What swiping a conversation left does in the mail list. */
+    var swipeLeft: ActionRules.Swipe
+        get() = ActionRules.Swipe.of(prefs.getString(SWIPE_LEFT, null), ActionRules.DEFAULT_LEFT)
+        set(value) = prefs.edit { putString(SWIPE_LEFT, value.key) }
+
+    /** Delete asks first (off by default). */
+    var confirmDelete: Boolean
+        get() = prefs.getBoolean(CONFIRM_DELETE, false)
+        set(value) = prefs.edit { putBoolean(CONFIRM_DELETE, value) }
+
+    /** How many seconds Undo of a send lasts (one of [ActionRules.UNDO_CHOICES]). */
+    var undoSeconds: Int
+        get() = ActionRules.undoSeconds(prefs.getInt(UNDO_SECONDS, ActionRules.DEFAULT_UNDO_SECONDS))
+        set(value) = prefs.edit { putInt(UNDO_SECONDS, ActionRules.undoSeconds(value)) }
+
+    /** The thread's primary button is Reply all when the message has more than one recipient. */
+    var replyAllDefault: Boolean
+        get() = prefs.getBoolean(REPLY_ALL, false)
+        set(value) = prefs.edit { putBoolean(REPLY_ALL, value) }
+
+    /** Puts the swipes, the delete question, the Undo time and the reply choice back as they were. */
+    fun resetActions() = prefs.edit {
+        remove(SWIPE_RIGHT)
+        remove(SWIPE_LEFT)
+        remove(CONFIRM_DELETE)
+        remove(UNDO_SECONDS)
+        remove(REPLY_ALL)
+    }
+
     private companion object {
+        const val SWIPE_RIGHT = "actions_swipe_right"
+        const val SWIPE_LEFT = "actions_swipe_left"
+        const val CONFIRM_DELETE = "actions_confirm_delete"
+        const val UNDO_SECONDS = "actions_undo_seconds"
+        const val REPLY_ALL = "actions_reply_all"
         const val CONVERSATIONS = "reading_conversation_view"
         const val MARK_READ = "reading_mark_read"
         const val AFTER_ACTION = "reading_after_action"
