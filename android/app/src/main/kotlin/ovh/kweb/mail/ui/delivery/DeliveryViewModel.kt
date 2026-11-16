@@ -35,6 +35,7 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.DeliveryMode
 import ovh.kweb.mail.background.GooglePush
 import ovh.kweb.mail.background.ModeRules
+import ovh.kweb.mail.background.PushService
 import ovh.kweb.mail.background.ServiceLog
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.background.CheckScheduler
@@ -62,6 +63,8 @@ data class DeliveryState(
     val signingOut: Boolean = false,
     /** Push through Google of this account. */
     val push: PushView = PushView(),
+    /** Why the always-on entry is shown (accounts that need the connection); empty when it is not. */
+    val serviceReasons: List<ModeRules.ServiceReason> = emptyList(),
 )
 
 /** The state of the phone that the app cannot observe: re-read on every resume. */
@@ -97,6 +100,7 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
                 fallback = settings.pushFallback,
                 busy = googleMode.busy.value || session.record.id in GooglePush.switching.value,
             ),
+            serviceReasons = ModeRules.serviceReasons(PushService.deliveries(getApplication())),
             host = extra.host,
             status = status,
             startFailure = serviceLog.lastStartFailure,

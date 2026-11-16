@@ -39,6 +39,9 @@
     <string name="delivery_connection_title_unknown">Connection to your server</string>
     <string name="delivery_connecting">Connecting…</string>
     <string name="delivery_server_refused">The server no longer accepts this sign-in</string>
+    <string name="service_entry_none">No always-on entry: every account gets its news through Google.</string>
+    <string name="service_entry_needed">The always-on entry is shown because the permanent connection is needed for %1$s.</string>
+    <string name="service_entry_google_failed">Google registration failed for %1$s, using the connection.</string>
     <string name="delivery_start_failed">Android did not let the connection start: %1$s</string>
     <plurals name="last_push_seconds">
         <item quantity="one">Last push %d second ago</item>

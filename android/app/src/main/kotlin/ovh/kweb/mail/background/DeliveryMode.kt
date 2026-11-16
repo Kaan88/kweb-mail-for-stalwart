@@ -61,6 +61,32 @@ object ModeRules {
     /** The service runs for the accounts in connection mode only; with none it must not run. */
     fun needsService(modes: Collection<DeliveryMode>): Boolean = modes.any { it == DeliveryMode.Connection }
 
+    /**
+     * One account as the service decision sees it. [googleRegistered] matters in Google mode only: false when the
+     * registration is known to be gone or failed (the connection must carry the account until it is registered
+     * again), null or true when it stands or is not known (nothing is assumed broken).
+     */
+    data class Delivery(val label: String, val mode: DeliveryMode, val googleRegistered: Boolean? = null)
+
+    /** Why the service has to run for one account, null when it does not. */
+    fun serviceReason(d: Delivery): ServiceReason? = when {
+        d.mode == DeliveryMode.Connection -> ServiceReason.ConnectionMode(d.label)
+        d.googleRegistered == false -> ServiceReason.GoogleNotRegistered(d.label)
+        else -> null
+    }
+
+    sealed interface ServiceReason {
+        val label: String
+        data class ConnectionMode(override val label: String) : ServiceReason
+        data class GoogleNotRegistered(override val label: String) : ServiceReason
+    }
+
+    /** The one answer to "must the connection service run?" that every start path uses. */
+    fun mustRunService(accounts: List<Delivery>): Boolean = accounts.any { serviceReason(it) != null }
+
+    /** The accounts that make the service run, for the Delivery check. */
+    fun serviceReasons(accounts: List<Delivery>): List<ServiceReason> = accounts.mapNotNull(::serviceReason)
+
     /** The accounts the service holds a connection for. */
     fun serviceItems(items: List<AccountStatus>): List<AccountStatus> = items.filter { !it.google }
 

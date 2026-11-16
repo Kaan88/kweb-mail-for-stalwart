@@ -57,6 +57,21 @@ class PushService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val needed = ModeRules.mustRunService(deliveries(this))
+        if (!needed) {
+            // Nothing needs the connection (all accounts get their news through Google). A restart by the system
+            // (no intent) has no promise to keep, so no entry at all. A start request made it must be answered with
+            // startForeground; the entry is taken away again at once.
+            if (intent != null) {
+                try {
+                    if (enterForeground()) stopForeground(STOP_FOREGROUND_REMOVE)
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "leaving the foreground failed", e)
+                }
+            }
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Android gives five seconds after startForegroundService; do this before anything slow.
         if (!enterForeground()) {
             stopSelf()
@@ -223,8 +238,7 @@ class PushService : Service() {
         fun start(context: Context): Boolean {
             val app = context.applicationContext
             // Decision 5: with no account in connection mode there is no service and no entry, and nothing starts it.
-            val modes = Accounts.load(app).map { Settings.of(app, it).deliveryMode }
-            if (!ModeRules.needsService(modes)) {
+            if (!ModeRules.mustRunService(deliveries(app))) {
                 app.stopService(Intent(app, PushService::class.java))
                 return true
             }
@@ -235,6 +249,13 @@ class PushService : Service() {
                 recordStartFailure(app, e)
                 false
             }
+        }
+
+        /** Every account as the service decision sees it (see [ModeRules.mustRunService]). Blocks a little (prefs). */
+        fun deliveries(context: Context): List<ModeRules.Delivery> {
+            val labels = Accounts.load(context)
+            val names = AccountLabels.of(labels)
+            return labels.map { ModeRules.Delivery(names.getValue(it.id), Settings.of(context, it).deliveryMode) }
         }
 
         /** Stops the service and, through its `onDestroy`, the live connection. */

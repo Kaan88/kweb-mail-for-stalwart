@@ -185,4 +185,25 @@ class ModeRulesTest {
         assertEquals(500, DueRules.waitLeft(1500, 1000))
         assertEquals(60_000, DueRules.waitLeft(10_000_000, 1000))
     }
+
+    private fun d(mode: DeliveryMode, registered: Boolean? = null) = ModeRules.Delivery("a", mode, registered)
+
+    @Test
+    fun theServiceDecisionFollowsModeAndRegistration() {
+        // one Google account, registered (or not known to be broken): no service
+        assertFalse(ModeRules.mustRunService(listOf(d(G, true))))
+        assertFalse(ModeRules.mustRunService(listOf(d(G))))
+        assertFalse(ModeRules.mustRunService(emptyList()))
+        // Google but unregistered or failed: the connection carries it
+        assertTrue(ModeRules.mustRunService(listOf(d(G, false))))
+        // one Google plus one connection account
+        assertTrue(ModeRules.mustRunService(listOf(d(G, true), d(C))))
+        // after the fallback the mode is Connection: yes; after a new registration it is Google again: no
+        assertTrue(ModeRules.mustRunService(listOf(d(C))))
+        assertFalse(ModeRules.mustRunService(listOf(d(G, true))))
+        assertEquals(
+            listOf<ModeRules.ServiceReason>(ModeRules.ServiceReason.ConnectionMode("a")),
+            ModeRules.serviceReasons(listOf(d(C), d(G, true))),
+        )
+    }
 }

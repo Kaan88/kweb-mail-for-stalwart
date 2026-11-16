@@ -176,6 +176,12 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, onOpenNotifica
             Verdict(items)
             items.forEach { CheckRow(it) }
             GoogleModeSection(state.push, now, vm::askGoogleMode)
+            Text(
+                serviceEntryText(state.serviceReasons),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             SectionTitle(stringResource(R.string.delivery_what_to_show))
             // The switches live on the Notifications screen (one place, one state); this row leads there.
             Row(
@@ -599,4 +605,16 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+/** Says why the always-on "Connected" entry is shown, or that it is not. */
+@Composable
+private fun serviceEntryText(reasons: List<ModeRules.ServiceReason>): String {
+    if (reasons.isEmpty()) return stringResource(R.string.service_entry_none)
+    val connection = reasons.filterIsInstance<ModeRules.ServiceReason.ConnectionMode>().map { it.label }
+    val failed = reasons.filterIsInstance<ModeRules.ServiceReason.GoogleNotRegistered>().map { it.label }
+    return listOfNotNull(
+        connection.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.service_entry_needed, it.joinToString(", ")) },
+        failed.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.service_entry_google_failed, it.joinToString(", ")) },
+    ).joinToString(" ")
 }
