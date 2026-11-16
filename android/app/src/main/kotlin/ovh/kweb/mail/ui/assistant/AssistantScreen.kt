@@ -202,7 +202,7 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
             }
         }
 
-        SectionLabel(stringResource(R.string.assistant_service))
+        SectionLabel(stringResource(R.string.assistant_protocol))
         val services = listOf(
             AiProvider.OPEN_AI_COMPATIBLE to R.string.assistant_service_openai,
             AiProvider.ANTHROPIC to R.string.assistant_service_anthropic,
@@ -514,7 +514,21 @@ private fun ModelsSheet(state: ModelsState, onPick: (AiModel) -> Unit, onRetry: 
             when (state) {
                 ModelsState.Loading -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 is ModelsState.Failed -> Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(state.message.resolve(LocalResources.current), color = colors.error, textAlign = TextAlign.Center)
+                    val failure = state.failure
+                    Text(
+                        when (failure.kind) {
+                            ModelFailure.Kind.KEY_REFUSED -> stringResource(R.string.assistant_models_key_refused)
+                            ModelFailure.Kind.UNREACHABLE -> stringResource(R.string.assistant_models_unreachable, failure.host.orEmpty())
+                            ModelFailure.Kind.OTHER -> stringResource(R.string.assistant_models_failed)
+                        },
+                        color = colors.error,
+                        textAlign = TextAlign.Center,
+                    )
+                    failure.details?.let { details ->
+                        var shown by remember { mutableStateOf(false) }
+                        TextButton(onClick = { shown = !shown }) { Text(stringResource(R.string.assistant_models_details)) }
+                        if (shown) Text(details, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, textAlign = TextAlign.Center)
+                    }
                     TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
                 }
                 is ModelsState.Loaded -> {

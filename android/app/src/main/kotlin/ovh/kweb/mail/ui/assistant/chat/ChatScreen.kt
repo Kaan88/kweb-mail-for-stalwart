@@ -15,7 +15,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -134,6 +137,7 @@ fun ChatScreen(
                         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_new)) },
+                                leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     vm.newChat()
@@ -142,6 +146,7 @@ fun ChatScreen(
                             if (state.gate == ChatGate.READY && state.actionsOn) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(if (state.auto) R.string.chat_auto_off else R.string.chat_auto_on)) },
+                                    leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
                                     onClick = {
                                         menuOpen = false
                                         if (state.auto) vm.setAuto(false) else explaining = ""
@@ -150,6 +155,7 @@ fun ChatScreen(
                             }
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_settings)) },
+                                leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                                 onClick = {
                                     menuOpen = false
                                     onOpenSettings()

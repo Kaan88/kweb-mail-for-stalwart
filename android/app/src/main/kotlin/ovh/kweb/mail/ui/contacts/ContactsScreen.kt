@@ -106,12 +106,7 @@ fun ContactsScreen(
         bottomBar = bottomBar,
         snackbarHost = { SnackbarHost(appSnackbar) },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddContact,
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.contacts_add)) }
+            ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.contacts_add), onClick = onAddContact)
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -139,13 +134,11 @@ fun ContactsScreen(
                             }
                         }
                         entries.isEmpty() -> item(key = "empty") {
-                            Centered {
-                                Text(
-                                    stringResource(if (state.answeredQuery.isBlank()) R.string.contacts_empty else R.string.contacts_nothing_found),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
+                            ovh.kweb.mail.ui.list.EmptyNote(
+                                R.drawable.ic_person,
+                                stringResource(if (state.answeredQuery.isBlank()) R.string.contacts_empty else R.string.contacts_nothing_found),
+                                Modifier.fillParentMaxSize(),
+                            )
                         }
                         else -> items(entries, key = { entry -> entryKey(entry) }) { entry ->
                             when (entry) {

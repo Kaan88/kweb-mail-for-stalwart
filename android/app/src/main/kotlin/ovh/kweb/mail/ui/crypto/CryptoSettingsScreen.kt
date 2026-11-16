@@ -279,7 +279,12 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.crypto_title)) },
+                title = {
+                    Column {
+                        Text(stringResource(R.string.crypto_title))
+                        Text(stringResource(R.string.crypto_settings_detail), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back)) }
                 },

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="crypto_title">Encryption (S/MIME and OpenPGP)</string>
-    <string name="crypto_settings_detail">Signed and encrypted mail, and your keys</string>
+    <string name="crypto_title">Signed and encrypted mail</string>
+    <string name="crypto_settings_detail">S/MIME and OpenPGP</string>
     <string name="crypto_switch">Read signed and encrypted mail</string>
     <string name="crypto_switch_detail">Off by default. When on, a mail that is signed or encrypted shows a status, and the whole message is fetched to check it.</string>
     <string name="crypto_off_note">Nothing is checked while this is off, and no mail is looked at for it.</string>
@@ -136,7 +136,7 @@
     <string name="crypto_plain_reply_send">Send anyway</string>
     <string name="crypto_plain_reply_back">Go back</string>
     <string name="crypto_sign_default_title">Sign new messages</string>
-    <string name="crypto_sign_default_detail">Switches Sign on in every new message sent from an address you have a private key for. You can switch it off per message.</string>
+    <string name="crypto_sign_default_detail">Sign every new message from an address you have a private key for. You can switch it off per message.</string>
     <string name="crypto_from_autocrypt">Learned from the Autocrypt header of a mail from %1$s</string>
     <string name="crypto_chip_first_seen">Signed, key first seen in a mail</string>
     <string name="crypto_why_first_seen">The signature is valid, but you never checked this key: it was only learned from a mail or a key directory the first time this sender used it. It proves the later mail comes from the same key, not that the key belongs to who it says. Compare its fingerprint with the sender in another way, then mark it verified in the Encryption settings.</string>

@@ -253,6 +253,7 @@ private fun PasskeyRow(shape: Shape, key: Passkey, locale: Locale, c: SecurityCo
 
 @Composable
 private fun AppRow(shape: Shape, app: ConnectedApp, state: SecurityState, c: SecurityController) {
+    val signedIn = AccountRules.date(app.createdAt, remember { Locale.getDefault() })?.let { stringResource(R.string.security_signed_in_on, it) }
     val reach = SecurityRules.scopes(app.scopes).map { part ->
         when (part) {
             is ScopePart.Known -> stringResource(scopeText(part.word))
@@ -262,7 +263,7 @@ private fun AppRow(shape: Shape, app: ConnectedApp, state: SecurityState, c: Sec
     AccountRow(
         shape,
         app.name,
-        detail = if (reach.isEmpty()) null else stringResource(R.string.security_may_reach, reach.joinToString(", ")),
+        detail = listOfNotNull(signedIn, if (reach.isEmpty()) null else stringResource(R.string.security_may_reach, reach.joinToString(", "))).joinToString(LINE).ifEmpty { null },
         titleContent = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(app.name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f, fill = false))
@@ -291,3 +292,5 @@ private fun scopeText(word: ScopeWord): Int = when (word) {
     ScopeWord.FULL -> R.string.security_scope_full
     ScopeWord.STAY_SIGNED_IN -> R.string.security_scope_stay
 }
+
+private const val LINE = "\n"

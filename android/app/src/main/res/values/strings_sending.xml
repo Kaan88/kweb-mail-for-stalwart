@@ -19,7 +19,7 @@
     <string name="compose_to">To</string>
     <string name="compose_cc">Cc</string>
     <string name="compose_bcc">Bcc</string>
-    <string name="compose_cc_bcc">Cc Bcc</string>
+    <string name="compose_cc_bcc">Show Cc and Bcc</string>
     <string name="compose_subject">Subject</string>
     <string name="compose_body_hint">Write your message</string>
     <string name="compose_invalid_address">This is not a valid address</string>

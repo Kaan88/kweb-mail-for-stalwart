@@ -183,13 +183,14 @@ fun GoogleModeSection(view: PushView, @Suppress("UNUSED_PARAMETER") now: Long, o
             Column(Modifier.weight(1f)) {
                 Text(stringResource(R.string.push_title), style = MaterialTheme.typography.bodyLarge)
                 Text(pushRowLine(view), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Why the account went back to the connection: part of the row's own text, in the error colour.
+                view.fallback?.takeIf { !on }?.let {
+                    Text(pushFallbackLine(it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+                }
             }
             KwebSwitch(checked = on, onCheckedChange = null, enabled = !view.busy)
         }
         Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            view.fallback?.takeIf { !on }?.let {
-                Text(pushFallbackLine(it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-            }
             if (on) PushNotes()
         }
     }

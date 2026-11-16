@@ -92,4 +92,12 @@ class RowFormatTest {
         assertEquals("Monday is fine for me. > Shall we ship?", Preview.oneLine("Monday is fine for me.\n\n> Shall we ship?\r\n"))
         assertEquals("", Preview.oneLine(" \n\t "))
     }
+
+    @Test
+    fun snippetDropsQuotes() {
+        assertEquals("Monday is fine.", Preview.snippet("Monday is fine.\nOn Mon, 3 Nov 2026 at 10:00, Ann <a@b.c> wrote:\n> Shall we ship?\n> Yes"))
+        assertEquals("Monday is fine.", Preview.snippet("Monday is fine. On Mon, 3 Nov 2026, Ann wrote: > Shall we ship?"))
+        assertEquals("Thanks", Preview.snippet("> old\nThanks"))
+        assertEquals("It went on and on", Preview.snippet("It went on and on"))
+    }
 }

@@ -204,12 +204,7 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
         floatingActionButton = {
             if (state.mayAdd) {
                 Box {
-                    FloatingActionButton(
-                        onClick = { menuAdd.value = true },
-                        shape = RoundedCornerShape(20.dp),
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.files_add)) }
+                    ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.files_add), onClick = { menuAdd.value = true })
                     DropdownMenu(expanded = menuAdd.value, onDismissRequest = { menuAdd.value = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.files_upload)) },

@@ -6,8 +6,6 @@
     <string name="accounts_current">Shown now</string>
     <string name="accounts_sign_in_needed">Sign-in needed</string>
     <string name="accounts_open_switcher">Switch account</string>
-    <string name="accounts_unfold">Show accounts</string>
-    <string name="accounts_fold">Hide accounts</string>
     <string name="accounts_switch">Switch</string>
     <string name="accounts_this_is_for">This is for %1$s</string>
     <string name="accounts_draft_saved_in">Saved as a draft in %1$s</string>

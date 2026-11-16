@@ -35,7 +35,7 @@ sealed interface ModelsState {
 
     data class Loaded(val list: AiModelList) : ModelsState
 
-    data class Failed(val message: UiMessage) : ModelsState
+    data class Failed(val failure: ModelFailure) : ModelsState
 }
 
 /** The question after a save that left the assistant on and not agreed to: what goes where. */
@@ -222,7 +222,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 throw e
             } catch (e: Exception) {
                 Log.w(Background.TAG, "asking for the models failed: ${e.javaClass.simpleName}")
-                stateFlow.update { it.copy(models = ModelsState.Failed(AssistantMessages.of(e, R.string.assistant_models_failed))) }
+                stateFlow.update { it.copy(models = ModelsState.Failed(ModelFailure.of(e))) }
             }
         }
     }

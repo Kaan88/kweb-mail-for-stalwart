@@ -71,6 +71,7 @@
     <string name="security_new_app_password">New app password</string>
     <string name="security_new_api_key">New API key</string>
     <string name="security_no_note">No note</string>
+    <string name="security_signed_in_on">Signed in %1$s</string>
     <string name="security_made">Made %1$s</string>
     <string name="security_ends">Ends %1$s</string>
     <string name="security_ended">Ended %1$s</string>

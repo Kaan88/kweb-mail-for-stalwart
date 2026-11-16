@@ -32,6 +32,18 @@ object Preview {
 
     /** The server's preview on one line: line breaks and runs of blanks become one space. */
     fun oneLine(preview: String): String = preview.replace(blanks, " ").trim()
+
+    private val wrote = Regex("""(?i)^\s*(on|am|le|el)\b.{0,200}\b(wrote|schrieb|a écrit|escribió|yazdı)\s*:?\s*$""")
+    private val inlineWrote = Regex("""(?i)\s*\bOn\b.{3,200}?\bwrote:.*$""")
+
+    /**
+     * The collapsed thread row's snippet: [oneLine] without quoted lines (those starting with ">") and without the
+     * "On ... wrote:" line that introduces a quote, and what follows it when the preview has no line breaks.
+     */
+    fun snippet(preview: String): String {
+        val own = preview.lines().filterNot { it.trimStart().startsWith(">") || wrote.matches(it) }.joinToString("\n")
+        return oneLine(own).replace(inlineWrote, "").trim()
+    }
 }
 
 /** The sender as a row shows it. */

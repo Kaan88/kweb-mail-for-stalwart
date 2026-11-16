@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -181,7 +182,10 @@ fun RecipientField(
 /** The toggle at the end of the To line that shows Cc and Bcc. */
 @Composable
 fun CcBccToggle(onClick: () -> Unit) {
-    TextButton(onClick = onClick) { Text(stringResource(R.string.compose_cc_bcc)) }
+    // A chevron in the standard 48 dp target; it shows both fields.
+    androidx.compose.material3.IconButton(onClick = onClick) {
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = stringResource(R.string.compose_cc_bcc))
+    }
 }
 
 /** A recipient that was accepted: a pill in the secondary container with a small avatar and a remove button. */

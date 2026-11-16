@@ -165,12 +165,13 @@ fun MessageCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         sender,
-                        fontWeight = FontWeight.Bold,
+                        // Bold only while the message is unread.
+                        fontWeight = if (header.isUnread) FontWeight.Bold else FontWeight.Normal,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        Preview.oneLine(header.preview),
+                        Preview.snippet(header.preview),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

@@ -20,16 +20,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -57,7 +53,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -116,8 +111,6 @@ fun CalendarScreen(
                 TitleRow(
                     title = WeekRules.title(state.selected, locale),
                     todaySelected = state.selected == state.today,
-                    onPrevious = { vm.moveWeek(-1) },
-                    onNext = { vm.moveWeek(1) },
                     onToday = vm::goToToday,
                 )
                 WeekStrip(
@@ -137,13 +130,7 @@ fun CalendarScreen(
             }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { onAddEvent(state.selected.toString()) },
-                shape = RoundedCornerShape(20.dp),
-                // The solid primary colour: no card of the agenda (primary, secondary or tertiary container) is near it.
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-            ) { Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.cal_add)) }
+            ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.cal_new_entry), onClick = { onAddEvent(state.selected.toString()) })
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -219,7 +206,7 @@ private fun androidx.compose.foundation.lazy.LazyItemScope.Centered(content: @Co
 }
 
 @Composable
-private fun TitleRow(title: String, todaySelected: Boolean, onPrevious: () -> Unit, onNext: () -> Unit, onToday: () -> Unit) {
+private fun TitleRow(title: String, todaySelected: Boolean, onToday: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -228,15 +215,7 @@ private fun TitleRow(title: String, todaySelected: Boolean, onPrevious: () -> Un
             title,
             modifier = Modifier.weight(1f).semantics { heading() },
             style = MaterialTheme.typography.headlineSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
-        IconButton(onClick = onPrevious) {
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = stringResource(R.string.cal_previous_week))
-        }
-        IconButton(onClick = onNext) {
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = stringResource(R.string.cal_next_week))
-        }
         FilterChip(
             selected = todaySelected,
             onClick = onToday,

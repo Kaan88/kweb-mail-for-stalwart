@@ -122,6 +122,7 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.accounts.AccountList
 import ovh.kweb.mail.ui.accounts.AccountRows
 import ovh.kweb.mail.ui.accounts.AccountSheet
+import ovh.kweb.mail.ui.accounts.AccountsUi
 import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -235,6 +236,11 @@ fun MailListScreen(
     AskForNotificationsOnce()
     // Registered first, so the drawer's (below) is asked first when both are up: Back closes the drawer, then the selection.
     BackHandler(enabled = selecting) { vm.clearSelection() }
+    // Leaving for a screen outside the list: the drawer is shut at once (not animated), so it is closed on the way back.
+    val leaveDrawer: (() -> Unit) -> Unit = { go ->
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { drawerState.snapTo(DrawerValue.Closed) }
+        go()
+    }
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     // The questions about the chosen rows go with the selection.
     LaunchedEffect(selecting) {
@@ -332,48 +338,32 @@ fun MailListScreen(
                     vm.selectFolder(folder.id, withSubfolders = with)
                 },
                 onFolderMenu = { folder, item ->
-                    scope.launch { drawerState.close() }
                     when (item) {
-                        FolderMenuItem.NOTIFY_ON -> vm.setNotify(folder.id, true)
-                        FolderMenuItem.NOTIFY_OFF -> vm.setNotify(folder.id, false)
-                        else -> onOpenFolders(folder.id, FolderRules.action(item))
+                        FolderMenuItem.NOTIFY_ON -> {
+                            scope.launch { drawerState.close() }
+                            vm.setNotify(folder.id, true)
+                        }
+                        FolderMenuItem.NOTIFY_OFF -> {
+                            scope.launch { drawerState.close() }
+                            vm.setNotify(folder.id, false)
+                        }
+                        else -> leaveDrawer { onOpenFolders(folder.id, FolderRules.action(item)) }
                     }
                 },
-                onManageFolders = {
-                    scope.launch { drawerState.close() }
-                    onOpenFolders(null, null)
-                },
+                onManageFolders = { leaveDrawer { onOpenFolders(null, null) } },
                 labels = labels.labels,
-                onLabel = {
-                    scope.launch { drawerState.close() }
-                    onOpenLabel(it.id, it.name)
-                },
+                onLabel = { leaveDrawer { onOpenLabel(it.id, it.name) } },
                 onDeleteLabel = { deletingLabelId = it.id },
-                onShared = {
-                    scope.launch { drawerState.close() }
-                    onOpenShared()
-                },
-                onDeliveryCheck = {
-                    scope.launch { drawerState.close() }
-                    onOpenDeliveryCheck()
-                },
+                onShared = { leaveDrawer { onOpenShared() } },
+                onDeliveryCheck = { leaveDrawer { onOpenDeliveryCheck() } },
                 adminEntry = adminEntry,
-                onAdminEntry = {
-                    scope.launch { drawerState.close() }
-                    adminEntry?.let(onOpenAdminEntry)
-                },
+                onAdminEntry = { leaveDrawer { adminEntry?.let(onOpenAdminEntry) } },
                 onChat = if (chatOffered) {
-                    {
-                        scope.launch { drawerState.close() }
-                        onOpenChat()
-                    }
+                    { leaveDrawer { onOpenChat() } }
                 } else {
                     null
                 },
-                onSettings = {
-                    scope.launch { drawerState.close() }
-                    onOpenSettings()
-                },
+                onSettings = { leaveDrawer { onOpenSettings() } },
                 onAccountChosen = { scope.launch { drawerState.close() } },
             )
         },
@@ -436,14 +426,7 @@ fun MailListScreen(
             floatingActionButton = {
                 // The primary container, a pen and a word, at the bottom right, as in the Inbox figure. Out of the way while choosing.
                 AnimatedVisibility(visible = !selecting, enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
-                ExtendedFloatingActionButton(
-                    onClick = { vm.startDraft(DraftKind.New) },
-                    icon = { Icon(Icons.Filled.Create, contentDescription = null) },
-                    text = { Text(stringResource(R.string.compose_button)) },
-                    shape = RoundedCornerShape(20.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
+                KwebFab(Icons.Filled.Create, stringResource(R.string.compose_button), onClick = { vm.startDraft(DraftKind.New) })
                 }
             },
         ) { padding ->
@@ -896,7 +879,7 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClickLabel = stringResource(if (open) R.string.accounts_fold else R.string.accounts_unfold)) { open = !open }
+            .clickable(onClickLabel = stringResource(R.string.accounts_open_switcher)) { open = true }
             .padding(start = 16.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -908,30 +891,20 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
                 Text(active.host, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Icon(
-            if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
-        )
+        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = colors.onSurfaceVariant)
     }
+    Spacer(Modifier.height(12.dp))
     if (open) {
-        AccountList(
-            all = ui.rows,
-            hideActive = true,
-            onPick = {
-                open = false
-                onChosen()
-                ui.onSwitch(it)
-            },
-            onAdd = {
-                open = false
-                onChosen()
-                ui.onAdd()
-            },
-            modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
+        // The same sheet as the avatar in the search bar; a choice also shuts the drawer.
+        AccountSheet(
+            title = stringResource(R.string.accounts_title),
+            onDismiss = { open = false },
+            ui = AccountsUi(
+                rows = ui.rows,
+                onSwitch = { onChosen(); ui.onSwitch(it) },
+                onAdd = { onChosen(); ui.onAdd() },
+            ),
         )
-    } else {
-        Spacer(Modifier.height(12.dp))
     }
 }
 

@@ -10,6 +10,7 @@
     <string name="assistant_switch_on">On</string>
     <string name="assistant_switch_using">%1$s · %2$s</string>
     <string name="assistant_service">Service</string>
+    <string name="assistant_protocol">Protocol</string>
     <string name="assistant_service_openai">OpenAI-compatible</string>
     <string name="assistant_service_openai_detail">A hosted service with an OpenAI-style interface, or a model on your own computer or network</string>
     <string name="assistant_service_anthropic">Anthropic</string>
@@ -18,6 +19,9 @@
     <string name="assistant_models_title">Models</string>
     <string name="assistant_models_built_in">This is a built-in list: the service could not be asked, or has no key yet. You can still type any model name.</string>
     <string name="assistant_models_none">The service offers no models.</string>
+    <string name="assistant_models_key_refused">The service refused the key. Check the key, or leave it empty for a local model.</string>
+    <string name="assistant_models_unreachable">Could not reach the service at %1$s.</string>
+    <string name="assistant_models_details">Details</string>
     <string name="assistant_models_failed">The models could not be loaded.</string>
     <string name="assistant_switch_failed">The settings of that service could not be read.</string>
     <string name="assistant_effort">Effort</string>

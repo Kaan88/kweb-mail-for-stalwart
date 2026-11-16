@@ -7,6 +7,7 @@
     <!-- Agenda -->
     <string name="cal_today">Today</string>
     <string name="cal_add">New event</string>
+    <string name="cal_new_entry">New entry</string>
     <string name="cal_previous_week">Previous week</string>
     <string name="cal_next_week">Next week</string>
     <string name="cal_offline">Offline: showing what this phone has</string>
