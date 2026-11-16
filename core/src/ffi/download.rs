@@ -41,6 +41,13 @@ impl DownloadCancel {
     }
 }
 
+impl DownloadCancel {
+    /// Resolves once cancelled (for the core's own async code).
+    pub(crate) async fn cancelled(&self) {
+        self.watch.cancelled().await
+    }
+}
+
 #[uniffi::export]
 impl Core {
     /// As [`Core::download_blob`], reporting progress to `listener` and stoppable with `cancel`.

@@ -72,5 +72,7 @@ mod sync;
 mod unsubscribe;
 #[path = "suite/update_check.rs"]
 mod update_check;
+#[path = "suite/update_download.rs"]
+mod update_download;
 #[path = "suite/webpush.rs"]
 mod webpush;

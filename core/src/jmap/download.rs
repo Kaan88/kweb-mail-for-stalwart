@@ -40,7 +40,7 @@ impl DownloadWatch {
         self.cancelled.load(Ordering::SeqCst)
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         if !self.is_cancelled() {
             self.wake.notified().await;
         }
