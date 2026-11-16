@@ -1,0 +1,10 @@
+# Advisories accepted for now, with the reason. Remove an entry as soon as the fix can be taken.
+# Both come from the OpenPGP and S/MIME stack (M9, off by default): rPGP 0.21.1, the newest release,
+# still depends on rsa 0.9 and crypto-bigint 0.5, and the app's own S/MIME code uses rsa 0.9 beside it.
+# Both are timing side channels on private-key operations; the app does them only on the user's tap,
+# on the phone, so an attacker cannot measure many of them. Move to rsa 0.10 together with rPGP.
+[advisories]
+ignore = [
+    "RUSTSEC-2023-0071", # rsa 0.9: Marvin attack (timing), fixed in rsa 0.10
+    "RUSTSEC-2026-0387", # crypto-bigint 0.5: timing variability, fixed in 0.7.6
+]
