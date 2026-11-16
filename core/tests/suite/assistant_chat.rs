@@ -642,6 +642,44 @@ fn another_model_or_service_ends_the_conversation() {
 }
 
 #[test]
+fn a_model_that_takes_no_tools_is_remembered_for_its_address_and_model_only() {
+    let rig = ready(AiProvider::OpenAiCompatible);
+    assert!(!rig.core.ai_settings().unwrap().tools_unsupported);
+
+    // Refused with and without tools: its own error, the conversation untouched, the fact stored.
+    rig.ai.set(Script::NoFunctions);
+    let error = say(&rig, "What is new?").unwrap_err();
+    assert_eq!(error, Error::ToolsUnsupported);
+    assert!(rig.core.ai_settings().unwrap().tools_unsupported);
+
+    // A save of the same address and model keeps it; another model does not.
+    let same = rig.core.ai_settings().unwrap();
+    assert!(rig.core.set_ai_settings(same.clone(), None).unwrap().tools_unsupported);
+    // The caller cannot put it there or take it away.
+    let tried = AiSettings { tools_unsupported: false, ..same.clone() };
+    assert!(rig.core.set_ai_settings(tried, None).unwrap().tools_unsupported);
+    let other = rig.core.set_ai_settings(AiSettings { model: "other-model".into(), ..same.clone() }, None).unwrap();
+    assert!(!other.tools_unsupported);
+    // Back to the first model: it is not remembered from before.
+    assert!(!rig.core.set_ai_settings(same, None).unwrap().tools_unsupported);
+}
+
+#[test]
+fn a_model_that_answers_without_tools_is_remembered_and_forgiven_when_it_takes_them() {
+    let rig = ready(AiProvider::OpenAiCompatible);
+    rig.ai.set(Script::NoTools(vec!["From memory.".into()]));
+    assert!(say(&rig, "What is new?").unwrap().tools_off);
+    assert!(rig.core.ai_settings().unwrap().tools_unsupported);
+
+    // A new conversation tries tools again; when they are taken the note goes.
+    rig.core.ai_chat_new("chat-2".into()).unwrap();
+    rig.ai.answer(&["Hello."]);
+    let ears = Arc::new(Ears::default());
+    rig.core.ai_chat_send("chat-2".into(), "hi".into(), ZONE.into(), fresh_id(), ears).unwrap();
+    assert!(!rig.core.ai_settings().unwrap().tools_unsupported);
+}
+
+#[test]
 fn a_service_without_tools_answers_from_the_conversation_and_is_not_offered_them_again() {
     let rig = ready(AiProvider::OpenAiCompatible);
     rig.ai.set(Script::NoTools(vec!["I cannot look anything up.".into()]));

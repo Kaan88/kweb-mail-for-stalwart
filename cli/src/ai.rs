@@ -887,6 +887,7 @@ mod tests {
             allow_chat: false,
             chat_consented: false,
             actions: kweb_core::model::AiActionMode::AskFirst,
+            tools_unsupported: false,
         }
     }
 

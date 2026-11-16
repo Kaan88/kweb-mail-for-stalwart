@@ -38,6 +38,9 @@ pub struct Profile {
     /// The second yes, for the chat: it sends what it looks up to this service and model. Never
     /// true without `consented`.
     pub chat_consented: bool,
+    /// The chat found that this address and model take no tools. Kept only while both stay the same,
+    /// and cleared when a later chat turn used tools.
+    pub tools_unsupported: bool,
 }
 
 /// What is stored under [`SETTINGS_KEY`]: the shared switches, the service in use, and a
@@ -120,6 +123,7 @@ impl Stored {
             allow_chat: self.allow_chat,
             chat_consented: p.consented && p.chat_consented,
             actions: self.actions,
+            tools_unsupported: p.tools_unsupported,
         }
     }
 }
@@ -147,6 +151,7 @@ pub fn parse(json: &str) -> Option<(Stored, Option<AiProvider>)> {
         effort: old.effort,
         consented: old.consented,
         chat_consented: false,
+        tools_unsupported: false,
     };
     Some((stored, Some(old.provider)))
 }
@@ -164,6 +169,7 @@ pub fn normalise(mut s: AiSettings) -> Result<AiSettings> {
     s.base_url = s.base_url.trim().trim_end_matches('/').to_string();
     s.model = s.model.trim().to_string();
     s.has_key = false;
+    s.tools_unsupported = false;
     if s.base_url.is_empty() {
         if s.enabled {
             return Err(Error::invalid("enter the address of the service first"));
@@ -425,6 +431,7 @@ mod tests {
                 effort: AiEffort::High,
                 consented: true,
                 chat_consented: false,
+                tools_unsupported: false,
             },
             anthropic: Profile { base_url: "https://a.example/v1".into(), model: "m".into(), ..Profile::default() },
             ..Stored::default()
@@ -450,6 +457,7 @@ mod tests {
                 effort: AiEffort::Max,
                 consented: true,
                 chat_consented: true,
+                tools_unsupported: false,
             },
             ..Stored::default()
         };

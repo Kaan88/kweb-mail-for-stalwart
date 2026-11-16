@@ -31,8 +31,9 @@ use crate::{
     },
     jmap,
     model::{
-        Action, Agenda, AiAbout, AiActionMode, AiApplied, AiAutoResult, AiChange, AiChatTurn, AiFinding, AiSettings,
-        AiStep, Calendar, EventDetail, EventInput, Label, Mailbox, MessageBody, MessageHeader, SearchResult,
+        Action, Agenda, AiAbout, AiActionMode, AiApplied, AiAutoResult, AiChange, AiChatEnd, AiChatTurn, AiFinding,
+        AiSettings, AiStep, Calendar, EventDetail, EventInput, Label, Mailbox, MessageBody, MessageHeader,
+        SearchResult,
     },
     sync, Error, Result,
 };
@@ -357,7 +358,19 @@ impl Core {
         let mut model = Live { core: self, endpoint: &endpoint, running: &running };
         let mut on_text = |piece: &str| listener.text(piece.to_string());
         let mut on_step = |step: AiStep| listener.step(step);
-        let mut turn = chat::send(&mut copy, &text, &env, &today, &mut model, &reader, &mut on_text, &mut on_step)?;
+        let sent = chat::send(&mut copy, &text, &env, &today, &mut model, &reader, &mut on_text, &mut on_step);
+        // What the service said about tools is remembered for this address and model, so that the
+        // settings can say so. A failure to remember it does not fail the send.
+        let tools = match &sent {
+            Err(Error::ToolsUnsupported) => Some(true),
+            Ok(turn) if turn.tools_off => Some(true),
+            Ok(turn) if turn.end == AiChatEnd::Answered || turn.steps > 0 => Some(false),
+            Ok(_) | Err(_) => None,
+        };
+        if let (Some(unsupported), Some(origin)) = (tools, &copy.origin) {
+            assistant::note_tools(&self.store, &*self.secrets, &account_id, origin, unsupported).ok();
+        }
+        let mut turn = sent?;
 
         // Commit, and only into the conversation the run began in.
         let mut stored = self.chat_lock();

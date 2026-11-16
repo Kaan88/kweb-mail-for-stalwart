@@ -29,6 +29,7 @@ sealed interface SignInError {
             is CoreException.Temporary -> Unreachable
             is CoreException.SignInNeeded -> Refused
             is CoreException.Store -> Other(e.msg)
+            is CoreException.ToolsUnsupported -> Other("")
         }
 
         /** Sorts a failure of `finishSignIn`. */
@@ -37,6 +38,7 @@ sealed interface SignInError {
                 if (e.msg.contains("no answer from the browser", ignoreCase = true)) NoBrowserAnswer else Unreachable
             is CoreException.SignInNeeded, is CoreException.Invalid -> Refused
             is CoreException.Store -> Other(e.msg)
+            is CoreException.ToolsUnsupported -> Other("")
         }
 
         private fun mentionsOAuth(msg: String): Boolean =

@@ -277,7 +277,7 @@ fn a_refusal_that_is_not_about_tools_or_a_second_one_is_the_status() {
     // It does, but the request without tools fails too: one retry, then the first status.
     rig.ai.queue(vec![Script::NoTools(vec!["never".into()]), Script::Status(500)]);
     let message = temporary(converse(&rig, &ep, &question(), &tools()).0);
-    assert_eq!(message, "the service did not accept the request (status 400)");
+    assert_eq!(message, "the service has a problem (status 500); try again later");
     leaks_nothing(&message);
     assert_eq!(rig.ai.requests(), 3);
 
@@ -287,6 +287,35 @@ fn a_refusal_that_is_not_about_tools_or_a_second_one_is_the_status() {
     assert_eq!(message, "the service did not accept the request (status 400)");
     leaks_nothing(&message);
     assert_eq!(rig.ai.requests(), 4);
+}
+
+#[test]
+fn a_model_that_takes_no_functions_at_all_is_its_own_error_and_says_nothing_else() {
+    let rig = Rig::new();
+    let ep = endpoint(&rig, AiProvider::OpenAiCompatible);
+    // "Functions" is as good as "tools": the request is tried once more without them, is refused
+    // again, and the fact is all that comes out.
+    rig.ai.set(Script::NoFunctions);
+    let result = converse(&rig, &ep, &question(), &tools()).0;
+    let Err(error) = result else { panic!("an answer from a model that takes nothing") };
+    assert_eq!(error, Error::ToolsUnsupported);
+    // The core's own words, none of the service's (which echo the key).
+    assert_eq!(error.to_string(), "the model does not support tools");
+    for text in [error.to_string(), format!("{error:?}")] {
+        for secret in [KEY, "sk-test", "Credentials", "Functions are", "Bearer"] {
+            assert!(!text.contains(secret), "{text}");
+        }
+    }
+    assert_eq!(rig.ai.requests(), 2);
+
+    // Without tools there is nothing to blame them for: the status, one request.
+    let message = temporary(converse(&rig, &ep, &question(), &[]).0);
+    assert_eq!(message, "the service did not accept the request (status 400)");
+    assert_eq!(rig.ai.requests(), 3);
+
+    // The other protocol has no such rule.
+    let message = temporary(converse(&rig, &endpoint(&rig, AiProvider::Anthropic), &question(), &tools()).0);
+    assert_eq!(message, "the service did not accept the request (status 400)");
 }
 
 #[test]

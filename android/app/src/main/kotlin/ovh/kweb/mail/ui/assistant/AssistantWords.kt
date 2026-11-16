@@ -24,6 +24,7 @@ object AssistantMessages {
     fun of(error: Throwable, fallback: Int): UiMessage = when {
         error is CoreException.Temporary && error.msg.isNotBlank() -> UiMessage.Text(error.msg)
         error is CoreException.SignInNeeded -> UiMessage.Res(R.string.assistant_sign_in_needed)
+        error is CoreException.ToolsUnsupported -> UiMessage.Res(R.string.chat_tools_off)
         else -> UiMessage.of(error, fallback)
     }
 }

@@ -843,6 +843,7 @@ fn kind_of(e: &Error) -> &'static str {
         Error::Temporary { .. } => "temporary",
         Error::Store { .. } => "store",
         Error::Invalid { .. } => "invalid",
+        Error::ToolsUnsupported => "tools unsupported",
     }
 }
 

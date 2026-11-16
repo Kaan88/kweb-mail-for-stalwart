@@ -14,6 +14,10 @@ pub enum Error {
     /// The caller passed something that can never work (bad URL, unknown id).
     #[error("{msg}")]
     Invalid { msg: String },
+    /// The model of the assistant's service takes no tools (function calling), which the chat needs.
+    /// Only the fact: nothing of the service's answer is kept.
+    #[error("the model does not support tools")]
+    ToolsUnsupported,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

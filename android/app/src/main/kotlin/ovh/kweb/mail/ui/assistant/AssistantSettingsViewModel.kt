@@ -64,6 +64,8 @@ data class AssistantSettingsState(
      */
     val chatConsent: ConsentAsk? = null,
     val error: UiMessage? = null,
+    /** The address and model a chat found to take no tools, for the shown service; null when none is known. */
+    val tools: AssistantRules.ToolsFact? = null,
 )
 
 /**
@@ -142,7 +144,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
     private fun take(settings: AiSettings) {
         stored = settings
         val form = AssistantRules.formOf(settings)
-        stateFlow.update { AssistantSettingsState(phase = AssistantPhase.READY, form = form, initial = form, hasKey = settings.hasKey) }
+        stateFlow.update { AssistantSettingsState(phase = AssistantPhase.READY, form = form, initial = form, hasKey = settings.hasKey, tools = AssistantRules.toolsFact(settings)) }
     }
 
     /** Changes the form; the effort falls back to Default when the new model does not offer it. */
@@ -177,7 +179,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 stored = service
                 keyText = "" // dropped only now: a failed read keeps the form of the service left, key included
                 stateFlow.update { cur ->
-                    cur.copy(form = cur.form?.switchedTo(service), hasKey = service.hasKey, switching = false, modelList = null, models = null)
+                    cur.copy(form = cur.form?.switchedTo(service), hasKey = service.hasKey, switching = false, modelList = null, models = null, tools = AssistantRules.toolsFact(service))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -258,10 +260,10 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 val ask = ConsentAsk(ConsentRules.hostOf(after.baseUrl), after.model)
                 when {
                     ConsentRules.isNeededAfterSave(after) -> stateFlow.update {
-                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, consent = ask)
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, consent = ask, tools = AssistantRules.toolsFact(after))
                     }
                     ConsentRules.isChatNeededAfterSave(after) -> stateFlow.update {
-                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, chatConsent = ask)
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, chatConsent = ask, tools = AssistantRules.toolsFact(after))
                     }
                     else -> doneChannel.send(Unit)
                 }

@@ -6,7 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,7 +26,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -195,7 +197,7 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
         GroupColumn {
-            SwitchRow(Groups.shape(0, 1), stringResource(R.string.assistant_switch), form.enabled, stringResource(R.string.assistant_switch_detail)) { v ->
+            SwitchRow(Groups.shape(0, 1), stringResource(R.string.assistant_switch), form.enabled, switchDetail(form)) { v ->
                 vm.edit { it.copy(enabled = v) }
             }
         }
@@ -224,27 +226,48 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
             )
         }
 
-        if (form.provider == AiProvider.OPEN_AI_COMPATIBLE) PresetRow(form.baseUrl, !state.saving) { preset ->
-            vm.edit { it.copy(baseUrl = AssistantRules.addressForPreset(it.baseUrl, preset)) }
-        }
-
         val showEffort = EffortRules.isShown(form.provider)
-        val count = if (showEffort) 4 else 3
+        val hosted = form.provider == AiProvider.OPEN_AI_COMPATIBLE
+        // "Other address" stays chosen while the user types, even if what is typed is a named service's address.
+        var pickedOther by rememberSaveable { mutableStateOf(false) }
+        val service = AssistantRules.shownService(form.baseUrl, pickedOther)
+        val showAddress = !hosted || service == AssistantRules.Service.OTHER
+        val count = 2 + (if (hosted) 1 else 0) + (if (showAddress) 1 else 0) + (if (showEffort) 1 else 0)
         val ready = !state.switching
         GroupColumn(Modifier.padding(top = 16.dp)) {
-            FieldRow(Groups.shape(0, count), stringResource(R.string.assistant_address), form.baseUrl, { v -> vm.edit { it.copy(baseUrl = v) } }, KeyboardType.Uri, ready)
-            ModelRow(Groups.shape(1, count), form.model, ready, { v -> vm.edit { it.copy(model = v) } }, vm::chooseModel)
-            if (showEffort) EffortRow(Groups.shape(2, count), state, form, ready) { e -> vm.edit { it.copy(effort = e) } }
+            var at = 0
+            if (hosted) {
+                ServiceRow(Groups.shape(at++, count), service, ready && !state.saving) { picked ->
+                    pickedOther = picked == AssistantRules.Service.OTHER
+                    vm.edit { it.copy(baseUrl = AssistantRules.addressForService(it.baseUrl, picked)) }
+                }
+            }
+            if (showAddress) {
+                FieldRow(Groups.shape(at++, count), stringResource(R.string.assistant_address), form.baseUrl, { v -> vm.edit { it.copy(baseUrl = v) } }, KeyboardType.Uri, ready)
+            }
+            ModelRow(Groups.shape(at++, count), form.model, ready, { v -> vm.edit { it.copy(model = v) } }, vm::chooseModel)
+            if (showEffort) EffortRow(Groups.shape(at++, count), state, form, ready) { e -> vm.edit { it.copy(effort = e) } }
             KeyRow(Groups.shape(count - 1, count), state, form, vm, ready)
         }
 
-        if (form.provider == AiProvider.OPEN_AI_COMPATIBLE && AssistantRules.isCleartext(form.baseUrl)) {
+        if (AssistantRules.showToolsNote(state.tools, form)) {
+            Text(
+                stringResource(R.string.assistant_tools_note),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
+                color = colors.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
+        if (hosted && AssistantRules.isPrivateAddress(form.baseUrl)) {
             Text(
                 stringResource(R.string.assistant_local_detail),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
                 color = colors.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+        if (hosted && AssistantRules.isCleartext(form.baseUrl)) {
             Text(
                 stringResource(R.string.assistant_cleartext_warning),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 4.dp),
@@ -536,24 +559,60 @@ private fun ModelsSheet(state: ModelsState, onPick: (AiModel) -> Unit, onRetry: 
  * never put in the field. The field uses a password keyboard, and while it is on screen the window is kept out of
  * autofill, so that no service offers to save or fill it.
  */
+/** The line under the main switch: what the assistant is set to, or that it is off (and whether it was ever set up). */
 @Composable
-private fun PresetRow(address: String, enabled: Boolean, onPick: (AssistantRules.Preset) -> Unit) {
-    val chosen = AssistantRules.presetOf(address)
-    val names = listOf(
-        AssistantRules.Preset.OPENAI to R.string.assistant_preset_openai,
-        AssistantRules.Preset.OLLAMA to R.string.assistant_preset_ollama,
-        AssistantRules.Preset.LM_STUDIO to R.string.assistant_preset_lmstudio,
-        AssistantRules.Preset.LLAMA_CPP to R.string.assistant_preset_llamacpp,
-    )
-    Text(
-        stringResource(R.string.assistant_presets),
-        modifier = Modifier.fillMaxWidth().padding(start = 32.dp, end = 32.dp, top = 8.dp),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.labelMedium,
-    )
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        names.forEach { (preset, label) ->
-            FilterChip(selected = chosen == preset, onClick = { onPick(preset) }, enabled = enabled, label = { Text(stringResource(label)) })
+private fun switchDetail(form: AssistantRules.Form): String = when (val line = AssistantRules.switchLine(form)) {
+    AssistantRules.SwitchLine.NotSetUp -> stringResource(R.string.assistant_switch_detail)
+    AssistantRules.SwitchLine.Off -> stringResource(R.string.assistant_switch_off)
+    AssistantRules.SwitchLine.On -> stringResource(R.string.assistant_switch_on)
+    is AssistantRules.SwitchLine.Using -> {
+        val name = when {
+            line.provider == AiProvider.ANTHROPIC -> stringResource(R.string.assistant_service_anthropic)
+            line.service == AssistantRules.Service.OTHER -> line.host.ifEmpty { stringResource(R.string.assistant_svc_other) }
+            else -> stringResource(serviceName(line.service))
+        }
+        stringResource(R.string.assistant_switch_using, name, line.model)
+    }
+}
+
+private fun serviceName(service: AssistantRules.Service): Int = when (service) {
+    AssistantRules.Service.OPENAI -> R.string.assistant_svc_openai
+    AssistantRules.Service.OPENROUTER -> R.string.assistant_svc_openrouter
+    AssistantRules.Service.GEMINI -> R.string.assistant_svc_gemini
+    AssistantRules.Service.MISTRAL -> R.string.assistant_svc_mistral
+    AssistantRules.Service.DEEPSEEK -> R.string.assistant_svc_deepseek
+    AssistantRules.Service.GROQ -> R.string.assistant_svc_groq
+    AssistantRules.Service.OTHER -> R.string.assistant_svc_other
+}
+
+/** The service of the OpenAI-style protocol: a named one fills in its address, "Other address" shows the field. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServiceRow(shape: Shape, selected: AssistantRules.Service, enabled: Boolean, onPick: (AssistantRules.Service) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = open && enabled, onExpandedChange = { open = it && enabled }) {
+        TextField(
+            value = stringResource(serviceName(selected)),
+            onValueChange = {},
+            readOnly = true,
+            enabled = enabled,
+            label = { Text(stringResource(R.string.assistant_service)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
+            shape = shape,
+            colors = fieldColors(),
+            modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(expanded = open && enabled, onDismissRequest = { open = false }) {
+            AssistantRules.Service.entries.forEach { service ->
+                DropdownMenuItem(
+                    text = { Text(stringResource(serviceName(service))) },
+                    onClick = {
+                        open = false
+                        onPick(service)
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                )
+            }
         }
     }
 }

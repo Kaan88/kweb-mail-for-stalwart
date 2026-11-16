@@ -32,7 +32,7 @@
         <item quantity="other">Stopped after %1$d steps.</item>
     </plurals>
     <string name="chat_end_size">Stopped: that was too much to read in one go. Ask for less at a time.</string>
-    <string name="chat_tools_off">This model cannot look things up; it answers from the conversation only.</string>
+    <string name="chat_tools_off">This model cannot look things up (no tool support). Pick another model in the assistant settings, or use Summarize and the other one-shot actions, which work without tools.</string>
     <string name="chat_restarted">That conversation was over. This is a new one: send your message again.</string>
     <string name="chat_no_answer">The assistant gave no answer.</string>
 

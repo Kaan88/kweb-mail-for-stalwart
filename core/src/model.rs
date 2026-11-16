@@ -560,6 +560,10 @@ pub struct AiSettings {
     /// What the chat may do about changes. See [`AiActionMode`].
     #[serde(default)]
     pub actions: AiActionMode,
+    /// The chat found that this model takes no tools (function calling). An answer only, like
+    /// `has_key`: `set_ai_settings` ignores it. Kept while the address and model stay the same.
+    #[serde(default)]
+    pub tools_unsupported: bool,
 }
 
 /// What the chat may do about changes. There is no "automatic": every change waits for a tap.

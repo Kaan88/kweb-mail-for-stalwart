@@ -104,6 +104,7 @@ impl Rig {
             allow_chat: false,
             chat_consented: false,
             actions: AiActionMode::AskFirst,
+            tools_unsupported: false,
         }
     }
 
@@ -197,6 +198,7 @@ fn core_settings() -> AiSettings {
         allow_chat: false,
         chat_consented: false,
         actions: AiActionMode::AskFirst,
+        tools_unsupported: false,
     }
 }
 

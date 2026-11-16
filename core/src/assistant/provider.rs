@@ -422,6 +422,13 @@ const MAX_BLOCKS: usize = 64;
 /// The most that is read of a refused request's answer, to see whether it is about the tools.
 const REFUSAL_BODY: usize = 64 * 1024;
 
+/// Whether the body of a refused request names tools: "tool", "tools", "tool_choice" or "function(s)"
+/// (what OpenAI-compatible servers and Ollama say). Only this one fact is taken from it.
+fn names_tools(body: &[u8]) -> bool {
+    let body = body.to_ascii_lowercase();
+    [&b"tool"[..], &b"function"[..]].iter().any(|word| body.windows(word.len()).any(|w| w == *word))
+}
+
 fn too_much() -> Error {
     Error::temporary("the model asked for too much at once and was stopped")
 }
@@ -925,7 +932,8 @@ async fn post(client: &reqwest::Client, parts: Parts, host: &str, timeouts: Time
 
 /// One model turn. A turn with calls may have no text. OpenAI protocol only: a 400 to a request that
 /// carried tools, whose body mentions tools, is tried once more without them on the same endpoint and
-/// reported as ToolsRefused::Yes. Nothing of the service's words goes into an Error.
+/// reported as ToolsRefused::Yes. When that second request is refused with a 400 as well, the result
+/// is `Error::ToolsUnsupported`. Nothing of the service's words goes into an Error.
 ///
 /// `on_text` hears each visible piece as it comes; the text of the reply is the whole of it,
 /// trimmed, as with [`complete`]. Timeouts, the size limits and the handling of the key are
@@ -951,7 +959,7 @@ pub async fn converse(
         // The only thing ever read of an error's body, and only for one word: nothing of it is
         // kept, shown or logged.
         let about_tools = match read_capped(response, REFUSAL_BODY, timeouts.idle).await {
-            Ok(body) => body.to_ascii_lowercase().windows(4).any(|w| w == b"tool"),
+            Ok(body) => names_tools(&body),
             Err(_) => false,
         };
         if !about_tools {
@@ -960,7 +968,12 @@ pub async fn converse(
         // The same endpoint, so the key goes where it went before, and only once more.
         response = post(&client, chat_parts(ep, system, turns, &[]), &host, timeouts).await?;
         if !response.status().is_success() {
-            return Err(status_error(400));
+            // Still a 400 without tools: the model cannot be used for this at all, and that is the
+            // fact to report. Any other status is that status.
+            return Err(match response.status().as_u16() {
+                400 => Error::ToolsUnsupported,
+                other => status_error(other),
+            });
         }
         refused = ToolsRefused::Yes;
     } else if !response.status().is_success() {

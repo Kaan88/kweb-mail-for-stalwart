@@ -124,6 +124,7 @@ pub fn save(
     stored.allow_explain = new.allow_explain;
     stored.allow_chat = new.allow_chat;
     stored.actions = new.actions;
+    let (base_url, model) = (new.base_url.clone(), new.model.clone());
     *stored.profile_mut(provider) = Profile {
         base_url: new.base_url,
         model: new.model,
@@ -131,6 +132,9 @@ pub fn save(
         consented: new.consented,
         // Never taken from the caller: the yes for the chat lives only as long as the first one.
         chat_consented: before.chat_consented && new.consented,
+        // Only a chat finds this out; it holds for this address and model and no other.
+        tools_unsupported: before.tools_unsupported
+            && (before.base_url.as_str(), before.model.as_str()) == (base_url.as_str(), model.as_str()),
     };
     let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
     match key {
@@ -267,6 +271,27 @@ pub fn chat_consent(store: &Store, secrets: &dyn SecretStore, account_id: &str, 
         store.kv_set(account_id, SETTINGS_KEY, &json)?;
     }
     view(&stored, provider, secrets)
+}
+
+/// Remembers (`unsupported`) or forgets that the model of the service `provider` takes no tools, for
+/// the address and model the chat was held with. Nothing changes when the profile has moved on to
+/// another address or model meanwhile. Local.
+pub fn note_tools(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    origin: &chat::Origin,
+    unsupported: bool,
+) -> Result<()> {
+    let mut stored = read(store, secrets, account_id)?;
+    let profile = stored.profile_mut(origin.provider);
+    if profile.base_url != origin.base_url || profile.model != origin.model || profile.tools_unsupported == unsupported
+    {
+        return Ok(());
+    }
+    profile.tools_unsupported = unsupported;
+    let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
+    store.kv_set(account_id, SETTINGS_KEY, &json)
 }
 
 /// Where requests go: the settings, and the key if there is one.

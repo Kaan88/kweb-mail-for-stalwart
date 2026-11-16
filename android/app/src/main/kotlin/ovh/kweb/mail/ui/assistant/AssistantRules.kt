@@ -27,35 +27,117 @@ object AssistantRules {
     const val OPENAI_ADDRESS = "https://api.openai.com/v1"
     const val ANTHROPIC_ADDRESS = "https://api.anthropic.com/v1"
 
-    /** The addresses the settings offer to fill in. A local server is plain http and needs no key. */
-    enum class Preset(val address: String, val port: Int?, val local: Boolean) {
-        OPENAI(OPENAI_ADDRESS, null, false),
-        OLLAMA("http://localhost:11434/v1", 11434, true),
-        LM_STUDIO("http://localhost:1234/v1", 1234, true),
-        LLAMA_CPP("http://localhost:8080/v1", 8080, true),
+    /** The hosted services the settings offer by name; each fills in its address. [OTHER] shows the address field. */
+    enum class Service(val address: String?) {
+        OPENAI(OPENAI_ADDRESS),
+        OPENROUTER("https://openrouter.ai/api/v1"),
+        GEMINI("https://generativelanguage.googleapis.com/v1beta/openai"),
+        MISTRAL("https://api.mistral.ai/v1"),
+        DEEPSEEK("https://api.deepseek.com/v1"),
+        GROQ("https://api.groq.com/openai/v1"),
+        OTHER(null),
     }
-
-    private val localAddress = Regex("""^http://([^/:\s]+)(?::(\d+))?(/.*)?$""", RegexOption.IGNORE_CASE)
 
     /** Plain http: nothing sent is encrypted. The core only allows it for this device and private networks. */
     fun isCleartext(address: String): Boolean = address.trim().startsWith("http://", ignoreCase = true)
 
-    /** The preset the address looks like: the hosted default exactly, a local one by its port (the host is the user's). */
-    fun presetOf(address: String): Preset? {
-        if (sameAddress(address, OPENAI_ADDRESS)) return Preset.OPENAI
-        val port = localAddress.matchEntire(address.trim())?.groupValues?.get(2)?.toIntOrNull() ?: return null
-        return Preset.entries.firstOrNull { it.local && it.port == port }
-    }
+    /** The service the address belongs to: a named one when it is exactly that address, otherwise [Service.OTHER]. */
+    fun serviceOf(address: String): Service =
+        Service.entries.firstOrNull { it.address != null && sameAddress(address, it.address) } ?: Service.OTHER
 
     /**
-     * The address after [preset] was picked: the hosted one as it is; a local one keeps the host the user already wrote
-     * for a local server (so another port does not lose "192.168.1.20") and otherwise starts at localhost.
+     * The service the dropdown shows. [pickedOther]: the user chose "Other address" and is typing, so the field stays
+     * even when what was typed happens to be the address of a named service.
      */
-    fun addressForPreset(current: String, preset: Preset): String {
-        if (!preset.local) return preset.address
-        val host = localAddress.matchEntire(current.trim())?.groupValues?.get(1)
-        return if (host.isNullOrEmpty()) preset.address else "http://$host:${preset.port}/v1"
+    fun shownService(address: String, pickedOther: Boolean): Service = if (pickedOther) Service.OTHER else serviceOf(address)
+
+    /**
+     * The address after [service] was picked: a named service's own address; "Other address" starts empty when the
+     * address was a named service's (so it is not mistaken for what the user typed) and keeps what is there otherwise.
+     */
+    fun addressForService(current: String, service: Service): String = when {
+        service.address != null -> service.address
+        serviceOf(current) != Service.OTHER -> ""
+        else -> current
     }
+
+    /** The host of [address] (no scheme, port or path), for showing; empty when there is none. */
+    fun hostOf(address: String): String {
+        val authority = hostPattern.find(address.trim())?.groupValues?.get(1) ?: return ""
+        return if (authority.startsWith("[")) authority.substringBefore(']').trimStart('[') else authority.substringBeforeLast(':', authority)
+    }
+
+    private val hostPattern = Regex("""^[a-z][a-z0-9+.-]*://([^/?#\s]+)""", RegexOption.IGNORE_CASE)
+
+    /**
+     * Whether the address is this device or a private network: the rule of the core (127/8, 10/8, 172.16/12,
+     * 192.168/16, ::1, fc00::/7, fe80::/10, `localhost`, `.localhost` and `.local` names), where a model needs no key.
+     */
+    fun isPrivateAddress(address: String): Boolean {
+        if (hostPattern.find(address.trim()) == null) return false
+        val host = hostOf(address)
+        val bare = host.trimEnd('.').lowercase()
+        if (bare.isEmpty()) return false
+        if (host.contains(':')) return privateIpv6(bare)
+        if (ipv4.matches(bare)) return privateIpv4(bare.split('.').map { it.toInt() })
+        return bare == "localhost" || bare.endsWith(".localhost") || bare.endsWith(".local")
+    }
+
+    private val ipv4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+
+    private fun privateIpv4(o: List<Int>): Boolean =
+        o.all { it in 0..255 } && (o[0] == 127 || o[0] == 10 || (o[0] == 172 && o[1] in 16..31) || (o[0] == 192 && o[1] == 168))
+
+    private fun privateIpv6(text: String): Boolean {
+        // A literal only: it never asks a name server.
+        if (!text.all { it.isDigit() || it in 'a'..'f' || it == ':' || it == '.' }) return false
+        val bytes = try {
+            java.net.InetAddress.getByName(text).address
+        } catch (_: java.net.UnknownHostException) {
+            return false
+        }
+        val first = bytes[0].toInt() and 0xff
+        val second = bytes[1].toInt() and 0xff
+        return when (bytes.size) {
+            4 -> privateIpv4(bytes.map { it.toInt() and 0xff }) // ::ffff:a.b.c.d
+            else -> text == "::1" || bytes.dropLast(1).all { it.toInt() == 0 } && bytes.last().toInt() == 1 ||
+                first and 0xfe == 0xfc || (first == 0xfe && second and 0xc0 == 0x80)
+        }
+    }
+
+    /** What the line under the main switch says. */
+    sealed interface SwitchLine {
+        /** Off, and no model chosen yet. */
+        data object NotSetUp : SwitchLine
+
+        data object Off : SwitchLine
+
+        /** On, no model named yet. */
+        data object On : SwitchLine
+
+        /** On: the service (a named one, "Anthropic", or the host of another address) and the model. */
+        data class Using(val provider: AiProvider, val service: Service, val host: String, val model: String) : SwitchLine
+    }
+
+    fun switchLine(form: Form): SwitchLine {
+        val model = form.model.trim()
+        return when {
+            !form.enabled && model.isEmpty() -> SwitchLine.NotSetUp
+            !form.enabled -> SwitchLine.Off
+            model.isEmpty() -> SwitchLine.On
+            else -> SwitchLine.Using(form.provider, serviceOf(form.baseUrl), hostOf(form.baseUrl), model)
+        }
+    }
+
+    /** The address and model a chat found to take no tools. */
+    data class ToolsFact(val baseUrl: String, val model: String)
+
+    fun toolsFact(settings: AiSettings): ToolsFact? =
+        if (settings.toolsUnsupported) ToolsFact(settings.baseUrl.trim().trimEnd('/'), settings.model.trim()) else null
+
+    /** Whether the note "no tool support" shows under the model: for that address and model only, so a change ends it. */
+    fun showToolsNote(fact: ToolsFact?, form: Form): Boolean =
+        fact != null && form.provider == AiProvider.OPEN_AI_COMPATIBLE && sameAddress(form.baseUrl, fact.baseUrl) && form.model.trim() == fact.model
 
     /** Whether the assistant offers [kind]: it is on as a whole and that kind is switched on. No settings read yet: no. */
     fun isAllowed(settings: AiSettings?, kind: Kind): Boolean = settings != null && settings.enabled && when (kind) {

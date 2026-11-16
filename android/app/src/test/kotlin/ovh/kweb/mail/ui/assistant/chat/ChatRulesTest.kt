@@ -85,7 +85,7 @@ class ChatRulesTest {
 
     private fun settings(enabled: Boolean = true, consented: Boolean = true, allowChat: Boolean = true, chatConsented: Boolean = true) = AiSettings(
         enabled, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true,
-        allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = allowChat, chatConsented = chatConsented, actions = AiActionMode.ASK_FIRST,
+        allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = allowChat, chatConsented = chatConsented, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false,
     )
 
     private fun ref(id: String) = AiMessageRef(id, "t-$id", "Subject $id", "Ada <ada@example.org>", "Inbox")
@@ -286,6 +286,8 @@ class ChatRulesTest {
         assertEquals(UiMessage.Text("that message is too long"), ChatRules.message(CoreException.Invalid("that message is too long")))
         assertEquals(UiMessage.Text("the service did not answer"), ChatRules.message(CoreException.Temporary("the service did not answer")))
         assertEquals(UiMessage.Res(R.string.assistant_sign_in_needed), ChatRules.message(CoreException.SignInNeeded("x")))
+        // A model without tool support is its own plain message, not a raw failure.
+        assertEquals(UiMessage.Res(R.string.chat_tools_off), ChatRules.message(CoreException.ToolsUnsupported()))
         // Anything else is the fallback: nothing of the error itself is shown.
         assertEquals(UiMessage.Res(R.string.chat_failed), ChatRules.message(IllegalStateException("secret")))
         assertEquals(UiMessage.Res(R.string.chat_undo_failed), ChatRules.message(IllegalStateException("secret"), R.string.chat_undo_failed))

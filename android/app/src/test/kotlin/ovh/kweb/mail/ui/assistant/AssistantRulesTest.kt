@@ -27,7 +27,8 @@ class AssistantRulesTest {
         consented: Boolean = false,
         chatConsented: Boolean = false,
         actions: AiActionMode = AiActionMode.ASK_FIRST,
-    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions)
+        toolsUnsupported: Boolean = false,
+    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions, toolsUnsupported = toolsUnsupported)
 
     // ---- which entries show ----
 
@@ -289,21 +290,92 @@ class AssistantRulesTest {
     }
 
     @Test
-    fun a_local_preset_fills_plain_http_with_its_port_and_keeps_the_host_the_user_wrote() {
-        val ollama = AssistantRules.Preset.OLLAMA
-        assertEquals("http://localhost:11434/v1", AssistantRules.addressForPreset("https://api.openai.com/v1", ollama))
-        assertEquals("http://localhost:1234/v1", AssistantRules.addressForPreset("", AssistantRules.Preset.LM_STUDIO))
-        assertEquals("http://192.168.1.20:8080/v1", AssistantRules.addressForPreset("http://192.168.1.20:11434/v1", AssistantRules.Preset.LLAMA_CPP))
-        assertEquals("https://api.openai.com/v1", AssistantRules.addressForPreset("http://192.168.1.20:11434/v1", AssistantRules.Preset.OPENAI))
+    fun a_named_service_is_found_from_its_address_and_any_other_is_other() {
+        assertEquals(AssistantRules.Service.OPENAI, AssistantRules.serviceOf("https://api.openai.com/v1/"))
+        assertEquals(AssistantRules.Service.OPENROUTER, AssistantRules.serviceOf(" https://openrouter.ai/api/v1 "))
+        assertEquals(AssistantRules.Service.GEMINI, AssistantRules.serviceOf("https://generativelanguage.googleapis.com/v1beta/openai"))
+        assertEquals(AssistantRules.Service.MISTRAL, AssistantRules.serviceOf("https://api.mistral.ai/v1"))
+        assertEquals(AssistantRules.Service.DEEPSEEK, AssistantRules.serviceOf("https://api.deepseek.com/v1"))
+        assertEquals(AssistantRules.Service.GROQ, AssistantRules.serviceOf("https://api.groq.com/openai/v1"))
+        for (other in listOf("", "http://localhost:11434/v1", "https://api.openai.com/v2", "https://example.com/v1")) {
+            assertEquals(other, AssistantRules.Service.OTHER, AssistantRules.serviceOf(other))
+        }
+        assertNull(AssistantRules.Service.OTHER.address)
     }
 
     @Test
-    fun the_selected_preset_is_found_from_the_address_and_cleartext_is_flagged() {
-        assertEquals(AssistantRules.Preset.OPENAI, AssistantRules.presetOf("https://api.openai.com/v1/"))
-        assertEquals(AssistantRules.Preset.OLLAMA, AssistantRules.presetOf("http://192.168.1.20:11434/v1"))
-        assertEquals(AssistantRules.Preset.LM_STUDIO, AssistantRules.presetOf(" http://box.local:1234/v1 "))
-        assertNull(AssistantRules.presetOf("https://example.com:11434/v1"))
-        assertNull(AssistantRules.presetOf("http://192.168.1.20:9999/v1"))
+    fun picking_a_service_fills_its_address_and_other_starts_empty_only_from_a_named_one() {
+        assertEquals("https://api.groq.com/openai/v1", AssistantRules.addressForService("http://localhost:11434/v1", AssistantRules.Service.GROQ))
+        assertEquals("", AssistantRules.addressForService("https://api.openai.com/v1", AssistantRules.Service.OTHER))
+        assertEquals("http://192.168.1.20:11434/v1", AssistantRules.addressForService("http://192.168.1.20:11434/v1", AssistantRules.Service.OTHER))
+        assertEquals("", AssistantRules.addressForService("", AssistantRules.Service.OTHER))
+    }
+
+    @Test
+    fun the_dropdown_shows_other_while_it_was_picked_even_for_a_named_address() {
+        assertEquals(AssistantRules.Service.OPENAI, AssistantRules.shownService("https://api.openai.com/v1", pickedOther = false))
+        assertEquals(AssistantRules.Service.OTHER, AssistantRules.shownService("https://api.openai.com/v1", pickedOther = true))
+        assertEquals(AssistantRules.Service.OTHER, AssistantRules.shownService("http://localhost:8080/v1", pickedOther = false))
+    }
+
+    @Test
+    fun the_no_key_note_is_for_this_device_and_private_networks_only() {
+        for (local in listOf(
+            "http://localhost:11434/v1", "http://LOCALHOST/v1", "http://127.0.0.1:1234/v1", "http://127.9.9.9/v1", "http://10.1.2.3/v1",
+            "http://172.16.0.1/v1", "http://172.31.255.255/v1", "http://192.168.1.20:11434/v1", "http://[::1]:8080/v1", "http://[fc00::1]/v1",
+            "http://[fd12:3456::9]/v1", "http://[fe80::1]/v1", "http://[::ffff:192.168.1.5]/v1", "http://box.local/v1", "http://llm.localhost/v1",
+            "https://192.168.0.7/v1", " http://localhost./v1",
+        )) {
+            assertTrue(local, AssistantRules.isPrivateAddress(local))
+        }
+        for (public in listOf(
+            "https://api.openai.com/v1", "http://8.8.8.8/v1", "http://172.32.0.1/v1", "http://172.15.0.1/v1", "http://192.169.0.1/v1",
+            "http://11.0.0.1/v1", "http://[2001:db8::1]/v1", "http://[fec0::1]/v1", "http://localhost.example.com/v1", "http://[::ffff:8.8.8.8]/v1",
+            "", "not an address", "http://300.1.1.1/v1",
+        )) {
+            assertFalse(public, AssistantRules.isPrivateAddress(public))
+        }
+    }
+
+    @Test
+    fun the_host_is_shown_without_scheme_port_and_path() {
+        assertEquals("llm.example.org", AssistantRules.hostOf("https://llm.example.org:8443/v1"))
+        assertEquals("::1", AssistantRules.hostOf("http://[::1]:8080/v1"))
+        assertEquals("", AssistantRules.hostOf("nothing"))
+    }
+
+    @Test
+    fun the_line_under_the_switch_follows_the_state() {
+        val form = AssistantRules.formOf(settings(enabled = false, model = ""))
+        assertEquals(AssistantRules.SwitchLine.NotSetUp, AssistantRules.switchLine(form))
+        assertEquals(AssistantRules.SwitchLine.Off, AssistantRules.switchLine(form.copy(model = "gpt-x")))
+        assertEquals(AssistantRules.SwitchLine.On, AssistantRules.switchLine(form.copy(enabled = true, model = " ")))
+        assertEquals(
+            AssistantRules.SwitchLine.Using(AiProvider.OPEN_AI_COMPATIBLE, AssistantRules.Service.OPENAI, "api.openai.com", "gpt-x"),
+            AssistantRules.switchLine(form.copy(enabled = true, model = " gpt-x ")),
+        )
+        assertEquals(
+            AssistantRules.SwitchLine.Using(AiProvider.OPEN_AI_COMPATIBLE, AssistantRules.Service.OTHER, "192.168.1.20", "llama"),
+            AssistantRules.switchLine(form.copy(enabled = true, baseUrl = "http://192.168.1.20:11434/v1", model = "llama")),
+        )
+    }
+
+    @Test
+    fun the_tools_note_shows_for_that_address_and_model_until_either_changes() {
+        val stored = settings(baseUrl = "http://localhost:11434/v1", model = "small", toolsUnsupported = true)
+        val fact = AssistantRules.toolsFact(stored)
+        val form = AssistantRules.formOf(stored)
+        assertTrue(AssistantRules.showToolsNote(fact, form))
+        assertTrue(AssistantRules.showToolsNote(fact, form.copy(baseUrl = "http://localhost:11434/v1/", model = " small ")))
+        assertFalse(AssistantRules.showToolsNote(fact, form.copy(model = "big")))
+        assertFalse(AssistantRules.showToolsNote(fact, form.copy(baseUrl = "http://localhost:1234/v1")))
+        assertFalse(AssistantRules.showToolsNote(fact, form.copy(provider = AiProvider.ANTHROPIC)))
+        assertNull(AssistantRules.toolsFact(settings()))
+        assertFalse(AssistantRules.showToolsNote(null, form))
+    }
+
+    @Test
+    fun cleartext_is_flagged() {
         assertTrue(AssistantRules.isCleartext("http://localhost:11434/v1"))
         assertTrue(AssistantRules.isCleartext(" HTTP://10.0.0.2/v1"))
         assertFalse(AssistantRules.isCleartext("https://api.openai.com/v1"))

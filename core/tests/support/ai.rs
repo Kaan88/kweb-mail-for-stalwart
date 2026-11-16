@@ -58,6 +58,9 @@ pub enum Script {
     /// A request that carries `tools` gets a 400 whose body mentions tools (and echoes the credentials);
     /// one without gets these pieces as a normal answer.
     NoTools(Vec<String>),
+    /// A model that takes no functions at all: every request, with tools or without, gets a 400 whose
+    /// body says so (and echoes the credentials).
+    NoFunctions,
 }
 
 /// What `GET /v1/models` answers.
@@ -389,6 +392,11 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool) -> Res
             return (StatusCode::BAD_REQUEST, body.to_string()).into_response();
         }
         Script::NoTools(pieces) => (pieces, Tail::Done),
+        Script::NoFunctions => {
+            let message = format!("Functions are not supported by this model. Credentials sent: {echoed}");
+            let body = json!({"error": {"message": message, "type": "invalid_request_error"}});
+            return (StatusCode::BAD_REQUEST, body.to_string()).into_response();
+        }
     };
     let events = if anthropic { anthropic_events(&pieces, &tail) } else { openai_events(&pieces, &tail) };
     let split = *s.split_events.lock().unwrap();
