@@ -84,6 +84,16 @@ pub enum CryptoNote {
     SmimeNoRevocationCheck,
 }
 
+/// What a file the user chose to import as a private key looks like, so the host knows whether to ask for a passphrase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PrivateFile {
+    /// An OpenPGP secret key. Its own passphrase, if it has one, is asked for when a message needs it.
+    OpenPgp,
+    /// A PKCS#12 file (.p12, .pfx): its passphrase is needed to read it now.
+    Pkcs12,
+    Unknown,
+}
+
 /// Where a key or certificate came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum KeyOrigin {

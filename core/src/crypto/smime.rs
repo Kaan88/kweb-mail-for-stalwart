@@ -8,6 +8,7 @@
 use cms::{
     cert::CertificateChoices,
     content_info::ContentInfo,
+    enveloped_data::{EnvelopedData, RecipientIdentifier, RecipientInfo},
     signed_data::{SignedData, SignerIdentifier, SignerInfo},
 };
 use der::{asn1::ObjectIdentifier, Decode, Encode, Tagged};
@@ -364,4 +365,142 @@ fn check_signature(cert: &Certificate, signer: &SignerInfo, data: &[u8], signatu
 /// Whether `at` (a Unix time) lies within the certificate's validity.
 pub fn valid_at(cert: &CertInfo, at: i64) -> bool {
     cert.not_before <= at && at <= cert.not_after
+}
+
+// ---- decrypting -------------------------------------------------------------------------------
+
+const OID_AUTH_ENVELOPED: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.16.1.23");
+const OID_AES128_CBC: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.1.2");
+const OID_AES192_CBC: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.1.22");
+const OID_AES256_CBC: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.1.42");
+
+/// What a CMS blob is, by its outer type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CmsKind {
+    Signed,
+    Enveloped,
+    /// Authenticated enveloped data (AES-GCM, RFC 5083): newer S/MIME that this app does not open yet.
+    AuthEnveloped,
+    Other,
+}
+
+pub fn cms_kind(der: &[u8]) -> CmsKind {
+    match ContentInfo::from_der(der).map(|i| i.content_type) {
+        Ok(t) if t == OID_SIGNED_DATA => CmsKind::Signed,
+        Ok(t) if t == OID_ENVELOPED_DATA => CmsKind::Enveloped,
+        Ok(t) if t == OID_AUTH_ENVELOPED => CmsKind::AuthEnveloped,
+        _ => CmsKind::Other,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DecryptFail {
+    /// None of the keys given is a recipient.
+    NoKey,
+    /// A way of encrypting this app does not do; the text says which.
+    Unsupported(String),
+    /// A recipient key fits but the data would not decrypt (damaged, or the key is not the right one).
+    Failed,
+}
+
+/// A private key for decrypting: the certificate it belongs to (DER) and the PKCS#8 key (DER).
+pub struct Private<'a> {
+    pub cert: &'a [u8],
+    pub pkcs8: &'a [u8],
+}
+
+/// Opens enveloped data with one of the keys. RSA key transport and AES-CBC only; everything else is
+/// reported as unsupported. The result is NOT protected against change (CBC has no integrity check), so the
+/// caller must treat it as untrusted: shown alone, with remote content off.
+pub fn decrypt(der: &[u8], keys: &[Private<'_>]) -> Result<zeroize::Zeroizing<Vec<u8>>, DecryptFail> {
+    use rsa::{pkcs8::DecodePrivateKey, Pkcs1v15Encrypt, RsaPrivateKey};
+    let info = ContentInfo::from_der(der).map_err(|_| DecryptFail::Failed)?;
+    if info.content_type != OID_ENVELOPED_DATA {
+        return Err(DecryptFail::Unsupported("this kind of S/MIME data".into()));
+    }
+    let data = info.content.decode_as::<EnvelopedData>().map_err(|_| DecryptFail::Failed)?;
+    let mut saw_other = false;
+    let mut content_key: Option<zeroize::Zeroizing<Vec<u8>>> = None;
+    'recipients: for recipient in data.recip_infos.0.iter() {
+        match recipient {
+            RecipientInfo::Ktri(k) => {
+                for key in keys {
+                    let Ok(cert) = Certificate::from_der(key.cert) else { continue };
+                    let named = match &k.rid {
+                        RecipientIdentifier::IssuerAndSerialNumber(iss) => {
+                            cert.tbs_certificate.serial_number == iss.serial_number
+                                && cert.tbs_certificate.issuer.to_der().ok() == iss.issuer.to_der().ok()
+                        }
+                        RecipientIdentifier::SubjectKeyIdentifier(ski) => {
+                            subject_key_id(&cert).is_some_and(|id| id == ski.0.as_bytes())
+                        }
+                    };
+                    if !named {
+                        continue;
+                    }
+                    if k.key_enc_alg.oid != OID_RSA {
+                        return Err(DecryptFail::Unsupported("RSA-OAEP key encryption".into()));
+                    }
+                    let Ok(private) = RsaPrivateKey::from_pkcs8_der(key.pkcs8) else { continue };
+                    if let Ok(cek) = private.decrypt(Pkcs1v15Encrypt, k.enc_key.as_bytes()) {
+                        content_key = Some(zeroize::Zeroizing::new(cek));
+                        break 'recipients;
+                    }
+                    return Err(DecryptFail::Failed);
+                }
+            }
+            _ => saw_other = true,
+        }
+    }
+    let Some(cek) = content_key else {
+        return Err(if saw_other {
+            DecryptFail::Unsupported("key agreement (elliptic curve) encryption".into())
+        } else {
+            DecryptFail::NoKey
+        });
+    };
+    let enc = &data.encrypted_content;
+    let iv = enc.content_enc_alg.parameters.as_ref().and_then(|p| p.decode_as::<der::asn1::OctetString>().ok());
+    let (Some(iv), Some(cipher_text)) = (iv, enc.encrypted_content.as_ref()) else { return Err(DecryptFail::Failed) };
+    use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
+    let oid = enc.content_enc_alg.oid;
+    let plain = match oid {
+        OID_AES128_CBC => cbc::Decryptor::<aes::Aes128>::new_from_slices(&cek, iv.as_bytes())
+            .map(|d| d.decrypt_padded_vec_mut::<Pkcs7>(cipher_text.as_bytes())),
+        OID_AES192_CBC => cbc::Decryptor::<aes::Aes192>::new_from_slices(&cek, iv.as_bytes())
+            .map(|d| d.decrypt_padded_vec_mut::<Pkcs7>(cipher_text.as_bytes())),
+        OID_AES256_CBC => cbc::Decryptor::<aes::Aes256>::new_from_slices(&cek, iv.as_bytes())
+            .map(|d| d.decrypt_padded_vec_mut::<Pkcs7>(cipher_text.as_bytes())),
+        _ => return Err(DecryptFail::Unsupported("an encryption algorithm other than AES-CBC".into())),
+    };
+    match plain {
+        Ok(Ok(bytes)) => Ok(zeroize::Zeroizing::new(bytes)),
+        _ => Err(DecryptFail::Failed),
+    }
+}
+
+/// Why a PKCS#12 file was not taken.
+#[derive(Debug, Clone, PartialEq)]
+pub enum P12Error {
+    /// The passphrase is wrong, or this is not a PKCS#12 file.
+    WrongPassphrase,
+    /// No private key and certificate in it.
+    NoKey,
+    /// The key is not an RSA key: only those can open S/MIME mail here.
+    NotRsa,
+}
+
+/// The certificate (DER) and the PKCS#8 private key of the first key entry of a PKCS#12 file.
+pub fn import_pkcs12(data: &[u8], passphrase: &str) -> Result<(Vec<u8>, zeroize::Zeroizing<Vec<u8>>), P12Error> {
+    use p12_keystore::{KeyStore, Pkcs12ImportPolicy};
+    use rsa::pkcs8::DecodePrivateKey;
+    let store =
+        KeyStore::from_pkcs12(data, passphrase, Pkcs12ImportPolicy::Relaxed).map_err(|_| P12Error::WrongPassphrase)?;
+    let (_, chain) = store.private_key_chain().ok_or(P12Error::NoKey)?;
+    let pkcs8 = zeroize::Zeroizing::new(chain.key().as_der().to_vec());
+    if rsa::RsaPrivateKey::from_pkcs8_der(&pkcs8).is_err() {
+        return Err(P12Error::NotRsa);
+    }
+    let leaf = chain.certs().first().ok_or(P12Error::NoKey)?;
+    Ok((leaf.as_der().to_vec(), pkcs8))
 }

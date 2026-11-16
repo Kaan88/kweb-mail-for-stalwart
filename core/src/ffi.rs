@@ -246,6 +246,10 @@ impl Core {
     /// Revokes the grant on the server (best effort) and wipes the cache.
     pub fn sign_out(&self) -> Result<()> {
         self.stop();
+        // The user's private keys and kept passphrases go with the account, before it is forgotten.
+        if let Ok(account_id) = self.account_id() {
+            self.crypto_wipe_secrets(&account_id);
+        }
         // The subscription for push through Google is destroyed on the server while the grant
         // still works (best effort, bounded): a dead one is never dropped by the server itself.
         let _ = self.web_push_drop_within(Some(webpush::SIGN_OUT_BUDGET));

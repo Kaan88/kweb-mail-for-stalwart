@@ -14,7 +14,7 @@ use crate::{
     crypto::{
         analyze::{self, KeyRow},
         openpgp, smime,
-        types::{CryptoKind, CryptoView, KeyEntry, KeyKind, KeyOffer, KeyOrigin},
+        types::{CryptoKind, CryptoView, KeyEntry, KeyKind, KeyOffer, KeyOrigin, PrivateFile},
     },
     jmap::MAX_RAW_BYTES,
     store::StoredKey,
@@ -25,6 +25,19 @@ use crate::{
 const ENABLED_KEY: &str = "crypto_enabled";
 /// The most a key file or pasted key may be.
 const MAX_KEY_BYTES: usize = 1 << 20;
+
+fn secret_name(id: &str) -> String {
+    format!("crypto.secret.{}", id.replace(':', "."))
+}
+
+fn pass_name(id: &str) -> String {
+    format!("crypto.pass.{}", id.replace(':', "."))
+}
+
+/// A PKCS#12 file is a DER sequence that starts with a version number 3.
+fn looks_like_pkcs12(data: &[u8]) -> bool {
+    data.first() == Some(&0x30) && data.windows(3).take(16).any(|w| w == [0x02, 0x01, 0x03])
+}
 
 fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
@@ -109,7 +122,11 @@ impl Core {
     /// Every key and certificate of the keyring: the user's own first.
     pub fn crypto_keys(&self) -> Result<Vec<KeyEntry>> {
         let account_id = self.account_id()?;
-        Ok(self.store.crypto_keys(&account_id)?.into_iter().map(|k| k.entry).collect())
+        let mut keys: Vec<KeyEntry> = self.store.crypto_keys(&account_id)?.into_iter().map(|k| k.entry).collect();
+        for key in keys.iter_mut().filter(|k| k.has_secret && k.needs_passphrase) {
+            key.unlocked = self.secrets.get(pass_name(&key.id)).ok().flatten().is_some_and(|p| !p.is_empty());
+        }
+        Ok(keys)
     }
 
     /// Adds the public keys or certificates in `data`: an armored or binary OpenPGP key, or one
@@ -145,13 +162,16 @@ impl Core {
     /// Removes a key or certificate, and what was remembered about its fingerprint.
     pub fn crypto_remove_key(&self, id: String) -> Result<()> {
         let account_id = self.account_id()?;
+        self.wipe_secret(&id);
         self.store.delete_crypto_key(&account_id, &id)?;
+        self.crypto.forget();
         Ok(())
     }
 
     /// Removes every key and certificate and what was remembered, and switches the feature off.
     pub fn crypto_forget_all(&self) -> Result<()> {
         let account_id = self.account_id()?;
+        self.crypto_wipe_secrets(&account_id);
         self.store.clear_crypto(&account_id)?;
         self.set_crypto_enabled(false)
     }
@@ -183,13 +203,104 @@ impl Core {
     /// Fetches the message whole, checks its signature and says what it covers (network). The
     /// text of the answer is never stored.
     pub fn crypto_open(&self, message_id: String) -> Result<CryptoView> {
-        Ok(self.analyse(&message_id)?.view)
+        self.crypto_open_with(message_id, None, false)
+    }
+    /// What a file chosen as a private key is, so the host knows whether to ask for a passphrase first.
+    pub fn crypto_inspect_private(&self, data: Vec<u8>) -> PrivateFile {
+        if data.len() > MAX_KEY_BYTES {
+            return PrivateFile::Unknown;
+        }
+        if openpgp::parse_secret(&data).is_ok() {
+            PrivateFile::OpenPgp
+        } else if looks_like_pkcs12(&data) {
+            PrivateFile::Pkcs12
+        } else {
+            PrivateFile::Unknown
+        }
+    }
+
+    /// Adds a private key: an OpenPGP secret key (armored or binary; its own passphrase is asked for when a message
+    /// needs it) or a PKCS#12 file (`passphrase` opens the file now and is not kept; the key is kept without it).
+    /// The private part goes into the host's secret store and nowhere else; the keyring gets the public part.
+    pub fn crypto_import_private(&self, data: Vec<u8>, passphrase: Option<String>) -> Result<Vec<KeyEntry>> {
+        let account_id = self.account_id()?;
+        if data.len() > MAX_KEY_BYTES {
+            return Err(Error::invalid("That file is too large to be a key."));
+        }
+        let mut added = Vec::new();
+        if let Ok(keys) = openpgp::parse_secret(&data) {
+            for key in &keys {
+                key.verify_bindings().map_err(|_| Error::invalid("The key's own signatures do not check out."))?;
+                let public = openpgp::public_of(key);
+                let mut stored = entry_of_pgp(&public, KeyOrigin::Own, "")?;
+                stored.entry.has_secret = true;
+                stored.entry.needs_passphrase = openpgp::is_locked(key);
+                let secret = openpgp::secret_bytes(key).map_err(Error::invalid)?;
+                added.push(self.keep_private(&account_id, stored, &secret)?);
+            }
+        } else if looks_like_pkcs12(&data) {
+            let pass = zeroize::Zeroizing::new(passphrase.unwrap_or_default());
+            let (cert, pkcs8) = smime::import_pkcs12(&data, &pass).map_err(|e| match e {
+                smime::P12Error::WrongPassphrase => Error::invalid("That passphrase does not open the file."),
+                smime::P12Error::NoKey => Error::invalid("There is no private key in that file."),
+                smime::P12Error::NotRsa => Error::invalid("Only RSA keys can open encrypted S/MIME mail here."),
+            })?;
+            let mut stored = entry_of_cert(&cert, KeyOrigin::Own, "")?;
+            stored.entry.has_secret = true;
+            added.push(self.keep_private(&account_id, stored, &pkcs8)?);
+        } else {
+            return Err(Error::invalid("That is not an OpenPGP secret key or a PKCS#12 file."));
+        }
+        Ok(added)
+    }
+
+    /// Like [`Core::crypto_open`], with a passphrase the user just typed. With `keep_unlocked` the passphrase of the key
+    /// it opened is kept in the host's secret store (and only there) so that mail opens without asking.
+    pub fn crypto_open_with(
+        &self,
+        message_id: String,
+        passphrase: Option<String>,
+        keep_unlocked: bool,
+    ) -> Result<CryptoView> {
+        let account_id = self.account_id()?;
+        let typed = passphrase.map(zeroize::Zeroizing::new);
+        let outcome = self.analyse(&message_id, typed.as_deref().map(String::as_str))?;
+        if let (true, Some(key_id), Some(pass)) = (keep_unlocked, &outcome.unlocked_with, &typed) {
+            self.secrets
+                .set(pass_name(key_id), pass.to_string())
+                .map_err(|_| Error::store("the phone's protected storage did not keep the passphrase"))?;
+        }
+        let _ = account_id;
+        self.crypto.set_held(&message_id, outcome.held);
+        Ok(outcome.view)
+    }
+
+    /// The passphrase kept for a key is deleted: it is asked for again.
+    pub fn crypto_forget_passphrase(&self, key_id: String) -> Result<()> {
+        self.account_id()?;
+        self.secrets
+            .delete(pass_name(&key_id))
+            .map_err(|_| Error::store("the phone's protected storage could not be changed"))
+    }
+
+    /// Writes one file of a decrypted message (the `index` of a [`CryptoAttachment`](crate::crypto::types::CryptoAttachment))
+    /// to `dest_path`. The file comes from memory; the host removes it again when it is done with it.
+    pub fn crypto_save_attachment(&self, message_id: String, index: u32, dest_path: String) -> Result<()> {
+        self.account_id()?;
+        let written = self
+            .crypto
+            .with_part(&message_id, index as usize, |part| std::fs::write(&dest_path, part.bytes.as_slice()));
+        match written {
+            Some(Ok(())) => Ok(()),
+            Some(Err(e)) => Err(Error::store(format!("saving the file: {e}"))),
+            None => Err(Error::invalid("Open the message again to get its files.")),
+        }
     }
 
     /// Adds a key found in a message (an `offer` of [`Core::crypto_open`]) to the keyring.
     pub fn crypto_import_offer(&self, message_id: String, offer_id: String) -> Result<KeyEntry> {
         let account_id = self.account_id()?;
-        let outcome = self.analyse(&message_id)?;
+        let outcome = self.analyse(&message_id, None)?;
         let (offer, material): &(KeyOffer, Vec<u8>) = outcome
             .offered
             .iter()
@@ -211,7 +322,7 @@ impl Core {
 
 impl Core {
     /// Fetches and analyses a message. Records the first fingerprint seen for the sender.
-    pub(super) fn analyse(&self, message_id: &str) -> Result<analyze::Outcome> {
+    pub(super) fn analyse(&self, message_id: &str, passphrase: Option<&str>) -> Result<analyze::Outcome> {
         let account_id = self.account_id()?;
         if !self.crypto_enabled()? {
             return Err(Error::invalid("Encryption is switched off."));
@@ -231,19 +342,97 @@ impl Core {
                 let mut view = CryptoView::plain(CryptoKind::None);
                 view.signature = crate::crypto::types::SignatureState::Unreadable;
                 view.detail = Some(msg);
-                return Ok(analyze::Outcome { view, record_first_seen: None, held: Vec::new(), offered: Vec::new() });
+                return Ok(analyze::Outcome {
+                    view,
+                    record_first_seen: None,
+                    held: Vec::new(),
+                    unlocked_with: None,
+                    offered: Vec::new(),
+                });
             }
             Err(e) => return Err(e),
         };
         let keys = self.key_rows(&account_id)?;
         let store = &self.store;
         let seen = |address: &str| store.crypto_first_seen(&account_id, address).ok().flatten();
-        let outcome = analyze::analyze(&raw, &analyze::Context { now: now(), keys: &keys, first_seen: &seen });
+        let secrets = self.secret_keys(&account_id)?;
+        let outcome = analyze::analyze(
+            &raw,
+            &analyze::Context { now: now(), keys: &keys, first_seen: &seen, secrets: &secrets, passphrase },
+        );
         if let Some((address, fingerprint)) = &outcome.record_first_seen {
             self.store.put_crypto_first_seen(&account_id, address, fingerprint, now())?;
         }
         self.crypto.set_kind(message_id, outcome.view.kind);
         Ok(outcome)
+    }
+
+    /// Stores the private part in the secret store, then the public part in the keyring; if the second fails the
+    /// first is taken back. An own key keeps no origin but "own".
+    fn keep_private(&self, account_id: &str, mut stored: StoredKey, secret: &[u8]) -> Result<KeyEntry> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let existing = self.store.crypto_key(account_id, &stored.entry.id)?;
+        stored.entry.origin = KeyOrigin::Own;
+        if let Some(old) = existing {
+            stored.entry.added_at = old.entry.added_at;
+        }
+        let name = secret_name(&stored.entry.id);
+        self.secrets
+            .set(name.clone(), STANDARD.encode(secret))
+            .map_err(|_| Error::store("the phone's protected storage did not take the key"))?;
+        if let Err(e) = self.store.put_crypto_key(account_id, &stored) {
+            let _ = self.secrets.delete(name);
+            return Err(e);
+        }
+        Ok(stored.entry)
+    }
+
+    /// The user's private keys for one analysis: read from the secret store, wiped when dropped.
+    fn secret_keys(&self, account_id: &str) -> Result<Vec<analyze::SecretKey>> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let mut out = Vec::new();
+        for key in self.store.crypto_keys(account_id)?.into_iter().filter(|k| k.entry.has_secret) {
+            let stored = self
+                .secrets
+                .get(secret_name(&key.entry.id))
+                .map_err(|_| Error::store("the phone's protected storage could not be read"))?;
+            let Some(encoded) = stored else { continue };
+            let Ok(material) = STANDARD.decode(encoded.as_bytes()) else { continue };
+            let stored_passphrase = self
+                .secrets
+                .get(pass_name(&key.entry.id))
+                .ok()
+                .flatten()
+                .filter(|p| !p.is_empty())
+                .map(zeroize::Zeroizing::new);
+            out.push(analyze::SecretKey {
+                id: key.entry.id.clone(),
+                kind: key.entry.kind,
+                label: key.entry.label.clone(),
+                fingerprint: key.entry.fingerprint.clone(),
+                material: zeroize::Zeroizing::new(material),
+                cert: if key.entry.kind == KeyKind::Smime { key.material.clone() } else { Vec::new() },
+                stored_passphrase,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Deletes the private part and the kept passphrase of one key. Failures are not an error: the entry
+    /// goes from the keyring anyway, and a leftover private part is unreachable without it.
+    fn wipe_secret(&self, key_id: &str) {
+        let _ = self.secrets.delete(secret_name(key_id));
+        let _ = self.secrets.delete(pass_name(key_id));
+    }
+
+    /// Deletes every private part and kept passphrase of the account's keys.
+    pub(super) fn crypto_wipe_secrets(&self, account_id: &str) {
+        if let Ok(keys) = self.store.crypto_keys(account_id) {
+            for key in keys {
+                self.wipe_secret(&key.entry.id);
+            }
+        }
+        self.crypto.forget();
     }
 
     fn key_rows(&self, account_id: &str) -> Result<Vec<KeyRow>> {

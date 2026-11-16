@@ -39,7 +39,9 @@ Usage:
   kweb label set <message-id> <label-id> on|off
                               put a label on a message or take it off
   kweb label show <label-id>  list the mail that has the label
-  kweb crypto status|on|off|keys|import <file>|rm <id>|check <message-id>|take <message-id> <key-id>
+  kweb crypto status|on|off|keys|import <file>|rm <id>|check <message-id>|take <message-id> <key-id>|import-private <file>|lock <key-id>
+  kweb crypto decrypt <message-id> [--keep] [--show] [--save-to <dir>]
+                              the passphrase comes from the environment variable KWEB_PASSPHRASE
                               S/MIME and OpenPGP: keyring, and the signature status of a message
   kweb watch                  follow live changes until Ctrl+C
   kweb read <message-id>      mark a message read

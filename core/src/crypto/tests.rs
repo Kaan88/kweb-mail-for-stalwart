@@ -41,7 +41,7 @@ pub(super) fn cert_row(file: &str) -> KeyRow {
 fn check(raw: &[u8], keys: &[KeyRow], first: Option<&str>) -> Outcome {
     let first = first.map(str::to_string);
     let lookup = move |_: &str| first.clone();
-    analyze(raw, &Context { now: now(), keys, first_seen: &lookup })
+    analyze(raw, &Context { now: now(), keys, first_seen: &lookup, secrets: &[], passphrase: None })
 }
 
 fn replace(raw: &[u8], from: &str, to: &str) -> Vec<u8> {

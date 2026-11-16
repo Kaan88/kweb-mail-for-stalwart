@@ -282,6 +282,8 @@ pub enum DecryptError {
     /// The message has no integrity protection (a packet an attacker could change undetected), or
     /// the protection did not check out. Nothing of it is shown.
     NoIntegrity,
+    /// A kind of encryption this program does not open (vendor extensions).
+    Unsupported,
     Unreadable,
 }
 
@@ -308,6 +310,14 @@ pub fn decrypt(
     .map_err(|_| DecryptError::Unreadable)?;
     if !message.is_encrypted() {
         return Err(DecryptError::Unreadable);
+    }
+    // Encrypted data that carries no integrity check is never opened: an attacker could change it.
+    if let Message::Encrypted { edata, .. } = &message {
+        match edata {
+            pgp::composed::Edata::SymEncryptedProtectedData { .. } => {}
+            pgp::composed::Edata::SymEncryptedData { .. } => return Err(DecryptError::NoIntegrity),
+            _ => return Err(DecryptError::Unsupported),
+        }
     }
     let passwords: Vec<Password> = secrets.iter().map(|s| Password::from(s.passphrase)).collect();
     let keys: Vec<&SignedSecretKey> = secrets.iter().map(|s| s.key).collect();
@@ -371,4 +381,61 @@ pub fn is_locked(key: &SignedSecretKey) -> bool {
 pub fn passphrase_opens(key: &SignedSecretKey, passphrase: &str) -> bool {
     let password = Password::from(passphrase);
     key.primary_key.unlock(&password, |_, _| Ok(())).is_ok_and(|inner| inner.is_ok())
+}
+
+/// The ids of the keys a message is encrypted for (key ids or fingerprints, raw bytes). An empty
+/// list means the message hides its recipients (wildcard) and every key has to be tried.
+pub fn recipient_ids(data: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let message = if is_armored(data) {
+        Message::from_armor(Cursor::new(data.to_vec())).map(|(m, _)| m)
+    } else {
+        Message::from_bytes(Cursor::new(data.to_vec()))
+    }
+    .ok()?;
+    let Message::Encrypted { esk, .. } = &message else { return None };
+    let mut ids = Vec::new();
+    for e in esk {
+        if let pgp::composed::Esk::PublicKeyEncryptedSessionKey(p) = e {
+            if let Ok(id) = p.id() {
+                if !id.is_wildcard() {
+                    ids.push(id.as_ref().to_vec());
+                }
+            } else if let Ok(Some(fp)) = p.fingerprint() {
+                ids.push(fp.as_bytes().to_vec());
+            }
+        }
+    }
+    Some(ids)
+}
+
+/// Whether the secret key is one of the recipients: its primary key or a subkey has one of the ids.
+pub fn is_recipient(key: &SignedSecretKey, ids: &[Vec<u8>]) -> bool {
+    if ids.is_empty() {
+        return true;
+    }
+    let mut mine: Vec<Vec<u8>> =
+        vec![key.primary_key.legacy_key_id().as_ref().to_vec(), key.primary_key.fingerprint().as_bytes().to_vec()];
+    for sub in &key.secret_subkeys {
+        mine.push(sub.key.legacy_key_id().as_ref().to_vec());
+        mine.push(sub.key.fingerprint().as_bytes().to_vec());
+    }
+    for sub in &key.public_subkeys {
+        mine.push(sub.key.legacy_key_id().as_ref().to_vec());
+        mine.push(sub.key.fingerprint().as_bytes().to_vec());
+    }
+    ids.iter().any(|id| mine.contains(id))
+}
+
+/// The public part of a secret key, for the keyring.
+pub fn public_of(key: &SignedSecretKey) -> SignedPublicKey {
+    SignedPublicKey::from(key.clone())
+}
+
+pub fn secret_bytes(key: &SignedSecretKey) -> Result<Zeroizing<Vec<u8>>, String> {
+    use pgp::ser::Serialize;
+    key.to_bytes().map(Zeroizing::new).map_err(|_| "the key could not be written".to_string())
+}
+
+pub fn fingerprint_of_secret(key: &SignedSecretKey) -> String {
+    hex_upper(key.primary_key.fingerprint().as_bytes())
 }

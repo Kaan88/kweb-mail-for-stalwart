@@ -197,5 +197,32 @@ def main():
     print("fixtures written to", OUT)
 
 
+def extras():
+    """Messages added later, made with the keys that are already committed (nothing else is regenerated)."""
+    gpg("--import", data=open(os.path.join(OUT, "bob.pub.asc"), "rb").read())
+    b = "attach-boundary"
+    inner = crlf(
+        f'Content-Type: multipart/mixed; boundary="{b}"\n\n--{b}\nContent-Type: text/html; charset=utf-8\n\n'
+        '<p>Secret <b>html</b> with a file.</p>\n'
+        f'--{b}\nContent-Type: text/plain; name="note.txt"\nContent-Disposition: attachment; filename="note.txt"\n'
+        f'Content-Transfer-Encoding: base64\n\nVGhlIGF0dGFjaGVkIG5vdGUu\n--{b}--\n'
+    )
+    enc = gpg("--armor", "--trust-model", "always", "--encrypt", "-r", "bob@example.test", "--passphrase", "", data=inner.encode()).decode()
+    ob = "pgp-enc-boundary"
+    msg = (
+        headers("Alice <alice@example.test>", "Bob <bob@example.test>", "Encrypted with a file",
+                f'Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="{ob}"\n')
+        + crlf(f"\n--{ob}\nContent-Type: application/pgp-encrypted\n\nVersion: 1\n\n--{ob}\nContent-Type: application/octet-stream; name=\"encrypted.asc\"\n\n")
+        + crlf(enc) + crlf(f"--{ob}--\n")
+    )
+    write("pgp-encrypted-attachment.eml", msg)
+    print("extras written to", OUT)
+
+
 if __name__ == "__main__":
-    main()
+    if "--extras" in sys.argv:
+        extras()
+        run(["gpgconf", "--kill", "gpg-agent"], check=False)
+        shutil.rmtree(HOME, ignore_errors=True)
+    else:
+        main()

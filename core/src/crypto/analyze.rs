@@ -32,6 +32,10 @@ pub struct Context<'a> {
     pub keys: &'a [KeyRow],
     /// The fingerprint first seen for a From address (lower case), if any.
     pub first_seen: &'a dyn Fn(&str) -> Option<String>,
+    /// The user's private keys, loaded for this call only.
+    pub secrets: &'a [SecretKey],
+    /// A passphrase the user just typed.
+    pub passphrase: Option<&'a str>,
 }
 
 /// A file inside a decrypted or opaque message, held in memory for the host to save on request.
@@ -46,6 +50,8 @@ pub struct Outcome {
     /// Remember this fingerprint as the first one seen for the address (trust on first use).
     pub record_first_seen: Option<(String, String)>,
     pub held: Vec<HeldPart>,
+    /// The key a typed passphrase opened, so the host can keep it unlocked if the user chose to.
+    pub unlocked_with: Option<String>,
     /// The keys found in the message, with their bytes, for importing: `(offer, material)`.
     pub offered: Vec<(KeyOffer, Vec<u8>)>,
 }
@@ -128,6 +134,7 @@ pub fn analyze(raw: &[u8], ctx: &Context<'_>) -> Outcome {
         view: CryptoView::plain(CryptoKind::None),
         record_first_seen: None,
         held: Vec::new(),
+        unlocked_with: None,
         offered: Vec::new(),
     };
     out.view.from = from.clone();
@@ -164,8 +171,8 @@ pub fn analyze(raw: &[u8], ctx: &Context<'_>) -> Outcome {
             out.view.kind = CryptoKind::SmimeOpaque;
             out.view.covers_whole_message = whole;
             let der = node.decoded_body(raw);
-            match smime::is_signed_data(&der) {
-                Some(true) => {
+            match smime::cms_kind(&der) {
+                smime::CmsKind::Signed => {
                     let (_, certs) = parse_keyring(ctx.keys);
                     let result = smime::verify(&der, None, &certs, ctx.now);
                     let content = result.content.clone();
@@ -174,16 +181,23 @@ pub fn analyze(raw: &[u8], ctx: &Context<'_>) -> Outcome {
                         set_content(&mut out, &inner, true);
                     }
                 }
-                Some(false) => encrypted(&mut out, CryptoKind::SmimeOpaque),
-                None => {
+                smime::CmsKind::Enveloped => open_smime(&mut out, &der, ctx),
+                smime::CmsKind::AuthEnveloped => {
+                    out.view.encryption = EncryptionState::Unsupported;
+                    out.view.notes.push(CryptoNote::NotSearchable);
+                    out.view.detail =
+                        Some("authenticated enveloped data (AES-GCM), which this app does not open yet".into());
+                }
+                smime::CmsKind::Other => {
                     out.view.signature = SignatureState::Unreadable;
                     out.view.detail = Some("the S/MIME data could not be read".into());
                 }
             }
         }
-        Some((_, Found::PgpEncrypted, whole)) => {
+        Some((node, Found::PgpEncrypted, whole)) => {
             out.view.covers_whole_message = whole;
-            encrypted(&mut out, CryptoKind::PgpEncrypted);
+            let data = node.children[1].decoded_body(raw);
+            open_pgp(&mut out, &data, ctx, CryptoKind::PgpEncrypted, true);
         }
         None => inline_pgp(raw, &root, ctx, &mut out, &from),
     }
@@ -191,11 +205,178 @@ pub fn analyze(raw: &[u8], ctx: &Context<'_>) -> Outcome {
     out
 }
 
-/// Encrypted mail with no way to open it yet (stage 2 replaces this).
-fn encrypted(out: &mut Outcome, kind: CryptoKind) {
+/// A private key the user imported, as the core hands it to the analysis for one call. The
+/// material is wiped when it is dropped.
+pub struct SecretKey {
+    pub id: String,
+    pub kind: KeyKind,
+    pub label: String,
+    pub fingerprint: String,
+    /// OpenPGP: the binary secret key (still locked if it was). S/MIME: the PKCS#8 key.
+    pub material: zeroize::Zeroizing<Vec<u8>>,
+    /// S/MIME: the certificate (DER) the key belongs to.
+    pub cert: Vec<u8>,
+    /// The passphrase the user chose to keep on this phone for the key.
+    pub stored_passphrase: Option<zeroize::Zeroizing<String>>,
+}
+
+/// Opens an OpenPGP message with the user's keys. `mime`: the plaintext is a MIME entity (PGP/MIME);
+/// otherwise it is text (inline). The decrypted text is shown on its own; it is never merged with the
+/// outer message, and nothing is opened unless the packet carries an integrity check.
+fn open_pgp(out: &mut Outcome, data: &[u8], ctx: &Context<'_>, kind: CryptoKind, mime: bool) {
     out.view.kind = kind;
-    out.view.encryption = EncryptionState::NeedKey;
     out.view.notes.push(CryptoNote::NotSearchable);
+    let mut secrets: Vec<(&SecretKey, pgp::composed::SignedSecretKey)> = Vec::new();
+    for s in ctx.secrets.iter().filter(|s| s.kind == KeyKind::Pgp) {
+        if let Some(key) = openpgp::parse_secret(&s.material).ok().and_then(|mut k| k.pop()) {
+            secrets.push((s, key));
+        }
+    }
+    let Some(ids) = openpgp::recipient_ids(data) else {
+        out.view.encryption = EncryptionState::Failed;
+        return;
+    };
+    let candidates: Vec<_> = secrets.iter().filter(|(_, k)| openpgp::is_recipient(k, &ids)).collect();
+    if candidates.is_empty() {
+        out.view.encryption = EncryptionState::NeedKey;
+        return;
+    }
+    // Which passphrase goes to which key: the one just typed, else the one kept for the key.
+    let mut unlockable: Vec<(&pgp::composed::SignedSecretKey, String)> = Vec::new();
+    let (mut asked_for, mut wrong, mut typed_for) = (None, None, None);
+    for (s, key) in &candidates {
+        if !openpgp::is_locked(key) {
+            unlockable.push((key, String::new()));
+            continue;
+        }
+        let typed = ctx.passphrase.map(str::to_string);
+        let kept = s.stored_passphrase.as_ref().map(|p| p.to_string());
+        match typed.into_iter().chain(kept).find(|p| openpgp::passphrase_opens(key, p)) {
+            Some(p) => {
+                if ctx.passphrase == Some(p.as_str()) {
+                    typed_for = Some(s.id.clone());
+                }
+                unlockable.push((key, p));
+            }
+            None if ctx.passphrase.is_some() => wrong = wrong.or(Some(s.label.clone())),
+            None => asked_for = asked_for.or(Some(s.label.clone())),
+        }
+    }
+    if unlockable.is_empty() {
+        match (wrong, asked_for) {
+            (Some(label), _) => {
+                out.view.encryption = EncryptionState::WrongPassphrase;
+                out.view.passphrase_for = Some(label);
+            }
+            (None, label) => {
+                out.view.encryption = EncryptionState::NeedPassphrase;
+                out.view.passphrase_for = label;
+            }
+        }
+        return;
+    }
+    let (parsed, _) = parse_keyring(ctx.keys);
+    let public: Vec<_> = parsed.iter().map(|p| p.key.clone()).collect();
+    let unlock: Vec<openpgp::Unlockable<'_>> =
+        unlockable.iter().map(|(key, pass)| openpgp::Unlockable { key, passphrase: pass }).collect();
+    match openpgp::decrypt(data, &unlock, &public, ctx.now) {
+        Ok(done) => {
+            out.view.encryption = EncryptionState::Decrypted;
+            out.unlocked_with = typed_for;
+            let from = out.view.from.clone();
+            if let Some(verdict) = done.inner {
+                out.view.notes.push(CryptoNote::SignedInsideEncryption);
+                apply_pgp(out, verdict, &parsed, ctx, None);
+            }
+            if mime {
+                inner_entity(out, &done.plaintext, ctx, &from, false);
+            } else {
+                let text = String::from_utf8_lossy(&done.plaintext).into_owned();
+                out.view.content = Some(CryptoContent { html: None, text: Some(text), attachments: Vec::new() });
+            }
+        }
+        Err(openpgp::DecryptError::NoKey) => out.view.encryption = EncryptionState::NeedKey,
+        Err(openpgp::DecryptError::WrongPassphrase) => out.view.encryption = EncryptionState::WrongPassphrase,
+        Err(openpgp::DecryptError::NoIntegrity) => out.view.encryption = EncryptionState::NoIntegrity,
+        Err(openpgp::DecryptError::Unsupported) => {
+            out.view.encryption = EncryptionState::Unsupported;
+            out.view.detail = Some("an encryption packet this app does not open".into());
+        }
+        Err(openpgp::DecryptError::Unreadable) => out.view.encryption = EncryptionState::Failed,
+    }
+}
+
+/// Opens S/MIME enveloped data. Its encryption (CBC) cannot tell a changed message from the original, so the
+/// result is shown alone with remote content off, whatever the user's setting is.
+fn open_smime(out: &mut Outcome, der: &[u8], ctx: &Context<'_>) {
+    out.view.kind = CryptoKind::SmimeOpaque;
+    out.view.notes.push(CryptoNote::NotSearchable);
+    let keys: Vec<smime::Private<'_>> = ctx
+        .secrets
+        .iter()
+        .filter(|s| s.kind == KeyKind::Smime)
+        .map(|s| smime::Private { cert: &s.cert, pkcs8: &s.material })
+        .collect();
+    match smime::decrypt(der, &keys) {
+        Ok(plain) => {
+            out.view.encryption = EncryptionState::Decrypted;
+            let from = out.view.from.clone();
+            inner_entity(out, &plain, ctx, &from, true);
+        }
+        Err(smime::DecryptFail::NoKey) => out.view.encryption = EncryptionState::NeedKey,
+        Err(smime::DecryptFail::Unsupported(why)) => {
+            out.view.encryption = EncryptionState::Unsupported;
+            out.view.detail = Some(why);
+        }
+        Err(smime::DecryptFail::Failed) => out.view.encryption = EncryptionState::Failed,
+    }
+}
+
+/// The decrypted MIME entity: look for a signature inside it (a signed message that was encrypted), and show its
+/// content alone. Only what was signed is shown for a signed entity.
+fn inner_entity(out: &mut Outcome, plain: &[u8], ctx: &Context<'_>, from: &str, block_remote: bool) {
+    // The entity has no From of its own: the outer message's is lent to it, so the signer is compared with it.
+    let mut lent = format!("From: {from}\r\n").into_bytes();
+    lent.extend_from_slice(plain);
+    let inner_ctx = Context { secrets: &[], passphrase: None, ..*ctx };
+    let inner = analyze(&lent, &inner_ctx);
+    let signed_inside = inner.view.signature != SignatureState::NotSigned;
+    let payload: Vec<u8> = match mime::parse(plain) {
+        // The signed part of a signed entity, not the signature around it.
+        Some(root) if signed_inside && inner.view.kind != CryptoKind::SmimeOpaque && root.children.len() == 2 => {
+            plain[root.children[0].whole.clone()].to_vec()
+        }
+        _ => plain.to_vec(),
+    };
+    if signed_inside {
+        out.view.signature = inner.view.signature;
+        out.view.signer = inner.view.signer;
+        out.record_first_seen = out.record_first_seen.take().or(inner.record_first_seen);
+        out.view.notes.push(CryptoNote::SignedInsideEncryption);
+        for n in inner.view.notes {
+            if !out.view.notes.contains(&n) {
+                out.view.notes.push(n);
+            }
+        }
+        out.offered.extend(inner.offered);
+    }
+    let payload = match (&inner.view.content, inner.view.kind) {
+        // Opaque signed data inside: its content came out of the signed data.
+        (Some(_), CryptoKind::SmimeOpaque) => None,
+        _ => Some(payload),
+    };
+    match payload {
+        Some(bytes) => set_content(out, &bytes, block_remote),
+        None => {
+            out.view.content = inner.view.content;
+            out.held = inner.held;
+            if block_remote {
+                out.view.remote_content_blocked = true;
+                out.view.notes.push(CryptoNote::RemoteContentBlocked);
+            }
+        }
+    }
+    sync_offers(out);
 }
 
 fn inline_pgp(raw: &[u8], _root: &Node, ctx: &Context<'_>, out: &mut Outcome, _from: &str) {
@@ -219,7 +400,7 @@ fn inline_pgp(raw: &[u8], _root: &Node, ctx: &Context<'_>, out: &mut Outcome, _f
             }
             out.view.content = Some(CryptoContent { html: None, text: Some(clear.text), attachments: Vec::new() });
         }
-        ArmorKind::Message => encrypted(out, CryptoKind::PgpInline),
+        ArmorKind::Message => open_pgp(out, text[block.range.clone()].as_bytes(), ctx, CryptoKind::PgpInline, false),
         ArmorKind::PublicKey => {}
     }
 }
@@ -453,8 +634,12 @@ fn content_of(entity: &[u8]) -> (CryptoContent, Vec<HeldPart>) {
     }
     let mut attachments = Vec::new();
     let mut held = Vec::new();
-    let mut seen_binary = |part: mail_parser::MessagePart<'_>, held: &mut Vec<HeldPart>| {
-        if !matches!(part.kind(), PartKind::Binary | PartKind::InlineBinary | PartKind::Message(_)) {
+    // A file is a leaf the server's rules list as an attachment (whatever its type, a text file included) or a
+    // non-text part of a body (a picture).
+    let mut seen_binary = |part: mail_parser::MessagePart<'_>, held: &mut Vec<HeldPart>, listed: bool| {
+        let is_file = matches!(part.kind(), PartKind::Binary | PartKind::InlineBinary | PartKind::Message(_))
+            || (listed && !matches!(part.kind(), PartKind::Multipart));
+        if !is_file {
             return;
         }
         let mime_type = part
@@ -475,8 +660,11 @@ fn content_of(entity: &[u8]) -> (CryptoContent, Vec<HeldPart>) {
         });
         held.push(HeldPart { name, mime_type, bytes: zeroize::Zeroizing::new(bytes) });
     };
-    for part in message.html_body().chain(message.text_body()).chain(message.attachments()) {
-        seen_binary(part, &mut held);
+    for part in message.html_body().chain(message.text_body()) {
+        seen_binary(part, &mut held, false);
+    }
+    for part in message.attachments() {
+        seen_binary(part, &mut held, true);
     }
     // Pictures listed in both bodies are one file.
     let mut seen = std::collections::HashSet::new();

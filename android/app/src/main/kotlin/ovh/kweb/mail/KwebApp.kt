@@ -26,7 +26,10 @@ class KwebApp : Application() {
 
     private fun warmUp() {
         try {
-            if (Accounts.load(this).isEmpty()) return
+            val accounts = Accounts.load(this)
+            if (accounts.isEmpty()) return
+            // Files of an opened encrypted message are only kept while its screen is open; a crash or kill may have left some.
+            for (account in accounts) ovh.kweb.mail.ui.crypto.CryptoTemp.clear(this, account.id)
             Accounts.sessions()
             Background.refreshStatus(this)
             CheckScheduler.schedulePeriodic(this)

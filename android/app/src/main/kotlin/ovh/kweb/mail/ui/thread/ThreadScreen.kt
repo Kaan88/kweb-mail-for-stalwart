@@ -146,6 +146,22 @@ fun ThreadScreen(
     val unsubscribes by vm.unsubscribe.state.collectAsStateWithLifecycle()
     val cryptos by vm.crypto.state.collectAsStateWithLifecycle()
     var cryptoId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The passphrase prompt: only the page the user is on asks, once per message until the user asks again from the chip.
+    var passphraseId by rememberSaveable { mutableStateOf<String?>(null) }
+    var skipped by remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(cryptos, active) {
+        if (passphraseId == null) {
+            passphraseId = cryptos.entries.firstOrNull { (id, ui) ->
+                id !in skipped && ui is ovh.kweb.mail.ui.crypto.CryptoUi.Ready && ovh.kweb.mail.ui.crypto.CryptoRules.mayPrompt(ui.view, active)
+            }?.key
+        }
+    }
+    val cryptoSession = ovh.kweb.mail.ui.accounts.LocalAccountSession.current
+    // The files of an opened encrypted message are written to a folder of their own in the cache while they are open,
+    // and the folder is emptied when the screen is left.
+    androidx.compose.runtime.DisposableEffect(vm) {
+        onDispose { ovh.kweb.mail.ui.crypto.CryptoTemp.clear(context, cryptoSession.record.id) }
+    }
 
     fun say(textRes: Int) {
         scope.launch { snackbar.showSnackbar(resources.getString(textRes)) }
@@ -457,6 +473,12 @@ fun ThreadScreen(
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
                         crypto = cryptos[header.id],
+                        onOpenCryptoFile = { file ->
+                            scope.launch {
+                                val opened = ovh.kweb.mail.ui.crypto.CryptoTemp.open(context, cryptoSession, header.id, file)
+                                if (opened == null) say(R.string.crypto_attachment_failed) else context.startActivity(opened)
+                            }
+                        },
                         actions = CardActions(
                             onCryptoChip = { cryptoId = header.id },
                             onLabels = { labelsTarget = header.id },
@@ -573,6 +595,19 @@ fun ThreadScreen(
             }
         }
     }
+    passphraseId?.let { id ->
+        val view = (cryptos[id] as? ovh.kweb.mail.ui.crypto.CryptoUi.Ready)?.view
+        if (view == null || !ovh.kweb.mail.ui.crypto.CryptoRules.needsPassphrase(view)) {
+            passphraseId = null
+        } else {
+            ovh.kweb.mail.ui.crypto.PassphraseDialog(
+                keyName = ovh.kweb.mail.ui.crypto.CryptoRules.keyName(view),
+                wrong = view.encryption == uniffi.kweb_core.EncryptionState.WRONG_PASSPHRASE,
+                onSubmit = { pass, keep -> passphraseId = null; vm.crypto.open(id, pass, keep) },
+                onDismiss = { skipped = skipped + id; passphraseId = null },
+            )
+        }
+    }
     cryptoId?.let { id ->
         val ui = cryptos[id]
         if (ui == null) {
@@ -583,6 +618,7 @@ fun ThreadScreen(
                 onDismiss = { cryptoId = null },
                 onRetry = { vm.crypto.recheck(id) },
                 onTakeOffer = { offer -> vm.crypto.takeOffer(id, offer) { say(R.string.crypto_offer_failed) } },
+                onPassphrase = { cryptoId = null; skipped = skipped - id; passphraseId = id },
             )
         }
     }

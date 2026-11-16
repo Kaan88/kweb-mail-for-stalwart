@@ -138,6 +138,8 @@ fun MessageCard(
     unsubscribe: UnsubEntry? = null,
     /** The status of a signed or encrypted message; null for plain mail. */
     crypto: CryptoUi? = null,
+    /** A tap on a file of an opened encrypted message. */
+    onOpenCryptoFile: (uniffi.kweb_core.CryptoAttachment) -> Unit = {},
     /** A thread of one message is drawn flat on the page (subject, sender, body, files), as in the owner's sheet, not as a card. */
     flat: Boolean = false,
 ) {
@@ -188,6 +190,9 @@ fun MessageCard(
                 val view = (crypto as? CryptoUi.Ready)?.view
                 val shown = if (body is BodyState.Loaded && view != null) BodyState.Loaded(CryptoRules.displayBody(body.body, view)) else body
                 BodyView(header, shown, CryptoRules.remoteAllowed(remoteAllowed, view), busyBlobId, download, actions, account, flatNow, CryptoRules.remoteOffered(view))
+                view?.content?.attachments?.filter { !it.isInline }?.takeIf { it.isNotEmpty() }?.let { files ->
+                    ovh.kweb.mail.ui.crypto.CryptoFiles(files, flatNow, onOpenCryptoFile)
+                }
             }
         }
     }

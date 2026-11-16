@@ -30,7 +30,28 @@ pub enum Crypto {
         id: String,
         offer: String,
     },
+    /// Add a private key (OpenPGP secret key or PKCS#12 file). A PKCS#12 passphrase comes from KWEB_PASSPHRASE.
+    ImportPrivate {
+        path: String,
+    },
+    /// Open an encrypted message: the passphrase of the key comes from KWEB_PASSPHRASE; `--keep` keeps the key
+    /// unlocked; `--show` prints the decrypted text; `--save-to <dir>` writes its files.
+    Decrypt {
+        id: String,
+        keep: bool,
+        show: bool,
+        save_to: Option<String>,
+    },
+    /// Delete the passphrase kept for a key.
+    Lock {
+        id: String,
+    },
 }
+
+/// The environment variable the passphrase is read from (never an argument, which shell history would keep).
+pub const PASSPHRASE_VARIABLE: &str = "KWEB_PASSPHRASE";
+
+const USAGE: &str = "crypto takes: status | on | off | keys | import <file> | rm <key-id> | check <message-id> | take <message-id> <key-id> | import-private <file> | decrypt <message-id> [--keep] [--show] [--save-to <dir>] | lock <key-id>";
 
 pub fn parse(rest: &[String]) -> Result<Crypto, String> {
     let words: Vec<&str> = rest.iter().map(String::as_str).collect();
@@ -43,7 +64,22 @@ pub fn parse(rest: &[String]) -> Result<Crypto, String> {
         ["rm", id] => Ok(Crypto::Remove { id: (*id).into() }),
         ["check", id] => Ok(Crypto::Check { id: (*id).into() }),
         ["take", id, offer] => Ok(Crypto::Take { id: (*id).into(), offer: (*offer).into() }),
-        _ => Err("crypto takes: status | on | off | keys | import <file> | rm <key-id> | check <message-id> | take <message-id> <key-id>".into()),
+        ["import-private", path] => Ok(Crypto::ImportPrivate { path: (*path).into() }),
+        ["lock", id] => Ok(Crypto::Lock { id: (*id).into() }),
+        ["decrypt", id, flags @ ..] => {
+            let (mut keep, mut show, mut save_to) = (false, false, None);
+            let mut flags = flags.iter();
+            while let Some(flag) = flags.next() {
+                match *flag {
+                    "--keep" => keep = true,
+                    "--show" => show = true,
+                    "--save-to" => save_to = Some(flags.next().ok_or("--save-to takes a folder")?.to_string()),
+                    other => return Err(format!("unknown option {other}")),
+                }
+            }
+            Ok(Crypto::Decrypt { id: (*id).into(), keep, show, save_to })
+        }
+        _ => Err(USAGE.into()),
     }
 }
 
@@ -79,6 +115,37 @@ pub fn run(core: &Core, what: Crypto) -> Result<(), String> {
         }
         Crypto::Take { id, offer } => {
             println!("added: {}", key_line(&core.crypto_import_offer(id, offer).map_err(e)?));
+        }
+        Crypto::ImportPrivate { path } => {
+            let data = std::fs::read(&path).map_err(|x| format!("cannot read {path}: {x}"))?;
+            let passphrase = std::env::var(PASSPHRASE_VARIABLE).ok();
+            for k in core.crypto_import_private(data, passphrase).map_err(e)? {
+                println!("added: {}", key_line(&k));
+            }
+        }
+        Crypto::Lock { id } => core.crypto_forget_passphrase(id).map_err(e)?,
+        Crypto::Decrypt { id, keep, show, save_to } => {
+            let passphrase = std::env::var(PASSPHRASE_VARIABLE).ok();
+            let view = core.crypto_open_with(id.clone(), passphrase, keep).map_err(e)?;
+            print_view(&view);
+            let Some(content) = &view.content else { return Ok(()) };
+            if show {
+                println!();
+                println!("{}", content.text.clone().or_else(|| content.html.clone()).unwrap_or_default());
+            }
+            if let Some(dir) = save_to {
+                for file in &content.attachments {
+                    let name = if file.name.is_empty() {
+                        format!("file-{}", file.index)
+                    } else {
+                        file.name.replace(['/', '\\'], "_")
+                    };
+                    let path = std::path::Path::new(&dir).join(name);
+                    core.crypto_save_attachment(id.clone(), file.index, path.to_string_lossy().into_owned())
+                        .map_err(e)?;
+                    println!("saved: {}", path.display());
+                }
+            }
         }
     }
     Ok(())
@@ -158,5 +225,27 @@ pub fn print_view(v: &CryptoView) {
     }
     if let Some(c) = &v.content {
         println!("content: {} attachments", c.attachments.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(words: &[&str]) -> Result<Crypto, String> {
+        parse(&words.iter().map(|w| w.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn the_commands_are_read() {
+        assert_eq!(p(&["status"]), Ok(Crypto::Status));
+        assert_eq!(p(&["check", "e1"]), Ok(Crypto::Check { id: "e1".into() }));
+        assert_eq!(
+            p(&["decrypt", "e1", "--keep", "--save-to", "out"]),
+            Ok(Crypto::Decrypt { id: "e1".into(), keep: true, show: false, save_to: Some("out".into()) })
+        );
+        assert!(p(&["decrypt", "e1", "--save-to"]).is_err());
+        assert!(p(&["decrypt", "e1", "--passphrase", "x"]).is_err(), "a passphrase is never an argument");
+        assert!(p(&[]).is_err());
     }
 }

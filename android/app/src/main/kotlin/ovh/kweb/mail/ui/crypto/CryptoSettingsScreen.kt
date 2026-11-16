@@ -72,6 +72,7 @@ import ovh.kweb.mail.ui.theme.KwebSwitch
 import uniffi.kweb_core.KeyEntry
 import uniffi.kweb_core.KeyKind
 import uniffi.kweb_core.KeyOrigin
+import uniffi.kweb_core.PrivateFile
 import uniffi.kweb_core.Exception as CoreException
 
 data class CryptoSettingsState(
@@ -79,6 +80,9 @@ data class CryptoSettingsState(
     val keys: List<KeyEntry> = emptyList(),
     val loaded: Boolean = false,
     val failed: Boolean = false,
+    /** A PKCS#12 file the user chose that waits for its passphrase. Its bytes are in the view model, in memory only. */
+    val askingPassphrase: Boolean = false,
+    val passphraseWrong: Boolean = false,
 )
 
 /** What the screen says once: a snackbar, in the user's words. */
@@ -127,6 +131,71 @@ class CryptoSettingsViewModel(app: Application, private val session: AccountSess
     fun importFile(uri: Uri) = import(KeyOrigin.FILE) {
         getApplication<Application>().contentResolver.openInputStream(uri)?.use { readUpTo(it, MAX_FILE) } ?: ByteArray(0)
     }
+
+    private var pendingP12: ByteArray? = null
+
+    /** A private key file: an OpenPGP key goes in as it is; a PKCS#12 file asks for its passphrase first. */
+    fun importPrivateFile(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val data = withContext(Dispatchers.IO) {
+                    getApplication<Application>().contentResolver.openInputStream(uri)?.use { readUpTo(it, MAX_FILE) } ?: ByteArray(0)
+                }
+                when (withContext(Dispatchers.IO) { session.core.cryptoInspectPrivate(data) }) {
+                    PrivateFile.PKCS12 -> {
+                        pendingP12 = data
+                        stateFlow.update { it.copy(askingPassphrase = true, passphraseWrong = false) }
+                    }
+                    else -> importPrivate(data, null)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading a key file failed: ${e.javaClass.simpleName}")
+                eventsFlow.send(CryptoSettingsEvent.Refused(""))
+            }
+        }
+    }
+
+    /** The passphrase of the waiting PKCS#12 file. A wrong one asks again; the file stays in memory until it is imported or dropped. */
+    fun submitPassphrase(passphrase: String) {
+        val data = pendingP12 ?: return
+        viewModelScope.launch {
+            val refused = importPrivate(data, passphrase)
+            if (refused == null) {
+                pendingP12 = null
+                stateFlow.update { it.copy(askingPassphrase = false) }
+            } else {
+                stateFlow.update { it.copy(askingPassphrase = true, passphraseWrong = true) }
+            }
+        }
+    }
+
+    fun dropPassphraseRequest() {
+        pendingP12 = null
+        stateFlow.update { it.copy(askingPassphrase = false, passphraseWrong = false) }
+    }
+
+    /** Returns null when the key was added, else the core's reason. */
+    private suspend fun importPrivate(data: ByteArray, passphrase: String?): String? {
+        return try {
+            val added = withContext(Dispatchers.IO) { session.core.cryptoImportPrivate(data, passphrase) }
+            eventsFlow.send(CryptoSettingsEvent.Added(added.joinToString(", ") { it.label }))
+            load()
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: CoreException.Invalid) {
+            if (passphrase == null) eventsFlow.send(CryptoSettingsEvent.Refused(e.msg))
+            e.msg
+        } catch (e: Exception) {
+            Log.w(Background.TAG, "importing a private key failed: ${e.javaClass.simpleName}")
+            eventsFlow.send(CryptoSettingsEvent.Refused(""))
+            ""
+        }
+    }
+
+    fun forgetPassphrase(id: String) = act { session.core.cryptoForgetPassphrase(id) }
 
     fun importText(text: String) = import(KeyOrigin.PASTED) { text.toByteArray() }
 
@@ -187,6 +256,7 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
     var pasting by remember { mutableStateOf(false) }
     var forgetting by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importFile(uri) }
+    val privatePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) vm.importPrivateFile(uri) }
 
     LaunchedEffect(vm) {
         vm.events.collect { event ->
@@ -237,7 +307,15 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
                 if (own.isEmpty()) {
                     KeyRow(Groups.shape(0, 1), stringResource(R.string.crypto_own_empty), null, quiet = true)
                 }
-                own.forEachIndexed { i, key -> KeyEntryRow(Groups.shape(i, own.size), key) { removing = key } }
+                own.forEachIndexed { i, key -> KeyEntryRow(Groups.shape(i, own.size), key, onForget = { vm.forgetPassphrase(key.id) }) { removing = key } }
+            }
+            Group(Modifier.padding(top = 12.dp)) {
+                KeyRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.crypto_import_own),
+                    stringResource(R.string.crypto_import_own_detail),
+                    onClick = { privatePicker.launch(arrayOf("*/*")) },
+                )
             }
 
             SectionTitle(stringResource(R.string.crypto_other_keys))
@@ -282,6 +360,16 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
             dismissButton = { TextButton(onClick = { forgetting = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    if (state.askingPassphrase) {
+        PassphraseDialog(
+            keyName = "",
+            wrong = state.passphraseWrong,
+            onSubmit = { pass, _ -> vm.submitPassphrase(pass) },
+            onDismiss = vm::dropPassphraseRequest,
+            showKeep = false,
+            body = stringResource(R.string.crypto_import_passphrase_body),
+        )
+    }
     if (pasting) PasteDialog(onAdd = { vm.importText(it); pasting = false }, onDismiss = { pasting = false })
 }
 
@@ -308,7 +396,7 @@ private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(Fo
 
 /** One key: its name, addresses, fingerprint and where it came from, with Remove at the end. */
 @Composable
-private fun KeyEntryRow(shape: Shape, key: KeyEntry, onRemove: () -> Unit) {
+private fun KeyEntryRow(shape: Shape, key: KeyEntry, onForget: () -> Unit = {}, onRemove: () -> Unit) {
     val kind = stringResource(if (key.kind == KeyKind.PGP) R.string.crypto_kind_pgp else R.string.crypto_kind_smime)
     val origin = when (key.origin) {
         KeyOrigin.FILE -> stringResource(R.string.crypto_from_file)
@@ -322,8 +410,10 @@ private fun KeyEntryRow(shape: Shape, key: KeyEntry, onRemove: () -> Unit) {
         stringResource(R.string.crypto_fingerprint, key.fingerprint),
         origin,
         expires,
+        if (key.hasSecret && key.needsPassphrase) stringResource(if (key.unlocked) R.string.crypto_unlocked else R.string.crypto_locked) else null,
     ).joinToString("\n")
     KeyRow(shape, key.label, detail) {
+        if (key.unlocked) TextButton(onClick = onForget) { Text(stringResource(R.string.crypto_forget_passphrase)) }
         IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.crypto_remove)) }
     }
 }

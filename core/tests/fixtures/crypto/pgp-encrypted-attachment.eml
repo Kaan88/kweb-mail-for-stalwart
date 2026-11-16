@@ -1,0 +1,29 @@
+From: Alice <alice@example.test>
+To: Bob <bob@example.test>
+Subject: Encrypted with a file
+Date: Tue, 11 Nov 2025 10:00:00 +0000
+Message-ID: <801104537@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="pgp-enc-boundary"
+
+--pgp-enc-boundary
+Content-Type: application/pgp-encrypted
+
+Version: 1
+
+--pgp-enc-boundary
+Content-Type: application/octet-stream; name="encrypted.asc"
+
+-----BEGIN PGP MESSAGE-----
+
+hF4DdGTQlLnB0n4SAQdArPGLUbflWtcPDytY9aGuk7/d+ShUsr+7MfT2Fhfz1mQw
+hVCgfApyzbqJ+/Tzc4amkrVZ3OTy/xWjWpUMr9JCDTvzdsgAl/VhoxajGMe3bDpA
+0sBSAWmfrD4Lz1qsYudGT2wZnWPIbynzO5GylUHXPiGeWmhvSOjFv8UbtlPIJa04
+NxwIwYgYjaen1FRe7kjfWN1fmA7N85q68qBXxsshYvXMieBPvsxqsWBGy+5Cl1vl
+6WG4RCojUMzwAFC2Q6jTAY9e1Bwge5AGsQoZJirMx0pA+CzY80Uw+ELPt8gFELGI
+DHgrXGzX5j0J/88taXTFvWz3rpn/um2jvfe0uODbzdIWRJkln5RJLg8Gx8GcI4O/
+/uJJ9F4tJFb7UFKR8h59uiWFcFEetjhkf8f504XxNakVA0XLeMwhSuWTD0JIHIKw
+lcIJfKXekuRU36Xs91XCcaAAnEvCEYcRnyk5B5h1SyIPywPAQw==
+=13+w
+-----END PGP MESSAGE-----
+--pgp-enc-boundary--

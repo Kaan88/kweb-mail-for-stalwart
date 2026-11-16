@@ -84,6 +84,26 @@ class CryptoController(
         }
     }
 
+    /**
+     * Opens an encrypted message with a passphrase the user typed ([keep]: keep that key unlocked on this phone). The
+     * passphrase is a String here and cannot be wiped; it is dropped as soon as the call returns.
+     */
+    fun open(messageId: String, passphrase: String, keep: Boolean) {
+        val mine = generation
+        stateFlow.update { it + (messageId to CryptoUi.Checking) }
+        scope.launch {
+            val result = try {
+                withContext(io) { CryptoUi.Ready(core().cryptoOpenWith(messageId, passphrase, keep)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "opening a message failed: ${e.javaClass.simpleName}")
+                CryptoUi.Failed
+            }
+            if (mine == generation) stateFlow.update { it + (messageId to result) }
+        }
+    }
+
     /** Adds a key the message carries, then checks the message again. */
     fun takeOffer(messageId: String, offerId: String, onFailed: () -> Unit) {
         val mine = generation

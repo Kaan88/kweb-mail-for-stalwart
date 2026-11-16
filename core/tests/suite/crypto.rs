@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::support::*;
 use kweb_core::{
-    crypto::types::{CryptoKind, CryptoNote, KeyKind, KeyOrigin, SignatureState},
+    crypto::types::{CryptoKind, CryptoNote, EncryptionState, KeyKind, KeyOrigin, PrivateFile, SignatureState},
     ffi::{Core, Shade},
     secrets::{MemorySecrets, SecretStore},
     Error,
@@ -20,8 +20,9 @@ fn fx(name: &str) -> Vec<u8> {
 struct Rig {
     core: Arc<Core>,
     server: MockServer,
+    secrets: Arc<dyn SecretStore>,
     _rt: Runtime,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
 }
 
 impl Rig {
@@ -31,13 +32,13 @@ impl Rig {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("cache.db").to_string_lossy().into_owned();
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
-        let core = Core::new(db_path, secrets).unwrap();
+        let core = Core::new(db_path, secrets.clone()).unwrap();
         let url = core.begin_sign_in(server.url()).unwrap();
         let browser = rt.spawn(async move { reqwest::get(url).await.map(|r| r.status()) });
         core.finish_sign_in().unwrap();
         assert!(rt.block_on(browser).unwrap().unwrap().is_success());
         core.check_once(Shade::Unknown).unwrap();
-        Rig { core, server, _rt: rt, _dir: dir }
+        Rig { core, server, secrets, _rt: rt, dir }
     }
 
     /// A message whose raw bytes are the fixture, in the Inbox.
@@ -163,4 +164,119 @@ fn the_calls_need_a_signed_in_account() {
     assert!(matches!(core.crypto_enabled(), Err(Error::SignInNeeded { .. })));
     assert!(matches!(core.crypto_keys(), Err(Error::SignInNeeded { .. })));
     assert!(matches!(core.crypto_probe("m".into()), Err(Error::SignInNeeded { .. })));
+}
+
+// ---- opening encrypted mail (stage 2) -------------------------------------------------------
+
+const SECRET_SENTENCE: &str = "Secret hello, signed and sealed.";
+
+/// Every byte of the cache database (and its write-ahead log) as text, to look for what must not be there.
+fn cache_bytes(rig: &Rig) -> Vec<u8> {
+    let mut all = Vec::new();
+    for name in ["cache.db", "cache.db-wal"] {
+        if let Ok(bytes) = std::fs::read(rig.dir.path().join(name)) {
+            all.extend(bytes);
+        }
+    }
+    all
+}
+
+fn contains(haystack: &[u8], needle: &str) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle.as_bytes())
+}
+
+#[test]
+fn a_private_key_is_imported_into_the_secret_store_only_and_opens_mail() {
+    let rig = Rig::new();
+    rig.enable();
+    assert_eq!(rig.core.crypto_inspect_private(fx("bob.sec.asc")), PrivateFile::OpenPgp);
+    assert_eq!(rig.core.crypto_inspect_private(fx("carol.p12")), PrivateFile::Pkcs12);
+    assert_eq!(rig.core.crypto_inspect_private(b"nothing".to_vec()), PrivateFile::Unknown);
+    let bob = rig.core.crypto_import_private(fx("bob.sec.asc"), None).unwrap().remove(0);
+    assert!(bob.has_secret && bob.needs_passphrase && !bob.unlocked);
+    assert_eq!(bob.origin, KeyOrigin::Own);
+    // The private part is in the secret store; the cache holds public material only.
+    let in_store = rig.secrets.get(format!("crypto.secret.{}", bob.id.replace(':', "."))).unwrap();
+    assert!(in_store.is_some());
+    let cache = cache_bytes(&rig);
+    assert!(!contains(&cache, "PRIVATE KEY"), "no armored private key in the cache");
+    let id = rig.deliver_raw("pgp-encrypted-bob.eml");
+    // Locked: it asks. Wrong: it says so. Right: it opens.
+    assert_eq!(rig.core.crypto_open(id.clone()).unwrap().encryption, EncryptionState::NeedPassphrase);
+    let wrong = rig.core.crypto_open_with(id.clone(), Some("nope".into()), false).unwrap();
+    assert_eq!(wrong.encryption, EncryptionState::WrongPassphrase);
+    let opened = rig.core.crypto_open_with(id.clone(), Some("bob-pass".into()), false).unwrap();
+    assert_eq!(opened.encryption, EncryptionState::Decrypted);
+    assert!(opened.content.unwrap().text.unwrap().contains("Secret hello"));
+    // Not kept unlocked: asks again, and nothing was stored for the passphrase.
+    assert_eq!(rig.core.crypto_open(id.clone()).unwrap().encryption, EncryptionState::NeedPassphrase);
+    assert!(rig.secrets.get(format!("crypto.pass.{}", bob.id.replace(':', "."))).unwrap().is_none());
+}
+
+#[test]
+fn keeping_a_key_unlocked_stores_the_passphrase_in_the_secret_store_and_forgetting_asks_again() {
+    let rig = Rig::new();
+    rig.enable();
+    let bob = rig.core.crypto_import_private(fx("bob.sec.asc"), None).unwrap().remove(0);
+    let id = rig.deliver_raw("pgp-encrypted-bob.eml");
+    rig.core.crypto_open_with(id.clone(), Some("bob-pass".into()), true).unwrap();
+    assert!(rig.core.crypto_keys().unwrap().iter().any(|k| k.id == bob.id && k.unlocked));
+    assert_eq!(rig.core.crypto_open(id.clone()).unwrap().encryption, EncryptionState::Decrypted);
+    rig.core.crypto_forget_passphrase(bob.id.clone()).unwrap();
+    assert_eq!(rig.core.crypto_open(id).unwrap().encryption, EncryptionState::NeedPassphrase);
+    assert!(!rig.core.crypto_keys().unwrap().iter().any(|k| k.unlocked));
+}
+
+#[test]
+fn decrypted_text_never_reaches_the_cache_and_files_come_from_memory() {
+    let rig = Rig::new();
+    rig.enable();
+    rig.core.crypto_import(fx("alice.pub.asc"), KeyOrigin::File).unwrap();
+    rig.core.crypto_import_private(fx("bob.sec.asc"), None).unwrap();
+    let signed = rig.deliver_raw("pgp-encrypted-signed-bob.eml");
+    let view = rig.core.crypto_open_with(signed, Some("bob-pass".into()), true).unwrap();
+    assert_eq!(view.signature, SignatureState::Verified);
+    let with_file = rig.deliver_raw("pgp-encrypted-attachment.eml");
+    let view = rig.core.crypto_open(with_file.clone()).unwrap();
+    let file = &view.content.as_ref().unwrap().attachments[0];
+    let target = rig.dir.path().join("note.txt");
+    rig.core.crypto_save_attachment(with_file.clone(), file.index, target.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"The attached note.");
+    // Nothing of the plaintext is in the database or its log, or in the keyring.
+    let cache = cache_bytes(&rig);
+    for secret in [SECRET_SENTENCE, "The attached note", "Secret <b>html"] {
+        assert!(!contains(&cache, secret), "{secret} found in the cache");
+    }
+    // Switching the feature off forgets the held files.
+    rig.core.set_crypto_enabled(false).unwrap();
+    assert!(rig.core.crypto_save_attachment(with_file, 0, target.to_string_lossy().into_owned()).is_err());
+}
+
+#[test]
+fn removing_a_key_or_signing_out_deletes_its_private_part() {
+    let rig = Rig::new();
+    rig.enable();
+    let bob = rig.core.crypto_import_private(fx("bob.sec.asc"), None).unwrap().remove(0);
+    let carol = rig.core.crypto_import_private(fx("carol.p12"), Some("carol-pass".into())).unwrap().remove(0);
+    assert_eq!(carol.kind, KeyKind::Smime);
+    assert!(rig.core.crypto_import_private(fx("carol.p12"), Some("wrong".into())).is_err());
+    let name = |id: &str| format!("crypto.secret.{}", id.replace(':', "."));
+    assert!(rig.secrets.get(name(&bob.id)).unwrap().is_some());
+    rig.core.crypto_remove_key(bob.id.clone()).unwrap();
+    assert!(rig.secrets.get(name(&bob.id)).unwrap().is_none());
+    assert!(rig.secrets.get(name(&carol.id)).unwrap().is_some());
+    rig.core.sign_out().unwrap();
+    assert!(rig.secrets.get(name(&carol.id)).unwrap().is_none(), "the private part goes with the account");
+}
+
+#[test]
+fn smime_mail_opens_with_an_imported_p12_and_stays_off_the_internet() {
+    let rig = Rig::new();
+    rig.enable();
+    rig.core.crypto_import_private(fx("carol.p12"), Some("carol-pass".into())).unwrap();
+    let id = rig.deliver_raw("smime-encrypted.eml");
+    let view = rig.core.crypto_open(id).unwrap();
+    assert_eq!(view.encryption, EncryptionState::Decrypted);
+    assert!(view.remote_content_blocked);
+    assert!(view.content.unwrap().text.unwrap().contains("S/MIME signed"));
 }
