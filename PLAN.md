@@ -352,6 +352,33 @@ M9 (S/MIME and OpenPGP) is left alone for now (owner).
 
 **Before the final release (owner, 2026-11-14):** a second Fable agent goes through every screen of the app on the emulator against the mock-ups once more (`design/mockup-themes.pdf`, the owner's sheet of the mail list, the Today screen and a message in the four palettes, light and dark, and `design/mockups-material.html`), in each built-in theme, and reports every difference; the differences are fixed and the agent looks again. It runs after the last feature is merged, so it sees the final screens. The sheet's "Today" overview is left out of the app (owner, 2026-11-14), so the review does not count it as missing.
 
+### M11: settings and polish (from the design review, 2026-11-16)
+
+The design review (`design/review-2026-11-16.md`) found the screens in line with the mock-ups and the settings too few. This milestone is the owner's earlier requests plus the review's proposals, in the order they matter, built in stages that each end in a commit. Nothing in it changes the notification rule, the sending rule or what a shared account may reach. The bento home is not built (review, section 4).
+
+**Stage 1: notifications per receiving address, complete.** The owner's first request.
+- A notification channel per receiving address, made when the address is first set to "Notify" or "Quiet" and named after the address; a sound, vibration and importance are then Android's per channel, reached from the Notifications screen by a "Sound" row per address (today one channel serves all mail of the account). Existing notifications are re-posted into the new channel at the next plan; channel ids carry the account and the address so nothing of one account leaks into another.
+- A preview choice per account: subject and snippet (today), subject only, or "New mail" only, for the lock screen.
+- Cc, Bcc and list mail per address: the cache gains the Cc list and the delivery address from the server (`Delivered-To` is not in JMAP's defaults; use the `header:Delivered-To:asAddresses` property where the server stores it, else Cc), with a migration that fetches the headers of the cached window again. The owner accepted the resync (CLAUDE.md, open list). Until the headers are in, such mail keeps the default, as today.
+- Checked by: core tests on the mock server for the channel id per address and the preview text; on the emulator two addresses with two sounds; on the owner's phone the sound over hours.
+
+**Stage 2: pictures and reading.** The owner's second request first.
+- "Always show pictures" under a new Reading group in Settings: off (today), on for all, and "Always from this sender" on the Show bar, kept in the core per account (`remote_allow` table, additive migration). Never applied in a shared account or to S/MIME content (M9 keeps remote content off there). The list of allowed senders is editable in the Reading group.
+- Conversation view on or off (the thread screen already shows single messages), mark as read on open or after a delay or never, auto-advance after archive or delete (next, previous, back to the list), text size of the message body, preview lines in the list (0 to 3).
+- Checked by: emulator with the seeded HTML mail; a core test that a shared account ignores the allow list.
+
+**Stage 3: the Settings screen itself.** One "Notifications" entry holding what to notify, per address with sound, buttons and reminders, with Delivery check as the diagnostic screen in the drawer and in Settings, and "Push through Google" as a switch inside Delivery check. Add account moves to the accounts sheet and the end of Settings, Remove account to the end of the account group. One icon per row meaning. An About row with version, licences and the source link; the per-app language entry in the manifest. The `kweb-core` version line leaves Delivery check.
+
+**Stage 4: appearance.** Theme becomes an Appearance screen: colour (as now), light, dark or system, pure black for dark. Stored in `UiPrefs`. CLAUDE.md's note that the picker is in the drawer is corrected.
+
+**Stage 5: swipes and actions.** Swipe right and swipe left each chosen from archive, delete, mark read or unread, star, move, none; confirm before delete; the Undo time for sending (5 to 30 seconds, today fixed at 10 in the core's flush; the choice is passed in, the rule "never twice, never lost" is untouched); default Reply all.
+
+**Stage 6: the review's small items.** Calendar bar with the month as a title and a labelled FAB, one FAB style across tabs, a calendar picker in the editor when there are several; the drawer head opens the accounts sheet instead of expanding, the drawer closes when a destination outside the list is opened, the Drafts icon; the texts (assistant subtitle, Connected apps rows with their date, the Models sheet error, the Encryption title and the "Sign new messages" text, "Service" once); read collapsed thread rows in normal weight and quote markers out of snippets; Contacts' empty-state icon; icons in the chat's overflow; Delivery check's red paragraphs into row text; "Cc Bcc" chevron.
+
+**Stage 7: data.** A download that survives leaving the app (a foreground service with the transfer's progress notification, cancel from the notification; the owner's open item), a sync window setting (how far back a folder is kept on the phone), a "Clear cache and resync" row, an account name per account for the sheet and the drawer head.
+
+**After M11:** the per-theme and dark-mode comparison the owner skipped (the "before the final release" pass above), then release work (signing, shrinking, version code, CI artifact).
+
 ## Scope
 
 | Phase | Included |
