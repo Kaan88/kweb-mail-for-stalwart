@@ -39,6 +39,9 @@ struct Recorder {
 
 impl Listener for Recorder {
     fn calendar_changed(&self) {}
+    fn notices(&self, _: Vec<kweb_core::model::Notice>) -> bool {
+        false
+    }
     fn status(&self, status: ConnectionStatus) {
         if matches!(status, ConnectionStatus::Live { .. }) {
             *self.live.lock().unwrap() = true;

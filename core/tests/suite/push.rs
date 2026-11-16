@@ -33,10 +33,21 @@ enum Ev {
 #[derive(Default)]
 struct Recorder {
     events: Mutex<Vec<Ev>>,
+    /// Every notice the core handed over, in order.
+    notices: Mutex<Vec<kweb_core::model::Notice>>,
+    /// The host fails to handle the notices (the core offers them again).
+    refuse_notices: std::sync::atomic::AtomicBool,
 }
 
 impl Listener for Recorder {
     fn calendar_changed(&self) {}
+    fn notices(&self, notices: Vec<kweb_core::model::Notice>) -> bool {
+        if self.refuse_notices.load(std::sync::atomic::Ordering::SeqCst) {
+            return false;
+        }
+        self.notices.lock().unwrap().extend(notices);
+        true
+    }
     fn status(&self, status: ConnectionStatus) {
         self.events.lock().unwrap().push(Ev::Status(status));
     }
@@ -388,6 +399,93 @@ async fn a_revoked_grant_ends_in_sign_in_needed_without_spinning() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(handle.status(), ConnectionStatus::SignInNeeded);
     assert!(r.server.token_requests() <= before + 1);
+    handle.stop().await;
+}
+
+// ---- notices of the server -------------------------------------------------------------
+
+fn event_notice(id: &str, kind: &str, title: &str, at: i64) -> serde_json::Value {
+    json!({
+        "id": id, "created": kweb_core::jmap::format_utc(at), "type": kind, "calendarEventId": "e",
+        "changedBy": { "name": "Ann Lee", "email": "ann@x.org", "principalId": "other" },
+        "event": { "start": "2026-11-26T10:00:00", "title": title, "timeZone": "Europe/Istanbul" },
+    })
+}
+
+fn share_notice(id: &str, old: bool, new: bool, at: i64) -> serde_json::Value {
+    json!({
+        "id": id, "created": kweb_core::jmap::format_utc(at), "objectType": "Calendar", "objectAccountId": "someone",
+        "oldRights": { "mayReadItems": old }, "newRights": { "mayReadItems": new },
+        "changedBy": { "principalId": "other", "name": "Ann Lee", "email": "ann@x.org" },
+    })
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+}
+
+#[tokio::test]
+async fn a_notice_is_shown_once_and_acknowledged_and_an_old_one_is_left_alone() {
+    let r = rig(fast()).await;
+    let now = now_secs();
+    // The first look sets the baseline (a few minutes back): this one is older and stays on the server, unshown.
+    r.server.add_notice("event", event_notice("old", "created", "Last month", now - 40 * 86_400));
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    assert!(r.rec.notices.lock().unwrap().is_empty());
+
+    r.server.add_notice("event", event_notice("n1", "created", "Lunch", now));
+    r.server.add_notice("share", share_notice("s1", false, true, now));
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    let shown = r.rec.notices.lock().unwrap().clone();
+    assert_eq!(shown.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["ce:n1", "sh:s1"]);
+    assert_eq!(shown[0].title, "Lunch");
+    assert_eq!((shown[0].local_start.as_deref(), shown[0].time_zone.as_deref()), (Some("2026-11-26T10:00:00"), Some("Europe/Istanbul")));
+    // Acknowledged: gone from the server; the old one is still there.
+    assert_eq!(r.server.notice_ids(), (vec!["old".to_string()], Vec::<String>::new()));
+
+    // Nothing new, nothing again.
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    assert_eq!(r.rec.notices.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn notices_the_host_could_not_handle_are_offered_again_and_a_switched_off_account_reads_none() {
+    let r = rig(fast()).await;
+    let now = now_secs();
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    r.server.add_notice("event", event_notice("n1", "updated", "Moved", now));
+    r.rec.refuse_notices.store(true, std::sync::atomic::Ordering::SeqCst);
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    assert!(r.rec.notices.lock().unwrap().is_empty());
+    assert_eq!(r.server.notice_ids().0, ["n1"]);
+    r.rec.refuse_notices.store(false, std::sync::atomic::Ordering::SeqCst);
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    assert_eq!(r.rec.notices.lock().unwrap().len(), 1);
+    assert!(r.server.notice_ids().0.is_empty());
+
+    // Switched off for the account: nothing is read, shown or destroyed.
+    kweb_core::notices::set_enabled(&r.deps.store, &r.deps.account.id, false).unwrap();
+    r.server.add_notice("event", event_notice("n2", "destroyed", "Cancelled", now));
+    r.server.reset_request_counts();
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
+    assert_eq!(r.rec.notices.lock().unwrap().len(), 1);
+    assert_eq!(r.server.request_count("CalendarEventNotification/query"), 0);
+    assert_eq!(r.server.notice_ids().0, ["n2"]);
+}
+
+#[tokio::test]
+async fn the_live_connection_shows_a_notice_when_the_server_pushes_its_type_and_without_a_mail_pass() {
+    let r = rig(fast()).await;
+    let handle = r.start().await;
+    let rec = r.rec.clone();
+    // The loop's first look found nothing; a notice made now comes with a push of its own type.
+    r.server.add_notice("event", event_notice("n1", "created", "Lunch", now_secs()));
+    r.server.push_notice_state();
+    eventually("the notice", move || !rec.notices.lock().unwrap().is_empty()).await;
+    assert_eq!(r.rec.notices.lock().unwrap()[0].id, "ce:n1");
+    assert!(r.server.notice_ids().0.is_empty());
+    // No mail changed: no notification plan.
+    assert!(r.rec.plans().is_empty());
     handle.stop().await;
 }
 

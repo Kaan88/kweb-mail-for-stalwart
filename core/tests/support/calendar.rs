@@ -45,6 +45,10 @@ pub struct Calendar {
     log: Vec<(u64, String, char)>,
     /// Makes `CalendarEvent/changes` answer `cannotCalculateChanges` once (the server lost its history).
     pub forget_history: bool,
+    /// The server's records of what others did: `CalendarEventNotification` (`event`) and
+    /// `ShareNotification` (`share`), by id, as the server holds them until they are destroyed.
+    pub event_notices: BTreeMap<String, Value>,
+    pub share_notices: BTreeMap<String, Value>,
 }
 
 impl Default for Calendar {
@@ -61,10 +65,41 @@ impl Default for Calendar {
             interfere: VecDeque::new(),
             log: Vec::new(),
             forget_history: false,
+            event_notices: BTreeMap::new(),
+            share_notices: BTreeMap::new(),
         };
         calendar.add_calendar("cal1", "Personal", true, true);
         calendar
     }
+}
+
+/// The ids of the records, newest first (they are made in order), as `query` gives them.
+fn notice_query(records: &BTreeMap<String, Value>, args: &Value) -> Value {
+    let limit = args["limit"].as_u64().map_or(usize::MAX, |l| l as usize);
+    let mut ids: Vec<&String> = records.keys().collect();
+    ids.sort_by(|a, b| records[*b]["created"].as_str().cmp(&records[*a]["created"].as_str()));
+    let ids: Vec<&&String> = ids.iter().take(limit).collect();
+    json!({ "accountId": ACCOUNT_ID, "queryState": "n", "canCalculateChanges": true, "position": 0, "ids": ids })
+}
+
+fn notice_get(records: &BTreeMap<String, Value>, args: &Value) -> Value {
+    let wanted: Vec<String> = match args["ids"].as_array() {
+        Some(ids) => ids.iter().filter_map(|i| i.as_str().map(str::to_string)).collect(),
+        None => records.keys().cloned().collect(),
+    };
+    let list: Vec<&Value> = wanted.iter().filter_map(|id| records.get(id)).collect();
+    let missing: Vec<&String> = wanted.iter().filter(|id| !records.contains_key(*id)).collect();
+    json!({ "accountId": ACCOUNT_ID, "state": "n", "list": list, "notFound": missing })
+}
+
+fn notice_destroy(records: &mut BTreeMap<String, Value>, args: &Value) -> Value {
+    let mut destroyed = Vec::new();
+    for id in args["destroy"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        if records.remove(id).is_some() {
+            destroyed.push(id.to_string());
+        }
+    }
+    json!({ "accountId": ACCOUNT_ID, "oldState": "n", "newState": "n", "destroyed": destroyed })
 }
 
 fn invalid(description: &str) -> MethodError {
@@ -175,6 +210,12 @@ impl Calendar {
             "CalendarEvent/query" => self.query(args),
             "CalendarEvent/changes" => self.changes(args),
             "CalendarEvent/set" => self.set(args),
+            "CalendarEventNotification/query" => Ok(notice_query(&self.event_notices, args)),
+            "CalendarEventNotification/get" => Ok(notice_get(&self.event_notices, args)),
+            "CalendarEventNotification/set" => Ok(notice_destroy(&mut self.event_notices, args)),
+            "ShareNotification/query" => Ok(notice_query(&self.share_notices, args)),
+            "ShareNotification/get" => Ok(notice_get(&self.share_notices, args)),
+            "ShareNotification/set" => Ok(notice_destroy(&mut self.share_notices, args)),
             other => Err(MethodError { kind: "unknownMethod", description: other.to_string() }),
         }
     }

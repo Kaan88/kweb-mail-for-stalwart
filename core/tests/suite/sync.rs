@@ -135,6 +135,52 @@ async fn cannot_calculate_changes_triggers_a_full_resync() {
 }
 
 #[tokio::test]
+async fn a_state_that_went_backwards_is_a_full_resync_and_keeps_drafts_and_the_queue() {
+    let (server, conn, store) = setup().await;
+    server.use_stalwart_states();
+    sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+
+    // Two arrivals the cache learns of; then the server is restored from a backup made before them
+    // and has since had one change of its own, so its state is below the cache's.
+    let kept = server.deliver("Zed", "zed@example.test", "Kept", "Hi");
+    let lost = server.deliver("Zed", "zed@example.test", "Lost", "Hi");
+    assert!(sync::sync(&conn, &store, ACCOUNT).await.unwrap().changed);
+    let draft = kweb_core::model::Draft {
+        id: "local-1".into(),
+        identity_id: "i1".into(),
+        to: Vec::new(),
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        subject: "Unsent".into(),
+        body: "text".into(),
+        attachments: Vec::new(),
+        source_message_id: None,
+        is_forward: false,
+        server_id: None,
+        send_error: None,
+        updated_at: 1,
+        protection: Default::default(),
+    };
+    store.draft_insert(ACCOUNT, &draft, None, true).unwrap();
+    store.outbox_enqueue(ACCOUNT, &kweb_core::model::Action::Flag { message_id: kept.clone() }).unwrap();
+    server.rewind_states(2);
+    server.destroy(&lost);
+
+    // Asked since the state it never reached, the server says nothing; the cache must not believe it.
+    let out = sync::sync(&conn, &store, ACCOUNT).await.unwrap();
+    assert!(out.changed && out.full_resync);
+    assert!(store.get_message(ACCOUNT, &lost).unwrap().is_none());
+    assert!(store.get_message(ACCOUNT, &kept).unwrap().is_some());
+    assert_eq!(store.get_state(ACCOUNT, "Email").unwrap().unwrap(), server.email_state());
+    // What the user made on the phone is still there.
+    assert_eq!(store.draft_get(ACCOUNT, "local-1").unwrap().unwrap().draft.subject, "Unsent");
+    assert_eq!(store.outbox_pending(ACCOUNT).unwrap().len(), 1);
+
+    // Then it is incremental again, and a state that did not go back is trusted as before.
+    assert!(!sync::sync(&conn, &store, ACCOUNT).await.unwrap().full_resync);
+}
+
+#[tokio::test]
 async fn many_changes_are_all_picked_up() {
     let (server, conn, store) = setup().await;
     sync::sync(&conn, &store, ACCOUNT).await.unwrap();

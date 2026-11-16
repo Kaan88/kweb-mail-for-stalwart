@@ -118,14 +118,18 @@ impl Connection {
         read_responses(what, status, &bytes, keep_errors)
     }
 
-    /// The sender identities, in the server's order.
+    /// The sender identities, in the server's order, except that the user's own address (the
+    /// login name) comes first: a server may list a group's identity before the member's own,
+    /// and "the first" is the default sender.
     pub async fn identities(&self) -> Result<Vec<Identity>> {
         let args = json!({
             "accountId": self.account_for(SUBMISSION_CAPABILITY),
             "properties": ["name", "email", "textSignature"],
         });
         let responses = self.call(&[SUBMISSION_CAPABILITY], &[("Identity/get", args)]).await?;
-        Ok(identities_from(response(&responses, "Identity/get")?))
+        let mut list = identities_from(response(&responses, "Identity/get")?);
+        own_address_first(&mut list, self.client.session().username());
+        Ok(list)
     }
 
     /// The account's limits and what is used. No quota capability, no limits: an empty list.
@@ -470,6 +474,10 @@ const REFUSED_FOR_GOOD: [&str; 12] = [
 pub(super) fn set_error(e: &Value) -> Error {
     let kind = e["type"].as_str().unwrap_or("unknown");
     let detail = e["description"].as_str().filter(|d| !d.is_empty()).unwrap_or(kind);
+    // The server's own limit on a held message (7 days by default), whichever clock it was reckoned by.
+    if detail.contains("hold time exceeds") {
+        return Error::invalid("the server holds a message for seven days at most: choose an earlier time");
+    }
     if REFUSED_FOR_GOOD.contains(&kind) {
         Error::invalid(format!("the server refused it: {detail}"))
     } else {
@@ -519,13 +527,34 @@ fn strings(v: &Value) -> Vec<String> {
     v.as_array().into_iter().flatten().filter_map(|s| s.as_str().map(str::to_string)).collect()
 }
 
+/// Puts the identity whose address is `own` first and leaves the others in their order. Nothing
+/// moves when none is (the login name need not be an address).
+fn own_address_first(list: &mut [Identity], own: &str) {
+    if let Some(at) = list.iter().position(|i| i.email.eq_ignore_ascii_case(own.trim())) {
+        list[..=at].rotate_right(1);
+    }
+}
+
+/// A display name as the From header wants it. Stalwart may hand back `Name <addr>` where only
+/// the name belongs; used as it is the header would carry the address twice and the server
+/// refuses the submission.
+fn plain_name(name: &str, email: &str) -> String {
+    let name = name.trim();
+    let Some(open) = name.rfind('<').filter(|_| name.ends_with('>')) else { return name.to_string() };
+    let inside = name[open + 1..name.len() - 1].trim();
+    if !inside.eq_ignore_ascii_case(email.trim()) && !inside.contains('@') {
+        return name.to_string();
+    }
+    name[..open].trim().trim_matches('"').trim().to_string()
+}
+
 fn identities_from(get: &Value) -> Vec<Identity> {
     let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
     let one = |i: &Value| {
         let (id, email) = (text(&i["id"]), text(&i["email"]));
         (!id.is_empty() && !email.is_empty()).then(|| Identity {
             id,
-            name: text(&i["name"]),
+            name: plain_name(&text(&i["name"]), &email),
             email,
             signature: text(&i["textSignature"]),
         })
@@ -625,6 +654,17 @@ pub(super) fn submission_args(
         "create": { CREATE_ID: { "identityId": identity_id, "emailId": email_id } },
         "onSuccessUpdateEmail": { format!("#{CREATE_ID}"): update },
     })
+}
+
+#[cfg(test)]
+mod hold_tests {
+    use super::*;
+
+    #[test]
+    fn a_hold_the_server_finds_too_long_is_told_plainly() {
+        let e = json!({"type": "forbiddenMailFrom", "description": "Server rejected MAIL-FROM: 501 5.5.4 Requested hold time exceeds maximum of 604800 seconds."});
+        assert!(matches!(set_error(&e), Error::Invalid { msg } if msg.contains("seven days") && !msg.contains("501")));
+    }
 }
 
 #[cfg(test)]
@@ -769,6 +809,30 @@ mod tests {
         let got = identities_from(&get);
         assert_eq!(got.len(), 2);
         assert_eq!((got[0].signature.as_str(), got[1].name.as_str()), ("Bye", ""));
+    }
+
+    #[test]
+    fn a_name_that_carries_its_address_is_cut_back_to_the_name() {
+        assert_eq!(plain_name("Ann Lee <ann@x.org>", "ann@x.org"), "Ann Lee");
+        assert_eq!(plain_name("\"Lee, Ann\" <ann@x.org>", "ann@x.org"), "Lee, Ann");
+        assert_eq!(plain_name("<ann@x.org>", "ann@x.org"), "");
+        assert_eq!(plain_name("Ann (work)", "ann@x.org"), "Ann (work)");
+        assert_eq!(plain_name("  Ann  ", "ann@x.org"), "Ann");
+    }
+
+    #[test]
+    fn the_users_own_identity_comes_first_and_the_rest_keep_their_order() {
+        let id = |n: &str, e: &str| Identity {
+            id: n.into(),
+            name: String::new(),
+            email: e.into(),
+            signature: String::new(),
+        };
+        let mut list = vec![id("g", "team@x.org"), id("a", "alias@x.org"), id("m", "Me@x.org")];
+        own_address_first(&mut list, "me@x.org");
+        assert_eq!(list.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["m", "g", "a"]);
+        own_address_first(&mut list, "someone-else");
+        assert_eq!(list[0].id, "m");
     }
 
     #[test]

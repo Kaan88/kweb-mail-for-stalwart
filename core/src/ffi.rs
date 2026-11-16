@@ -16,6 +16,7 @@ mod devcal;
 mod download;
 mod enterprise;
 mod filter_rules;
+mod notices;
 mod sparkle;
 
 pub use admin::{
@@ -56,9 +57,9 @@ use crate::{
         AiProvider, AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail,
         ContactList, ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace,
         FilterRule, Filters, Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses,
-        MessageBody, MessageHeader, MessageLabels, NewSecret, PendingSend, Person, Quota, RefusedRecipient, Reminder,
-        ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox,
-        SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
+        MessageBody, MessageHeader, MessageLabels, NewSecret, Notice, PendingSend, Person, Quota, RefusedRecipient,
+        Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction,
+        SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -1147,6 +1148,9 @@ struct Silent;
 
 impl Listener for Silent {
     fn calendar_changed(&self) {}
+    fn notices(&self, _: Vec<Notice>) -> bool {
+        false
+    }
     fn status(&self, _: ConnectionStatus) {}
     fn notifications(&self, _: Plan) {}
     fn cache_changed(&self) {}

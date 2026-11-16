@@ -51,6 +51,7 @@ Usage:
   kweb archive <message-id>   move a message to Archive
   kweb delete <message-id>    move a message to Trash
   kweb destroy <message-id>   delete a message for good
+  kweb notices [ack]          list what the server holds as notices (invited, changed, shared); ack destroys them
   kweb agenda [days]          show events and tasks for the next days (default 7), in $TZ or UTC
   kweb calendars              list calendars
   kweb identities             list the addresses you can send as
@@ -198,6 +199,7 @@ pub enum Command {
     Delete { id: String },
     Destroy { id: String },
     Agenda { days: u32 },
+    Notices { ack: bool },
     Calendars,
     Identities,
     Quota,
@@ -394,6 +396,11 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "sign-out" => no_args(rest, Command::SignOut),
         "calendars" => no_args(rest, Command::Calendars),
         "agenda" => agenda(rest),
+        "notices" => match rest {
+            [] => Ok(Command::Notices { ack: false }),
+            [w] if w == "ack" => Ok(Command::Notices { ack: true }),
+            _ => Err("notices takes no argument, or ack".into()),
+        },
         "identities" => no_args(rest, Command::Identities),
         "quota" => no_args(rest, Command::Quota),
         "push" => match rest {

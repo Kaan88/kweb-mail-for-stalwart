@@ -210,7 +210,7 @@ impl Connection {
         let account = self.account_id();
         let mut figures = [None, None, None];
         for (i, object) in ["QueuedMessage", "Account", "BlockedIp"].into_iter().enumerate() {
-            let args = json!({ "accountId": account, "limit": 0, "calculateTotal": true });
+            let args = json!({ "accountId": account, "limit": 1, "calculateTotal": true });
             // One request each: a method error does not say which call it was.
             let method = format!("x:{object}/query");
             let responses = self.call_keeping_errors(&[], &[(&method, args)]).await?;

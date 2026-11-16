@@ -17,6 +17,7 @@ pub mod folders;
 pub mod jmap;
 pub mod labels;
 pub mod model;
+pub mod notices;
 pub mod notify;
 pub mod push;
 pub mod reading;

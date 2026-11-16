@@ -95,6 +95,10 @@ impl Connection {
             .as_str()
             .ok_or_else(|| Error::temporary("the server's answer has no new state"))?
             .to_string();
+        // A server that went back answers with nothing and a lower state: read everything again.
+        if crate::jmap::state::went_backwards(since, &new_state) {
+            return Ok(Page::Reset);
+        }
         Ok(Page::Changes {
             created: ids("created"),
             updated: ids("updated"),

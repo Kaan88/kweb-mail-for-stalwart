@@ -37,6 +37,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
         Command::Delete { id } => act(core, Action::Delete { message_id: id }, "moved to Trash"),
         Command::Destroy { id } => act(core, Action::Destroy { message_id: id }, "destroyed"),
         Command::Agenda { days } => agenda(core, days),
+        Command::Notices { ack } => notices(core, ack),
         Command::Calendars => calendars(core),
         Command::Identities => identities(core),
         Command::Quota => quota(core),
@@ -481,6 +482,42 @@ fn calendar_line(c: &Calendar) -> String {
     ];
     let color = c.color.as_deref().map_or_else(|| "-".to_string(), one_line);
     format!("{}  {}  {}  [{}]", one_line(&c.name), flags.join("  "), color, one_line(&c.id))
+}
+
+fn notices(core: &Core, ack: bool) -> Result<(), String> {
+    let list = core.server_notices().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        println!("The server holds no notices.");
+    }
+    for n in &list {
+        println!("{}  {}", n.id, describe_notice(n));
+    }
+    if ack && !list.is_empty() {
+        core.acknowledge_notices(list.iter().map(|n| n.id.clone()).collect()).map_err(|e| e.to_string())?;
+        println!("Acknowledged {}.", list.len());
+    }
+    Ok(())
+}
+
+fn describe_notice(n: &kweb_core::model::Notice) -> String {
+    use kweb_core::model::{NoticeKind as K, NoticeThing as T};
+    let thing = match n.thing {
+        T::Event => "an event",
+        T::Mailbox => "a mailbox",
+        T::Calendar => "a calendar",
+        T::AddressBook => "an address book",
+        T::Other => "something",
+    };
+    let when = n.local_start.as_deref().map(|s| format!(" ({s})")).unwrap_or_default();
+    match n.kind {
+        K::EventInvited => format!("{} invited you to \"{}\"{when}", n.who, n.title),
+        K::EventAdded => format!("{} added \"{}\"{when} to your calendar", n.who, n.title),
+        K::EventChanged => format!("{} changed \"{}\"{when}", n.who, n.title),
+        K::EventCancelled => format!("{} cancelled \"{}\"{when}", n.who, n.title),
+        K::ShareNew => format!("{} shared {thing} with you", n.who),
+        K::ShareChanged => format!("{} changed what you can do in {thing}", n.who),
+        K::ShareEnded => format!("{} stopped sharing {thing} with you", n.who),
+    }
 }
 
 fn agenda(core: &Core, days: u32) -> Result<(), String> {
@@ -1186,6 +1223,12 @@ struct Printer;
 
 impl Listener for Printer {
     fn calendar_changed(&self) {}
+    fn notices(&self, notices: Vec<kweb_core::model::Notice>) -> bool {
+        for n in &notices {
+            println!("notice: {}", describe_notice(n));
+        }
+        true
+    }
     fn status(&self, status: ConnectionStatus) {
         println!("status: {}", describe_status(&status));
     }

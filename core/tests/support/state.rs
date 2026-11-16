@@ -365,11 +365,73 @@ struct Log {
     /// States older than this were "forgotten": asking for changes since them is an error.
     floor: u64,
     entries: Vec<(u64, String, Kind)>,
+    /// States are written the way Stalwart 1.1 writes them (`s` and a base32 counter) and a state
+    /// ahead of the server's answers with nothing and the server's own, as a restored server does.
+    stalwart: bool,
+}
+
+const STALWART_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz792013";
+
+fn stalwart_name(mut n: u64) -> String {
+    let mut bytes = Vec::new();
+    loop {
+        let low = (n & 0x7f) as u8;
+        n >>= 7;
+        bytes.push(if n == 0 { low } else { low | 0x80 });
+        if n == 0 {
+            break;
+        }
+    }
+    let bits: String = bytes.iter().map(|b| format!("{b:08b}")).collect();
+    let mut out = String::from("s");
+    for chunk in bits.as_bytes().chunks(5) {
+        let mut value = 0usize;
+        for i in 0..5 {
+            value = (value << 1) | usize::from(chunk.get(i) == Some(&b'1'));
+        }
+        out.push(STALWART_ALPHABET[value] as char);
+    }
+    out
+}
+
+fn stalwart_number(text: &str) -> Option<u64> {
+    let bits: String = text
+        .strip_prefix('s')?
+        .bytes()
+        .map(|c| STALWART_ALPHABET.iter().position(|a| *a == c).map(|v| format!("{v:05b}")))
+        .collect::<Option<_>>()?;
+    let (mut number, mut shift) = (0u64, 0);
+    for byte in bits.as_bytes().chunks(8).filter(|c| c.len() == 8) {
+        let byte = u8::from_str_radix(std::str::from_utf8(byte).ok()?, 2).ok()?;
+        number |= u64::from(byte & 0x7f) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            return Some(number);
+        }
+    }
+    None
 }
 
 impl Log {
     fn new() -> Log {
-        Log { state: 1, floor: 1, entries: Vec::new() }
+        Log { state: 1, floor: 1, entries: Vec::new(), stalwart: false }
+    }
+
+    fn name(&self, prefix: &str, n: u64) -> String {
+        if self.stalwart {
+            // Counters start high, as on a server that has been used.
+            stalwart_name(n + 7000)
+        } else {
+            format!("{prefix}{n}")
+        }
+    }
+
+    fn number(&self, prefix: &str, text: &str) -> Option<u64> {
+        if self.stalwart {
+            stalwart_number(text).and_then(|n| n.checked_sub(7000))
+        } else {
+            text.strip_prefix(prefix).and_then(|n| n.parse().ok())
+        }
     }
 
     fn bump(&mut self) -> u64 {
@@ -640,11 +702,30 @@ impl Mail {
     // ---- state strings -------------------------------------------------------------
 
     pub fn email_state(&self) -> String {
-        format!("es{}", self.email_log.state)
+        self.email_log.name("es", self.email_log.state)
     }
 
     pub fn mailbox_state(&self) -> String {
-        format!("ms{}", self.mailbox_log.state)
+        self.mailbox_log.name("ms", self.mailbox_log.state)
+    }
+
+    /// Switches to Stalwart's state strings, and a state ahead of the server's is answered with
+    /// an empty change list instead of an error.
+    pub fn use_stalwart_states(&mut self) {
+        self.email_log.stalwart = true;
+        self.mailbox_log.stalwart = true;
+    }
+
+    /// The server goes back to an older state (a restore): the logs lose everything after it. The
+    /// mail and the mailboxes stay as they are, which is not what a restore does, but the cache
+    /// is only asked about its state.
+    pub fn rewind_states(&mut self, by: u64) {
+        for log in [&mut self.email_log, &mut self.mailbox_log] {
+            log.state = log.state.saturating_sub(by).max(1);
+            let state = log.state;
+            log.entries.retain(|(s, _, _)| *s <= state);
+            log.floor = log.floor.min(state);
+        }
     }
 
     pub fn forget_changes(&mut self) {
@@ -2223,9 +2304,19 @@ fn changes(log: &Log, prefix: &str, args: &Value) -> Result<ChangesOut, MethodEr
             _ => return Err(merr("invalidArguments", "maxChanges must be a positive integer")),
         },
     };
-    let since = since_str
-        .strip_prefix(prefix)
-        .and_then(|n| n.parse::<u64>().ok())
+    // A restored server has not reached the state asked for: empty answer, its own state.
+    if log.stalwart && log.number(prefix, since_str).is_some_and(|n| n > log.state) {
+        return Ok(ChangesOut {
+            old_state: since_str.to_string(),
+            new_state: log.name(prefix, log.state),
+            has_more: false,
+            created: Vec::new(),
+            updated: Vec::new(),
+            destroyed: Vec::new(),
+        });
+    }
+    let since = log
+        .number(prefix, since_str)
         .filter(|s| *s >= log.floor && *s <= log.state)
         .ok_or_else(|| merr("cannotCalculateChanges", format!("state '{since_str}' is unknown or forgotten")))?;
 
@@ -2277,7 +2368,7 @@ fn changes(log: &Log, prefix: &str, args: &Value) -> Result<ChangesOut, MethodEr
     let pick = |k: Kind| folded.iter().filter(|(_, kind)| *kind == k).map(|(id, _)| id.clone()).collect();
     Ok(ChangesOut {
         old_state: since_str.to_string(),
-        new_state: format!("{prefix}{new_state}"),
+        new_state: log.name(prefix, new_state),
         has_more,
         created: pick(Kind::Created),
         updated: pick(Kind::Updated),

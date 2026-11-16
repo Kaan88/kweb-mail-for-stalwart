@@ -101,6 +101,10 @@ async fn sync_mailboxes(conn: &Connection, store: &Store, account_id: &str) -> R
         return full_mailboxes(conn, store, account_id).await;
     };
     match conn.mailbox_changes(&since).await {
+        // A server that went back (a restore, an upgrade) answers with nothing and its lower state.
+        Ok(changes) if jmap::state::went_backwards(&since, &changes.new_state) => {
+            full_mailboxes(conn, store, account_id).await
+        }
         Ok(changes) => {
             let changed = apply_mailbox_changes(conn, store, account_id, &changes).await?;
             Ok(Outcome { changed, full_resync: false })
@@ -139,6 +143,9 @@ async fn sync_messages(conn: &Connection, store: &Store, account_id: &str) -> Re
         return Ok(outcome);
     };
     match conn.email_changes(&since).await {
+        Ok(changes) if jmap::state::went_backwards(&since, &changes.new_state) => {
+            full_messages(conn, store, account_id).await
+        }
         Ok(changes) => {
             let changed = apply_message_changes(conn, store, account_id, &changes).await?;
             Ok(Outcome { changed, full_resync: false })

@@ -409,6 +409,16 @@ pub fn create_object(contact: &Contact) -> Value {
     Value::Object(card)
 }
 
+/// A new card's `uid`: `urn:uuid:` and a random version 4 identifier.
+pub fn new_uid() -> Result<String> {
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).map_err(|e| Error::temporary(format!("random numbers: {e}")))?;
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    Ok(format!("urn:uuid:{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..]))
+}
+
 // ---- changing a card ----
 
 /// The name components with the first given and surname ones set to the new values (taken out
@@ -599,6 +609,16 @@ pub fn update_patch(card: &Value, wanted: &Contact, base: &Contact) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_new_card_gets_a_version_4_uuid_urn_that_differs_each_time() {
+        let (a, b) = (new_uid().unwrap(), new_uid().unwrap());
+        assert_ne!(a, b);
+        let uuid = a.strip_prefix("urn:uuid:").unwrap();
+        let parts: Vec<usize> = uuid.split('-').map(str::len).collect();
+        assert_eq!(parts, [8, 4, 4, 4, 12]);
+        assert!(uuid.split('-').nth(2).unwrap().starts_with('4') && "89ab".contains(&uuid[19..20]));
+    }
+
     use super::*;
 
     /// A card as Stalwart 1.1.0 gave it back after it was made with everything the app shows

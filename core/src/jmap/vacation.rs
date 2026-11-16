@@ -47,14 +47,14 @@ impl Connection {
 
     /// Whether the away message is on; false on a server that has none.
     pub async fn away_is_on(&self) -> Result<bool> {
-        match self.has_capability(VACATION_CAPABILITY) {
+        match self.account_has_capability(VACATION_CAPABILITY) {
             true => Ok(self.away_message().await?.is_enabled),
             false => Ok(false),
         }
     }
 
     fn needs_vacation(&self) -> Result<()> {
-        match self.has_capability(VACATION_CAPABILITY) {
+        match self.account_has_capability(VACATION_CAPABILITY) {
             true => Ok(()),
             false => Err(Error::invalid("the server does not support an away message")),
         }

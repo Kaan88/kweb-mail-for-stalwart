@@ -700,6 +700,15 @@ fn a_wrong_away_message_is_refused_before_it_is_sent() {
 }
 
 #[test]
+fn an_away_message_the_account_may_not_use_is_told_before_asking_though_the_session_names_it() {
+    let rig = Rig::new();
+    rig.server.set_vacation_for_account(false);
+    assert!(matches!(rig.core.away_message(), Err(Error::Invalid { .. })));
+    assert!(matches!(rig.core.set_away_message(away(false, None, None, "")), Err(Error::Invalid { .. })));
+    assert_eq!(rig.server.request_count("VacationResponse/get"), 0);
+}
+
+#[test]
 fn a_server_without_an_away_message_says_so() {
     let rig = Rig::new();
     rig.server.set_vacation_enabled(false);

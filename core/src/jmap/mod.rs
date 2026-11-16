@@ -25,6 +25,7 @@ mod import;
 mod jscal;
 mod jscontact;
 mod manage;
+mod notices;
 mod pushsub;
 mod recur;
 mod send;
@@ -32,6 +33,7 @@ mod send_later;
 mod shared;
 mod sharing;
 mod sieve;
+pub mod state;
 mod totp;
 mod vacation;
 
@@ -119,6 +121,8 @@ pub enum Event {
         mailbox: bool,
         /// The user's calendars or their events changed (the device calendar sync follows this).
         calendar: bool,
+        /// The server made a record of what someone else did (`CalendarEventNotification`, `ShareNotification`).
+        notices: bool,
     },
     CalendarAlert {
         event_id: String,
@@ -191,6 +195,15 @@ impl Connection {
 
     pub fn has_capability(&self, urn: &str) -> bool {
         self.client.session().has_capability(urn)
+    }
+
+    /// Whether the account the capability's calls go to has it, not only the session. Stalwart
+    /// keeps `vacationresponse` in the session but takes it out of the account's capabilities
+    /// when the user lacks the permission to use it (Stalwart issue 1488).
+    pub(crate) fn account_has_capability(&self, urn: &str) -> bool {
+        let session = self.client.session();
+        session.has_capability(urn)
+            && session.account(&self.account_for(urn)).is_some_and(|account| account.capability(urn).is_some())
     }
 
     /// All mailboxes and the Mailbox state they belong to.
@@ -467,6 +480,8 @@ impl Connection {
                 DataType::CalendarAlert,
                 DataType::CalendarEvent,
                 DataType::Calendar,
+                DataType::CalendarEventNotification,
+                DataType::ShareNotification,
             ]),
             false,
             Some(STREAM_PING_SECS),
@@ -539,7 +554,14 @@ fn read_event(item: jmap_client::Result<PushNotification>, account: &str) -> Opt
             let types: Vec<&DataType> = changes.changes(account).into_iter().flatten().map(|(t, _)| t).collect();
             let (email, mailbox) = changed_types(types.iter().copied());
             let calendar = types.iter().any(|t| matches!(t, DataType::CalendarEvent | DataType::Calendar));
-            (email || mailbox || calendar).then_some(Ok(Event::StateChange { email, mailbox, calendar }))
+            let notices =
+                types.iter().any(|t| matches!(t, DataType::CalendarEventNotification | DataType::ShareNotification));
+            (email || mailbox || calendar || notices).then_some(Ok(Event::StateChange {
+                email,
+                mailbox,
+                calendar,
+                notices,
+            }))
         }
         Ok(PushNotification::CalendarAlert(a)) => Some(Ok(Event::CalendarAlert {
             event_id: a.calendar_event_id,

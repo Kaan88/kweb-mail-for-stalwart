@@ -26,7 +26,7 @@ use crate::{
     auth::Tokens,
     compose,
     jmap::{is_unauthorized, Connection},
-    model::{Account, ConnectionStatus, Reminder},
+    model::{Account, ConnectionStatus, Notice, Reminder},
     notify::{self, OnScreen, Plan},
     store::Store,
     sync, Error, Result,
@@ -45,6 +45,10 @@ pub trait Listener: Send + Sync {
     /// The server's calendars or events changed (also by this phone's own upload): the device calendar sync, if it
     /// is on, should run. Nothing of the change is told.
     fn calendar_changed(&self);
+    /// What other people did that concerns the user (invited, changed, cancelled, shared): show each as a
+    /// notice of its own. Return true once they are handled (shown, or the user switched them off); the
+    /// core then tells the server they were shown. Return false to be offered them again at the next pass.
+    fn notices(&self, notices: Vec<Notice>) -> bool;
 }
 
 /// Timings, so tests can run in milliseconds. `Default` gives the production values.
@@ -121,13 +125,21 @@ pub async fn check_pass_only(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Pla
 async fn attempt_pass(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     let token = deps.tokens.access_token().await?;
     let conn = Connection::connect(&deps.account.server_url, &token.token).await?;
-    pass(deps, &conn, on_screen).await
+    let plan = pass(deps, &conn, on_screen).await?;
+    notices(deps, &conn).await;
+    Ok(plan)
+}
+
+/// The notices of the server (invitations, changes, shares), after a pass. Best effort.
+async fn notices(deps: &Deps, conn: &Connection) {
+    crate::notices::deliver(conn, &deps.store, &deps.account.id, &*deps.listener, now_secs()).await;
 }
 
 async fn attempt(deps: &Deps, on_screen: OnScreen<'_>) -> Result<Plan> {
     let token = deps.tokens.access_token().await?;
     let conn = Connection::connect(&deps.account.server_url, &token.token).await?;
     let plan = pass(deps, &conn, on_screen).await?;
+    notices(deps, &conn).await;
     // The plan is made and the listener was told; the bodies for reading offline come after
     // and are optional. This call is the 15-minute job or the boot receiver, whose process may
     // not live long, so the prefetch is done here, within a budget (each batch that arrived is

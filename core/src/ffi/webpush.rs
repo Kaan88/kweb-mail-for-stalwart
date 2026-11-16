@@ -69,7 +69,7 @@ pub const RENEW_BEFORE_SECS: i64 = 4 * 24 * 3600;
 pub const LOOK_EVERY_SECS: i64 = 10 * 60;
 /// The data types of the subscription: the ones the live connection listens to
 /// (`Connection::events`). New mail does not come as one of them but as an EmailPush.
-pub const TYPES: [&str; 3] = ["Email", "Mailbox", "CalendarAlert"];
+pub const TYPES: [&str; 5] = ["Email", "Mailbox", "CalendarAlert", "CalendarEventNotification", "ShareNotification"];
 /// The `emailPush` properties asked for: the list the experiment was run with (part d), so the
 /// shape is one the server is known to accept and deliver. Their content is not used in this
 /// version: a message only says "mail came".

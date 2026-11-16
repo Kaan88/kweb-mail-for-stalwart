@@ -1316,6 +1316,56 @@ pub struct Reminder {
     pub all_day: bool,
 }
 
+/// What the server's record of another person's action is about (a `CalendarEventNotification` or a
+/// `ShareNotification`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NoticeKind {
+    /// Someone invited the user to an event (the event has guests).
+    EventInvited,
+    /// Someone put an event into one of the user's calendars.
+    EventAdded,
+    EventChanged,
+    EventCancelled,
+    /// Someone shared a mailbox, calendar, address book or folder with the user.
+    ShareNew,
+    /// What the user may do with something already shared was changed.
+    ShareChanged,
+    /// Someone stopped sharing it.
+    ShareEnded,
+}
+
+/// What a share notice is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NoticeThing {
+    Event,
+    Mailbox,
+    Calendar,
+    AddressBook,
+    /// A folder of the files, or anything this version does not name.
+    Other,
+}
+
+/// One notice of the server for the user: another person invited, changed, cancelled, shared. The
+/// words are the host's (it has the language): the core gives who, what and when as the server did.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Notice {
+    /// Stable and unique in the account (`ce:` or `sh:` and the server's id); the host's notification id comes from it.
+    pub id: String,
+    pub kind: NoticeKind,
+    pub thing: NoticeThing,
+    /// The name of the person (or, for a share, the account that gives it); never empty.
+    pub who: String,
+    /// The event's title; empty for a share and when the event has none.
+    pub title: String,
+    /// For an event: when it starts, as a JSCalendar local date-time (`2026-11-12T10:00:00`); `None` when unknown.
+    pub local_start: Option<String>,
+    /// IANA zone `local_start` is in; `None` is a floating time.
+    pub time_zone: Option<String>,
+    pub all_day: bool,
+    /// When the server made the record (Unix seconds).
+    pub at: i64,
+}
+
 /// The state of the live connection, for the "Connected" entry and the Delivery check screen.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ConnectionStatus {

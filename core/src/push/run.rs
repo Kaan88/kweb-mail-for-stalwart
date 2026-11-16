@@ -84,11 +84,20 @@ struct Runner {
     reporter: Arc<Reporter>,
     /// A prefetch of bodies is running beside the loop: do not start a second one.
     prefetching: Arc<AtomicBool>,
+    /// The server's notices (invitations, shares) are to be looked at after the next pass: set by the push type, at
+    /// the start of a session and when a stream is replaced (a push may have been missed), cleared by the look.
+    notices_due: AtomicBool,
 }
 
 pub(super) async fn run(deps: Deps, wake: Arc<Notify>, reporter: Arc<Reporter>) {
     let mut health = Health::new(deps.timing.clone());
-    let runner = Runner { deps, wake, reporter, prefetching: Arc::new(AtomicBool::new(false)) };
+    let runner = Runner {
+        deps,
+        wake,
+        reporter,
+        prefetching: Arc::new(AtomicBool::new(false)),
+        notices_due: AtomicBool::new(true),
+    };
     loop {
         runner.reporter.set(ConnectionStatus::Connecting);
         let err = runner.session(&mut health).await;
@@ -139,6 +148,9 @@ impl Runner {
                     if self.on_event(event, &conn) {
                         self.settle(&mut stream, &conn).await?;
                         self.pass(&conn).await?;
+                    } else {
+                        // Only a notice, or a type with nothing for the cache: no pass, a look at the notices.
+                        self.look_at_notices(&conn).await;
                     }
                 }
                 Next::Rearm => {
@@ -146,6 +158,7 @@ impl Runner {
                     // in between; the pass covers the moment of the swap.
                     stream = conn.events().await?;
                     rearm_at = Instant::now() + self.deps.timing.rearm_after;
+                    self.notices_due.store(true, Ordering::Release);
                     self.pass(&conn).await?;
                 }
                 Next::Renew => {
@@ -153,6 +166,7 @@ impl Runner {
                     conn = Arc::new(Connection::connect(&self.deps.account.server_url, &token.token).await?);
                     stream = conn.events().await?;
                     rearm_at = Instant::now() + self.deps.timing.rearm_after;
+                    self.notices_due.store(true, Ordering::Release);
                     self.pass(&conn).await?;
                 }
                 Next::Poke => self.pass(&conn).await?,
@@ -162,8 +176,23 @@ impl Runner {
 
     async fn pass(&self, conn: &Arc<Connection>) -> Result<()> {
         pass(&self.deps, conn, OnScreen::Unknown).await?;
+        self.look_at_notices(conn).await;
         self.prefetch(conn);
         Ok(())
+    }
+
+    /// Looks at the server's notices when something said they may have changed. Best effort.
+    async fn look_at_notices(&self, conn: &Arc<Connection>) {
+        if self.notices_due.swap(false, Ordering::AcqRel) {
+            crate::notices::deliver(
+                conn,
+                &self.deps.store,
+                &self.deps.account.id,
+                &*self.deps.listener,
+                super::now_secs(),
+            )
+            .await;
+        }
     }
 
     /// Fetches the bodies of the newest Inbox mail for reading offline, in a task of its own:
@@ -188,9 +217,12 @@ impl Runner {
     fn on_event(&self, event: Event, conn: &Arc<Connection>) -> bool {
         self.reporter.set(ConnectionStatus::Live { last_event_at: now_secs() });
         match event {
-            Event::StateChange { email, mailbox, calendar } => {
+            Event::StateChange { email, mailbox, calendar, notices } => {
                 if calendar {
                     self.deps.listener.calendar_changed();
+                }
+                if notices {
+                    self.notices_due.store(true, Ordering::Release);
                 }
                 email || mailbox
             }

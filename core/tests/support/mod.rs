@@ -561,6 +561,12 @@ impl MockServer {
         let _ = self.shared.tx.send(StreamMsg::CalendarAlert { data });
     }
 
+    /// A `StateChange` that names only the notice types, as the server sends when it records one.
+    pub fn push_notice_state(&self) {
+        let changed = json!({ ACCOUNT_ID: { "CalendarEventNotification": "n", "ShareNotification": "n" } });
+        let _ = self.shared.tx.send(StreamMsg::State { id: 900, changed });
+    }
+
     /// Another client changes `property` of the event right after this client's next
     /// `CalendarEvent/get` (each call queues one change): its write then finds the state moved.
     pub fn change_event_after_next_get(&self, id: &str, property: &str, value: Value) {
@@ -608,6 +614,16 @@ impl MockServer {
         if down {
             self.drop_event_streams();
         }
+    }
+
+    /// Stalwart's own state strings from now on (and an empty answer for a state ahead of the server).
+    pub fn use_stalwart_states(&self) {
+        self.shared.mail().use_stalwart_states();
+    }
+
+    /// The server goes back `by` states, as after a restore from a backup.
+    pub fn rewind_states(&self, by: u64) {
+        self.shared.mail().rewind_states(by);
     }
 
     /// States up to now become unknown to `/changes` (`cannotCalculateChanges`). The current
@@ -1002,6 +1018,29 @@ impl MockServer {
     pub fn set_unsubscribe_headers(&self, id: &str, list_unsubscribe: Option<&str>, post: Option<&str>) {
         let value = (list_unsubscribe.map(str::to_string), post.map(str::to_string));
         self.shared.mail().unsubscribe.insert(id.to_string(), value);
+    }
+
+    /// The server records something another person did: `kind` is `event` (a `CalendarEventNotification`) or
+    /// `share` (a `ShareNotification`); `record` is the object as the server gives it, with its `id` and `created`.
+    pub fn add_notice(&self, kind: &str, record: Value) {
+        let id = record["id"].as_str().expect("a notice has an id").to_string();
+        let mut calendar = self.shared.calendar.lock().unwrap();
+        match kind {
+            "event" => calendar.event_notices.insert(id, record),
+            _ => calendar.share_notices.insert(id, record),
+        };
+    }
+
+    /// The ids of the notices the server still holds: `(events, shares)`.
+    pub fn notice_ids(&self) -> (Vec<String>, Vec<String>) {
+        let calendar = self.shared.calendar.lock().unwrap();
+        (calendar.event_notices.keys().cloned().collect(), calendar.share_notices.keys().cloned().collect())
+    }
+
+    /// With false the session still names the away message but the account does not (a user without the
+    /// permission to use it).
+    pub fn set_vacation_for_account(&self, allowed: bool) {
+        self.shared.account.lock().unwrap().vacation_denied = !allowed;
     }
 
     /// With false the server has no away message (the session names no capability).
@@ -1452,7 +1491,9 @@ async fn session(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     ] {
         if on {
             capabilities[urn] = json!({});
-            account_capabilities[urn] = json!({});
+            if !(urn.ends_with("vacationresponse") && s.account.lock().unwrap().vacation_denied) {
+                account_capabilities[urn] = json!({});
+            }
             primary[urn] = json!(ACCOUNT_ID);
         }
     }
@@ -1790,7 +1831,13 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
         | "CalendarEvent/get"
         | "CalendarEvent/query"
         | "CalendarEvent/changes"
-        | "CalendarEvent/set" => s.calendar.lock().unwrap().call(name, args).map(one),
+        | "CalendarEvent/set"
+        | "CalendarEventNotification/query"
+        | "CalendarEventNotification/get"
+        | "CalendarEventNotification/set"
+        | "ShareNotification/query"
+        | "ShareNotification/get"
+        | "ShareNotification/set" => s.calendar.lock().unwrap().call(name, args).map(one),
         "SieveScript/get" | "SieveScript/set" | "SieveScript/validate" => {
             let mut sieve = s.sieve.lock().unwrap();
             let mut account = s.account.lock().unwrap();

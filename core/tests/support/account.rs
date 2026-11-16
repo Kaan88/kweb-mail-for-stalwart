@@ -80,6 +80,8 @@ pub struct Account {
     vacation_version: u64,
     /// With false the session names no vacation response capability and the methods do not exist.
     pub vacation_enabled: bool,
+    /// The session names the away message but the account's capabilities do not.
+    pub vacation_denied: bool,
     /// With false the session names no contacts capability and the methods do not exist.
     pub contacts_enabled: bool,
     pub quota_enabled: bool,
@@ -127,6 +129,7 @@ impl Default for Account {
             }),
             vacation_version: 0,
             vacation_enabled: true,
+            vacation_denied: false,
             contacts_enabled: true,
             quota_enabled: true,
             quota: (1_500, Some(10_000)),

@@ -38,8 +38,18 @@ use sha2::Sha256;
 use super::state::{MethodError, ACCOUNT_ID};
 
 pub const CAPABILITY: &str = "urn:ietf:params:jmap:webpush-vapid";
-const TYPES: [&str; 8] =
-    ["Email", "Mailbox", "CalendarAlert", "Thread", "EmailDelivery", "Identity", "Core", "EmailSubmission"];
+const TYPES: [&str; 10] = [
+    "Email",
+    "Mailbox",
+    "CalendarAlert",
+    "Thread",
+    "EmailDelivery",
+    "Identity",
+    "Core",
+    "EmailSubmission",
+    "CalendarEventNotification",
+    "ShareNotification",
+];
 const EMAIL_PROPERTIES: [&str; 8] =
     ["id", "threadId", "mailboxIds", "keywords", "receivedAt", "subject", "from", "preview"];
 const WEEK: i64 = 7 * 24 * 3600;

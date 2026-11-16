@@ -132,10 +132,10 @@ impl Connection {
         let books = self.address_books_in(account).await?;
         let Some(id) = id else {
             let clean = jscontact::validate(contact, &books, None)?;
-            let args = json!({
-                "accountId": account,
-                "create": { CREATE_ID: jscontact::create_object(&clean) },
-            });
+            // The server keeps a card without a uid unless one is sent (checked on Stalwart 1.1).
+            let mut object = jscontact::create_object(&clean);
+            object["uid"] = json!(jscontact::new_uid()?);
+            let args = json!({ "accountId": account, "create": { CREATE_ID: object } });
             let responses = self.contacts_call(&[("ContactCard/set", args)]).await?;
             return created_id(response(&responses, "ContactCard/set")?);
         };
