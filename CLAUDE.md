@@ -79,7 +79,7 @@ CI is `.github/workflows/ci.yml` (core job, then android job that uploads the AP
 
 - `rustfmt.toml`: `max_width = 120`, `use_small_heuristics = "Max"`. Clippy is `-D warnings`.
 - Package `ovh.kweb.mail`, minSdk 29, compile and target 36. Dependency versions are pinned on purpose (lifecycle 2.10.0 because newer ones need compileSdk 37).
-- Look: Material You. Take every colour from `MaterialTheme.colorScheme`; never write a colour into a screen. Rows that belong together are one group (`ui/list/Groups.kt`: large outer corners, small inner ones, no divider lines). The theme is the user's choice (`ui/theme`: wallpaper palette or a built-in one); the picker is in the folder drawer. `design/mockups-material.html` is the current design page.
+- Look: Material You. Take every colour from `MaterialTheme.colorScheme`; never write a colour into a screen. Rows that belong together are one group (`ui/list/Groups.kt`: large outer corners, small inner ones, no divider lines). The theme is the user's choice (`ui/theme`: wallpaper palette or a built-in one); the picker is Settings > Appearance (colour, light, dark or system, pure black). `design/mockups-material.html` is the current design page.
 - Notification rule: what is on screen equals the unread Inbox mail that arrived after sign-in and was not swiped. Android notification ids are derived from the message id and are 1000 or more; lower ids belong to the app's own entries.
 - Android sign-in returns through the app link `ovh.kweb.mail:/oauth/callback` (`SignInReturnActivity`). A loopback socket does not work on a phone. The desktop CLI keeps the loopback socket.
 - Tests for the core run against the mock server in `core/tests/support/`. Prefer a core test plus a real-server check over a UI-only check.

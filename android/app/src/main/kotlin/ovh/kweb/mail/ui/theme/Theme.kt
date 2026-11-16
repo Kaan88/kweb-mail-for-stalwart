@@ -22,12 +22,29 @@ import ovh.kweb.mail.ui.UiPrefs
 /** The theme the app is drawn in. One value for the process; the picker changes it and it is remembered. */
 object ThemeState {
     private val flow = MutableStateFlow(ThemeChoice.default(Build.VERSION.SDK_INT))
+    private val modeFlow = MutableStateFlow(ThemeMode.System)
+    private val blackFlow = MutableStateFlow(false)
 
     val choice: StateFlow<ThemeChoice> get() = flow
+    val mode: StateFlow<ThemeMode> get() = modeFlow
+    val pureBlack: StateFlow<Boolean> get() = blackFlow
 
     /** Reads the remembered choice. Called before the first frame, so the app never flashes another theme. */
     fun load(context: Context) {
-        flow.value = ThemeChoice.fromKey(UiPrefs(context).theme, Build.VERSION.SDK_INT)
+        val prefs = UiPrefs(context)
+        flow.value = ThemeChoice.fromKey(prefs.theme, Build.VERSION.SDK_INT)
+        modeFlow.value = ThemeMode.of(prefs.themeMode)
+        blackFlow.value = prefs.pureBlack
+    }
+
+    fun chooseMode(context: Context, mode: ThemeMode) {
+        UiPrefs(context).themeMode = mode.key
+        modeFlow.value = mode
+    }
+
+    fun choosePureBlack(context: Context, on: Boolean) {
+        UiPrefs(context).pureBlack = on
+        blackFlow.value = on
     }
 
     fun choose(context: Context, choice: ThemeChoice) {
@@ -91,22 +108,45 @@ private fun builtIn(choice: ThemeChoice, dark: Boolean): ColorScheme {
     return schemeOf(if (dark) palette.dark else palette.light, dark)
 }
 
+/** The dark scheme with the page black and the layers above it in dark greys ([BlackRules]); every other role stays. */
+fun ColorScheme.pureBlack(): ColorScheme = copy(
+    background = Color(BlackRules.SURFACE),
+    surface = Color(BlackRules.SURFACE),
+    surfaceBright = Color(BlackRules.CONTAINER_HIGHEST),
+    surfaceDim = Color(BlackRules.SURFACE),
+    surfaceVariant = Color(BlackRules.CONTAINER_HIGH),
+    surfaceContainerLowest = Color(BlackRules.CONTAINER_LOWEST),
+    surfaceContainerLow = Color(BlackRules.CONTAINER_LOW),
+    surfaceContainer = Color(BlackRules.CONTAINER),
+    surfaceContainerHigh = Color(BlackRules.CONTAINER_HIGH),
+    surfaceContainerHighest = Color(BlackRules.CONTAINER_HIGHEST),
+)
+
+/** Whether the app is drawn dark now (the user's mode over the phone's setting); the thread's WebView follows it too. */
+val LocalDarkTheme = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 /** The colour a theme is known by in the picker. Null for the wallpaper, which has no fixed one. */
 fun seedColor(choice: ThemeChoice): Color? = PaletteTokens.palettes[choice]?.let { Color(it.seed) }
 
 /**
  * Material You. The colours are the user's choice ([ThemeState]): the phone's wallpaper palette
- * (dynamic colour, Android 12 and later) or one of the built-in themes. Light or dark follows the
- * system. Every colour on screen is a role of this scheme, so each theme reaches every screen.
+ * (dynamic colour, Android 12 and later) or one of the built-in themes. Light or dark is the user's choice
+ * ([ThemeMode], by default the system's), with a black page for dark if asked. Every colour on screen is a role of this scheme, so each theme reaches every screen.
  */
 @Composable
-fun KwebTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+fun KwebTheme(content: @Composable () -> Unit) {
     val choice by ThemeState.choice.collectAsStateWithLifecycle()
-    val colors = if (choice == ThemeChoice.Wallpaper && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+    val mode by ThemeState.mode.collectAsStateWithLifecycle()
+    val black by ThemeState.pureBlack.collectAsStateWithLifecycle()
+    val darkTheme = mode.isDark(isSystemInDarkTheme())
+    val base = if (choice == ThemeChoice.Wallpaper && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         val context = LocalContext.current
         if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else {
         remember(choice, darkTheme) { builtIn(choice, darkTheme) }
     }
-    MaterialTheme(colorScheme = colors, content = content)
+    val colors = if (BlackRules.active(black, mode, isSystemInDarkTheme())) base.pureBlack() else base
+    androidx.compose.runtime.CompositionLocalProvider(LocalDarkTheme provides darkTheme) {
+        MaterialTheme(colorScheme = colors, content = content)
+    }
 }

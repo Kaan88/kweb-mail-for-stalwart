@@ -4,6 +4,8 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import android.graphics.Color
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
@@ -15,17 +17,37 @@ import ovh.kweb.mail.ui.AppContent
 import ovh.kweb.mail.ui.AppViewModel
 import ovh.kweb.mail.ui.sending.IntentShare
 import ovh.kweb.mail.ui.theme.KwebTheme
+import ovh.kweb.mail.ui.theme.LocalDarkTheme
 import ovh.kweb.mail.ui.theme.ThemeState
 
 /** The one activity. Screens and navigation are in `ovh.kweb.mail.ui`. */
 class MainActivity : ComponentActivity() {
+    private companion object {
+        // The scrims enableEdgeToEdge() uses itself.
+        val LIGHT_SCRIM = Color.argb(0xe6, 0xFF, 0xFF, 0xFF)
+        val DARK_SCRIM = Color.argb(0x80, 0x1b, 0x1b, 0x1b)
+    }
+
     private val app: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         ThemeState.load(this)
-        setContent { KwebTheme { AppContent(app) } }
+        setContent {
+            KwebTheme {
+                // The bars' icons follow the app's own light or dark, which can differ from the phone's.
+                val dark = LocalDarkTheme.current
+                androidx.compose.runtime.DisposableEffect(dark) {
+                    enableEdgeToEdge(
+                        statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },
+                        navigationBarStyle = SystemBarStyle.auto(LIGHT_SCRIM, DARK_SCRIM) { dark },
+                    )
+                    onDispose { }
+                }
+                AppContent(app)
+            }
+        }
         // After a recreation (rotation) or a relaunch from Recents the intent is the one that was handled already.
         if (savedInstanceState == null && intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0) {
             handleNotificationIntent(intent)

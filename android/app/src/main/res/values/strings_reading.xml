@@ -117,6 +117,20 @@
     <string name="theme_moss">Moss</string>
     <string name="theme_peach">Peach</string>
     <string name="theme_done">Done</string>
+    <string name="appearance_title">Appearance</string>
+    <string name="appearance_detail">%1$s \u00b7 %2$s</string>
+    <string name="appearance_colour">Colour</string>
+    <string name="appearance_mode">Mode</string>
+    <string name="appearance_mode_system">System</string>
+    <string name="appearance_mode_light">Light</string>
+    <string name="appearance_mode_dark">Dark</string>
+    <string name="appearance_dark">Dark theme</string>
+    <string name="appearance_black">Pure black</string>
+    <string name="appearance_black_detail">A black background for OLED screens</string>
+    <string name="appearance_black_light">Only used in the dark theme; the mode is Light now</string>
+    <string name="appearance_preview_primary">Primary</string>
+    <string name="appearance_preview_secondary">Secondary</string>
+    <string name="appearance_preview_tertiary">Tertiary</string>
     <!-- Reading settings (M11 stage 2) -->
     <string name="reading_title">Reading</string>
     <string name="reading_settings_detail">Pictures, the list, text size and when mail counts as read</string>

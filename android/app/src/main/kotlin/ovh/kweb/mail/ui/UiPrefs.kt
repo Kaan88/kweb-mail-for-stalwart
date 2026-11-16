@@ -17,6 +17,16 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(THEME, null)
         set(value) = prefs.edit { putString(THEME, value) }
 
+    /** Light, dark or system (`ThemeMode.key`); null until the user picks one. */
+    var themeMode: String?
+        get() = prefs.getString(THEME_MODE, null)
+        set(value) = prefs.edit { putString(THEME_MODE, value) }
+
+    /** Dark theme with a black page. */
+    var pureBlack: Boolean
+        get() = prefs.getBoolean(PURE_BLACK, false)
+        set(value) = prefs.edit { putBoolean(PURE_BLACK, value) }
+
     /** The language last asked for in the assistant's Translate; null until used. */
     var translateLanguage: String?
         get() = prefs.getString(TRANSLATE, null)
@@ -56,6 +66,8 @@ class UiPrefs(context: Context) {
         const val FILE = "ui"
         const val TRANSLATE = "assistant_translate_language"
         const val THEME = "theme"
+        const val THEME_MODE = "theme_mode"
+        const val PURE_BLACK = "theme_pure_black"
         const val ASKED = "notification_permission_asked"
     }
 }

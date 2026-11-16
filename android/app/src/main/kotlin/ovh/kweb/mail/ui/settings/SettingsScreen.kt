@@ -70,7 +70,7 @@ import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
 import ovh.kweb.mail.ui.delivery.SignOutDialog
 import ovh.kweb.mail.ui.list.Groups
-import ovh.kweb.mail.ui.theme.ThemePickerDialog
+import ovh.kweb.mail.ui.theme.themeModeName
 import ovh.kweb.mail.ui.theme.ThemeState
 import ovh.kweb.mail.ui.theme.themeName
 import uniffi.kweb_core.Quota
@@ -87,6 +87,7 @@ fun SettingsScreen(
     onOpenDeliveryCheck: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenReading: () -> Unit,
+    onOpenAppearance: () -> Unit,
     onOpenCrypto: () -> Unit,
     onOpenAway: () -> Unit,
     onOpenFilters: () -> Unit,
@@ -105,9 +106,9 @@ fun SettingsScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val deliveryState by delivery.state.collectAsStateWithLifecycle()
     val theme by ThemeState.choice.collectAsStateWithLifecycle()
+    val themeMode by ThemeState.mode.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
-    var pickingTheme by remember { mutableStateOf(false) }
     val signOutPrompt by delivery.signOutPrompt.collectAsStateWithLifecycle()
 
     LifecycleResumeEffect(vm) {
@@ -236,10 +237,10 @@ fun SettingsScreen(
             Group {
                 SettingsRow(
                     Groups.shape(0, 2),
-                    stringResource(R.string.theme_title),
-                    stringResource(themeName(theme)),
+                    stringResource(R.string.appearance_title),
+                    stringResource(R.string.appearance_detail, stringResource(themeName(theme)), stringResource(themeModeName(themeMode))),
                     icon = { Icon(painterResource(R.drawable.ic_palette), contentDescription = null) },
-                    onClick = { pickingTheme = true },
+                    onClick = onOpenAppearance,
                 )
                 SettingsRow(
                     Groups.shape(1, 2),
@@ -264,7 +265,6 @@ fun SettingsScreen(
         }
     }
 
-    if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
     signOutPrompt?.let {
         SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size))
     }

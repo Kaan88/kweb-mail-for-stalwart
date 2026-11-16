@@ -403,6 +403,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
                     onOpenAbout = { app.open(Route.About) },
                     onOpenReading = { app.open(Route.Reading) },
+                    onOpenAppearance = { app.open(Route.Appearance) },
                     onOpenCrypto = { app.open(Route.Crypto) },
                     onOpenAway = { app.open(Route.Away) },
                     onOpenFilters = { app.open(Route.Filters()) },
@@ -422,6 +423,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 )
                 Route.NotificationButtons -> ovh.kweb.mail.ui.settings.NotificationButtonsScreen(onBack = app::back)
                 Route.About -> ovh.kweb.mail.ui.settings.AboutScreen(onBack = app::back)
+                Route.Appearance -> ovh.kweb.mail.ui.settings.AppearanceScreen(onBack = app::back)
                 Route.Reading -> ovh.kweb.mail.ui.settings.ReadingScreen(onBack = app::back, onOpenSenders = { app.open(Route.RemoteSenders) })
                 Route.RemoteSenders -> ovh.kweb.mail.ui.settings.RemoteSendersScreen(onBack = app::back)
                 Route.Crypto -> ovh.kweb.mail.ui.crypto.CryptoSettingsScreen(onBack = app::back)

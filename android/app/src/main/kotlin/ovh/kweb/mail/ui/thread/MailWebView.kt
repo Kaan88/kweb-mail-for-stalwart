@@ -10,7 +10,7 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
-import androidx.compose.foundation.isSystemInDarkTheme
+
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +68,7 @@ fun MailWebView(
     /** The user's text size for message bodies, in percent. */
     textZoom: Int = 100,
 ) {
-    val dark = isSystemInDarkTheme()
+    val dark = ovh.kweb.mail.ui.theme.LocalDarkTheme.current
     val textColor = MaterialTheme.colorScheme.onBackground.toArgb().let { String.format("#%06x", it and 0xFFFFFF) }
     val imageNote = stringResource(R.string.thread_image_not_loaded)
     var generation by remember { mutableIntStateOf(0) }

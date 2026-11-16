@@ -132,6 +132,9 @@ sealed interface Route {
 
     data object Settings : Route
 
+    /** Appearance: colours, light or dark, pure black, reached from Settings. */
+    data object Appearance : Route
+
     /** Reading: pictures, the list and the message text, reached from Settings. */
     data object Reading : Route
 
