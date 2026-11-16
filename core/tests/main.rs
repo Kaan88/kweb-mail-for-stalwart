@@ -56,6 +56,8 @@ mod push;
 mod reading;
 #[path = "suite/send_later.rs"]
 mod send_later;
+#[path = "suite/sender_check.rs"]
+mod sender_check;
 #[path = "suite/sending.rs"]
 mod sending;
 #[path = "suite/shared.rs"]

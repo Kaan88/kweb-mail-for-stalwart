@@ -131,6 +131,9 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
     /** The status of signed and encrypted messages among the opened ones (nothing is asked while the feature is off). */
     val crypto = ovh.kweb.mail.ui.crypto.CryptoController(viewModelScope, Dispatchers.IO) { acct.core }
 
+    /** What the server found out about the sender of each opened message (its own results, asked live, never kept). */
+    val senders = ovh.kweb.mail.ui.sender.SenderController(viewModelScope, Dispatchers.IO) { acct.core }
+
     /** The Unsubscribe chips of the opened messages. */
     val unsubscribe = UnsubscribeController(viewModelScope, Dispatchers.IO, extras, onError = { eventChannel.trySend(ThreadEvent.Text(it)) })
 
@@ -183,6 +186,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
         pendingSave = null
         labels.reset()
         unsubscribe.reset()
+        senders.reset()
         crypto.reset()
         stateFlow.value = ThreadState()
         // Nothing queued for the last visit may reach the next one.
@@ -215,6 +219,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
             val header = s.messages.firstOrNull { it.id == id } ?: continue
             if (s.myAddress != null && header.fromEmail.equals(s.myAddress, ignoreCase = true)) continue
             unsubscribe.check(id)
+            senders.check(id)
         }
     }
 

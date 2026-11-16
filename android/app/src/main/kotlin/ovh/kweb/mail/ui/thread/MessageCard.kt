@@ -114,6 +114,8 @@ class CardActions(
     val onCancelDownload: () -> Unit = {},
     /** A tap on the status chip of a signed or encrypted message (it opens the explanation). */
     val onCryptoChip: () -> Unit = {},
+    /** A tap on the sender mark (it opens the explanation). */
+    val onSenderChip: () -> Unit = {},
 )
 
 /**
@@ -146,6 +148,8 @@ fun MessageCard(
     flat: Boolean = false,
     /** The recipients the server refused when it took this message, which went to the others; empty for any other message. */
     refused: List<uniffi.kweb_core.RefusedRecipient> = emptyList(),
+    /** What the server found out about the sender; null while not known or for mail that is not checked. */
+    senderCheck: uniffi.kweb_core.SenderCheck? = null,
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
@@ -188,7 +192,7 @@ fun MessageCard(
                 )
             }
         } else {
-            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe, crypto, refused)
+            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe, crypto, refused, senderCheck)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                 // Mail the core opened (decrypted, or taken out of opaque signed data) is shown from the core's copy alone;
                 // remote content stays off for it when the core says so, whatever the user allowed.
@@ -215,6 +219,7 @@ private fun ExpandedHeader(
     unsubscribe: UnsubEntry?,
     crypto: CryptoUi?,
     refused: List<uniffi.kweb_core.RefusedRecipient>,
+    senderCheck: uniffi.kweb_core.SenderCheck?,
 ) {
     var showDetails by remember(header.id) { mutableStateOf(false) }
     val loaded = (body as? BodyState.Loaded)?.body
@@ -263,6 +268,12 @@ private fun ExpandedHeader(
             onUnsubscribe = actions.onUnsubscribe,
             modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
         )
+        if (senderCheck != null && ovh.kweb.mail.ui.sender.SenderRules.shows(senderCheck)) {
+            ovh.kweb.mail.ui.sender.SenderChip(senderCheck, onClick = actions.onSenderChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
+            if (ovh.kweb.mail.ui.sender.SenderRules.warns(senderCheck)) {
+                ovh.kweb.mail.ui.sender.SenderWarning(senderCheck, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
+            }
+        }
         if (crypto != null) CryptoChip(crypto, onClick = actions.onCryptoChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
         if (refused.isNotEmpty()) {
             // The message went to the others; the server would not take these (its reply is in the details).

@@ -472,6 +472,8 @@ pub struct Mail {
     pub list_ids: BTreeMap<String, String>,
     /// The raw List-Unsubscribe and List-Unsubscribe-Post headers of some messages, by message id.
     pub unsubscribe: BTreeMap<String, (Option<String>, Option<String>)>,
+    /// The whole header block of some messages, in order, by message id (the `headers` property).
+    pub raw_headers: BTreeMap<String, Vec<(String, String)>>,
     /// The most ids a get or a snippet request takes, when the test sets one.
     pub get_max: Option<usize>,
     /// Files put on the server through the upload endpoint: blob id to type and bytes.
@@ -611,6 +613,7 @@ impl Mail {
             bodies_fail: false,
             list_ids: BTreeMap::new(),
             unsubscribe: BTreeMap::new(),
+            raw_headers: BTreeMap::new(),
             get_max: None,
             uploads: BTreeMap::new(),
             submissions: Vec::new(),
@@ -1065,6 +1068,12 @@ impl Mail {
     /// One message as `Email/get` gives it, with the header the message type does not know.
     fn email_value(&self, e: &Email, props: Option<&BTreeSet<String>>, body: &BodyOpts) -> Value {
         let mut value = e.json(props, body);
+        if props.is_some_and(|p| p.contains("headers")) {
+            let list: Vec<Value> = (self.raw_headers.get(&e.id).into_iter().flatten())
+                .map(|(name, value)| json!({ "name": name, "value": value }))
+                .collect();
+            value["headers"] = json!(list);
+        }
         for property in props.into_iter().flatten().filter(|p| p.to_ascii_lowercase().starts_with("header:")) {
             let lower = property.to_ascii_lowercase();
             let (unsubscribe, post) = self.unsubscribe.get(&e.id).cloned().unwrap_or_default();

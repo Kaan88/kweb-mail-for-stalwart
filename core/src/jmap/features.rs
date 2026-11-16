@@ -36,6 +36,37 @@ impl Connection {
         Ok(headers_from(email))
     }
 
+    /// The headers of the message in the order they stand (name and raw value) and its From
+    /// addresses, for the sender check. A message the server no longer has is `Error::Invalid`.
+    pub async fn check_headers(&self, message_id: &str) -> Result<(Vec<(String, String)>, Vec<crate::model::Address>)> {
+        let args = json!({
+            "accountId": self.account_id(),
+            "ids": [message_id],
+            "properties": ["headers", "from"],
+        });
+        let responses = self.call(&[MAIL_CAPABILITY], &[("Email/get", args)]).await?;
+        let get = response(&responses, "Email/get")?;
+        let Some(email) = get["list"].get(0) else { return Err(Error::invalid(MESSAGE_GONE)) };
+        let headers = email["headers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|h| Some((h["name"].as_str()?.to_string(), h["value"].as_str()?.to_string())))
+            .collect();
+        let from = email["from"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|a| {
+                Some(crate::model::Address {
+                    name: a["name"].as_str().unwrap_or_default().to_string(),
+                    email: a["email"].as_str()?.to_string(),
+                })
+            })
+            .collect();
+        Ok((headers, from))
+    }
+
     /// Puts the keyword on the message or takes it off (a patch of that one keyword, so no other
     /// keyword is touched). A message the server no longer has is `Error::Invalid`, and so is a
     /// keyword the server refuses.

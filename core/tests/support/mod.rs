@@ -1020,6 +1020,12 @@ impl MockServer {
         self.shared.mail().unsubscribe.insert(id.to_string(), value);
     }
 
+    /// The whole header block of the message as `Email/get` gives it for `headers` (name and raw value, top first).
+    pub fn set_raw_headers(&self, id: &str, headers: &[(&str, &str)]) {
+        let list = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
+        self.shared.mail().raw_headers.insert(id.to_string(), list);
+    }
+
     /// The server records something another person did: `kind` is `event` (a `CalendarEventNotification`) or
     /// `share` (a `ShareNotification`); `record` is the object as the server gives it, with its `id` and `created`.
     pub fn add_notice(&self, kind: &str, record: Value) {

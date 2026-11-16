@@ -165,6 +165,8 @@ fun ThreadScreen(
     val unsubscribes by vm.unsubscribe.state.collectAsStateWithLifecycle()
     val cryptos by vm.crypto.state.collectAsStateWithLifecycle()
     var cryptoId by rememberSaveable { mutableStateOf<String?>(null) }
+    val senderChecks by vm.senders.state.collectAsStateWithLifecycle()
+    var senderId by rememberSaveable { mutableStateOf<String?>(null) }
     // The passphrase prompt: only the page the user is on asks, once per message until the user asks again from the chip.
     var passphraseId by rememberSaveable { mutableStateOf<String?>(null) }
     var skipped by remember { mutableStateOf(setOf<String>()) }
@@ -553,6 +555,7 @@ fun ThreadScreen(
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
                         crypto = cryptos[header.id],
+                        senderCheck = senderChecks[header.id],
                         refused = state.refused[header.id].orEmpty(),
                         onOpenCryptoFile = { file ->
                             scope.launch {
@@ -562,6 +565,7 @@ fun ThreadScreen(
                         },
                         actions = CardActions(
                             onCryptoChip = { cryptoId = header.id },
+                            onSenderChip = { senderId = header.id },
                             onLabels = { labelsTarget = header.id },
                             onUnsubscribe = { unsubscribeId = header.id },
                             onToggle = { vm.toggle(header.id) },
@@ -691,6 +695,10 @@ fun ThreadScreen(
                 onDismiss = { skipped = skipped + id; passphraseId = null },
             )
         }
+    }
+    senderId?.let { id ->
+        val check = senderChecks[id]
+        if (check == null) senderId = null else ovh.kweb.mail.ui.sender.SenderSheet(check, onDismiss = { senderId = null })
     }
     cryptoId?.let { id ->
         val ui = cryptos[id]

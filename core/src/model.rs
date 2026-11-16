@@ -966,6 +966,59 @@ pub struct Unsubscribe {
     pub web_url: Option<String>,
 }
 
+/// How far the From address of a message can be trusted, from the server's own checks
+/// (`Authentication-Results`, see [`crate::sender_check`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SenderStatus {
+    /// The server checked and the message is from the domain it says.
+    Verified,
+    /// The server wrote no checks for this message (it did not arrive from outside).
+    NotChecked,
+    /// Checked, but nothing proves the From domain.
+    Unverified,
+    /// A check failed: the From address is probably forged.
+    Failed,
+}
+
+/// What one method (DMARC, DKIM, SPF) said about the From domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum MethodResult {
+    NotRun,
+    Pass,
+    Fail,
+    Other,
+}
+
+/// Why the status is what it is, for the sheet's one plain sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SenderReason {
+    DmarcPass,
+    DkimPass,
+    SpfPass,
+    DmarcFail,
+    DkimFail,
+    SpfFail,
+    /// Something passed, but for a domain other than the one in the From line.
+    NotAligned,
+    NoResults,
+    NotFromThisServer,
+    NoSender,
+}
+
+/// The sender check of one message.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SenderCheck {
+    pub status: SenderStatus,
+    pub reason: SenderReason,
+    /// The domain of the From address, lower case.
+    pub from_domain: String,
+    pub dmarc: MethodResult,
+    pub dkim: MethodResult,
+    pub spf: MethodResult,
+    /// The domain that signed the message when a signature for the From domain passed, else empty.
+    pub signed_by: String,
+}
+
 /// A recipient the server refused while it took a message that went to the others: the thread
 /// can say "not delivered to ...". `reply` is the server's own SMTP reply, not a secret.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]

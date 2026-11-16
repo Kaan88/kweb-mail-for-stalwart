@@ -22,6 +22,7 @@ pub mod notify;
 pub mod push;
 pub mod reading;
 pub mod secrets;
+pub mod sender_check;
 pub mod snippets;
 pub mod store;
 pub mod sync;

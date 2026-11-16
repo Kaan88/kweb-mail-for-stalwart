@@ -2160,6 +2160,16 @@ impl Core {
         Ok(self.unsubscribe_options(&message_id)?.info())
     }
 
+    /// What the user's own server found out about the sender of `message_id`: its SPF, DKIM and
+    /// DMARC results, read from the header the server wrote (never one the sender wrote). Asks
+    /// the server for the headers each time and keeps nothing. Not for shared mail.
+    pub fn sender_check(&self, message_id: String) -> Result<crate::model::SenderCheck> {
+        self.account_id()?;
+        let message_id = &message_id;
+        let (headers, from) = self.with_connection(|conn| async move { conn.check_headers(message_id).await })?;
+        Ok(crate::sender_check::evaluate(&headers, &from))
+    }
+
     /// Leaves the list: the one-click request when the list takes one (an https POST from the
     /// core, no redirects followed, nothing of the user's sent along), else the request by
     /// mail, sent from the user's default address like any message. Neither possible is

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sender_chip_verified">Sender verified</string>
+    <string name="sender_chip_unverified">Sender not verified</string>
+    <string name="sender_chip_failed">Sender check failed</string>
+    <string name="sender_warning">This message may not really be from %1$s. Do not open links or files in it.</string>
+    <string name="sender_sheet_title">About the sender</string>
+    <string name="sender_why_dmarc_pass">Your server checked this message when it arrived, and %1$s confirmed that it sent it.</string>
+    <string name="sender_why_dkim_pass">The message carries a signature from %2$s that your server checked and found intact. That domain belongs with %1$s.</string>
+    <string name="sender_why_spf_pass">The server that sent this message is one %1$s allows to send for it. There is no signature to check, so this is a weaker proof.</string>
+    <string name="sender_why_dmarc_fail">%1$s says that mail like this one is not from it: your server checked and the message did not pass. It was most likely sent by someone pretending to be that sender.</string>
+    <string name="sender_why_dkim_fail">The message claims to be signed by %1$s, but the signature does not match. It was changed on the way or the signature is not real.</string>
+    <string name="sender_why_spf_fail">The server that sent this message is not one %1$s allows to send for it, and nothing else vouches for the message.</string>
+    <string name="sender_why_not_aligned">Your server checked the message, but what it found belongs to another domain than %1$s, the one shown as the sender. That is common for newsletters and mailing lists, and it is also how some forged mail looks.</string>
+    <string name="sender_why_no_results">Your server could not check whether %1$s sent this message. The domain publishes nothing to check against, or the message carries nothing to check.</string>
+    <string name="sender_why_not_checked">Your server did not check this message, for example because it did not come in from outside.</string>
+    <string name="sender_why_no_sender">The message has no usable sender address, so there is nothing to check.</string>
+    <string name="sender_method_dmarc">DMARC (the domain\'s own rule)</string>
+    <string name="sender_method_dkim">DKIM (a signature)</string>
+    <string name="sender_method_spf">SPF (which server sent it)</string>
+    <string name="sender_method_pass">Passed</string>
+    <string name="sender_method_fail">Failed</string>
+    <string name="sender_method_other">No clear answer</string>
+    <string name="sender_method_not_run">Not checked</string>
+    <string name="sender_sheet_limits">This comes from the checks your own server made on arrival. It shows who sent the message, not that the message is safe or that the sender can be trusted.</string>
+</resources>
