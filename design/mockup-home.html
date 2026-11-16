@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kweb mail home and attention</title>
+<style>
+:root{--bg:#f6f4f5;--fg:#1c1c26;--muted:#656878;--line:#e0dde3;--card:#fff;--brand:#b72046;--bezel:#16171f;--aiBg:#ffddb9;--aiFg:#2b1700}
+@media (prefers-color-scheme:dark){:root{--bg:#101118;--fg:#eceef4;--muted:#9a9fb2;--line:#2a2c3a;--card:#191b25;--brand:#ffb2bd;--bezel:#05060a;--aiBg:#6b4300;--aiFg:#ffddb9}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;padding:36px 20px 72px}
+.wrap{max-width:1360px;margin:0 auto;display:flex;flex-direction:column;gap:34px}
+h1{font-size:30px;line-height:1.15;margin:0 0 8px}h2{font-size:21px;margin:0 0 6px}h3{font-size:16px;margin:0 0 6px}
+.lede{color:var(--muted);max-width:80ch;margin:0}
+.pr{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.pr div{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px 18px}
+.pr b{display:block;font-size:19px;margin-bottom:4px;color:var(--brand)}.pr span{color:var(--muted);font-size:14px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{text-align:left;vertical-align:top;padding:8px 11px;border-bottom:1px solid var(--line)}
+th{font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--bg)}
+td:first-child{font-weight:700;white-space:nowrap}tr:last-child td{border-bottom:0}
+tr.fam td{background:var(--bg);font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.k{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:8px;white-space:nowrap}
+.k.loc{background:var(--line);color:var(--fg)}.k.svc{background:var(--aiBg);color:var(--aiFg)}.k.mix{background:linear-gradient(90deg,var(--line) 50%,var(--aiBg) 50%);color:var(--fg)}
+.small{font-size:13px;color:var(--muted);margin:8px 0 0;max-width:100ch}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+ol.q{margin:0;padding-left:20px}ol.q li{margin:0 0 8px}
+.v{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;padding-top:26px;border-top:1px solid var(--line)}
+.v .cap{flex:1 1 300px;min-width:280px;font-size:14px;color:var(--muted)}
+.v.three .cap{order:-1;flex-basis:100%;columns:2;column-gap:32px}.v.three .cap h2{column-span:all}
+.cap ul{margin:6px 0 0;padding-left:18px}.cap li{margin:3px 0;break-inside:avoid}.cap b{color:var(--fg)}
+.lbl{font-size:12px;color:var(--muted);text-align:center;margin-top:6px}
+.phone{width:376px;height:796px;border:8px solid var(--bezel);border-radius:40px;overflow:hidden;position:relative}
+
+/* the phone screens: M3 roles, Ward crimson */
+.s{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);font:400 13px/1.35 Roboto,system-ui,"Segoe UI",sans-serif}
+.s *{box-sizing:border-box}
+.l{--bg:#fff8f7;--fg:#22191a;--var:#534344;--pri:#b72046;--opri:#fff;--pc:#ffd9de;--opc:#400012;--secc:#fadde0;--osecc:#2c1519;--terc:#ffddb9;--oterc:#2b1700;--scl:#fff0f0;--sc:#fceaea;--sch:#f6e3e4;--out:#857374;--outv:#d8c2c3;--err:#ba1a1a;--errc:#ffdad6;--oerrc:#410002}
+.d{--bg:#1a1112;--fg:#f0dedf;--var:#d8c1c3;--pri:#ffb2bd;--opri:#670023;--pc:#8f0b37;--opc:#ffd9de;--secc:#5c3f43;--osecc:#ffd9de;--terc:#6b4300;--oterc:#ffddb9;--scl:#231a1b;--sc:#271e1f;--sch:#322829;--out:#a08c8d;--outv:#534344;--err:#ffb4ab;--errc:#93000a;--oerrc:#ffdad6}
+.sb{display:flex;justify-content:space-between;padding:9px 22px 4px;font-size:11px;font-weight:500;flex:none}
+.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.i.f{fill:currentColor;stroke:none}
+.tb{display:flex;align-items:center;gap:10px;padding:6px 14px 6px 18px;flex:none;min-height:52px}.tb .t{flex:1;font-size:22px;font-weight:400;min-width:0}
+.tb .t small{display:block;font-size:12px;color:var(--var);margin-top:1px}
+.av{width:32px;height:32px;border-radius:50%;background:var(--secc);color:var(--osecc);display:grid;place-items:center;font-weight:600;font-size:13px;flex:none}
+.body{flex:1;min-height:0;overflow:hidden;padding:4px 12px 10px;display:flex;flex-direction:column;gap:8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.t1{background:var(--scl);border-radius:24px;padding:14px 14px 13px;display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--fg)}
+.t1.w{grid-column:span 2}.t1.hi{background:var(--pc);color:var(--opc)}.t1.sc{background:var(--sch)}.t1.tall{grid-row:span 2}
+.t1 h4{margin:0;font-size:12px;font-weight:500;letter-spacing:.02em;display:flex;gap:6px;align-items:center;color:var(--var);min-height:32px}
+.t1.hi h4{color:inherit;opacity:.85}.t1 h4 .i{width:18px;height:18px}
+.big{font-size:36px;line-height:1;font-weight:400}.mid{font-size:20px;line-height:1.15;font-weight:400}
+.sub{color:var(--var);font-size:12px}.t1.hi .sub{color:inherit;opacity:.8}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;gap:8px;align-items:center;min-width:0}.row>div{min-width:0}
+.pill{font-size:10.5px;font-weight:700;border-radius:8px;padding:1px 7px;background:var(--secc);color:var(--osecc);flex:none}
+.tk{display:flex;gap:9px;align-items:center;font-size:13px;min-width:0}.tk i{width:16px;height:16px;border-radius:50%;border:2px solid var(--out);flex:none}
+.mk{width:13px;height:13px;color:var(--pri);flex:none}.t1.hi .mk{color:inherit}
+
+/* the sparkle: one accent, tertiary container */
+.spk{margin-left:auto;width:32px;height:32px;border-radius:50%;background:var(--terc);color:var(--oterc);display:grid;place-items:center;position:relative;flex:none}
+.spk .i{width:17px;height:17px}
+.spk b{position:absolute;top:-4px;right:-5px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--pri);color:var(--opri);font-size:10.5px;font-weight:700;display:grid;place-items:center;box-shadow:0 0 0 2px var(--bg)}
+.tb .spk{margin-left:0;width:40px;height:40px}.tb .spk .i{width:20px;height:20px}
+
+.nv{display:flex;background:var(--sc);padding:10px 4px 14px;flex:none}
+.nv div{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--var);font-weight:500}
+.nv div span{width:52px;height:30px;border-radius:15px;display:grid;place-items:center}
+.nv .on{color:var(--fg);font-weight:700}.nv .on span{background:var(--secc);color:var(--osecc)}
+.fab{position:absolute;right:16px;bottom:84px;height:54px;padding:0 18px;border-radius:16px;background:var(--pc);color:var(--opc);display:flex;gap:10px;align-items:center;font-weight:600;font-size:14px;box-shadow:0 3px 10px rgba(0,0,0,.22)}
+.stc{display:flex;gap:8px;padding:0 14px 8px;flex:none;overflow:hidden}
+.ch{height:32px;border-radius:8px;padding:0 12px 0 8px;display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;flex:none;background:var(--secc);color:var(--osecc)}
+.ch .i{width:17px;height:17px}.ch.er{background:var(--errc);color:var(--oerrc)}
+.chips{display:flex;gap:8px;padding:0 14px 8px;flex:none}.c{height:32px;border-radius:8px;border:1px solid var(--out);padding:0 12px;display:flex;align-items:center;font-weight:500;font-size:12.5px;color:var(--var)}.c.on{background:var(--secc);color:var(--osecc);border-color:transparent}
+.days{display:flex;justify-content:space-between;padding:0 18px 8px;flex:none;color:var(--var);font-size:11px;text-align:center}.days b{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;font-size:14px;color:var(--fg);font-weight:500}.days .on b{background:var(--pri);color:var(--opri)}
+.today{height:32px;padding:0 14px;border-radius:16px;border:1px solid var(--out);display:grid;place-items:center;font-weight:500;font-size:12.5px;flex:none}
+.lab{font-size:12px;font-weight:600;color:var(--var);padding:4px 6px 0;display:flex;align-items:center;gap:6px}
+.gp{display:flex;flex-direction:column;gap:2px}
+.ag{display:flex;gap:10px;padding:10px 14px;background:var(--scl);border-radius:6px;align-items:center;min-height:52px}
+.gp>.ag:first-child,.gp>.sr:first-child,.gp>.tr:first-child,.gp>.fd:first-child{border-radius:20px 20px 6px 6px}
+.gp>.ag:last-child,.gp>.sr:last-child,.gp>.tr:last-child,.gp>.fd:last-child{border-radius:6px 6px 20px 20px}
+.gp>:only-child{border-radius:20px!important}
+.ag .tm{width:42px;font-size:12px;color:var(--var);flex:none}.ag .bar{width:4px;height:32px;border-radius:2px;background:var(--pri);flex:none}.ag .bar.t{background:var(--terc)}
+.ag b{font-weight:500;font-size:13.5px}
+.tr{display:flex;gap:12px;padding:11px 14px;background:var(--scl);border-radius:6px;align-items:center}
+.tr i{width:18px;height:18px;border-radius:50%;border:2px solid var(--out);flex:none}.tr .tx{flex:1;min-width:0}.tr .due{font-size:11.5px;color:var(--var);flex:none}.tr .due.late{color:var(--err)}
+
+/* buttons */
+.bt{height:32px;padding:0 14px;border-radius:16px;display:inline-flex;align-items:center;gap:6px;font-weight:500;font-size:12.5px;flex:none;white-space:nowrap}
+.bt .i{width:16px;height:16px}
+.bt.o{border:1px solid var(--out);color:var(--pri)}
+.bt.ai{background:var(--terc);color:var(--oterc)}
+.bt.f{background:var(--pri);color:var(--opri)}
+.bt.x{color:var(--pri);padding:0 10px}
+.acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+
+/* findings and results */
+.fd{background:var(--scl);border-radius:6px;padding:10px 12px 9px;display:flex;flex-direction:column;gap:6px}
+.fd .hd{display:flex;gap:11px;align-items:flex-start}
+.fd .ic{width:34px;height:34px;border-radius:12px;background:var(--sch);color:var(--pri);display:grid;place-items:center;flex:none}.fd .ic .i{width:18px;height:18px}
+.fd .tt{font-size:13.5px;font-weight:500;line-height:1.3}.fd .me{font-size:11.5px;color:var(--var);margin-top:2px}
+.fd .tx{flex:1;min-width:0}
+.slots{display:flex;gap:6px;flex-wrap:wrap;padding-left:45px}
+.slot{height:30px;padding:0 11px;border-radius:8px;background:var(--secc);color:var(--osecc);display:inline-flex;align-items:center;font-size:12px;font-weight:500}
+.rc{background:var(--terc);color:var(--oterc);border-radius:20px;padding:12px 14px 10px;display:flex;flex-direction:column;gap:3px}
+.rc .kd{font-size:11px;font-weight:600;display:flex;gap:5px;align-items:center;opacity:.85}.rc .kd .i{width:14px;height:14px}
+.rc .tt{font-size:14px;font-weight:500}.rc .me{font-size:12px;opacity:.85}
+.rc .acts{margin-top:4px}.rc .bt.x{color:inherit}
+.cost{font-size:11px;color:var(--var);display:flex;gap:6px;align-items:center;padding:0 6px}.cost .i{width:14px;height:14px}
+.box{border:1px solid var(--outv);border-radius:24px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
+.box .bh{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;padding:0 4px}.box .bh .i{width:17px;height:17px;color:var(--pri)}
+.ideas{display:flex;flex-direction:column;gap:6px}.idea{border:1px solid var(--outv);border-radius:12px;padding:7px 11px;font-size:12.5px}
+
+/* sheet and dialog */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.42)}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:46px;background:var(--bg);border-radius:28px 28px 0 0;display:flex;flex-direction:column;padding:8px 12px 0;gap:8px;overflow:hidden}
+.sheet .hdl{width:32px;height:4px;border-radius:2px;background:var(--outv);align-self:center;flex:none}
+.sheet .sh{display:flex;align-items:center;gap:10px;padding:2px 6px 0}.sheet .sh .t{flex:1;font-size:22px}
+.sheet .ss{font-size:12px;color:var(--var);padding:0 6px;margin-top:-6px}
+.sheet .lst{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:8px}
+.sheet .foot{flex:none;border-top:1px solid var(--outv);padding:9px 6px 14px;font-size:11.5px;color:var(--var);display:flex;gap:7px;align-items:center;background:var(--bg)}
+.sheet .foot .i{width:15px;height:15px;color:var(--oterc);background:var(--terc);border-radius:50%;padding:2px;width:19px;height:19px}
+.dlg{position:absolute;left:24px;right:24px;top:250px;background:var(--sch);border-radius:28px;padding:22px 22px 14px;display:flex;flex-direction:column;gap:12px}
+.dlg .dt{font-size:21px;line-height:1.25}.dlg p{margin:0;font-size:13.5px;color:var(--var);line-height:1.45}
+.dlg .acts{gap:2px}
+.dlg .ico{align-self:center;color:var(--oterc);background:var(--terc);border-radius:50%;width:40px;height:40px;display:grid;place-items:center}
+
+/* settings */
+.sr{display:flex;align-items:center;gap:12px;padding:9px 14px;background:var(--scl);border-radius:6px;min-height:46px}
+.sr .tx{flex:1;min-width:0}.sr .tt{font-size:14px}.sr .ss{font-size:11px;color:var(--var);line-height:1.3;margin-top:1px}.sr .vl{font-size:12.5px;color:var(--pri);font-weight:500;flex:none}
+.sr .i{color:var(--var)}
+.sw{width:44px;height:26px;border-radius:13px;border:2px solid var(--out);position:relative;flex:none;background:var(--sch)}.sw:after{content:"";position:absolute;left:4px;top:4px;width:14px;height:14px;border-radius:50%;background:var(--out)}
+.sw.on{background:var(--pri);border-color:var(--pri)}.sw.on:after{left:20px;top:2px;width:18px;height:18px;background:var(--opri)}
+.rd{width:20px;height:20px;border-radius:50%;border:2px solid var(--out);flex:none;position:relative}.rd.on{border-color:var(--pri)}.rd.on:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--pri)}
+.ft{font-size:11px;color:var(--var);padding:2px 14px;line-height:1.4}
+.new{font-size:10px;font-weight:700;border-radius:6px;padding:1px 6px;background:var(--terc);color:var(--oterc);margin-left:6px;vertical-align:1px}
+.seg{display:flex;margin:0 4px;border:1px solid var(--out);border-radius:20px;overflow:hidden;flex:none}.seg div{flex:1;height:36px;display:grid;place-items:center;font-size:12.5px;font-weight:500}.seg div.on{background:var(--secc);color:var(--osecc)}.seg div+div{border-left:1px solid var(--out)}
+.msg{padding:2px 8px;font-size:13.5px;line-height:1.5}
+.rb{display:flex;gap:8px;padding:10px 12px 14px;flex:none;background:var(--bg)}.rb div{flex:1;height:40px;border-radius:20px;background:var(--secc);color:var(--osecc);display:flex;align-items:center;justify-content:center;gap:6px;font-weight:500;font-size:12.5px}
+@media(max-width:1180px){.v.three .cap{columns:1}}
+@media(max-width:860px){.pr,.two{grid-template-columns:1fr}}
+</style>
+<body><div class="wrap">
+
+<header><h1>Home and attention: the final design</h1>
+<p class="lede">One page, replacing the three rounds of <code>design/mockup-bento.html</code>. Home is variant A (the owner's pick) without assistant tiles; the assistant comes in through one small sparkle button that a <b>local, non-AI attention layer</b> switches on when something in the cache is worth a look. Crimson Ward palette, light and dark, 360 x 780 screens. Nothing here is built.</p></header>
+
+<section class="pr">
+<div><b>1. The phone watches.</b><span>After each sync a few plain rules in the core read the cache (agenda, tasks, Inbox headers and previews). No model, no network, nothing leaves the phone.</span></div>
+<div><b>2. The sparkle asks.</b><span>When a rule fires, a small sparkle with a count appears inside the tile, top bar or header it concerns. No pop-up, no notification, nothing runs.</span></div>
+<div><b>3. The service answers on a tap.</b><span>The sparkle shows what was found. Plain buttons act on the phone; a button with a sparkle in front of its verb sends exactly the items it names to the chosen service. A change is made only by Add on the card that shows it.</span></div>
+</section>
+
+<section><h2>The rules of the attention layer</h2>
+<p class="small" style="margin:0 0 10px">Every rule reads only the account's own cache: never a shared account, never Spam or Trash, never encrypted mail (its text is not in the cache). A finding has a stable key; swiped away, it stays away (like a swiped notification); when the data changes so the rule no longer holds (the event moved, the task was ticked, the mail was answered), it disappears by itself. <span class="k loc">Phone</span> needs no service; <span class="k svc">Service</span> needs the assistant; <span class="k mix">Both</span> has a phone action and an assistant action. Without an assistant set up, a finding shows its phone actions only, and a finding that has none is not shown.</p>
+<table>
+<tr><th>Rule</th><th>Fires when (from the cache)</th><th>The sparkle offers</th><th>Runs</th><th>What leaves the phone, on the tap</th></tr>
+<tr class="fam"><td colspan="5">Calendar (own calendars, next 7 days; declined, free and all-day entries left out)</td></tr>
+<tr><td>Overlap</td><td>Two timed events overlap.</td><td><b>Find a slot</b>: free times of the same length that day and the next, 08:00 to 19:00, as chips; a chip opens the editor prefilled. <b>Move Standup…</b> opens the editor.</td><td><span class="k loc">Phone</span></td><td>Nothing.</td></tr>
+<tr><td>No place</td><td>A timed event starts within 2 h with no place and no link (place, notes, virtual location).</td><td><b>Open mails</b>: cached mails of the last 30 days whose subject shares the event's title. <b>✦ Look in mail</b>: the assistant searches for the place or meeting link and says which mail it is in; <b>Edit event…</b> opens the editor with it filled in.</td><td><span class="k mix">Both</span></td><td>The event's title and time; then the mails the assistant chooses to read (chat consent, read tools only).</td></tr>
+<tr><td>Open invitation</td><td>An invitation in the next 14 days is not answered.</td><td><b>Accept / Maybe / Decline</b> (the M5 answer), with "Free then" or "Overlaps Standup" worked out on the phone.</td><td><span class="k loc">Phone</span></td><td>Nothing (the answer goes to your server).</td></tr>
+<tr><td>Busy day</td><td>Today or tomorrow has 5 or more timed events, or under 30 min free between 09:00 and 18:00.</td><td><b>Free time</b> (list of gaps). <b>✦ Plan my day</b>: tasks due fitted into the gaps, proposed as new events.</td><td><span class="k mix">Both</span></td><td>That day's events (title, time, place) and open tasks due.</td></tr>
+<tr><td>Tight change</td><td>Two events with different physical places less than 15 min apart.</td><td><b>Directions</b>: opens the maps app with both places (as a contact's address does).</td><td><span class="k loc">Phone</span></td><td>Nothing (the maps app gets the places on your tap).</td></tr>
+<tr class="fam"><td colspan="5">Tasks (own task lists)</td></tr>
+<tr><td>Overdue</td><td>Open tasks due before today.</td><td><b>Move to today</b> (your own change, one Undo). <b>✦ Plan my day</b>.</td><td><span class="k mix">Both</span></td><td>As Busy day.</td></tr>
+<tr><td>No time today</td><td>Tasks due today without a time, and free time today.</td><td><b>✦ Plan my day</b>.</td><td><span class="k svc">Service</span></td><td>As Busy day.</td></tr>
+<tr><td>Too many</td><td>More than 5 tasks due today.</td><td><b>✦ Plan my day</b>, which also lists what could wait (shown only; each "Move…" opens the editor).</td><td><span class="k svc">Service</span></td><td>As Busy day.</td></tr>
+<tr><td>Mail may finish it</td><td>An open task shares two significant words, a file name or a number with the subject of an Inbox mail newer than the task.</td><td><b>Open mail</b>, <b>Mark done</b>. <b>✦ Check the mail</b>: says whether the mail finishes or changes the task.</td><td><span class="k mix">Both</span></td><td>The task's title and that one mail.</td></tr>
+<tr class="fam"><td colspan="5">Mail ("Which mail": Inbox, or Inbox and the notified folders; last 7 days; from a person: no List-Id, List-Unsubscribe, no-reply or bulk header)</td></tr>
+<tr><td>Date in mail</td><td>Subject or preview holds a future date or time ("Fri 19:30", "20 Nov", "tomorrow at 3", "20.11.", "2026-11-20").</td><td><b>Add to calendar…</b>: the editor prefilled with the date found and the subject (no model). <b>✦ Add dates</b>: to-dos and dates over those mails, as cards.</td><td><span class="k mix">Both</span></td><td>Those mails (sender, subject, text).</td></tr>
+<tr><td>Deadline words</td><td>"deadline, due, invoice, payment, RSVP, appointment, booking, reservation, flight, ticket" next to a date or an amount.</td><td><b>Add task…</b> prefilled with the subject. <b>✦ Add dates</b> (gives a task card for a deadline).</td><td><span class="k mix">Both</span></td><td>That mail.</td></tr>
+<tr><td>Invitation file</td><td>A <code>text/calendar</code> part or <code>.ics</code> whose UID is not in your calendar.</td><td><b>Open invitation</b>, <b>Add to calendar</b> (a new event from the file).</td><td><span class="k loc">Phone</span></td><td>Nothing.</td></tr>
+<tr><td>Waiting for you</td><td>A short mail (under 1,500 characters) from a person, older than 2 days, with a question mark in the preview or your first name before "can you / could you / please", and no later message from you in the thread.</td><td><b>Open</b>. <b>✦ Reply ideas</b>: three; a tap opens the composer with it, nothing is sent.</td><td><span class="k mix">Both</span></td><td>That mail.</td></tr>
+</table>
+<p class="small">The thresholds (2 h, 5 events, 5 tasks, 2 days, 15 min) are fixed defaults (open question 3). The date and keyword patterns are English first (open question 4). The rules run in milliseconds over SQLite after each sync and at midnight; there is no background run of the assistant at all.</p>
+</section>
+
+<section class="two">
+<div><h2>What each screen shows</h2>
+<table>
+<tr><th>Screen</th><th>Quiet</th><th>Fired</th><th>After the tap</th></tr>
+<tr><td>Home tiles</td><td>Tiles only</td><td>Sparkle with a count inside Next event, Due today, Unread; a small ✦ beside each mail concerned</td><td>Sheet "Worth a look"</td></tr>
+<tr><td>Home status</td><td>Nothing</td><td>Chips under the greeting: Delivery problem, Away on (not attention: always shown)</td><td>Delivery check, Away editor</td></tr>
+<tr><td>Calendar</td><td>Nothing</td><td>Sparkle with a count in the top bar</td><td>Findings and results inline under Today</td></tr>
+<tr><td>Tasks</td><td>Nothing</td><td>Sparkle in the top bar</td><td>Inline above the list</td></tr>
+<tr><td>Thread</td><td>Nothing</td><td>Sparkle in the top bar</td><td>A menu of its actions; results inline above the text (the existing cards)</td></tr>
+<tr><td>Mail list, notifications</td><td>Nothing</td><td>Nothing (open question 5)</td><td>-</td></tr>
+</table>
+<p class="small">One pattern: the sparkle opens what was found where you are. Inline where the screen has a list; a sheet on Home, where tiles have no room. The same finding and result cards everywhere.</p></div>
+<div><h2>Effort</h2>
+<table>
+<tr><th>Piece</th><th>Days</th><th>What</th></tr>
+<tr><td>Attention layer (core)</td><td>4.5</td><td>13 rules over the cache, findings with stable keys, swiped keys in <code>kv</code>, date and time patterns (1.5 of the days), free-slot finder, one FFI call per account, tests on the mock data</td></tr>
+<tr><td>Home tab</td><td>3</td><td>Variant A tiles, status chips, the sparkle button, start tab</td></tr>
+<tr><td>Sheet and cards</td><td>3</td><td>One composable for findings, phone actions, assistant runs, result cards with Add, Edit and Undo, cost note, the per-run ask</td></tr>
+<tr><td>Assistant tasks (core)</td><td>6</td><td>Add dates over several mails (1), Look in mail as a short read-only run (1.5), Plan my day with a read-tasks tool (2), an add-task change in the allow-list (1.5)</td></tr>
+<tr><td>Calendar, Tasks, thread hooks</td><td>2</td><td>Top-bar sparkle, inline results, editor prefill (<code>EventPrefill.kt</code> exists), a Tasks view</td></tr>
+<tr><td>Settings</td><td>1.5</td><td>Home and attention screen, per-account settings in the core, the row in Assistant settings</td></tr>
+<tr><td>Emulator check</td><td>1</td><td>Every frame below, both themes</td></tr>
+<tr><td>Total</td><td>21</td><td>Phase 1 without any service (layer, Home, sheet with phone actions, settings): about 12 days. Phase 2 (the ✦ actions): about 9.</td></tr>
+</table></div>
+</section>
+
+<section><h2>Open questions for the owner</h2>
+<ol class="q">
+<li><b>Count or dot?</b> The sparkle carries the number of findings (2, 3). A plain dot is calmer but says less. I drew the count.</li>
+<li><b>"Ask before each run" on by default</b> means two taps per run after the first consent (the button, then Send). Keep it on, or on only for runs that send mail (Add dates, Reply ideas) and off for calendar-only runs?</li>
+<li><b>Thresholds:</b> keep 2 h, 5 events, 5 tasks, 2 days, 15 min fixed, or put them in Settings, Home and attention, under each family?</li>
+<li><b>Languages</b> for the date and keyword patterns: English only at first, or English plus the languages you read mail in (which ones)?</li>
+<li><b>Mail outside Home:</b> with Home off (the default), mail findings show only in the thread. Should the mail list mark those rows with the same small ✦ beside the time (no button, no count)?</li>
+</ol></section>
+
+<div id="vs" style="display:flex;flex-direction:column;gap:34px"></div>
+</div>
+<script>
+const P={
+ mail:'<path d="M3 6h18v12H3zM3 7l9 7 9-7"/>',cal:'<path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/>',ppl:'<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>',fil:'<path d="M3 6h7l2 2h9v11H3z"/>',home:'<path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/>',
+ star:'<path d="M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2-5.6-3.2-5.6 3.2 1.3-6.2L3 9.5l6.3-.7z"/>',chk:'<circle cx="12" cy="12" r="8"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+ spark:'<path d="M10.5 3C11.2 7.6 13.4 9.8 18 10.5 13.4 11.2 11.2 13.4 10.5 18 9.8 13.4 7.6 11.2 3 10.5 7.6 9.8 9.8 7.6 10.5 3zM18.5 15c.3 2 1 2.7 3 3-2 .3-2.7 1-3 3-.3-2-1-2.7-3-3 2-.3 2.7-1 3-3z"/>',
+ srch:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>',clk:'<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>',away:'<path d="M3 12l18-8-6 16-3-7z"/>',plus:'<path d="M12 5v14M5 12h14"/>',
+ back:'<path d="M15 5l-7 7 7 7"/>',x:'<path d="M6 6l12 12M18 6L6 18"/>',pin:'<path d="M12 21s-6-5.5-6-11a6 6 0 0112 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/>',
+ warn:'<path d="M12 4l9 16H3zM12 10v4M12 17v.5"/>',arch:'<path d="M4 5h16v4H4zM5 9v10h14V9M10 13h4"/>',more:'<path d="M12 5v.5M12 12v.5M12 19v.5" stroke-width="3"/>',chev:'<path d="M9 5l7 7-7 7"/>',
+ reply:'<path d="M10 7L4 12l6 5M4 12h10a6 6 0 016 6"/>',fwd:'<path d="M14 7l6 5-6 5M20 12H10a6 6 0 00-6 6"/>',info:'<circle cx="12" cy="12" r="8"/><path d="M12 11v5M12 8v.5"/>',coin:'<circle cx="12" cy="12" r="8"/><path d="M12 7v10M9.5 9.5h4a1.5 1.5 0 010 3h-3a1.5 1.5 0 000 3h4"/>'};
+const I=n=>'<svg class="i'+(n=='spark'?' f':'')+'" viewBox="0 0 24 24">'+P[n]+'</svg>';
+const sb='<div class="sb"><span>9:40</span><span>5G 87%</span></div>';
+const nav=on=>'<div class="nv">'+[['h','home','Home'],['m','mail','Mail'],['c','cal','Calendar'],['p','ppl','Contacts'],['f','fil','Files']].map(([k,ic,t])=>'<div class="'+(on==k?'on':'')+'"><span>'+I(ic)+'</span>'+t+'</div>').join('')+'</div>';
+const spk=n=>'<span class="spk">'+I('spark')+(n?'<b>'+n+'</b>':'')+'</span>';
+const mk='<svg class="i f mk" viewBox="0 0 24 24">'+P.spark+'</svg>';
+const bt=(t,c,ic)=>'<span class="bt '+(c||'')+'">'+(c=='ai'?I('spark'):(ic?I(ic):''))+t+'</span>';
+const tile=(c,h,b)=>'<div class="t1 '+c+'"><h4>'+h+'</h4>'+b+'</div>';
+
+/* Home */
+const homeTop='<div class="tb"><div class="t">Good morning<small>Tuesday 17 November</small></div>'+I('srch')+'<div class="av">K</div></div>';
+const sndr=(n,s,m)=>'<div class="row"><div class="ell" style="flex:1"><b>'+n+'</b> '+s+'</div>'+(m?mk:'')+'</div>';
+const unreadT=f=>tile('w hi',I('mail')+' Unread in Inbox'+(f?spk(2):''),'<div class="row" style="align-items:flex-start"><div class="big">12</div><div style="flex:1;margin-left:8px;display:flex;flex-direction:column;gap:2px">'+
+ (f?sndr('Merve Aydın','Call this week?',1)+sndr('Hetzner','Invoice 1042, due 30 Nov',1)+sndr('Mira Costa','Release plan'):sndr('Mira Costa','Release plan')+sndr('Dan Ortiz','Contract-v3')+sndr('Ward Team','Weekly notes'))+'</div></div>');
+const eventT=f=>tile('',I('cal')+' Next event'+(f?spk(2):''),f?'<div class="mid">in 1 h 20</div><div class="sub ell">Release review, 11:00</div><div class="sub ell">Then: Lunch with Pia</div>':'<div class="mid">in 42 min</div><div class="sub ell">Standup, Room 2</div><div class="sub ell">Then: Lunch with Pia</div>');
+const tasksT=f=>tile('tall',I('chk')+' Due today'+(f?spk(2):''),'<div class="mid">2 tasks</div><div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">'+
+ (f?'<div class="tk"><i></i><span class="ell">Pay rent</span></div><div class="tk"><i></i><span class="ell">Sign Contract-v3</span></div>':'<div class="tk"><i></i><span class="ell">Pay rent</span></div><div class="tk"><i></i><span class="ell">Book a table</span></div>')+
+ '</div><div class="sub" style="margin-top:auto">'+(f?'and 3 overdue':'1 more tomorrow')+'</div>');
+const flagT=tile('',I('star')+' Flagged','<div class="mid">5 mails</div><div class="sub ell">Oldest: 3 days</div>');
+const filesT=tile('w sc',I('fil')+' Recent files','<div class="row"><span class="pill">PDF</span><div class="ell">Contract-v3.pdf</div><span class="sub" style="margin-left:auto">Mon</span></div><div class="row"><span class="pill">XLS</span><div class="ell">Budget 2027.xlsx</div><span class="sub" style="margin-left:auto">Sun</span></div>');
+const status='<div class="stc"><span class="ch er">'+I('warn')+'No connection since 09:12</span><span class="ch">'+I('away')+'Away until Fri 20</span></div>';
+const home=(f,st)=>sb+homeTop+(st?status:'')+'<div class="body"><div class="grid">'+unreadT(f)+eventT(f)+tasksT(f)+flagT+filesT+'</div></div>'+nav('h');
+
+/* findings */
+const fd=(ic,t,me,acts,extra)=>'<div class="fd"><div class="hd"><span class="ic">'+I(ic)+'</span><div class="tx"><div class="tt">'+t+'</div>'+(me?'<div class="me">'+me+'</div>':'')+'</div></div>'+(extra||'')+(acts?'<div class="acts">'+acts+'</div>':'')+'</div>';
+const fOver=(slots)=>fd('clk','Thu 14:00 Dentist overlaps Standup','Personal and Work, 45 min and 30 min',slots?'':bt('Move Standup…','o')+bt('Find a slot','o'),slots?'<div class="slots"><span class="me" style="width:100%;font-size:11.5px;color:var(--var)">Free for 30 min on Thursday; a tap opens Standup in the editor at that time</span><span class="slot">13:00</span><span class="slot">15:00</span><span class="slot">16:30</span><span class="slot">Fri 09:30</span></div>':'');
+const fPlace=fd('pin','Release review at 11:00 has no place or link','In 1 h 20 · 2 mails mention it',bt('Open mails','o')+bt('Look in mail','ai'));
+const fTasks=fd('chk','3 tasks overdue, 2 due today without a time','Free today 10:00 to 11:00 and 13:00 to 16:00',bt('Move to today','o')+bt('Plan my day','ai'));
+const fDates=fd('mail','2 dates in mail from Merve and Hetzner','Call Thu 15:00 · invoice due Mon 30 Nov',bt('Open','o')+bt('Add dates','ai'));
+const fWait=fd('reply','Ayse asked you something 3 days ago','"Can you send the menu choices before Friday?"',bt('Open','o')+bt('Reply ideas','ai'));
+const shHead='<div class="hdl"></div><div class="sh"><div class="t">Worth a look</div>'+I('x')+'</div><div class="ss">Found on the phone at 09:40. Nothing has been sent.</div>';
+const shFoot='<div class="foot">'+I('spark')+'<span>Buttons with ✦ send what they name to OpenAI · gpt-5. The others stay on the phone.</span></div>';
+const lab=(t,n)=>'<div class="lab">'+t+(n?' <span style="font-weight:400">· '+n+'</span>':'')+'</div>';
+const homeUnder='<div style="position:absolute;inset:0;display:flex;flex-direction:column">'+home(1)+'</div><div class="scrim"></div>';
+const fContract=fd('mail','Sign Contract-v3: Dan’s mail may finish it','"Contract-v3 signed copy", yesterday 18:02',bt('Mark done','o')+bt('Check the mail','ai'));
+const sheet=()=>homeUnder+'<div class="sheet">'+shHead+'<div class="lst">'+lab('Mail',2)+'<div class="gp">'+fDates+fWait+'</div>'+lab('Calendar',2)+'<div class="gp">'+fOver()+fPlace+'</div>'+lab('Tasks',2)+'<div class="gp">'+fTasks+fContract+'</div></div>'+shFoot+'</div>';
+const consent=()=>sheet()+'<div class="scrim"></div><div class="dlg"><span class="ico">'+I('spark')+'</span><div class="dt">Send 2 mails to api.openai.com?</div><p>This sends 2 mails (from Merve Aydın and Hetzner: sender, subject and text) to api.openai.com, using the model gpt-5. You will not be asked again for this service and model.</p><div class="acts">'+bt('Decline','x')+bt('Send','x')+'</div></div>';
+const rc=(kind,t,me)=>'<div class="rc"><div class="kd">'+I('spark')+kind+'</div><div class="tt">'+t+'</div><div class="me">'+me+'</div><div class="acts">'+bt('Edit','x')+bt('Add','f')+'</div></div>';
+const cost=(t)=>'<div class="cost">'+I('coin')+'<span>'+t+'</span></div>';
+const result=()=>homeUnder+'<div class="sheet">'+shHead+'<div class="lst">'+lab('Mail','from Merve and Hetzner')+rc('New event','Call with Merve','Thu 19 Nov, 15:00 to 16:00 · Personal')+rc('New task','Pay Hetzner invoice 1042','Due Mon 30 Nov · Tasks')+
+ '<div class="row" style="padding:0 2px">'+cost('Sent 2 mails to OpenAI · gpt-5 at 09:41 · 2,412 tokens in, 318 out')+bt('Add both','f')+'</div>'+lab('Calendar',2)+'<div class="gp">'+fOver(1)+fPlace+'</div></div>'+shFoot+'</div>';
+
+/* Calendar and Tasks */
+const days='<div class="days"><div><div>M</div><b>16</b></div><div class="on"><div>T</div><b>17</b></div><div><div>W</div><b>18</b></div><div><div>T</div><b>19</b></div><div><div>F</div><b>20</b></div><div><div>S</div><b>21</b></div><div><div>S</div><b>22</b></div></div>';
+const calTop=(t,n)=>'<div class="tb"><div class="t">'+t+'</div>'+(n?spk(n):'')+'<span class="today">Today</span><div class="av">K</div></div>';
+const chipsC=on=>'<div class="chips"><div class="c'+(on=='a'?' on':'')+'">Agenda</div><div class="c'+(on=='t'?' on':'')+'">Tasks</div></div>';
+const ag=(tm,t,sub,c)=>'<div class="ag"><div class="tm">'+tm+'</div><div class="bar'+(c?' t':'')+'"></div><div style="min-width:0"><b>'+t+'</b><div class="sub ell">'+sub+'</div></div></div>';
+const calQuiet=()=>sb+calTop('November')+days+chipsC('a')+'<div class="body" style="padding-top:0">'+lab('Today, Tuesday 17')+'<div class="gp">'+ag('09:30','Standup','Room 2')+ag('11:00','Release review','Video call · meet link')+ag('12:00','Lunch with Pia','Cafe Nord',1)+'</div>'+lab('Thursday 19')+'<div class="gp">'+ag('09:30','Standup','Room 2')+ag('14:00','Dentist','Dr. Aksoy, Bahnhofstr. 4',1)+'</div>'+lab('Friday 20')+'<div class="gp">'+ag('19:30','Dinner at Lokanta','Ayse, Pia',1)+'</div></div><div class="fab">'+I('plus')+' New entry</div>'+nav('c');
+const calFired=()=>sb+calTop('November',2)+days+chipsC('a')+'<div class="body" style="padding-top:0">'+lab('Today, Tuesday 17')+'<div class="gp">'+ag('09:30','Standup','Room 2')+ag('11:00','Release review','No place')+ag('12:00','Lunch with Pia','Cafe Nord',1)+'</div>'+lab('Thursday 19')+'<div class="gp">'+ag('14:00','Dentist','Dr. Aksoy, Bahnhofstr. 4',1)+ag('14:00','Standup','Moved this week · Room 2')+'</div>'+lab('Friday 20')+'<div class="gp">'+ag('19:30','Dinner at Lokanta','Ayse, Pia',1)+'</div></div><div class="fab">'+I('plus')+' New entry</div>'+nav('c');
+const placeRes='<div class="rc"><div class="kd">'+I('spark')+'Found in mail</div><div class="tt">Release review: the link is in Mira\'s mail</div><div class="me">"Release plan", 12 Nov · meet.example.org/rel-rev</div><div class="acts">'+bt('Open mail','x')+bt('Edit event…','f')+'</div></div>';
+const calTapped=()=>sb+calTop('November',1)+days+chipsC('a')+'<div class="body" style="padding-top:0">'+lab('Today, Tuesday 17')+
+ '<div class="box"><div class="bh">'+I('spark')+'<span style="flex:1">Worth a look</span>'+I('x')+'</div>'+placeRes+cost('Sent the event and 2 mails to OpenAI · gpt-5 · 3,120 tokens in, 140 out')+'<div class="gp">'+fOver(1)+'</div></div>'+
+ '<div class="gp">'+ag('09:30','Standup','Room 2')+ag('11:00','Release review','No place')+'</div></div>'+nav('c');
+const tr=(t,due,late,sub)=>'<div class="tr"><i></i><div class="tx"><div class="ell" style="font-size:13.5px">'+t+'</div>'+(sub?'<div class="sub ell">'+sub+'</div>':'')+'</div><span class="due'+(late?' late':'')+'">'+due+'</span></div>';
+const tasksQuiet=()=>sb+calTop('Tasks')+chipsC('t')+'<div class="body" style="padding-top:0">'+lab('Today')+'<div class="gp">'+tr('Pay rent','10:00')+tr('Book a table for 6','18:00')+'</div>'+lab('Tomorrow')+'<div class="gp">'+tr('Send the menu choices to Ayse','Wed')+'</div>'+lab('Later')+'<div class="gp">'+tr('Renew the domain','30 Nov')+tr('Winter tyres','5 Dec')+'</div></div><div class="fab">'+I('plus')+' New task</div>'+nav('c');
+const tasksFired=()=>sb+calTop('Tasks',2)+chipsC('t')+'<div class="body" style="padding-top:0">'+lab('Overdue',3)+'<div class="gp">'+tr('Send invoice 0311','Mon',1)+tr('Renew the domain','Sun',1)+tr('Call Ayse','Fri',1)+'</div>'+lab('Today',2)+'<div class="gp">'+tr('Pay rent','Today')+tr('Sign Contract-v3','Today')+'</div>'+lab('Later')+'<div class="gp">'+tr('Winter tyres','5 Dec')+'</div></div><div class="fab">'+I('plus')+' New task</div>'+nav('c');
+const plan='<div class="rc"><div class="kd">'+I('spark')+'Plan for today · 5 new events</div><div class="me" style="font-size:12.5px;line-height:1.65;opacity:1">10:00 Send invoice 0311 (15 min)<br>10:15 Call Ayse (15 min)<br>13:00 Sign Contract-v3 (30 min)<br>13:30 Pay rent (10 min)<br>13:45 Renew the domain (10 min)</div><div class="acts">'+bt('Dismiss','x')+bt('Edit','x')+bt('Add 5 events','f')+'</div></div>';
+const tasksTapped=()=>sb+calTop('Tasks',1)+chipsC('t')+'<div class="body" style="padding-top:0"><div class="box"><div class="bh">'+I('spark')+'<span style="flex:1">Worth a look</span>'+I('x')+'</div>'+plan+cost('Sent today\'s events and 5 tasks to OpenAI · gpt-5 · 1,180 tokens in, 210 out')+
+ '<div class="gp">'+fd('mail','Sign Contract-v3: Dan\'s mail may finish it','"Contract-v3 signed copy", yesterday 18:02',bt('Mark done','o')+bt('Check the mail','ai'))+'</div></div>'+lab('Overdue',3)+'<div class="gp">'+tr('Send invoice 0311','Mon',1)+'</div></div>'+nav('c');
+
+/* Thread */
+const thread=()=>sb+'<div class="tb" style="padding-left:12px">'+I('back')+'<div class="t"></div>'+spk(2)+I('arch')+I('more')+'</div><div class="body" style="gap:9px;padding-top:0"><div style="font-size:21px;padding:0 6px">Call this week?</div>'+
+ '<div class="row" style="padding:0 6px"><div class="av">M</div><div style="flex:1"><b>Merve Aydın</b><div class="sub">to me · Sat 14 Nov, 16:20</div></div></div>'+
+ '<div class="box"><div class="bh">'+I('spark')+'<span style="flex:1">To-dos and dates</span>'+I('x')+'</div>'+
+ '<div class="fd" style="border-radius:16px"><div class="row"><div style="flex:1"><div class="tt ell" style="font-size:13.5px;font-weight:500">Call with Merve</div><div class="me">Thu 19 Nov, 15:00</div></div>'+bt('Add to calendar','o')+'</div><div class="row"><div style="flex:1"><div class="tt ell" style="font-size:13.5px;font-weight:500">Or: call with Merve</div><div class="me">Fri 20 Nov, 10:00</div></div>'+bt('Add to calendar','o')+'</div><div class="row"><div style="flex:1"><div class="tt ell" style="font-size:13.5px;font-weight:500">To-do: send the agenda</div><div class="me">Before the call</div></div>'+bt('Add task','o')+'</div></div>'+
+ '<div class="bh" style="padding-top:2px">'+I('spark')+'<span>Reply ideas</span></div><div class="ideas"><div class="idea">Thursday at 15:00 works for me.</div><div class="idea">Could we do Friday at 10:00 instead?</div><div class="idea">Yes; I will send the agenda tomorrow.</div></div>'+
+ cost('Sent this mail to OpenAI · gpt-5 · 640 tokens in, 190 out')+'</div>'+
+ '<div class="msg">Hi,<br>could we have a call this week about the migration? Thursday at 15:00 or Friday at 10:00 would suit me. Could you send the agenda before?<br><br>Merve</div></div>'+
+ '<div class="rb"><div>'+I('reply')+'Reply</div><div>'+I('reply')+'Reply all</div><div>'+I('fwd')+'Forward</div></div>';
+
+/* Settings */
+const sw=on=>'<span class="sw'+(on?' on':'')+'"></span>';
+const sr=(t,sub,kind,val)=>'<div class="sr"><div class="tx"><div class="tt">'+t+'</div>'+(sub?'<div class="ss">'+sub+'</div>':'')+'</div>'+(kind=='val'?'<span class="vl">'+val+'</span>':kind=='chev'?I('chev'):kind=='rd1'?'<span class="rd on"></span>':kind=='rd0'?'<span class="rd"></span>':kind=='none'?'':sw(kind))+'</div>';
+const topS=t=>'<div class="tb" style="padding-left:12px">'+I('back')+'<div class="t" style="font-size:22px">'+t+'</div></div>';
+const free='On the phone, costs nothing.';
+const setA=()=>sb+topS('Home and attention')+'<div class="body" style="gap:6px;padding-top:2px"><div class="gp">'+sr('Show Home tab','Off: four tabs, the app opens on Mail',1)+'</div>'+
+ lab('Tiles')+'<div class="gp">'+sr('Unread','',1)+sr('Next event','',1)+sr('Due today','',1)+sr('Flagged','',1)+sr('Recent files','',1)+sr('Delivery','Only when there is a problem',1)+sr('Away message','Only while it is on',1)+'</div>'+
+ lab('Attention')+'<div class="gp">'+sr('Calendar','Overlaps, no place soon, open invitations, busy days. '+free,1)+sr('Tasks','Overdue, unscheduled, too many, a mail that may finish one. '+free,1)+'</div></div>';
+const setB=()=>sb+topS('Home and attention')+'<div class="body" style="gap:6px;padding-top:2px">'+lab('Attention')+'<div class="gp">'+sr('Calendar','Overlaps, no place soon, open invitations, busy days. '+free,1)+sr('Tasks','Overdue, unscheduled, too many, a mail that may finish one. '+free,1)+sr('Mail','Dates, deadlines, invitation files, questions waiting for you. '+free,1)+sr('Which mail','',  'val','Inbox only')+'</div>'+
+ lab('Assistant')+'<div class="gp">'+sr('OpenAI · gpt-5','Used by the ✦ buttons · Assistant settings','chev')+sr('Ask before each run','Says what will be sent and waits for Send',1)+sr('Show the cost note','What was sent and the tokens, under each result',1)+'</div>'+
+ '<div class="ft">The phone looks for these by itself and sends nothing. Mail leaves the phone only when you tap a button with ✦, and only the mail it names. A change is made only when you tap Add on the card that shows it, with Undo. The assistant never sends mail and never changes an existing event: Move and Edit open the editor for you.</div></div>';
+const setAI=()=>sb+topS('AI assistant')+'<div class="body" style="gap:6px;padding-top:2px"><div class="gp">'+sr('Use the AI assistant','On · OpenAI · gpt-5',1)+'</div>'+
+ lab('What it may do')+'<div class="gp">'+sr('Summaries','',1)+sr('Reply drafts','',1)+sr('Rewriting what I write','',1)+sr('Reply ideas','',1)+sr('To-dos and dates','Also Add dates and Plan my day',1)+sr('Explaining a message','',1)+sr('Chat','Also Look in mail',1)+'</div>'+
+ '<div class="gp" style="margin-top:6px">'+'<div class="sr"><div class="tx"><div class="tt">Home and attention<span class="new">New</span></div><div class="ss">Calendar, Tasks, Mail on · ask before each run</div></div>'+I('chev')+'</div></div>'+
+ lab('Changes in the chat')+'<div class="gp">'+sr('Off','The chat only reads and answers','rd0')+sr('Ask first','The chat may suggest a change; it is made only when you approve it','rd1')+'</div></div>';
+
+/* sections: [title, intro, bullets, frames:[[fn, theme, label]] ] */
+const V=[
+['Home, quiet','Variant A as picked, with no assistant tiles. A quiet day shows nothing extra: no sparkle, no placeholder, no "assistant off" row.',[
+ '<b>Unread</b> (Inbox count, three newest senders), <b>Next event</b> (countdown and the one after), <b>Due today</b> (two rows tall), <b>Flagged</b>, <b>Recent files</b> (one live call).',
+ 'Each tile opens its place. Home is off by default (Settings, Home and attention).'],[[()=>home(0),'l','Quiet · light'],[()=>home(0),'d','Quiet · dark']]],
+['Home, fired','The same tiles. Where a rule fired, the tile gets a 32 dp tonal sparkle (tertiary container) with a count in its header, and the mails concerned get a small ✦ beside them. Nothing moves, nothing else changes colour.',[
+ '<b>Next event · 2</b>: Release review in 1 h 20 has no place; Thursday has an overlap.',
+ '<b>Due today · 2</b>: 3 overdue and 2 without a time (one finding); Sign Contract-v3 may be finished by a mail.',
+ '<b>Unread · 2</b>: dates in mail from Merve and Hetzner; Ayse waits for an answer.',
+ 'A tap on any sparkle opens the same sheet, scrolled to that tile\'s group. The tile itself still opens its place.'],[[()=>home(1),'l','Fired · light'],[()=>home(1),'d','Fired · dark']]],
+['Home, something to see','Delivery and Away are not tiles any more: they are M3 assist chips in one thin row under the greeting, shown only while true. The error chip uses the error container; Away the secondary container.',[
+ '<b>No connection since 09:12</b> opens the Delivery check. <b>Away until Fri 20</b> opens the away message editor.',
+ 'With neither, the row is gone and the tiles move up (as in Home, quiet). They are status, not attention: they show even with Attention switched off.'],[[()=>home(0,1),'l','Status chips · light'],[()=>home(1,1),'d','Status chips with sparkles · dark']]],
+['The sparkle sheet: "Worth a look"','A modal bottom sheet over Home. Grouped in the order of the tiles (Mail, Calendar, Tasks) and scrolled to the group of the tile that was tapped; each finding says what the phone found in one line, then at most two buttons: a phone action (outlined) and an assistant action (tonal tertiary, with ✦ before the verb).',[
+ '<b>Thu 14:00 Dentist overlaps Standup</b>: Move Standup… (editor prefilled), Find a slot (computed on the phone). No ✦: nothing to send.',
+ '<b>Release review has no place or link</b>: Open mails (local subject match), ✦ Look in mail.',
+ '<b>2 dates in mail</b>: Open, ✦ Add dates. <b>Ayse asked you something</b>: Open, ✦ Reply ideas. <b>3 overdue, 2 without a time</b>: Move to today, ✦ Plan my day; Sign Contract-v3 follows below the fold.',
+ 'Swipe a finding away and it stays away. The footer names the service and model once. Without an assistant, the ✦ buttons are simply absent.'],[[sheet,'l','Sheet · light'],[sheet,'d','Sheet · dark']]],
+['First tap, and the result','The first ✦ tap ever uses the existing consent dialog of the one-shot actions (<code>assistant_consent_text</code>), naming host, model and exactly what goes out. Later taps, with "Ask before each run" on, show the same dialog without its last sentence; with it off they run at once.',[
+ '<b>Result</b>: the finding turns into cards in place: <b>New event</b> Call with Merve, <b>New task</b> Pay Hetzner invoice 1042, each with Edit (opens the editor filled in) and Add (the apply path, with a 10 s Undo); Add both is one batch with one Undo.',
+ '<b>Cost note</b> (if kept on): what was sent, to which model, when, and the tokens the service reported.',
+ 'Find a slot ran on the phone: its chips open Standup in the editor at that time. The assistant never moves Standup itself.',
+ 'Cards not added stay in the sheet and inline in Calendar and Tasks until added or dismissed.'],[[consent,'l','First tap: consent · light'],[result,'l','Result · light'],[result,'d','Result · dark']],1],
+['Calendar','Quiet: the agenda as today. Fired: a 40 dp sparkle with a count in the top bar, before Today. After the tap the findings open inline under the Today header, in one outlined "Worth a look" box that closes with its ×.',[
+ '<b>Look in mail</b> found the link in Mira\'s mail: Open mail, or <b>Edit event…</b>, which opens the editor with the link filled in; you save it, so the existing event is changed by you, not the assistant.',
+ '<b>Overlap</b>: Find a slot already ran; the chips are free 30-minute times.',
+ 'The count goes down as findings are handled (2 to 1 here). Release review shows "No place" in the agenda, which is data, not attention.',
+ 'Light shows quiet and fired, dark the state after the tap; Tasks below shows the opposite, so every state is drawn in both themes once.'],[[calQuiet,'l','Quiet · light'],[calFired,'l','Fired · light'],[calTapped,'d','After the tap · dark']],1],
+['Tasks','The Tasks view of the Calendar tab (a chip beside Agenda; new, from stage 8). Same sparkle in the top bar; overdue dates in the error colour as data.',[
+ '<b>Plan my day</b>: today\'s events and the 5 open tasks sent once; back comes an ordered plan in the free gaps, proposed as 5 <b>new events</b> (tasks themselves are not changed). Edit opens the list to drop or move lines; Add 5 events is one batch with one Undo.',
+ '<b>Sign Contract-v3: Dan\'s mail may finish it</b>: Mark done (your own change) or ✦ Check the mail (sends that one mail and the task title).',
+ 'Quiet has no box and no sparkle.'],[[tasksQuiet,'d','Quiet · dark'],[tasksFired,'d','Fired · dark'],[tasksTapped,'l','After the tap · light']],1],
+['Thread','The sparkle in the top bar when this mail fired a rule (date in mail, waiting for you). A tap opens a short menu: "Add Thu 15:00 to calendar…" (phone, parsed date), "✦ Find dates and to-dos", "✦ Reply ideas". The results are the existing cards, inline above the text.',[
+ '<b>To-dos and dates</b> now has <b>Add to calendar</b> per date (a card flow for that one new event) and <b>Add task</b> per to-do once the add-task change exists.',
+ '<b>Reply ideas</b>: a tap opens the composer with that text; nothing is sent.',
+ 'Cost note under the results. The sparkle\'s count drops to nothing once both were run or dismissed.'],[[thread,'l','Fired and run · light']]],
+['Settings: Home and attention, and the Assistant row','One screen in Settings (per account), in the grouped style of the other settings screens. Attention works with Home off: Calendar, Tasks and the thread use it too.',[
+ '<b>Show Home tab</b>; <b>Tiles</b>, one switch each; Delivery and Away say when they appear.',
+ '<b>Attention</b>: a switch per family, each saying what it looks for and that it runs on the phone and costs nothing; <b>Which mail</b>: Inbox only (default) or Inbox and notified folders.',
+ '<b>Assistant</b> (shown only when a service is set up; no placeholder otherwise): service and model, linking to Assistant settings; <b>Ask before each run</b> (on); <b>Show the cost note</b> (on); the footer states the rules.',
+ '<b>AI assistant</b> gets one new row, <b>Home and attention</b>. The ✦ actions follow "What it may do": Add dates and Plan my day need To-dos and dates; Look in mail needs Chat; Reply ideas needs Reply ideas. A switch here never grants consent.'],[[setA,'l','Top · light'],[setB,'d','Scrolled · dark'],[setAI,'l','AI assistant · light']],1]
+];
+const vs=document.getElementById('vs');
+V.forEach(([t,d,l,frames,three])=>{const e=document.createElement('section');e.className='v'+(three?' three':'');
+ e.innerHTML=frames.map(([f,th,lb])=>'<div><div class="phone"><div class="s '+th+'">'+f()+'</div></div><div class="lbl">'+lb+'</div></div>').join('')+
+ '<div class="cap"><h2 style="color:var(--fg)">'+t+'</h2>'+d+'<ul>'+l.map(x=>'<li>'+x+'</li>').join('')+'</ul></div>';vs.appendChild(e)});
+</script></body></html>
