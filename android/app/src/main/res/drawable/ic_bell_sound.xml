@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A bell with a small music note: the sound settings of a notification channel. Drawn black and tinted by Icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M10,2.5c-0.83,0 -1.5,0.67 -1.5,1.5v0.68C5.64,5.36 4,7.92 4,11v5l-2,2v1h16v-1l-2,-2v-1.2c-0.3,0.1 -0.65,0.2 -1,0.2c-0.5,0 -0.95,-0.12 -1.35,-0.32L14,16v-3.5l-0.2,-0.3C13.3,11.5 13,10.8 13,10c0,-1.4 0.8,-2.5 2,-3C14.2,5.7 13,4.9 11.5,4.7V4C11.5,3.17 10.83,2.5 10,2.5zM8,20c0,1.1 0.9,2 2,2s2,-0.9 2,-2H8z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M19,3v4.3c-0.3,-0.2 -0.6,-0.3 -1,-0.3c-1.1,0 -2,0.9 -2,2s0.9,2 2,2s2,-0.9 2,-2V5h2V3H19z" />
+</vector>

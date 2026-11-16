@@ -337,3 +337,17 @@ fn an_account_name_is_kept_and_cleared() {
     rig.core.set_account_name("   ".into()).unwrap();
     assert_eq!(rig.core.account_name().unwrap(), None);
 }
+
+#[test]
+fn show_with_subfolders_is_kept_per_folder_until_switched_off() {
+    let rig = Rig::signed_in();
+    assert!(rig.core.folders_with_subfolders().unwrap().is_empty());
+    rig.core.set_folder_with_subfolders("a".into(), true).unwrap();
+    rig.core.set_folder_with_subfolders("b".into(), true).unwrap();
+    rig.core.set_folder_with_subfolders("a".into(), true).unwrap();
+    assert_eq!(rig.reopen().folders_with_subfolders().unwrap(), ["b", "a"]);
+    rig.core.set_folder_with_subfolders("b".into(), false).unwrap();
+    assert_eq!(rig.core.folders_with_subfolders().unwrap(), ["a"]);
+    rig.core.set_folder_with_subfolders("a".into(), false).unwrap();
+    assert!(rig.core.folders_with_subfolders().unwrap().is_empty());
+}

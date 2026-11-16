@@ -22,7 +22,7 @@ class ConsentRulesTest {
 
     private fun preview(messages: UInt, characters: UInt, cut: Boolean = false) = AiPreview("api.openai.com", "gpt-x", messages, characters, cut)
 
-    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true, allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = false, chatConsented = false, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false)
+    private fun settings(consented: Boolean) = AiSettings(true, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true, allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = false, chatConsented = false, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false, instructions = "")
 
     @Test fun theFirstTaskAsksAndLaterOnesDoNot() {
         assertTrue(ConsentRules.isNeeded(settings(consented = false)))

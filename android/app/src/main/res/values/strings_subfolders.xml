@@ -2,6 +2,6 @@
 <!-- Texts of the list that shows a folder with the folders below it. -->
 <resources>
     <string name="list_show_subfolders">Show with subfolders</string>
-    <string name="list_without_subfolders">Show this folder only</string>
+    <string name="list_subfolders_on">On</string>
     <string name="list_with_subfolders">%1$s and subfolders</string>
 </resources>

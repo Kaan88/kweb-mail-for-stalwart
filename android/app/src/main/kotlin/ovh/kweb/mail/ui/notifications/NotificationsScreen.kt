@@ -42,6 +42,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -103,22 +104,27 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenBut
 
             Title(stringResource(R.string.notifications_mail))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                SwitchRow(Groups.shape(0, 6), stringResource(R.string.delivery_show_mail), null, state.mailEnabled, vm::setMailEnabled)
                 SwitchRow(
-                    Groups.shape(1, 6),
+                    Groups.shape(0, 5),
+                    stringResource(R.string.delivery_show_mail),
+                    null,
+                    state.mailEnabled,
+                    vm::setMailEnabled,
+                    soundDescription = stringResource(R.string.notifications_sound_for, stringResource(R.string.notifications_mail_default)),
+                    onSound = { openChannel(ChannelKind.Mail) },
+                )
+                SwitchRow(
+                    Groups.shape(1, 5),
                     stringResource(R.string.delivery_remove_elsewhere),
                     stringResource(R.string.notifications_remove_detail),
                     state.removeWhenReadElsewhere,
                     vm::setRemoveWhenReadElsewhere,
                 )
-                LinkRow(Groups.shape(2, 6), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
+                LinkRow(Groups.shape(2, 5), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
                     choosingPreview = true
                 }
-                LinkRow(Groups.shape(3, 6), stringResource(R.string.notifications_sound), stringResource(R.string.notifications_sound_detail)) {
-                    openChannel(ChannelKind.Mail)
-                }
-                LinkRow(Groups.shape(4, 6), stringResource(R.string.notif_buttons_title), buttonsLine(state.buttons), onOpenButtons)
-                LinkRow(Groups.shape(5, 6), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
+                LinkRow(Groups.shape(3, 5), stringResource(R.string.notif_buttons_title), buttonsLine(state.buttons), onOpenButtons)
+                LinkRow(Groups.shape(4, 5), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
             }
 
             Title(stringResource(R.string.notifications_addresses))
@@ -138,32 +144,30 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenBut
                         null,
                     )
                 } else {
-                    // One row for the choice and, for an address that is not off, one for its sound.
-                    val rows = addresses.sumOf { if (it.mode == AddressMode.OFF) 1 else 2 }
-                    var at = 0
-                    addresses.forEach { choice ->
-                        LinkRow(
-                            Groups.shape(at++, rows),
-                            choice.name.ifBlank { choice.address },
-                            (if (choice.name.isBlank()) "" else choice.address + " · ") + stringResource(modeName(choice.mode)),
-                        ) { choosing = choice }
-                        if (choice.mode != AddressMode.OFF) {
-                            LinkRow(
-                                Groups.shape(at++, rows),
-                                stringResource(R.string.notifications_address_sound),
-                                stringResource(R.string.notifications_address_sound_detail, choice.address),
-                            ) { openAddressChannel(choice) }
-                        }
+                    addresses.forEachIndexed { index, choice ->
+                        ChoiceRow(
+                            Groups.shape(index, addresses.size),
+                            choice.address,
+                            stringResource(modeName(choice.mode)),
+                            onClick = { choosing = choice },
+                            soundDescription = if (choice.mode == AddressMode.OFF) null else stringResource(R.string.notifications_sound_for, choice.address),
+                            onSound = { openAddressChannel(choice) },
+                        )
                     }
                 }
             }
 
             Title(stringResource(R.string.notifications_reminders))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                SwitchRow(Groups.shape(0, 2), stringResource(R.string.delivery_show_reminders), null, state.remindersEnabled, vm::setRemindersEnabled)
-                LinkRow(Groups.shape(1, 2), stringResource(R.string.notifications_reminder_sound), stringResource(R.string.notifications_reminder_sound_detail)) {
-                    openChannel(ChannelKind.Reminders)
-                }
+                SwitchRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.delivery_show_reminders),
+                    null,
+                    state.remindersEnabled,
+                    vm::setRemindersEnabled,
+                    soundDescription = stringResource(R.string.notifications_sound_for, stringResource(R.string.notifications_reminders)),
+                    onSound = { openChannel(ChannelKind.Reminders) },
+                )
             }
         }
     }
@@ -326,10 +330,36 @@ private fun TwoLines(title: String, detail: String?, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun SwitchRow(shape: Shape, title: String, detail: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun SwitchRow(
+    shape: Shape,
+    title: String,
+    detail: String?,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit,
+    soundDescription: String? = null,
+    onSound: (() -> Unit)? = null,
+) {
     RowBox(shape, Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onChange)) {
         TwoLines(title, detail, Modifier.weight(1f))
+        // The sound of this channel: Android keeps it, so the button opens its own screen. Nothing to set while it is off.
+        if (checked && onSound != null) SoundButton(soundDescription.orEmpty(), onSound)
         KwebSwitch(checked = checked, onCheckedChange = null)
+    }
+}
+
+/** A row that opens a choice, with the channel's sound settings as a button at the end (none when [soundDescription] is null). */
+@Composable
+private fun ChoiceRow(shape: Shape, title: String, detail: String, onClick: () -> Unit, soundDescription: String?, onSound: () -> Unit) {
+    RowBox(shape, Modifier.clickable(role = Role.Button, onClick = onClick)) {
+        TwoLines(title, detail, Modifier.weight(1f))
+        if (soundDescription != null) SoundButton(soundDescription, onSound)
+    }
+}
+
+@Composable
+private fun SoundButton(description: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(painterResource(R.drawable.ic_bell_sound), contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

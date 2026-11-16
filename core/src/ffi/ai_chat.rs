@@ -24,6 +24,7 @@ use crate::{
         self,
         changes::{self, Undo, Writer},
         chat::{self, Chat, Model, Origin, State},
+        prompts,
         provider::{self, Endpoint},
         tools::{Env, Reader},
         wire::{Reply, ToolSpec, ToolsRefused, Turn},
@@ -222,6 +223,8 @@ struct Live<'a> {
     core: &'a Core,
     endpoint: &'a Endpoint,
     running: &'a Running<'a>,
+    /// The user's own instructions, added after the app's system text of every turn.
+    instructions: &'a str,
 }
 
 impl Model for Live<'_> {
@@ -235,6 +238,7 @@ impl Model for Live<'_> {
         if self.running.is_cancelled() {
             return Err(cancelled());
         }
+        let system = &prompts::with_instructions(system, self.instructions);
         self.core.rt.block_on(async {
             tokio::select! {
                 biased;
@@ -355,7 +359,8 @@ impl Core {
         let env = Env { zone: &time_zone, now: at, actions: settings.actions };
         let today = today_in(zone, at);
         let reader = CoreReader { core: self, account_id: account_id.clone() };
-        let mut model = Live { core: self, endpoint: &endpoint, running: &running };
+        let mut model =
+            Live { core: self, endpoint: &endpoint, running: &running, instructions: &settings.instructions };
         let mut on_text = |piece: &str| listener.text(piece.to_string());
         let mut on_step = |step: AiStep| listener.step(step);
         let sent = chat::send(&mut copy, &text, &env, &today, &mut model, &reader, &mut on_text, &mut on_step);

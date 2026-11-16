@@ -28,7 +28,7 @@ class AssistantRulesTest {
         chatConsented: Boolean = false,
         actions: AiActionMode = AiActionMode.ASK_FIRST,
         toolsUnsupported: Boolean = false,
-    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions, toolsUnsupported = toolsUnsupported)
+    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions, toolsUnsupported = toolsUnsupported, instructions = "")
 
     // ---- which entries show ----
 

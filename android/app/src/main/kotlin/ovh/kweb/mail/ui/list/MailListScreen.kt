@@ -327,7 +327,7 @@ fun MailListScreen(
                 username = state.username,
                 folders = folders,
                 currentId = current?.id,
-                combinedId = current?.id?.takeIf { SubfolderRules.isCombined(state.scope) },
+                withSubfolders = state.subfolderIds,
                 allFolders = state.mailboxes,
                 onFolder = {
                     scope.launch { drawerState.close() }
@@ -335,7 +335,7 @@ fun MailListScreen(
                 },
                 onSubfolders = { folder, with ->
                     scope.launch { drawerState.close() }
-                    vm.selectFolder(folder.id, withSubfolders = with)
+                    vm.setSubfolders(folder.id, with)
                 },
                 onFolderMenu = { folder, item ->
                     when (item) {
@@ -721,7 +721,7 @@ private fun DrawerContent(
     username: String,
     folders: List<FolderEntry>,
     currentId: String?,
-    combinedId: String?,
+    withSubfolders: Set<String>,
     allFolders: List<Mailbox>,
     onFolder: (String) -> Unit,
     onSubfolders: (Mailbox, Boolean) -> Unit,
@@ -795,10 +795,15 @@ private fun DrawerContent(
                             extra = if (shareable || subfolders) {
                                 {
                                     if (subfolders) {
-                                        // The list of this folder shows its subfolders too: the entry then takes them away again.
-                                        val combined = folder.id == combinedId
+                                        // A lasting choice per folder: checked, the list of this folder holds its subfolders' mail every time it opens.
+                                        val combined = folder.id in withSubfolders
                                         DropdownMenuItem(
-                                            text = { Text(stringResource(if (combined) R.string.list_without_subfolders else R.string.list_show_subfolders)) },
+                                            text = { Text(stringResource(R.string.list_show_subfolders)) },
+                                            trailingIcon = if (combined) {
+                                                { Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.list_subfolders_on)) }
+                                            } else {
+                                                null
+                                            },
                                             leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
                                             onClick = { menuOpen = false; onSubfolders(folder, !combined) },
                                         )

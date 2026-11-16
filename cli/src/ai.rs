@@ -888,6 +888,7 @@ mod tests {
             chat_consented: false,
             actions: kweb_core::model::AiActionMode::AskFirst,
             tools_unsupported: false,
+            instructions: String::new(),
         }
     }
 

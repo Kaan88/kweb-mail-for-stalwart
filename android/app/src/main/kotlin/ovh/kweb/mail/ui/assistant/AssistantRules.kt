@@ -198,6 +198,9 @@ object AssistantRules {
         else -> StateLine.Model(settings.model.trim())
     }
 
+    /** The longest "Your instructions" may be (the core refuses more). */
+    const val INSTRUCTIONS_MAX = 2000
+
     /** What the settings screen edits. The key is not part of it: it is typed, sent on Save and forgotten. */
     data class Form(
         val enabled: Boolean,
@@ -215,6 +218,8 @@ object AssistantRules {
         val allowChat: Boolean = false,
         /** What the chat may do about changes; it has no effect while the chat is off. */
         val actions: AiActionMode = AiActionMode.ASK_FIRST,
+        /** "Your instructions": the user's own text, sent after the app's own with every request. Per account, not per service. */
+        val instructions: String = "",
         /** The stored key is to be removed on Save. */
         val removeKey: Boolean = false,
     ) {
@@ -241,6 +246,7 @@ object AssistantRules {
                 allowChat = allowChat,
                 chatConsented = stored.chatConsented && stored.consented && sameService,
                 actions = actions,
+                instructions = instructions,
             )
         }
 
@@ -262,6 +268,7 @@ object AssistantRules {
             allowExplain = allowExplain,
             allowChat = allowChat,
             actions = actions,
+            instructions = instructions,
             removeKey = false,
         )
     }
@@ -283,6 +290,7 @@ object AssistantRules {
         allowExplain = stored.allowExplain,
         allowChat = stored.allowChat,
         actions = stored.actions,
+        instructions = stored.instructions,
     )
 
     /** Anything to lose by leaving: the form differs from [initial], or a key was typed. */

@@ -6,7 +6,7 @@ import uniffi.kweb_core.ThreadRow
 
 /**
  * "Show with subfolders": the list of a folder that also holds the mail of every folder below it. Pure.
- * The choice is made from the folder's menu in the drawer and is not kept across restarts.
+ * The choice is made from the folder's menu in the drawer and kept in the core, per account.
  */
 object SubfolderRules {
     /** The folder has folders inside it, so the menu offers the entry. */

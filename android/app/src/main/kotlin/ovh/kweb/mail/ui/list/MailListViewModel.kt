@@ -47,8 +47,8 @@ data class MailListState(
     val selectedId: String? = null,
     /** The folder shown: [selectedId] if it exists, else the Inbox. Null before the first sync. */
     val current: Mailbox? = null,
-    /** The user asked for [selectedId] with the folders below it (not kept across restarts). */
-    val withSubfolders: Boolean = false,
+    /** The folders the user keeps showing with the folders below them (kept in the core, per account). */
+    val subfolderIds: Set<String> = emptySet(),
     /** The folders the rows come from: [current] alone, or it and its subfolders (see [SubfolderRules.scope]). */
     val scope: List<String> = emptyList(),
     val filter: ListFilter = ListFilter.ALL,
@@ -160,15 +160,15 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
     /** Shows the Inbox without a filter (a tap on a notification). */
     fun showInbox() = selectFolder(null)
 
-    fun selectFolder(mailboxId: String?, withSubfolders: Boolean = false) {
-        stateFlow.update { it.fresh(selectedId = mailboxId, filter = ListFilter.ALL, withSubfolders = withSubfolders) }
+    fun selectFolder(mailboxId: String?) {
+        stateFlow.update { it.fresh(selectedId = mailboxId, filter = ListFilter.ALL) }
         listState.requestScrollToItem(0)
         reload()
     }
 
     fun selectFilter(filter: ListFilter) {
         if (stateFlow.value.filter == filter) return
-        stateFlow.update { it.fresh(selectedId = it.selectedId, filter = filter, withSubfolders = it.withSubfolders) }
+        stateFlow.update { it.fresh(selectedId = it.selectedId, filter = filter) }
         listState.requestScrollToItem(0)
         reload()
     }
@@ -461,6 +461,20 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
     }
 
     /** The bell of a folder from the drawer's menu. The list reads again when the core has it. */
+    /** "Show with subfolders" for a folder, kept in the core; the folder is opened the way it was just set. */
+    fun setSubfolders(mailboxId: String, on: Boolean) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { session.core.setFolderWithSubfolders(mailboxId, on) }
+                selectFolder(mailboxId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "keeping the subfolder choice failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
     fun setNotify(mailboxId: String, notify: Boolean) {
         viewModelScope.launch {
             try {
@@ -631,7 +645,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
     private class OutboxRead(val failedDraftId: String?, val waiting: Int, val holding: PendingSend?, val pendingIds: Set<String>)
 
     private fun MailListState.sameQuestion(asked: MailListState) =
-        selectedId == asked.selectedId && withSubfolders == asked.withSubfolders && filter == asked.filter && limit == asked.limit &&
+        selectedId == asked.selectedId && filter == asked.filter && limit == asked.limit &&
             generation == asked.generation
 
     /** The state with what was read from the cache; unchanged when [read] is null. */
@@ -640,6 +654,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         mailboxes = read.mailboxes,
         current = read.current,
         scope = read.scope,
+        subfolderIds = read.subfolderIds,
         rows = read.rows,
         // What was chosen and is not in the list any more (synced away, acted on elsewhere) is dropped.
         selection = SelectionRules.prune(selection, read.rows.map { SelectionRules.key(it) }),
@@ -652,6 +667,7 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         val mailboxes: List<Mailbox>,
         val current: Mailbox?,
         val scope: List<String>,
+        val subfolderIds: Set<String>,
         val rows: List<ThreadRow>,
     )
 
@@ -659,14 +675,15 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         val core = session.core
         val mailboxes = core.mailboxes()
         val current = mailboxes.firstOrNull { it.id == asked.selectedId } ?: Folders.withRole(mailboxes, "inbox")
-        // A folder that lost its subfolders meanwhile is just itself.
-        val scope = current?.let { SubfolderRules.scope(mailboxes, it.id, asked.withSubfolders) }.orEmpty()
+        // The choice is the core's, so it holds every time the folder opens. A folder that lost its subfolders meanwhile is just itself.
+        val subfolderIds = core.foldersWithSubfolders().toSet()
+        val scope = current?.let { SubfolderRules.scope(mailboxes, it.id, it.id in subfolderIds) }.orEmpty()
         SelectionRules.byMessage = !ovh.kweb.mail.ui.UiPrefs(getApplication()).conversationView
         val rows = current?.let {
             if (SelectionRules.byMessage) return@let messageRows(core, scope.ifEmpty { listOf(it.id) }, asked)
             if (scope.size > 1) core.threadsIn(scope, asked.filter, asked.limit.toUInt(), 0u) else core.threads(it.id, asked.filter, asked.limit.toUInt(), 0u)
         }.orEmpty()
-        return Read(core.account()?.username.orEmpty(), mailboxes, current, scope, rows)
+        return Read(core.account()?.username.orEmpty(), mailboxes, current, scope, subfolderIds, rows)
     }
 
     /**
@@ -699,9 +716,8 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
             }
     }
 
-    private fun MailListState.fresh(selectedId: String?, filter: ListFilter, withSubfolders: Boolean) = copy(
+    private fun MailListState.fresh(selectedId: String?, filter: ListFilter) = copy(
         selectedId = selectedId,
-        withSubfolders = withSubfolders,
         scope = emptyList(),
         filter = filter,
         rows = emptyList(),

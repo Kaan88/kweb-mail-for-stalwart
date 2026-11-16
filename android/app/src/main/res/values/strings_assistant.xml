@@ -64,6 +64,10 @@
     <string name="assistant_allow_explain">Explaining a message</string>
     <string name="assistant_allow_chat">Chat</string>
     <string name="assistant_allow_chat_detail">In the chat the assistant itself looks up mail, folders and calendar entries</string>
+    <string name="assistant_instructions">Your instructions</string>
+    <string name="assistant_instructions_label">For example: answer in German, keep replies short</string>
+    <string name="assistant_instructions_count">%1$d of %2$d</string>
+    <string name="assistant_instructions_help">Sent to the service with each request, after the app\'s own instructions, for every assistant feature and the chat. It cannot switch off the checks the app makes, and it is cleared by Reset. Do not put secrets in it.</string>
     <string name="assistant_actions">Changes in the chat</string>
     <string name="assistant_actions_off">Off</string>
     <string name="assistant_actions_off_detail">The chat only reads and answers</string>

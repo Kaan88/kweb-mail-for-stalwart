@@ -124,6 +124,7 @@ pub fn save(
     stored.allow_explain = new.allow_explain;
     stored.allow_chat = new.allow_chat;
     stored.actions = new.actions;
+    stored.instructions = new.instructions.clone();
     let (base_url, model) = (new.base_url.clone(), new.model.clone());
     *stored.profile_mut(provider) = Profile {
         base_url: new.base_url,

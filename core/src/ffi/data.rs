@@ -12,6 +12,9 @@ use crate::{
 /// The key (in the account's key/value table) of the name the user gave the account.
 const NAME_KEY: &str = "account_name";
 
+/// The key of the folders the user wants shown with their subfolders (ids, one per line).
+const SUBFOLDERS_KEY: &str = "with_subfolders";
+
 /// The longest an account name is (in characters).
 pub const NAME_MAX: usize = 40;
 
@@ -21,6 +24,10 @@ fn clean_name(name: &str) -> Option<String> {
     let cut: String = one_line.chars().take(NAME_MAX).collect();
     let cut = cut.trim().to_string();
     (!cut.is_empty()).then_some(cut)
+}
+
+fn parse_ids(value: &str) -> Vec<String> {
+    value.lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
 #[uniffi::export]
@@ -88,6 +95,28 @@ impl Core {
         })?;
         self.poke();
         Ok(())
+    }
+
+    /// The folders the user keeps showing with their subfolders (the drawer's "Show with subfolders"):
+    /// the list of such a folder holds the mail of every folder below it, every time it is opened, until
+    /// the choice is switched off. Kept on this phone, per account.
+    pub fn folders_with_subfolders(&self) -> Result<Vec<String>> {
+        Ok(self.store.kv_get(&self.account_id()?, SUBFOLDERS_KEY)?.map(|v| parse_ids(&v)).unwrap_or_default())
+    }
+
+    /// Switches "Show with subfolders" on or off for one folder.
+    pub fn set_folder_with_subfolders(&self, mailbox_id: String, on: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        let mut ids = self.folders_with_subfolders()?;
+        ids.retain(|id| *id != mailbox_id);
+        if on && !mailbox_id.trim().is_empty() && !mailbox_id.contains('\n') {
+            ids.push(mailbox_id);
+        }
+        if ids.is_empty() {
+            self.store.kv_delete(&account_id, SUBFOLDERS_KEY)
+        } else {
+            self.store.kv_set(&account_id, SUBFOLDERS_KEY, &ids.join("\n"))
+        }
     }
 
     /// The name the user gave the account ("Work"), if any.

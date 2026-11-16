@@ -308,6 +308,29 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
             ) { vm.edit { it.copy(actions = AiActionMode.ASK_FIRST) } }
         }
 
+        // The user's own instructions: sent as an extra system text with every request.
+        SectionLabel(stringResource(R.string.assistant_instructions))
+        GroupColumn {
+            TextField(
+                value = form.instructions,
+                onValueChange = { v -> vm.edit { it.copy(instructions = v.take(AssistantRules.INSTRUCTIONS_MAX)) } },
+                label = { Text(stringResource(R.string.assistant_instructions_label)) },
+                supportingText = { Text(stringResource(R.string.assistant_instructions_count, form.instructions.length, AssistantRules.INSTRUCTIONS_MAX)) },
+                minLines = 3,
+                maxLines = 8,
+                shape = Groups.shape(0, 1),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                colors = fieldColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Text(
+            stringResource(R.string.assistant_instructions_help),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
+            color = colors.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
         Text(
             stringResource(R.string.assistant_privacy),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 16.dp),

@@ -1449,6 +1449,7 @@ impl Core {
         assistant::check_allowed(&settings, &task)?;
         let prepared = self.ai_prepare(&account_id, &task)?;
         let endpoint = assistant::endpoint(&settings, &*self.secrets)?;
+        let system = assistant::prompts::with_instructions(&prepared.system, &settings.instructions);
         let mut on_text = |piece: &str| listener.text(piece.to_string());
         self.rt.block_on(async {
             tokio::select! {
@@ -1456,7 +1457,7 @@ impl Core {
                 () = running.cancel.notified() => Err(Error::invalid("cancelled")),
                 answer = assistant::provider::complete(
                     &endpoint,
-                    &prepared.system,
+                    &system,
                     &prepared.user,
                     assistant::provider::TIMEOUTS,
                     &mut on_text,

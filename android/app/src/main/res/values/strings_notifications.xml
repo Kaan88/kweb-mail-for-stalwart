@@ -9,8 +9,6 @@
     <string name="notifications_for">Account: %1$s</string>
     <string name="notifications_mail">New mail</string>
     <string name="notifications_remove_detail">A notification goes when the mail is read, moved or deleted on another device</string>
-    <string name="notifications_sound">Sound and vibration</string>
-    <string name="notifications_sound_detail">For mail that came to none of your addresses below. Opens Android\'s settings</string>
     <string name="notifications_preview">What a notification says</string>
     <string name="notifications_preview_full">Subject and text</string>
     <string name="notifications_preview_full_detail">Sender, subject and the first lines of the mail</string>
@@ -20,8 +18,6 @@
     <string name="notifications_preview_nothing_detail">No sender and no subject. Also on the lock screen</string>
     <string name="notification_new_mail">New mail</string>
     <string name="channel_address_quiet">%1$s, quiet</string>
-    <string name="notifications_address_sound">Sound</string>
-    <string name="notifications_address_sound_detail">%1$s: opens Android\'s settings</string>
     <string name="notifications_folders">Folders that notify</string>
     <string name="notifications_folders_detail">Choose folders besides the Inbox</string>
     <string name="notifications_addresses">By address</string>
@@ -35,8 +31,8 @@
     <string name="notifications_mode_off">Do not notify</string>
     <string name="notifications_mode_off_detail">Not shown at all; the mail stays in your folders</string>
     <string name="notifications_reminders">Reminders</string>
-    <string name="notifications_reminder_sound">Reminder sound</string>
-    <string name="notifications_reminder_sound_detail">Opens Android\'s settings for calendar and task reminders</string>
     <string name="notifications_address_failed">The choice could not be saved</string>
     <string name="notifications_channel_failed">This phone has no settings screen for that</string>
+    <string name="notifications_sound_for">Sound and vibration for %1$s</string>
+    <string name="notifications_mail_default">new mail</string>
 </resources>

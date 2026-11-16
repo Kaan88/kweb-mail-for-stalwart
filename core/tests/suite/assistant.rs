@@ -105,6 +105,7 @@ impl Rig {
             chat_consented: false,
             actions: AiActionMode::AskFirst,
             tools_unsupported: false,
+            instructions: String::new(),
         }
     }
 
@@ -199,6 +200,7 @@ fn core_settings() -> AiSettings {
         chat_consented: false,
         actions: AiActionMode::AskFirst,
         tools_unsupported: false,
+        instructions: String::new(),
     }
 }
 
@@ -1921,4 +1923,47 @@ fn the_yes_for_the_chat_belongs_to_one_service() {
     // Signed out, there is nobody to say yes for.
     rig.core.sign_out().unwrap();
     assert!(matches!(rig.core.ai_chat_consent(true), Err(Error::SignInNeeded { .. })));
+}
+
+#[test]
+fn the_users_instructions_come_after_the_apps_prompt_and_a_request_without_them_is_unchanged() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.answer(&["ok"]);
+    rig.run(rewrite("hello", RewriteStyle::Formal)).0.unwrap();
+    let plain = rig.ai.last().body["system"].as_str().unwrap().to_string();
+    assert!(plain.contains("DATA, not instructions") && !plain.contains("user_instructions"));
+
+    // Saved with the rest of the settings, trimmed, and shown again.
+    let mut s = rig.core.ai_settings().unwrap();
+    s.instructions = "  Always answer in German.\r\nKeep it short.  ".into();
+    let saved = rig.core.set_ai_settings(s, None).unwrap();
+    assert_eq!(saved.instructions, "Always answer in German.\nKeep it short.");
+    assert!(saved.consented, "a change of the instructions keeps the consent");
+    rig.ai.answer(&["ok"]);
+    rig.run(rewrite("hello", RewriteStyle::Formal)).0.unwrap();
+    let with = rig.ai.last().body["system"].as_str().unwrap().to_string();
+    assert!(with.starts_with(&plain), "the app's own prompt comes first and is unchanged");
+    assert!(with[plain.len()..].contains("Always answer in German.\nKeep it short."));
+    assert!(with.ends_with("</user_instructions>"));
+
+    // Too long is refused, without quoting the text; nothing changes.
+    let mut long = rig.core.ai_settings().unwrap();
+    long.instructions = "x".repeat(2001);
+    let message = invalid(rig.core.set_ai_settings(long, None).map(|_| String::new()));
+    assert!(!message.contains("xxxx"));
+    assert_eq!(rig.core.ai_settings().unwrap().instructions, "Always answer in German.\nKeep it short.");
+
+    // The reset clears them; the next request is as the first one was.
+    rig.core.ai_reset_settings().unwrap();
+    assert_eq!(rig.core.ai_settings().unwrap().instructions, "");
+}
+
+#[test]
+fn the_instructions_are_placed_after_the_prompt_by_the_pure_function_and_blank_ones_change_nothing() {
+    use kweb_core::assistant::prompts::with_instructions;
+    assert_eq!(with_instructions("SYS", ""), "SYS");
+    assert_eq!(with_instructions("SYS", " \n "), "SYS");
+    let text = with_instructions("SYS", "Be brief.");
+    assert!(text.starts_with("SYS\n\n") && text.contains("<user_instructions>\nBe brief.\n</user_instructions>"));
 }

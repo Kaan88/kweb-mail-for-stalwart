@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::{
-    model::{AiActionMode, AiEffort, AiProvider, AiSettings},
+    model::{AiActionMode, AiEffort, AiProvider, AiSettings, AI_INSTRUCTIONS_MAX},
     Error, Result,
 };
 
@@ -58,6 +58,8 @@ pub struct Stored {
     pub allow_explain: bool,
     pub allow_chat: bool,
     pub actions: AiActionMode,
+    /// The user's own instructions (see `AiSettings::instructions`).
+    pub instructions: String,
     pub openai: Profile,
     pub anthropic: Profile,
 }
@@ -75,6 +77,7 @@ impl Default for Stored {
             allow_explain: false,
             allow_chat: false,
             actions: AiActionMode::default(),
+            instructions: String::new(),
             openai: Profile::default(),
             anthropic: Profile::default(),
         }
@@ -124,6 +127,7 @@ impl Stored {
             chat_consented: p.consented && p.chat_consented,
             actions: self.actions,
             tools_unsupported: p.tools_unsupported,
+            instructions: self.instructions.clone(),
         }
     }
 }
@@ -156,6 +160,17 @@ pub fn parse(json: &str) -> Option<(Stored, Option<AiProvider>)> {
     Some((stored, Some(old.provider)))
 }
 
+/// The instructions as they are stored: line ends made \n, surrounding blanks dropped, nothing else changed.
+/// Longer than [`AI_INSTRUCTIONS_MAX`] characters is refused (the text is not quoted in the error).
+pub fn clean_instructions(text: &str) -> Result<String> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let text = text.trim();
+    if text.chars().count() > AI_INSTRUCTIONS_MAX {
+        return Err(Error::invalid(format!("the instructions are longer than {AI_INSTRUCTIONS_MAX} characters")));
+    }
+    Ok(text.to_string())
+}
+
 /// How the assistant is set up before the user has done anything: off, nothing agreed to.
 pub fn defaults() -> AiSettings {
     Stored::default().view(AiProvider::OpenAiCompatible)
@@ -170,6 +185,7 @@ pub fn normalise(mut s: AiSettings) -> Result<AiSettings> {
     s.model = s.model.trim().to_string();
     s.has_key = false;
     s.tools_unsupported = false;
+    s.instructions = clean_instructions(&s.instructions)?;
     if s.base_url.is_empty() {
         if s.enabled {
             return Err(Error::invalid("enter the address of the service first"));

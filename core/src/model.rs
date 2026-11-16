@@ -564,7 +564,15 @@ pub struct AiSettings {
     /// `has_key`: `set_ai_settings` ignores it. Kept while the address and model stay the same.
     #[serde(default)]
     pub tools_unsupported: bool,
+    /// The user's own instructions to the assistant ("Your instructions"), per account and shared
+    /// by both services: sent as an extra system text after the app's own with every request.
+    /// At most [`AI_INSTRUCTIONS_MAX`] characters. Never in a log or an error.
+    #[serde(default)]
+    pub instructions: String,
 }
+
+/// The longest the assistant instructions are (in characters).
+pub const AI_INSTRUCTIONS_MAX: usize = 2000;
 
 /// What the chat may do about changes. There is no "automatic": every change waits for a tap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]

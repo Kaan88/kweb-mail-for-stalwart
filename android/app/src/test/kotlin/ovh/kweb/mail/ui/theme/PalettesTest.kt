@@ -27,8 +27,9 @@ class PalettesTest {
     }
 
     @Test
-    fun theWallpaperIsTheDefaultOnlyWhereThePhoneHasIt() {
-        assertEquals(ThemeChoice.Wallpaper, ThemeChoice.default(31))
+    fun crimsonIsTheDefaultAndTheWallpaperIsOfferedOnlyWhereThePhoneHasIt() {
+        assertEquals(ThemeChoice.Ward, ThemeChoice.default(31))
+        assertEquals(ThemeChoice.Wallpaper, ThemeChoice.fromKey("wallpaper", 31))
         assertEquals(ThemeChoice.Ward, ThemeChoice.default(30))
         assertFalse(ThemeChoice.Wallpaper in ThemeChoice.offered(29))
         assertEquals(ThemeChoice.entries, ThemeChoice.offered(35))
@@ -37,8 +38,8 @@ class PalettesTest {
     @Test
     fun aStoredChoiceIsKeptAndAnUnusableOneFallsBack() {
         assertEquals(ThemeChoice.Moss, ThemeChoice.fromKey("moss", 29))
-        assertEquals(ThemeChoice.Wallpaper, ThemeChoice.fromKey(null, 35))
+        assertEquals(ThemeChoice.Ward, ThemeChoice.fromKey(null, 35))
         assertEquals(ThemeChoice.Ward, ThemeChoice.fromKey("wallpaper", 29))
-        assertEquals(ThemeChoice.Wallpaper, ThemeChoice.fromKey("something old", 33))
+        assertEquals(ThemeChoice.Ward, ThemeChoice.fromKey("something old", 33))
     }
 }

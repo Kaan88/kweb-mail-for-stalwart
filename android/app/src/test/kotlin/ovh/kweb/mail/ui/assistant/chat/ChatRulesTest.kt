@@ -85,7 +85,7 @@ class ChatRulesTest {
 
     private fun settings(enabled: Boolean = true, consented: Boolean = true, allowChat: Boolean = true, chatConsented: Boolean = true) = AiSettings(
         enabled, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true,
-        allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = allowChat, chatConsented = chatConsented, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false,
+        allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = allowChat, chatConsented = chatConsented, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false, instructions = "",
     )
 
     private fun ref(id: String) = AiMessageRef(id, "t-$id", "Subject $id", "Ada <ada@example.org>", "Inbox")

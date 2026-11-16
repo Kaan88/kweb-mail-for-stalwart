@@ -13,8 +13,9 @@ enum class ThemeChoice(val key: String) {
     ;
 
     companion object {
-        /** What a fresh install uses: the wallpaper where the phone has such colours, else Ward. */
-        fun default(sdk: Int): ThemeChoice = if (sdk >= WALLPAPER_FROM_SDK) Wallpaper else Ward
+        /** What a fresh install uses: Ward crimson on every phone (the wallpaper palette is one tap away in the picker). */
+        @Suppress("UNUSED_PARAMETER")
+        fun default(sdk: Int): ThemeChoice = Ward
 
         /** The stored choice; an unknown key, or the wallpaper on a phone without it, is the default. */
         fun fromKey(key: String?, sdk: Int): ThemeChoice {
