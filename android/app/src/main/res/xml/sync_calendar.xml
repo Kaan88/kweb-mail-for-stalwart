@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sync adapter of the phone's calendar. Off until the user switches the device calendar on (isAlwaysSyncable false). -->
+<sync-adapter xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="ovh.kweb.mail.account"
+    android:allowParallelSyncs="false"
+    android:contentAuthority="com.android.calendar"
+    android:isAlwaysSyncable="false"
+    android:supportsUploading="true"
+    android:userVisible="true" />

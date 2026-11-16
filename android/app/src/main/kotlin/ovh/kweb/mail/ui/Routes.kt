@@ -138,6 +138,9 @@ sealed interface Route {
     /** Swipes and actions: what a swipe does, the delete question, the Undo time of a send, Reply all, reached from Settings. */
     data object Actions : Route
 
+    /** Device calendar: whether the account's own calendars show in the phone's calendar apps, and which, reached from Settings. */
+    data object DeviceCalendar : Route
+
     /** Reading: pictures, the list and the message text, reached from Settings. */
     data object Reading : Route
 

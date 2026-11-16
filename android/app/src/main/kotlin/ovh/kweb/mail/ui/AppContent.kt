@@ -411,6 +411,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
                     onOpenAssistant = { app.open(Route.Assistant) },
                     onOpenNotifications = { app.open(Route.Notifications) },
+                    onOpenDeviceCalendar = { app.open(Route.DeviceCalendar) },
                     onOpenScheduled = { app.open(Route.Scheduled) },
                     onOpenSenders = { app.open(Route.Senders) },
                     onOpenMasked = { app.open(Route.MaskedAddresses) },
@@ -422,6 +423,9 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onBack = app::back,
                     onOpen = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                 )
+                Route.DeviceCalendar -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
+                    ovh.kweb.mail.ui.devcal.DeviceCalendarScreen(onBack = app::back)
+                }
                 Route.NotificationButtons -> ovh.kweb.mail.ui.settings.NotificationButtonsScreen(onBack = app::back)
                 Route.About -> ovh.kweb.mail.ui.settings.AboutScreen(onBack = app::back)
                 Route.Appearance -> ovh.kweb.mail.ui.settings.AppearanceScreen(onBack = app::back)

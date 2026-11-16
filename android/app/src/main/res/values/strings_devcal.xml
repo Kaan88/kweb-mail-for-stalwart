@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings: Device calendar -->
+    <string name="devcal_section">Calendar</string>
+    <string name="devcal_title">Device calendar</string>
+    <string name="devcal_settings_detail">Show your calendars in the phone\'s calendar apps</string>
+    <string name="devcal_switch">Show in the phone\'s calendar apps</string>
+    <string name="devcal_switch_detail">Your calendars and events appear in the calendar app you use on this phone, and what you change there goes back to the server.</string>
+    <string name="devcal_for">For %1$s</string>
+    <string name="devcal_calendars">Calendars to show</string>
+    <string name="devcal_calendars_text">Only your own calendars are shown. Calendars other people share with you are never copied to the phone.</string>
+    <string name="devcal_calendars_loading">Reading the calendars…</string>
+    <string name="devcal_calendars_none">There are no calendars to show.</string>
+    <string name="devcal_how">How it works</string>
+    <string name="devcal_how_text">Events that do not repeat can be changed in either place. Repeating events are shown in the phone\'s calendar and changed here or on the server; a change made to one on the phone is put back. Reminders stay with this app, so nothing reminds you twice.</string>
+    <string name="devcal_last">Last sync</string>
+    <string name="devcal_never">Not yet</string>
+    <string name="devcal_sync_now">Sync now</string>
+    <string name="devcal_syncing">Syncing…</string>
+    <string name="devcal_android_off">Sync is switched off for this account in Android\'s settings.</string>
+    <string name="devcal_android_settings">Android account settings</string>
+    <string name="devcal_permission_title">Allow calendar access</string>
+    <string name="devcal_permission_text">To show your calendars on this phone, the app needs to read and write the phone\'s calendar. Other apps that can read the phone\'s calendar will be able to read what is copied there. Nothing is copied before you switch this on, and it is taken away when you switch it off.</string>
+    <string name="devcal_permission_continue">Continue</string>
+    <string name="devcal_permission_denied">Without the calendar permission nothing can be shown on the phone. You can allow it in the app\'s settings.</string>
+    <string name="devcal_permission_settings">App settings</string>
+    <string name="devcal_off_failed">Switching off did not work. Try again.</string>
+    <string name="devcal_on_failed">Switching on did not work. Try again.</string>
+    <string name="devcal_choice_failed">The change was not saved. Try again.</string>
+
+    <!-- The last run, as a line -->
+    <string name="devcal_result_ok">Up to date</string>
+    <string name="devcal_result_ok_counts">Done: %1$d from the server, %2$d sent</string>
+    <string name="devcal_result_deletions">Stopped: %1$d events would have been deleted. Nothing was deleted. Switch this off and on to start again.</string>
+    <string name="devcal_result_empty">Stopped: the server answered with no events while the phone has %1$d. Nothing was deleted.</string>
+    <string name="devcal_result_denied">The calendar permission is missing.</string>
+    <string name="devcal_result_signin">Sign in again to go on.</string>
+    <string name="devcal_result_failed">Could not reach the server. It tries again by itself.</string>
+    <string name="devcal_result_other">Did not work: %1$s</string>
+    <string name="devcal_result_reverted">%1$d changes to repeating events were put back.</string>
+    <string name="devcal_result_conflicts">%1$d changes were taken from the server.</string>
+    <string name="devcal_result_not_sent">%1$d new repeating events made on the phone were not sent (not supported yet).</string>
+
+    <!-- The notification of a failed run -->
+    <string name="channel_sync_problems">Calendar sync problems</string>
+    <string name="channel_sync_problems_description">Tells you when showing your calendars on the phone has stopped working</string>
+    <string name="devcal_notice_title">Device calendar</string>
+    <string name="devcal_notice_text">Showing %1$s on the phone has stopped. Tap to see why.</string>
+
+    <!-- Android account entry -->
+    <string name="devcal_account_label">kweb mail</string>
+</resources>

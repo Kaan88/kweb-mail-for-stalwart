@@ -93,6 +93,17 @@ class Settings(private val values: KeyValues) {
         get() = PreviewChoice.parse(values.getString(PREVIEW))
         set(value) = write { putString(PREVIEW, value.key) }
 
+    /** The device calendar is on: this account's own calendars are mirrored into the phone's calendar (see `devcal`). */
+    var deviceCalendar: Boolean
+        get() = values.getBoolean(DEVICE_CALENDAR, false)
+        set(value) = write { putBoolean(DEVICE_CALENDAR, value) }
+
+    /** The last run of the device calendar sync: when, and what it left ([ovh.kweb.mail.devcal.DeviceRun.encode]). */
+    val deviceCalendarRun: Pair<Long, String>?
+        get() = values.getLong(DEVICE_CALENDAR_AT, 0L).takeIf { it > 0 }?.let { at -> values.getString(DEVICE_CALENDAR_RESULT)?.let { at to it } }
+
+    fun recordDeviceCalendarRun(atMillis: Long, result: String) = write { putLongAndString(DEVICE_CALENDAR_AT, atMillis, DEVICE_CALENDAR_RESULT, result) }
+
     /** Back to "never chose": the default, also a later version's. */
     fun resetNotificationActions() = write { remove(NOTIFICATION_ACTIONS) }
 
@@ -213,6 +224,9 @@ class Settings(private val values: KeyValues) {
         private const val PREVIEW = "notification_preview"
         private const val ADMIN_KEY = "admin_key_accepted"
         private const val ADMIN_DASHBOARD = "admin_may_dashboard"
+        private const val DEVICE_CALENDAR = "device_calendar"
+        private const val DEVICE_CALENDAR_AT = "device_calendar_at"
+        private const val DEVICE_CALENDAR_RESULT = "device_calendar_result"
         private const val CHECK_AT = "check_at"
         private const val CHECK_ERROR = "check_error"
         private const val DELIVERY_MODE = "delivery_mode"

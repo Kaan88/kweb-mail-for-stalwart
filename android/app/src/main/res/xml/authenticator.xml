@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The account type of the device calendar: one account per app account, no secret in it. -->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="ovh.kweb.mail.account"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/devcal_account_label"
+    android:smallIcon="@mipmap/ic_launcher" />

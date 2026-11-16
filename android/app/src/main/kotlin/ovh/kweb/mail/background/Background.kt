@@ -42,6 +42,8 @@ object Background {
         // Accounts in Google mode run the ordinary live loop while the app is on screen, and register again when due.
         LiveWindow.onForeground(context)
         GooglePush.onAppStart(context)
+        ovh.kweb.mail.devcal.DeviceCalendarController.reconcile(context)
+        ovh.kweb.mail.devcal.DeviceCalendarController.onForeground(context)
         // Accounts.sessions() leaves out an account that cannot be opened, so it cannot stop the others.
         Accounts.sessions().forEach {
             it.core.poke()
@@ -81,6 +83,8 @@ object Background {
      */
     fun afterAccountRemoved(context: Context, record: AccountRecord) {
         Notifier(context).cancelAccount(record)
+        // Its calendars leave the phone's calendar with its Android account.
+        ovh.kweb.mail.devcal.DeviceCalendarController.accountRemoved(context, record)
         if (Accounts.records.value.isEmpty()) {
             PushService.stop(context)
             CheckScheduler.cancelAll(context)

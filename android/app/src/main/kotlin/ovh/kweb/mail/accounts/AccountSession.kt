@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.background.Settings
+import ovh.kweb.mail.devcal.DeviceCalendarController
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.Core
 import uniffi.kweb_core.Listener
@@ -61,6 +62,7 @@ class AccountSession internal constructor(
         override fun notifications(plan: Plan) = guarded("notifications") { Notifier(app).apply(record, plan) }
         override fun cacheChanged() = guarded("cacheChanged") { publishCacheChanged() }
         override fun reminder(reminder: Reminder) = guarded("reminder") { Notifier(app).showReminder(record, reminder) }
+        override fun calendarChanged() = guarded("calendarChanged") { DeviceCalendarController.onCalendarChanged(app, record) }
     }
 
     init {

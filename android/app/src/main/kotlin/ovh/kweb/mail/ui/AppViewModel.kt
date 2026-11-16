@@ -267,6 +267,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** The notification of a stopped device calendar sync was tapped: its screen opens over Settings. */
+    fun openDeviceCalendar(accountExtra: String?) {
+        viewModelScope.launch {
+            val signedIn = SessionState.signedIn.first { it != null }
+            if (signedIn != true) return@launch
+            intoAccount(accountExtra) { stackFlow.update { BackStack.showOver(it, BackStack.initial + Route.Settings + Route.DeviceCalendar) } }
+        }
+    }
+
     /** An entry was saved: back to the agenda. It reads again when it comes up. */
     fun eventSaved() = stackFlow.update { BackStack.afterEventSaved(it) }
 

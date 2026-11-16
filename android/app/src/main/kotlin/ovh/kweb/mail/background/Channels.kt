@@ -25,6 +25,7 @@ object Channels {
     const val REMINDERS = "reminders"
     const val CONNECTION = "connection"
     const val DOWNLOADS = "downloads"
+    const val SYNC_PROBLEMS = "sync_problems"
 
     /**
      * Creates the device's channels and those of every account the app knows. Creating an existing channel
@@ -53,6 +54,10 @@ object Channels {
                     description = context.getString(R.string.channel_downloads_description)
                     setShowBadge(false)
                 },
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(SYNC_PROBLEMS, context.getString(R.string.channel_sync_problems), NotificationManager.IMPORTANCE_DEFAULT)
+                .apply { description = context.getString(R.string.channel_sync_problems_description) },
         )
         val records = Accounts.records.value
         if (records.isEmpty()) {

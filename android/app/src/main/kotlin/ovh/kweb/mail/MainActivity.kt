@@ -138,6 +138,12 @@ class MainActivity : ComponentActivity() {
     private fun handleNotificationIntent(intent: Intent) {
         if (handleShareIntent(intent)) return
         if (handleReplyIntent(intent) || handleReminderIntent(intent)) return
+        if (intent.getStringExtra(Notifier.EXTRA_OPEN) == Notifier.OPEN_DEVICE_CALENDAR) {
+            val account = intent.takeAccount()
+            intent.removeExtra(Notifier.EXTRA_OPEN)
+            app.openDeviceCalendar(account)
+            return
+        }
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID)
         if (messageId == null) {
             // The tap on a group summary names only the account whose mail it counts.

@@ -392,6 +392,10 @@ class Notifier(context: Context) {
         /** Extra of every intent a notification sends: the id of the account it is for ([AccountRecord.id], String). No extra means the migrated account. */
         const val EXTRA_ACCOUNT = "ovh.kweb.mail.extra.ACCOUNT"
 
+        /** Extra of a notification intent that asks for a screen of the app instead of a message ([OPEN_DEVICE_CALENDAR]). */
+        const val EXTRA_OPEN = "ovh.kweb.mail.extra.OPEN"
+        const val OPEN_DEVICE_CALENDAR = "device_calendar"
+
         internal const val SUMMARY_ID = 1
         internal const val SERVICE_ID = 2
         internal const val TEST_ID = 3
