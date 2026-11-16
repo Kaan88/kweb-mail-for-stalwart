@@ -326,7 +326,10 @@ pub enum Filters {
     Text,
     On,
     Off,
-    AddFrom { message_id: String, folder_id: String },
+    AddFrom {
+        message_id: String,
+        folder_id: String,
+    },
     /// Bulwark's model (M12): the state, written out whole.
     Rules,
     /// Save a file of Bulwark's rules JSON.

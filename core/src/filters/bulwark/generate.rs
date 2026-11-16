@@ -371,7 +371,8 @@ pub fn generate(meta: &Metadata, external: &str, opts: &Options) -> String {
     let audience: Option<&Audience> = meta.vacation_audience.as_ref();
     let forward: Option<&Forward> = meta.vacation_forward.as_ref().filter(|f| f.enabled);
     let rules: Vec<&Rule> = meta.rules.iter().collect();
-    let mut lines: Vec<String> = vec![METADATA_BEGIN.to_string(), meta.to_json(), METADATA_END.to_string(), String::new()];
+    let mut lines: Vec<String> =
+        vec![METADATA_BEGIN.to_string(), meta.to_json(), METADATA_END.to_string(), String::new()];
 
     let use_mailbox_id = extensions.iter().any(|e| e == "mailboxid");
     let forward_period = forward.and_then(|f| period_tests(f.active_from.as_deref(), f.active_until.as_deref()));

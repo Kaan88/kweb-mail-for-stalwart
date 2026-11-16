@@ -439,7 +439,10 @@ async fn a_notice_is_shown_once_and_acknowledged_and_an_old_one_is_left_alone() 
     let shown = r.rec.notices.lock().unwrap().clone();
     assert_eq!(shown.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["ce:n1", "sh:s1"]);
     assert_eq!(shown[0].title, "Lunch");
-    assert_eq!((shown[0].local_start.as_deref(), shown[0].time_zone.as_deref()), (Some("2026-11-26T10:00:00"), Some("Europe/Istanbul")));
+    assert_eq!(
+        (shown[0].local_start.as_deref(), shown[0].time_zone.as_deref()),
+        (Some("2026-11-26T10:00:00"), Some("Europe/Istanbul"))
+    );
     // Acknowledged: gone from the server; the old one is still there.
     assert_eq!(r.server.notice_ids(), (vec!["old".to_string()], Vec::<String>::new()));
 
