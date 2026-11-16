@@ -35,7 +35,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,9 +69,19 @@ import java.time.ZoneId
 import java.util.Locale
 import kotlin.math.abs
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.accounts.AccountAvatarButton
+import ovh.kweb.mail.ui.attention.AttentionBox
+import ovh.kweb.mail.ui.attention.AttentionNav
+import ovh.kweb.mail.ui.attention.AttentionRules
+import ovh.kweb.mail.ui.attention.AttentionViewModel
+import ovh.kweb.mail.ui.attention.Place
+import ovh.kweb.mail.ui.attention.SparkleButton
+import ovh.kweb.mail.ui.attention.rememberFindingRunner
+import ovh.kweb.mail.ui.attention.rememberWordClock
 import ovh.kweb.mail.ui.sharing.PickKind
 import ovh.kweb.mail.ui.sharing.SharePickerButton
+import uniffi.kweb_core.Finding
 import uniffi.kweb_core.Occurrence
 
 /**
@@ -80,9 +95,17 @@ fun CalendarScreen(
     onAddEvent: (startHint: String) -> Unit,
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
+    /** What a finding can open (a mail, the editor, the Tasks view). */
+    attentionNav: AttentionNav = AttentionNav(openThread = { _, _ -> }, openEditor = {}),
+    /** Where the buttons with a sparkle are wired (phase 2); the core only returns one when an assistant is set up. */
+    onService: (Finding) -> Unit = {},
     vm: CalendarViewModel = viewModel(),
+    attention: AttentionViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val mode by vm.mode.collectAsStateWithLifecycle()
+    val tasks by vm.tasks.collectAsStateWithLifecycle()
+    val found by attention.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
     val locale = rememberLocale()
@@ -91,7 +114,44 @@ fun CalendarScreen(
     // Every time the screen comes up, also from the background: it refreshes the agenda, today and the zone.
     LifecycleResumeEffect(vm) {
         vm.load()
+        attention.load()
         onPauseOrDispose { }
+    }
+    LaunchedEffect(attention) {
+        attention.notices.collect { notice ->
+            snackbar.currentSnackbarData?.dismiss()
+            val result = snackbar.showSnackbar(
+                notice.text,
+                actionLabel = notice.undo?.let { resources.getString(R.string.att_undo) },
+                duration = if (notice.undo != null) SnackbarDuration.Long else SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed) notice.undo?.invoke()
+        }
+    }
+    val tasksMode = mode == CalendarMode.TASKS
+    // A change made from a finding (Move to today, Mark done, an Undo) or by the sync: the list follows.
+    LaunchedEffect(found.at) { if (tasksMode && found.at > 0) vm.loadTasks(refreshing = false) }
+    val findings = remember(found.findings, tasksMode) {
+        AttentionRules.forPlace(found.findings, if (tasksMode) Place.Tasks else Place.Calendar)
+    }
+    // The box with the findings: opened by the sparkle, gone by itself when nothing is left to look at.
+    var boxOpen by rememberSaveable(tasksMode) { mutableStateOf(false) }
+    LaunchedEffect(findings.isEmpty()) { if (findings.isEmpty()) boxOpen = false }
+    // A list keeps what is on screen when something is put above it: the box is brought into view.
+    val tasksListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(boxOpen, tasksMode) { if (boxOpen && tasksMode) tasksListState.animateScrollToItem(0) }
+    val todayHeader = state.rows.any { it is AgendaRules.Row.Header && it.date == state.today }
+    val runner = rememberFindingRunner(attention, attentionNav)
+    val clock = rememberWordClock(found.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000))
+    val attentionBox: @Composable () -> Unit = {
+        AttentionBox(
+            findings = findings,
+            runner = runner,
+            clock = clock,
+            onClose = { boxOpen = false },
+            onDismiss = attention::dismiss,
+            onService = onService,
+        )
     }
     LaunchedEffect(vm) {
         vm.messages.collect {
@@ -109,17 +169,27 @@ fun CalendarScreen(
         topBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
                 TitleRow(
-                    title = WeekRules.title(state.selected, locale),
+                    title = if (tasksMode) stringResource(R.string.cal_tasks_title) else WeekRules.title(state.selected, locale),
                     todaySelected = state.selected == state.today,
                     onToday = vm::goToToday,
+                    showToday = !tasksMode,
+                    sparks = findings.size,
+                    onSpark = {
+                        boxOpen = !boxOpen
+                        // The box sits under the Today header: bring it into view.
+                        if (boxOpen && !tasksMode) vm.goToToday()
+                    },
                 )
-                WeekStrip(
-                    selected = state.selected,
-                    today = state.today,
-                    locale = locale,
-                    onSelect = vm::select,
-                    onWeek = vm::moveWeek,
-                )
+                if (!tasksMode) {
+                    WeekStrip(
+                        selected = state.selected,
+                        today = state.today,
+                        locale = locale,
+                        onSelect = vm::select,
+                        onWeek = vm::moveWeek,
+                    )
+                }
+                ModeChips(mode, vm::setMode)
             }
         },
         bottomBar = bottomBar,
@@ -130,7 +200,18 @@ fun CalendarScreen(
             }
         },
         floatingActionButton = {
-            ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.cal_new_entry), onClick = { onAddEvent(state.selected.toString()) })
+            if (tasksMode) {
+                ovh.kweb.mail.ui.list.KwebFab(
+                    Icons.Filled.Add,
+                    stringResource(R.string.cal_new_task),
+                    onClick = {
+                        val day = state.today.toString()
+                        attentionNav.openEditor(Route.EditEvent(null, day, prefill = EventPrefill("", "${day}T00:00:00", allDay = true, isTask = true)))
+                    },
+                )
+            } else {
+                ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.cal_new_entry), onClick = { onAddEvent(state.selected.toString()) })
+            }
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
@@ -139,7 +220,23 @@ fun CalendarScreen(
             if (state.failed && state.loaded) {
                 NoticeBar(stringResource(R.string.cal_agenda_failed), error = true, action = stringResource(R.string.retry) to vm::refresh)
             }
-            PullToRefreshBox(
+            if (tasksMode) {
+                TasksBody(
+                    state = tasks,
+                    today = state.today,
+                    zone = state.zone,
+                    onOpen = { onOpenEvent(it.eventId, it.recurrenceId) },
+                    onToggle = vm::setTaskDone,
+                    onRefresh = { vm.loadTasks(refreshing = true) },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    listState = tasksListState,
+                    top = if (boxOpen && findings.isNotEmpty()) {
+                        { item(key = "attention") { Box(Modifier.padding(top = 4.dp, bottom = 4.dp)) { attentionBox() } } }
+                    } else {
+                        null
+                    },
+                )
+            } else PullToRefreshBox(
                 isRefreshing = state.refreshing,
                 onRefresh = vm::refresh,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -149,6 +246,10 @@ fun CalendarScreen(
                     state = vm.listState,
                     contentPadding = PaddingValues(bottom = 96.dp),
                 ) {
+                    // Under the Today header; at the top when today has no header (nothing on it).
+                    if (boxOpen && findings.isNotEmpty() && !todayHeader) {
+                        item(key = "attention") { Box(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { attentionBox() } }
+                    }
                     when {
                         !state.loaded && !state.failed -> item(key = "loading") { Centered { CircularProgressIndicator() } }
                         !state.loaded -> item(key = "failed") {
@@ -166,9 +267,14 @@ fun CalendarScreen(
                         }
                         else -> items(state.rows, key = { row -> rowKey(row) }) { row ->
                             when (row) {
-                                is AgendaRules.Row.Header -> DayHeading(
-                                    AgendaRules.heading(row.date, state.today, locale, stringResource(R.string.cal_today)).uppercase(locale),
-                                )
+                                is AgendaRules.Row.Header -> Column {
+                                    DayHeading(
+                                        AgendaRules.heading(row.date, state.today, locale, stringResource(R.string.cal_today)).uppercase(locale),
+                                    )
+                                    if (boxOpen && findings.isNotEmpty() && row.date == state.today) {
+                                        Box(Modifier.padding(horizontal = 14.dp, vertical = 4.dp)) { attentionBox() }
+                                    }
+                                }
                                 is AgendaRules.Row.Entry -> EntryCard(
                                     entry = row.occurrence,
                                     continues = row.continues,
@@ -206,7 +312,7 @@ private fun androidx.compose.foundation.lazy.LazyItemScope.Centered(content: @Co
 }
 
 @Composable
-private fun TitleRow(title: String, todaySelected: Boolean, onToday: () -> Unit) {
+private fun TitleRow(title: String, todaySelected: Boolean, onToday: () -> Unit, showToday: Boolean, sparks: Int, onSpark: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(start = 24.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -214,17 +320,31 @@ private fun TitleRow(title: String, todaySelected: Boolean, onToday: () -> Unit)
         Text(
             title,
             modifier = Modifier.weight(1f).semantics { heading() },
-            style = MaterialTheme.typography.headlineSmall,
+            style = if (sparks > 0) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineSmall,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
-        FilterChip(
-            selected = todaySelected,
-            onClick = onToday,
-            label = { Text(stringResource(R.string.cal_today)) },
-            shape = RoundedCornerShape(17.dp),
-        )
+        SparkleButton(sparks, onSpark, modifier = Modifier.padding(end = 10.dp))
+        if (showToday) {
+            FilterChip(
+                selected = todaySelected,
+                onClick = onToday,
+                label = { Text(stringResource(R.string.cal_today)) },
+                shape = RoundedCornerShape(17.dp),
+            )
+        }
         SharePickerButton(PickKind.CALENDAR)
         // The account, as at the right end of the other tabs' field: it can be switched here too.
         AccountAvatarButton(Modifier.padding(start = 4.dp, end = 10.dp))
+    }
+}
+
+/** Agenda and Tasks: the two views of the Calendar tab. */
+@Composable
+private fun ModeChips(mode: CalendarMode, onMode: (CalendarMode) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = mode == CalendarMode.AGENDA, onClick = { onMode(CalendarMode.AGENDA) }, label = { Text(stringResource(R.string.cal_chip_agenda)) }, shape = RoundedCornerShape(10.dp))
+        FilterChip(selected = mode == CalendarMode.TASKS, onClick = { onMode(CalendarMode.TASKS) }, label = { Text(stringResource(R.string.cal_chip_tasks)) }, shape = RoundedCornerShape(10.dp))
     }
 }
 
@@ -357,7 +477,7 @@ internal fun EntryCard(
 
 /** The round check box of a task. */
 @Composable
-private fun TaskBox(done: Boolean, color: Color, checkColor: Color, onToggle: (() -> Unit)?) {
+internal fun TaskBox(done: Boolean, color: Color, checkColor: Color, onToggle: (() -> Unit)?) {
     val description = stringResource(if (done) R.string.cal_task_mark_open else R.string.cal_task_mark_done)
     Box(
         Modifier

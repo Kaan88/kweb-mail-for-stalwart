@@ -43,6 +43,17 @@ data class AgendaState(
     val fromCache: Boolean = false,
 )
 
+/** Which view of the Calendar tab is shown: the agenda or the open tasks. */
+enum class CalendarMode { AGENDA, TASKS }
+
+/** The open tasks of the Tasks view; [entries] are the answer of the last load (a task ticked since stays, ticked, until the next one). */
+data class TasksState(
+    val loaded: Boolean = false,
+    val refreshing: Boolean = false,
+    val failed: Boolean = false,
+    val entries: List<Occurrence> = emptyList(),
+)
+
 /**
  * The agenda: the entries around the selected week from the core, grouped by day. It lives as long
  * as the activity so that going to a mail and back keeps the week and the place in the list.
@@ -52,6 +63,9 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
     private val messageChannel = Channel<CalendarMessage>(Channel.BUFFERED)
     private val scrollChannel = Channel<LocalDate>(Channel.BUFFERED)
     private var job: Job? = null
+    private var tasksJob: Job? = null
+    private val modeFlow = MutableStateFlow(CalendarMode.AGENDA)
+    private val tasksFlow = MutableStateFlow(TasksState())
 
     /** A day to scroll to once the answer of the fetch that was started for it is in. */
     private var pendingScroll: LocalDate? = null
@@ -60,6 +74,11 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
     private var generation = 0
 
     val state: StateFlow<AgendaState> get() = stateFlow
+
+    /** The chip that is on; kept here so that it survives a visit to another screen. */
+    val mode: StateFlow<CalendarMode> get() = modeFlow
+
+    val tasks: StateFlow<TasksState> get() = tasksFlow
 
     val messages: Flow<CalendarMessage> get() = messageChannel.receiveAsFlow()
 
@@ -74,6 +93,9 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
             SessionState.signedIn.collect { signedIn ->
                 if (signedIn == false) {
                     job?.cancel()
+                    tasksJob?.cancel()
+                    modeFlow.value = CalendarMode.AGENDA
+                    tasksFlow.value = TasksState()
                     generation++
                     pendingScroll = null
                     stateFlow.value = initial()
@@ -97,6 +119,36 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
         val today = LocalDate.now(zone)
         stateFlow.update { it.copy(zone = zone, today = today) }
         fetch(refreshing = false)
+        if (modeFlow.value == CalendarMode.TASKS) loadTasks(refreshing = false)
+    }
+
+    fun setMode(mode: CalendarMode) {
+        modeFlow.value = mode
+        if (mode == CalendarMode.TASKS) loadTasks(refreshing = false)
+    }
+
+    /** One-shot request from outside (the Due today tile, a tasks finding): the next time the Calendar shows, it shows the tasks. */
+    fun showTasks() = setMode(CalendarMode.TASKS)
+
+    /** Reads the open tasks of the 60 days around today from the core. The list on screen stays until the answer is in. */
+    fun loadTasks(refreshing: Boolean) {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        if (refreshing) tasksFlow.update { it.copy(refreshing = true) }
+        tasksJob?.cancel()
+        tasksJob = viewModelScope.launch {
+            try {
+                val (from, to) = TaskRules.window(today, zone)
+                val agenda = withContext(Dispatchers.IO) { session.core.agenda(from, to, zone.id) }
+                tasksFlow.value = TasksState(loaded = true, entries = TaskRules.open(agenda.entries))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the tasks failed: ${e.javaClass.simpleName}")
+                tasksFlow.update { it.copy(refreshing = false, failed = true) }
+                if (refreshing) messageChannel.send(CalendarMessage.Res(R.string.cal_tasks_load_failed))
+            }
+        }
     }
 
     /** Pull to refresh. */
@@ -177,6 +229,7 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
     /** Ticks a task off or on. The box changes at once; when the server refuses it changes back. */
     fun setTaskDone(entry: Occurrence, done: Boolean) {
         replace(entry, done)
+        replaceTask(entry, done)
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { session.core.setTaskDone(entry.eventId, done) }
@@ -185,9 +238,14 @@ class CalendarViewModel(app: Application, private val session: AccountSession) :
             } catch (e: Exception) {
                 Log.w(Background.TAG, "marking a task failed: ${e.javaClass.simpleName}")
                 replace(entry, !done)
+                replaceTask(entry, !done)
                 messageChannel.send(CalendarMessage.Res(R.string.cal_task_failed))
             }
         }
+    }
+
+    private fun replaceTask(entry: Occurrence, done: Boolean) = tasksFlow.update { state ->
+        state.copy(entries = state.entries.map { if (TaskRules.key(it) == TaskRules.key(entry)) it.copy(isDone = done) else it })
     }
 
     private fun replace(entry: Occurrence, done: Boolean) = stateFlow.update { state ->

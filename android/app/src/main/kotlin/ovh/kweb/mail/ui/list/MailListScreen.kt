@@ -119,6 +119,9 @@ import ovh.kweb.mail.ui.admin.AdminEntry
 import ovh.kweb.mail.ui.admin.AdminEntryRules
 import ovh.kweb.mail.ui.assistant.chat.ChatRules
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.attention.AttentionRules
+import ovh.kweb.mail.ui.attention.AttentionViewModel
+import ovh.kweb.mail.ui.attention.HomeSetting
 import ovh.kweb.mail.ui.accounts.AccountList
 import ovh.kweb.mail.ui.accounts.AccountRows
 import ovh.kweb.mail.ui.accounts.AccountSheet
@@ -171,6 +174,15 @@ fun MailListScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val listState = vm.listState
+    // With Home off, a conversation a mail finding is about wears a small mark beside its time (with Home on the Unread tile has it).
+    val attention: AttentionViewModel = viewModel()
+    val found by attention.state.collectAsStateWithLifecycle()
+    val homeOn by HomeSetting.enabled.collectAsStateWithLifecycle()
+    val marks = remember(found.findings) { AttentionRules.rowMarks(found.findings) }
+    LifecycleResumeEffect(attention, homeOn) {
+        if (!homeOn) attention.load()
+        onPauseOrDispose { }
+    }
     val snackbar = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -463,6 +475,7 @@ fun MailListScreen(
                                     } else {
                                         null
                                     },
+                                    attention = AttentionRules.rowMarked(homeOn, marks, row.newest.threadId, row.messageIds),
                                     selecting = selecting,
                                     selected = SelectionRules.key(row) in state.selection,
                                     onToggleSelect = { vm.toggleSelected(SelectionRules.key(row)) },
@@ -996,6 +1009,7 @@ private fun ConversationItem(
     role: String?,
     labelNames: List<String>,
     folder: String?,
+    attention: Boolean,
     selecting: Boolean,
     selected: Boolean,
     swipeRight: ActionRules.Swipe,
@@ -1071,7 +1085,7 @@ private fun ConversationItem(
         },
     ) {
         MailRow(
-            rowContent(row, role, labelNames, folder),
+            rowContent(row, role, labelNames, folder).copy(attention = attention),
             onClick = if (SelectionRules.tap(selecting) == SelectionRules.Tap.TOGGLE) onToggleSelect else onOpen,
             shape = shape,
             onLongClick = onToggleSelect,

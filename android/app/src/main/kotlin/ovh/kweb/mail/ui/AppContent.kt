@@ -166,6 +166,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
             val command by app.listCommand.collectAsStateWithLifecycle()
             // The Inbox's unread count, the badge on Mail; read from the list's own state, so both sides agree.
             val mailList: MailListViewModel = viewModel()
+            val calendar: ovh.kweb.mail.ui.calendar.CalendarViewModel = viewModel()
             val unread by remember(mailList) {
                 mailList.state.map { s -> s.mailboxes.firstOrNull { it.role == "inbox" }?.unreadEmails?.toInt() ?: 0 }.distinctUntilChanged()
             }.collectAsStateWithLifecycle(0)
@@ -194,6 +195,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 AttentionNav(
                     openThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                     openEditor = { app.open(it) },
+                    openTasks = { calendar.showTasks(); app.switchTo(Route.Calendar) },
                 )
             }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
@@ -231,6 +233,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                             app.switchTo(Route.MailList)
                         },
                         openCalendar = { app.switchTo(Route.Calendar) },
+                        openTasks = { calendar.showTasks(); app.switchTo(Route.Calendar) },
                         openFiles = { app.switchTo(Route.Files) },
                         openSearch = { app.open(Route.Search) },
                         openDeliveryCheck = { app.open(Route.DeliveryCheck) },
@@ -246,6 +249,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onAddEvent = { app.open(Route.EditEvent(null, it)) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
+                    attentionNav = attentionNav,
                 )
                 Route.Contacts -> ContactsScreen(
                     onOpenContact = { app.open(Route.Contact(it)) },

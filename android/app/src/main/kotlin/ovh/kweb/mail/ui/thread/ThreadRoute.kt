@@ -98,6 +98,8 @@ fun ThreadRoute(
     onOpenFilters: () -> Unit,
     onAddToCalendar: (EventPrefill) -> Unit,
     onAskAssistant: (threadId: String) -> Unit = {},
+    /** Where the sparkle menu's service entries are wired (phase 2). */
+    onService: (uniffi.kweb_core.Finding) -> Unit = {},
 ) {
     val acct = LocalAccountSession.current
     val application = LocalContext.current.applicationContext as Application
@@ -194,6 +196,7 @@ fun ThreadRoute(
             onAddToCalendar = onAddToCalendar,
             onAskAssistant = onAskAssistant,
             stepActions = steps,
+            onService = onService,
         )
     }
 }

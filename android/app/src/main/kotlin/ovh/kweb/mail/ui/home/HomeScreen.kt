@@ -90,6 +90,8 @@ class HomeActions(
     val openSearch: () -> Unit,
     val openDeliveryCheck: () -> Unit,
     val openAway: () -> Unit,
+    /** The Tasks view of the Calendar tab (the Due today tile); the Calendar when not given. */
+    val openTasks: () -> Unit = openCalendar,
 )
 
 /**
@@ -192,7 +194,7 @@ fun HomeScreen(
                         }
                     }
                     if (showTasks) {
-                        TasksTile(state, sparks(HomeTile.DUE_TODAY), Modifier.weight(1f).fillMaxHeight(), actions.openCalendar) { openSheet(HomeTile.DUE_TODAY) }
+                        TasksTile(state, sparks(HomeTile.DUE_TODAY), Modifier.weight(1f).fillMaxHeight(), actions.openTasks) { openSheet(HomeTile.DUE_TODAY) }
                     }
                 }
             }

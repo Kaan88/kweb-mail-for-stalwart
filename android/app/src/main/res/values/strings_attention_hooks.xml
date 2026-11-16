@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Calendar and Tasks -->
+    <string name="att_box_title">Worth a look</string>
+    <string name="att_box_close">Close</string>
+    <string name="cal_chip_agenda">Agenda</string>
+    <string name="cal_chip_tasks">Tasks</string>
+    <string name="cal_tasks_title">Tasks</string>
+    <string name="cal_new_task">New task</string>
+    <string name="cal_tasks_empty">No open tasks</string>
+    <string name="cal_tasks_load_failed">The tasks could not be loaded.</string>
+    <string name="cal_tasks_overdue">Overdue</string>
+    <string name="cal_tasks_today">Today</string>
+    <string name="cal_tasks_tomorrow">Tomorrow</string>
+    <string name="cal_tasks_later">Later</string>
+
+    <!-- The sparkle in a thread -->
+    <string name="att_menu_add_calendar_at">Add %1$s to calendar…</string>
+    <string name="att_menu_add_task">Add task…</string>
+    <string name="att_menu_find_dates">Find dates and to-dos</string>
+</resources>

@@ -82,6 +82,8 @@ data class RowContent(
     val subjectHighlight: Highlight? = null,
     /** The text around the search hit, marked; used instead of [preview] when there is one. */
     val previewHighlight: Highlight? = null,
+    /** A mail finding is about this conversation (Home is off): the small mark beside the time. */
+    val attention: Boolean = false,
 )
 
 /**
@@ -212,6 +214,10 @@ private fun RowText(row: RowContent, modifier: Modifier) {
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.width(8.dp))
+            if (row.attention) {
+                ovh.kweb.mail.ui.attention.SparkleMark()
+                Spacer(Modifier.width(5.dp))
+            }
             Text(
                 time,
                 color = if (row.unread) MaterialTheme.colorScheme.primary else muted,

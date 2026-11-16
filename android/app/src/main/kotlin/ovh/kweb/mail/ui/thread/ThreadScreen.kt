@@ -99,6 +99,15 @@ import ovh.kweb.mail.ui.mailextras.NewLabelDialog
 import ovh.kweb.mail.ui.mailextras.UnsubEntry
 import ovh.kweb.mail.ui.mailextras.UnsubscribeDialog
 import ovh.kweb.mail.ui.mailextras.UnsubscribeRules
+import ovh.kweb.mail.ui.attention.AttentionRules
+import ovh.kweb.mail.ui.attention.AttentionViewModel
+import ovh.kweb.mail.ui.attention.Place
+import ovh.kweb.mail.ui.attention.ResourceTexts
+import ovh.kweb.mail.ui.attention.SparkleButton
+import ovh.kweb.mail.ui.attention.ThreadMenu
+import ovh.kweb.mail.ui.attention.ThreadMenuEntry
+import ovh.kweb.mail.ui.attention.rememberWordClock
+import ovh.kweb.mail.ui.attention.toEventPrefill
 import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.DraftKind
@@ -124,6 +133,8 @@ fun ThreadScreen(
     onAskAssistant: (threadId: String) -> Unit = {},
     /** What TalkBack offers on the subject to go to the conversation before or after this one (the pager has no buttons for it). */
     stepActions: List<CustomAccessibilityAction> = emptyList(),
+    /** A button with a sparkle in the menu of this mail's findings was tapped; wired where the assistant runs it (nothing yet). */
+    onService: (uniffi.kweb_core.Finding) -> Unit = {},
 ) {
     val context = LocalContext.current
     val accountSession = LocalAccountSession.current
@@ -187,6 +198,18 @@ fun ThreadScreen(
     }
 
     LaunchedEffect(vm) { vm.start() }
+
+    // What the phone found in this mail (a date, a question waiting): the sparkle in the bar and its menu.
+    val attention: AttentionViewModel = viewModel()
+    val found by attention.state.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(attention, active) {
+        if (active) attention.load()
+        onPauseOrDispose { }
+    }
+    val sparkMenu = remember(found.findings, route.threadId) { ThreadMenu.entries(AttentionRules.forPlace(found.findings, Place.Thread(route.threadId))) }
+    val sparkClock = rememberWordClock(found.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000))
+    val sparkTexts = remember(resources) { ResourceTexts(resources) }
+    var sparkOpen by remember { mutableStateOf(false) }
 
     // The AI assistant: one task at a time for the app; this screen shows only the session that is its own.
     val assistant: AssistantViewModel = viewModel()
@@ -367,6 +390,32 @@ fun ThreadScreen(
                     }
                 },
                 actions = {
+                    if (sparkMenu.isNotEmpty()) {
+                        Box(Modifier.padding(horizontal = 4.dp)) {
+                            SparkleButton(sparkMenu.map { it.finding.id }.distinct().size, onClick = { sparkOpen = true })
+                            DropdownMenu(expanded = sparkOpen, onDismissRequest = { sparkOpen = false }) {
+                                for (entry in sparkMenu) {
+                                    DropdownMenuItem(
+                                        text = { Text(ThreadMenu.label(entry, sparkClock, sparkTexts)) },
+                                        leadingIcon = {
+                                            Icon(
+                                                painterResource(if (entry is ThreadMenuEntry.Service) R.drawable.ic_sparkle else R.drawable.ic_calendar),
+                                                contentDescription = null,
+                                            )
+                                        },
+                                        onClick = {
+                                            sparkOpen = false
+                                            when (entry) {
+                                                is ThreadMenuEntry.Calendar -> onAddToCalendar(entry.prefill.toEventPrefill())
+                                                is ThreadMenuEntry.Task -> onAddToCalendar(entry.prefill.toEventPrefill())
+                                                is ThreadMenuEntry.Service -> onService(entry.finding)
+                                            }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
                     if (from?.role != "archive") {
                         IconButton(onClick = vm::archive, enabled = canAct) {
                             Icon(painterResource(R.drawable.ic_archive), contentDescription = stringResource(R.string.action_archive))

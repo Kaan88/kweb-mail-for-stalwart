@@ -86,6 +86,8 @@ import uniffi.kweb_core.TimeSlot
 class AttentionNav(
     val openThread: (threadId: String, messageId: String?) -> Unit,
     val openEditor: (Route.EditEvent) -> Unit,
+    /** Shows the Tasks view of the Calendar tab. */
+    val openTasks: () -> Unit = {},
 )
 
 /**
@@ -159,6 +161,9 @@ class FindingRunner(private val vm: AttentionViewModel, private val nav: Attenti
         }
     }
 
+    /** A tap on a tasks finding that has no mail to open: the Tasks view. */
+    fun openTasks() = nav.openTasks()
+
     /** A slot chip: the event in the editor at that time (the user saves it himself). */
     fun openSlot(action: PhoneAction.FindSlot, slot: TimeSlot) {
         val start = AttentionRules.localStart(slot.start, zone)
@@ -213,7 +218,13 @@ fun FindingCard(
     val open = AttentionRules.cardAction(finding)
     Column(
         modifier.fillMaxWidth().clip(shape).background(container)
-            .then(if (open != null) Modifier.clickable { runner.run(finding, open) } else Modifier)
+            .then(
+                when {
+                    open != null -> Modifier.clickable { runner.run(finding, open) }
+                    AttentionRules.opensTasks(finding) -> Modifier.clickable { runner.openTasks() }
+                    else -> Modifier
+                },
+            )
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -372,6 +383,7 @@ fun AttentionSheet(
         AttentionNav(
             openThread = { t, m -> onClose(); nav.openThread(t, m) },
             openEditor = { r -> onClose(); nav.openEditor(r) },
+            openTasks = { onClose(); nav.openTasks() },
         )
     }
     val runner = rememberFindingRunner(vm, closing)

@@ -89,6 +89,22 @@ object AttentionRules {
     /** What a tap on the card itself does: open the mail a mail finding is about. */
     fun cardAction(f: Finding): PhoneAction? = f.phone.firstOrNull { it is PhoneAction.OpenMail }
 
+    /** The conversations and messages that a mail finding is about: the small mark in a mail row. */
+    data class RowMarks(val threads: Set<String>, val messages: Set<String>) {
+        fun has(threadId: String, messageIds: Collection<String>): Boolean = threadId in threads || messageIds.any { it in messages }
+    }
+
+    fun rowMarks(all: List<Finding>): RowMarks {
+        val mail = forPlace(all, Place.MailRows)
+        return RowMarks(mail.mapNotNull { it.threadId }.toSet(), mail.flatMap { it.messageIds }.toSet())
+    }
+
+    /** Whether a mail row wears the mark: only with Home off (with Home on the Unread tile carries it) and only for a conversation that has a mail finding. */
+    fun rowMarked(homeOn: Boolean, marks: RowMarks, threadId: String, messageIds: Collection<String>): Boolean = !homeOn && marks.has(threadId, messageIds)
+
+    /** What a tap on a tasks-family finding that opens no mail does: show the Tasks view. */
+    fun opensTasks(f: Finding): Boolean = f.family == AttentionFamily.TASKS && cardAction(f) == null
+
     /** The local start "YYYY-MM-DDTHH:MM:SS" of [seconds] in [zone], for the editor. */
     fun localStart(seconds: Long, zone: ZoneId): String =
         java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(seconds), zone).withNano(0).toString().let { if (it.length == 16) "$it:00" else it }
