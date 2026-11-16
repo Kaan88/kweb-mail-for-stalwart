@@ -130,6 +130,9 @@ class CryptoSettingsViewModel(app: Application, private val session: AccountSess
 
     fun remove(id: String) = act { session.core.cryptoRemoveKey(id) }
 
+    /** The user compared the fingerprint by hand (or takes that back). */
+    fun setVerified(id: String, verified: Boolean) = act { session.core.cryptoSetVerified(id, verified) }
+
     fun forgetAll() = act { session.core.cryptoForgetAll() }
 
     /** Adds the public keys in a file the user picked. */
@@ -338,7 +341,7 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
                 if (others.isEmpty()) {
                     KeyRow(Groups.shape(0, 1), stringResource(R.string.crypto_other_empty), null, quiet = true)
                 }
-                others.forEachIndexed { i, key -> KeyEntryRow(Groups.shape(i, others.size), key) { removing = key } }
+                others.forEachIndexed { i, key -> KeyEntryRow(Groups.shape(i, others.size), key, onVerify = { vm.setVerified(key.id, it) }) { removing = key } }
             }
             Group(Modifier.padding(top = 12.dp)) {
                 KeyRow(
@@ -411,7 +414,7 @@ private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(Fo
 
 /** One key: its name, addresses, fingerprint and where it came from, with Remove at the end. */
 @Composable
-private fun KeyEntryRow(shape: Shape, key: KeyEntry, onForget: () -> Unit = {}, onRemove: () -> Unit) {
+private fun KeyEntryRow(shape: Shape, key: KeyEntry, onForget: () -> Unit = {}, onVerify: ((Boolean) -> Unit)? = null, onRemove: () -> Unit) {
     val kind = stringResource(if (key.kind == KeyKind.PGP) R.string.crypto_kind_pgp else R.string.crypto_kind_smime)
     val origin = when (key.origin) {
         KeyOrigin.FILE -> stringResource(R.string.crypto_from_file)
@@ -422,15 +425,32 @@ private fun KeyEntryRow(shape: Shape, key: KeyEntry, onForget: () -> Unit = {}, 
         KeyOrigin.WKD -> stringResource(R.string.crypto_from_wkd, key.originDetail)
     }
     val expires = key.expiresAt?.let { stringResource(R.string.crypto_expires, dateFormat.withLocale(androidx.compose.ui.text.intl.Locale.current.platformLocale).format(Instant.ofEpochSecond(it).atZone(ZoneId.systemDefault()))) }
+    val firstSeen = dateFormat.withLocale(androidx.compose.ui.text.intl.Locale.current.platformLocale).format(Instant.ofEpochSecond(key.addedAt).atZone(ZoneId.systemDefault()))
+    val learned = key.origin == KeyOrigin.AUTOCRYPT || key.origin == KeyOrigin.WKD
+    val trust = when {
+        key.hasSecret -> null
+        key.verified -> stringResource(R.string.crypto_trust_verified)
+        learned -> stringResource(R.string.crypto_trust_first_seen, firstSeen)
+        else -> null
+    }
+    val changed = if (key.changedFor.isEmpty()) null else stringResource(R.string.crypto_key_changed_for, key.changedFor.joinToString(", "))
     val detail = listOfNotNull(
         kind + " · " + key.emails.joinToString(", "),
         stringResource(R.string.crypto_fingerprint, key.fingerprint),
         origin,
+        if (key.hasSecret) null else stringResource(R.string.crypto_first_seen_on, firstSeen),
+        trust,
+        changed,
         expires,
         if (key.hasSecret && key.needsPassphrase) stringResource(if (key.unlocked) R.string.crypto_unlocked else R.string.crypto_locked) else null,
     ).joinToString("\n")
     KeyRow(shape, key.label, detail) {
         if (key.unlocked) TextButton(onClick = onForget) { Text(stringResource(R.string.crypto_forget_passphrase)) }
+        if (onVerify != null && !key.hasSecret) {
+            TextButton(onClick = { onVerify(!key.verified) }) {
+                Text(stringResource(if (key.verified) R.string.crypto_unverify else R.string.crypto_verify))
+            }
+        }
         IconButton(onClick = onRemove) { Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.crypto_remove)) }
     }
 }

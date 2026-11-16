@@ -42,12 +42,14 @@ fn read_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredKey> {
             needs_passphrase: r.get::<_, i64>(10)? != 0,
             unlocked: false,
             expires_at: r.get(11)?,
+            verified: r.get::<_, i64>(12)? != 0,
+            changed_for: Vec::new(),
         },
         material: r.get(8)?,
     })
 }
 
-const COLUMNS: &str = "id, kind, label, emails, fingerprint, origin, origin_detail, added_at, material, has_secret, needs_passphrase, expires_at";
+const COLUMNS: &str = "id, kind, label, emails, fingerprint, origin, origin_detail, added_at, material, has_secret, needs_passphrase, expires_at, verified";
 
 impl Store {
     /// Every key of the keyring, own keys first, then by label.
@@ -79,8 +81,8 @@ impl Store {
         self.write(|c| {
             c.execute(
                 "INSERT INTO crypto_keys (account_id, id, kind, label, emails, fingerprint, origin, origin_detail,
-                                          added_at, material, has_secret, needs_passphrase, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                          added_at, material, has_secret, needs_passphrase, expires_at, verified)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(account_id, id) DO UPDATE SET
                      label = ?4, emails = ?5, origin = ?7, origin_detail = ?8, material = ?10,
                      has_secret = ?11, needs_passphrase = ?12, expires_at = ?13",
@@ -98,6 +100,7 @@ impl Store {
                     e.has_secret as i64,
                     e.needs_passphrase as i64,
                     e.expires_at,
+                    e.verified as i64,
                 ],
             )?;
             Ok(())
@@ -149,6 +152,16 @@ impl Store {
         })
     }
 
+    /// The user's word that a key's fingerprint was compared by hand (or takes it back).
+    pub fn set_crypto_verified(&self, account_id: &str, id: &str, verified: bool) -> Result<bool> {
+        self.write(|c| {
+            Ok(c.execute(
+                "UPDATE crypto_keys SET verified = ?3 WHERE account_id = ?1 AND id = ?2",
+                params![account_id, id, verified as i64],
+            )? > 0)
+        })
+    }
+
     /// Every key and what was remembered goes (the user switched the feature off and chose to forget).
     pub fn clear_crypto(&self, account_id: &str) -> Result<()> {
         self.write(|c| {
@@ -191,6 +204,8 @@ mod tests {
                 needs_passphrase: secret,
                 unlocked: false,
                 expires_at: None,
+                verified: false,
+                changed_for: Vec::new(),
             },
             material: vec![1, 2, 3],
         }

@@ -11,12 +11,14 @@
 //! is made again each time the message is opened, and never written to the cache or a log.
 
 pub mod analyze;
+pub mod autocrypt;
 pub mod build;
 pub mod mime;
 pub mod openpgp;
 pub mod plan;
 pub mod smime;
 pub mod types;
+pub mod wkd;
 
 use std::{collections::HashMap, sync::Mutex};
 

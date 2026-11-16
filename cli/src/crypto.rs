@@ -46,12 +46,30 @@ pub enum Crypto {
     Lock {
         id: String,
     },
+    /// Say a key's fingerprint was compared by hand (or take that back).
+    Verify {
+        id: String,
+        verified: bool,
+    },
+    /// Look for a recipient's key in their provider's key directory (the provider sees the lookup).
+    Wkd {
+        email: String,
+    },
+    /// Send a message, signed and/or encrypted, without the undo delay. The passphrase of a locked key comes from
+    /// KWEB_PASSPHRASE. Says what was missing when it cannot be done.
+    Send {
+        to: String,
+        subject: String,
+        text: String,
+        sign: bool,
+        encrypt: bool,
+    },
 }
 
 /// The environment variable the passphrase is read from (never an argument, which shell history would keep).
 pub const PASSPHRASE_VARIABLE: &str = "KWEB_PASSPHRASE";
 
-const USAGE: &str = "crypto takes: status | on | off | keys | import <file> | rm <key-id> | check <message-id> | take <message-id> <key-id> | import-private <file> | decrypt <message-id> [--keep] [--show] [--save-to <dir>] | lock <key-id>";
+const USAGE: &str = "crypto takes: status | on | off | keys | import <file> | rm <key-id> | check <message-id> | take <message-id> <key-id> | import-private <file> | decrypt <message-id> [--keep] [--show] [--save-to <dir>] | lock <key-id> | verify <key-id> | unverify <key-id> | wkd <address> | send <to> <subject> <text> [--sign] [--encrypt]";
 
 pub fn parse(rest: &[String]) -> Result<Crypto, String> {
     let words: Vec<&str> = rest.iter().map(String::as_str).collect();
@@ -66,6 +84,23 @@ pub fn parse(rest: &[String]) -> Result<Crypto, String> {
         ["take", id, offer] => Ok(Crypto::Take { id: (*id).into(), offer: (*offer).into() }),
         ["import-private", path] => Ok(Crypto::ImportPrivate { path: (*path).into() }),
         ["lock", id] => Ok(Crypto::Lock { id: (*id).into() }),
+        ["verify", id] => Ok(Crypto::Verify { id: (*id).into(), verified: true }),
+        ["unverify", id] => Ok(Crypto::Verify { id: (*id).into(), verified: false }),
+        ["wkd", email] => Ok(Crypto::Wkd { email: (*email).into() }),
+        ["send", to, subject, text, flags @ ..] => {
+            let (mut sign, mut encrypt) = (false, false);
+            for flag in flags {
+                match *flag {
+                    "--sign" => sign = true,
+                    "--encrypt" => encrypt = true,
+                    other => return Err(format!("unknown option {other}")),
+                }
+            }
+            if !sign && !encrypt {
+                return Err("send needs --sign, --encrypt or both".into());
+            }
+            Ok(Crypto::Send { to: (*to).into(), subject: (*subject).into(), text: (*text).into(), sign, encrypt })
+        }
         ["decrypt", id, flags @ ..] => {
             let (mut keep, mut show, mut save_to) = (false, false, None);
             let mut flags = flags.iter();
@@ -124,6 +159,15 @@ pub fn run(core: &Core, what: Crypto) -> Result<(), String> {
             }
         }
         Crypto::Lock { id } => core.crypto_forget_passphrase(id).map_err(e)?,
+        Crypto::Verify { id, verified } => core.crypto_set_verified(id, verified).map_err(e)?,
+        Crypto::Wkd { email } => {
+            let found = core.crypto_wkd_lookup(email).map_err(e)?;
+            println!("asked: {}", found.asked.join(", "));
+            for k in found.keys {
+                println!("found: {}", key_line(&k));
+            }
+        }
+        Crypto::Send { to, subject, text, sign, encrypt } => send(core, to, subject, text, sign, encrypt)?,
         Crypto::Decrypt { id, keep, show, save_to } => {
             let passphrase = std::env::var(PASSPHRASE_VARIABLE).ok();
             let view = core.crypto_open_with(id.clone(), passphrase, keep).map_err(e)?;
@@ -157,7 +201,29 @@ fn key_line(k: &KeyEntry) -> String {
         KeyKind::Smime => "S/MIME",
     };
     let own = if k.has_secret { " [own]" } else { "" };
-    format!("{} {kind} {} <{}> {}{own}", k.id, k.label, k.emails.join(", "), k.fingerprint)
+    let source = match k.origin {
+        KeyOrigin::File => "file",
+        KeyOrigin::Pasted => "pasted",
+        KeyOrigin::Mail => "from a mail",
+        KeyOrigin::Own => "own",
+        KeyOrigin::Autocrypt => "Autocrypt",
+        KeyOrigin::Wkd => "key directory",
+    };
+    let checked = if k.verified { " [verified by you]" } else { "" };
+    let changed = if k.changed_for.is_empty() {
+        String::new()
+    } else {
+        format!(" [CHANGED: not the key first seen for {}]", k.changed_for.join(", "))
+    };
+    format!(
+        "{} {kind} {} <{}> {}{own} (source: {source}{}, first seen {}){checked}{changed}",
+        k.id,
+        k.label,
+        k.emails.join(", "),
+        k.fingerprint,
+        if k.origin_detail.is_empty() { String::new() } else { format!(" {}", k.origin_detail) },
+        k.added_at,
+    )
 }
 
 pub fn signature_words(s: SignatureState) -> &'static str {
@@ -171,6 +237,9 @@ pub fn signature_words(s: SignatureState) -> &'static str {
         SignatureState::OtherAddress => "valid signature, but from a different address than From",
         SignatureState::NoKey => "cannot check: no key or certificate for the signer",
         SignatureState::Invalid => "INVALID: the message was changed or the signature is false",
+        SignatureState::FirstSeenKey => {
+            "valid signature; the key was only learned from mail or a directory: first seen, not verified"
+        }
         SignatureState::KeyExpired => "valid signature, but the key had expired",
         SignatureState::KeyRevoked => "valid signature, but the key was revoked",
         SignatureState::Unsupported => "cannot check: a kind of signature this app does not read",
@@ -228,6 +297,35 @@ pub fn print_view(v: &CryptoView) {
     }
 }
 
+/// Sends a signed and/or encrypted message to one address and runs one pass.
+fn send(core: &Core, to: String, subject: String, text: String, sign: bool, encrypt: bool) -> Result<(), String> {
+    use kweb_core::model::{Address, DraftKind};
+    if core.identities().map_err(|x| x.to_string())?.is_empty() {
+        core.check_once(kweb_core::ffi::Shade::Unknown).map_err(|x| x.to_string())?;
+    }
+    let mut draft = core.new_draft(DraftKind::New).map_err(|x| x.to_string())?;
+    draft.to = vec![Address { name: String::new(), email: to.trim().to_string() }];
+    draft.subject = subject;
+    draft.body = text;
+    draft.protection.sign = sign;
+    draft.protection.encrypt = encrypt;
+    let check = core.crypto_send_check(draft.clone()).map_err(|x| x.to_string())?;
+    for warning in &check.warnings {
+        println!("note: {warning}");
+    }
+    let id = draft.id.clone();
+    let passphrase = std::env::var(PASSPHRASE_VARIABLE).ok();
+    if let Err(error) = core.send_protected(draft, 0, passphrase, false) {
+        // Nothing was queued: do not leave the draft behind.
+        let _ = core.discard_draft(id);
+        return Err(error.to_string());
+    }
+    core.check_once(kweb_core::ffi::Shade::Unknown)
+        .map_err(|x| format!("{id} is queued but not sent yet (the next pass will send it): {x}"))?;
+    println!("sent {id}");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +344,13 @@ mod tests {
         );
         assert!(p(&["decrypt", "e1", "--save-to"]).is_err());
         assert!(p(&["decrypt", "e1", "--passphrase", "x"]).is_err(), "a passphrase is never an argument");
+        assert_eq!(p(&["verify", "k"]), Ok(Crypto::Verify { id: "k".into(), verified: true }));
+        assert_eq!(p(&["wkd", "a@b.org"]), Ok(Crypto::Wkd { email: "a@b.org".into() }));
+        assert_eq!(
+            p(&["send", "a@b.org", "S", "T", "--sign", "--encrypt"]),
+            Ok(Crypto::Send { to: "a@b.org".into(), subject: "S".into(), text: "T".into(), sign: true, encrypt: true })
+        );
+        assert!(p(&["send", "a@b.org", "S", "T"]).is_err(), "asking for nothing is a mistake");
         assert!(p(&[]).is_err());
     }
 }

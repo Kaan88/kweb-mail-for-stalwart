@@ -348,3 +348,53 @@ fn a_failed_import_leaves_the_message_waiting_here_and_it_is_not_lost() {
     assert!(back.protection.encrypt);
     assert!(rig.store().draft_raw(&rig.account(), &draft.id).unwrap().is_none());
 }
+
+#[test]
+fn a_signed_message_carries_our_public_key_in_an_autocrypt_header_and_nothing_private() {
+    let rig = Rig::alice();
+    let draft = rig.note(true, false);
+    rig.core.send_protected(draft, 3600, None, false).unwrap();
+    let held = rig.server.held();
+    let raw = rig.server.raw_of(&held[0].email_id).unwrap();
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, _) = text.split_once("\r\n\r\n").unwrap();
+    let unfolded = head.replace("\r\n ", "");
+    let line = unfolded.lines().find(|l| l.starts_with("Autocrypt:")).expect("an Autocrypt header");
+    let header = kweb_core::crypto::autocrypt::parse(line.trim_start_matches("Autocrypt:")).expect("a readable header");
+    assert_eq!(header.addr, "alice@example.test");
+    let keys = kweb_core::crypto::openpgp::parse_public(&header.keydata).expect("a public key");
+    assert!(keys[0].to_armored_string(Default::default()).unwrap().contains("PUBLIC KEY BLOCK"));
+    assert!(kweb_core::crypto::openpgp::parse_secret(&header.keydata).is_err(), "no private part is sent");
+    assert_eq!(
+        kweb_core::crypto::openpgp::info(&keys[0]).fingerprint,
+        rig.core.crypto_keys().unwrap().iter().find(|k| k.has_secret).unwrap().fingerprint
+    );
+}
+
+#[test]
+fn a_key_from_autocrypt_encrypts_with_a_warning_until_the_user_marks_it_verified() {
+    let rig = Rig::alice();
+    // Bob's key arrives only in the header of a mail the user opened.
+    let key = kweb_core::crypto::openpgp::parse_public(&fx("bob.pub.asc")).unwrap().remove(0);
+    let bytes = kweb_core::crypto::openpgp::public_bytes(&key).unwrap();
+    let value = format!(
+        "addr=bob@example.test; keydata={}",
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes)
+    );
+    let id = rig.server.deliver("Bob", "bob@example.test", "Hi", "x");
+    rig.server.set_bodies(&id, Some("hello"), None);
+    rig.server.set_delivery_headers(&id, &[("Autocrypt", &value)]);
+    rig.core.crypto_probe(id).unwrap();
+    let draft = rig.note(false, true);
+    let check = rig.core.crypto_send_check(draft.clone()).unwrap();
+    assert!(check.ready, "{check:?}");
+    assert!(
+        check.warnings.iter().any(|w| w.contains("Autocrypt") && w.contains("not been checked")),
+        "{:?}",
+        check.warnings
+    );
+    let bob = rig.core.crypto_keys().unwrap().into_iter().find(|k| k.origin == KeyOrigin::Autocrypt).unwrap();
+    rig.core.crypto_set_verified(bob.id, true).unwrap();
+    let check = rig.core.crypto_send_check(draft).unwrap();
+    assert!(check.ready && check.warnings.is_empty(), "{check:?}");
+}

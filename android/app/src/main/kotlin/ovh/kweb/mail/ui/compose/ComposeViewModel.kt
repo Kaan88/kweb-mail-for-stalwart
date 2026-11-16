@@ -84,6 +84,11 @@ data class ComposeState(
     val passphrasePrompt: PassphrasePrompt? = null,
     /** The text quotes an encrypted message and the reply is not encrypted: sending asks first. */
     val confirmPlain: ComposeAction? = null,
+    /** The address whose key the user is about to look for (the question is open), and a lookup that is running. */
+    val lookupFor: String? = null,
+    val lookingUp: Boolean = false,
+    /** What the last lookup said. */
+    val lookupNote: String? = null,
 ) {
     fun text(field: Field) = when (field) {
         Field.To -> toText
@@ -289,6 +294,32 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
     fun setEncrypt(on: Boolean) {
         edit { it.copy(protection = it.protection.copy(encrypt = on)) }
         refreshCheck()
+    }
+
+    /** "Look for a key" was tapped for [address]: the question that says who learns of it comes first. */
+    fun askLookup(address: String) = update { it.copy(lookupFor = address, lookupNote = null) }
+
+    fun cancelLookup() = update { it.copy(lookupFor = null) }
+
+    /** The user agreed: one lookup for one address at its mail provider. Never started any other way. */
+    fun lookUp() {
+        val address = state.lookupFor ?: return
+        update { it.copy(lookupFor = null, lookingUp = true, lookupNote = null) }
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val note = withContext(Dispatchers.IO) {
+                try {
+                    acct.core.cryptoWkdLookup(address)
+                    context.getString(R.string.crypto_wkd_found, address)
+                } catch (e: CoreException.Invalid) {
+                    e.msg.ifBlank { context.getString(R.string.crypto_wkd_failed) }
+                } catch (e: CoreException) {
+                    context.getString(R.string.crypto_wkd_failed)
+                }
+            }
+            update { it.copy(lookingUp = false, lookupNote = note) }
+            refreshCheck()
+        }
     }
 
     private var checkJob: Job? = null

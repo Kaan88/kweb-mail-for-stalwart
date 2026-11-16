@@ -22,6 +22,7 @@ pub(super) fn pgp_row(file: &str) -> KeyRow {
         emails: info.emails.clone(),
         fingerprint: info.fingerprint.clone(),
         material: openpgp::public_bytes(&key).unwrap(),
+        unchecked: false,
     }
 }
 
@@ -35,6 +36,7 @@ pub(super) fn cert_row(file: &str) -> KeyRow {
         emails: info.emails,
         fingerprint: info.fingerprint,
         material: der,
+        unchecked: false,
     }
 }
 
@@ -63,6 +65,18 @@ fn a_pgp_mime_signature_from_a_known_key_with_the_same_address_is_verified() {
     assert!(out.view.covers_whole_message);
     // The first key seen for the address is remembered.
     assert_eq!(out.record_first_seen, Some(("alice@example.test".into(), alice.fingerprint)));
+}
+
+#[test]
+fn a_signature_from_a_key_only_learned_from_mail_is_first_seen_and_never_verified() {
+    let raw = fx("pgp-signed.eml");
+    let mut alice = pgp_row("alice.pub.asc");
+    alice.unchecked = true;
+    let out = check(&raw, std::slice::from_ref(&alice), None);
+    assert_eq!(out.view.signature, SignatureState::FirstSeenKey);
+    // A different key than the one first seen is still the louder warning.
+    let changed = check(&raw, std::slice::from_ref(&alice), Some("00FF"));
+    assert_eq!(changed.view.signature, SignatureState::KeyChanged);
 }
 
 #[test]

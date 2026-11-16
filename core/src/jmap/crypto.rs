@@ -12,6 +12,9 @@ use crate::{crypto::mime::TypeTree, Error, Result};
 /// as too large, never half read: a signature over a cut message means nothing.
 pub const MAX_RAW_BYTES: u64 = 40 * 1024 * 1024;
 
+/// The `Autocrypt` header, every instance of it.
+const AUTOCRYPT_PROPERTY: &str = "header:Autocrypt:asText:all";
+
 /// How deep the structure the server sends is read. A message nested deeper than this is read as far as this.
 const MAX_STRUCTURE_DEPTH: usize = 12;
 
@@ -22,6 +25,9 @@ pub struct Structure {
     pub blob_id: String,
     pub size: u64,
     pub tree: TypeTree,
+    /// The From addresses and the `Autocrypt` headers of the message (asked for in the same request).
+    pub from: Vec<String>,
+    pub autocrypt: Vec<String>,
 }
 
 fn tree_of(part: &Value, depth: usize) -> TypeTree {
@@ -62,7 +68,7 @@ impl Connection {
         let args = json!({
             "accountId": self.account_id(),
             "ids": [message_id],
-            "properties": ["blobId", "size", "bodyStructure"],
+            "properties": ["blobId", "size", "bodyStructure", "from", AUTOCRYPT_PROPERTY],
             "bodyProperties": ["partId", "type"],
         });
         let responses = self.call(&[MAIL_CAPABILITY], &[("Email/get", args)]).await?;
@@ -72,6 +78,14 @@ impl Connection {
             blob_id: email["blobId"].as_str().unwrap_or_default().to_string(),
             size: email["size"].as_u64().unwrap_or(0),
             tree: tree_of(&email["bodyStructure"], 0),
+            from: email["from"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x["email"].as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
+            autocrypt: email[AUTOCRYPT_PROPERTY]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .unwrap_or_default(),
         }))
     }
 

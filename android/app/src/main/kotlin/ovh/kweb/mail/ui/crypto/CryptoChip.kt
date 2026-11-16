@@ -62,6 +62,7 @@ internal fun chipText(v: CryptoView): String {
     return when (v.signature) {
         SignatureState.VERIFIED -> stringResource(R.string.crypto_chip_verified, name)
         SignatureState.KEY_CHANGED -> stringResource(R.string.crypto_chip_key_changed)
+        SignatureState.FIRST_SEEN_KEY -> stringResource(R.string.crypto_chip_first_seen)
         SignatureState.CERTIFICATE_NOT_CHECKED -> stringResource(R.string.crypto_chip_cert_not_checked)
         SignatureState.OTHER_ADDRESS -> stringResource(R.string.crypto_chip_other_address)
         SignatureState.NO_KEY -> stringResource(R.string.crypto_chip_no_key)
@@ -91,6 +92,7 @@ private fun signatureWhy(v: CryptoView): Int? = when (v.signature) {
     SignatureState.NOT_SIGNED -> null
     SignatureState.VERIFIED -> R.string.crypto_why_verified
     SignatureState.KEY_CHANGED -> R.string.crypto_why_key_changed
+    SignatureState.FIRST_SEEN_KEY -> R.string.crypto_why_first_seen
     SignatureState.CERTIFICATE_NOT_CHECKED -> R.string.crypto_why_cert_not_checked
     SignatureState.OTHER_ADDRESS -> R.string.crypto_why_other_address
     SignatureState.NO_KEY -> R.string.crypto_why_no_key

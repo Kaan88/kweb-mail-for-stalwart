@@ -24,6 +24,8 @@ mod crypto;
 mod crypto_raw;
 #[path = "suite/crypto_send.rs"]
 mod crypto_send;
+#[path = "suite/crypto_trust.rs"]
+mod crypto_trust;
 #[path = "suite/enterprise.rs"]
 mod enterprise;
 #[path = "suite/ffi.rs"]

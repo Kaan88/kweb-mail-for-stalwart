@@ -233,7 +233,14 @@ impl Core {
             in_reply_to: threading.in_reply_to,
             references: threading.references,
         };
-        let protect = Protect { sign: signer, encrypt, autocrypt: None, now: super::now() };
+        // An OpenPGP message carries our own public key in an Autocrypt header, so a recipient's program can
+        // answer encrypted. (The key is public; the header is outside the signed and encrypted parts.)
+        let autocrypt = (resolved.protocol == KeyKind::Pgp)
+            .then(|| resolved.own.as_ref().or(resolved.signer.as_ref()))
+            .flatten()
+            .and_then(|id| keys.iter().find(|k| &k.entry.id == id))
+            .map(|k| (identity.email.to_ascii_lowercase(), k.material.clone()));
+        let protect = Protect { sign: signer, encrypt, autocrypt, now: super::now() };
         let raw = build::build(&headers, &draft.body, &files, &protect).map_err(to_error)?;
         // The passphrase is kept only after it did its work.
         if let Some((key_id, pass)) = used_passphrase {

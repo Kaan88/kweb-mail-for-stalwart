@@ -278,6 +278,8 @@ fn stored(file: &str, secret: bool, kind: KeyKind, origin: KeyOrigin) -> StoredK
             needs_passphrase: false,
             unlocked: false,
             expires_at: None,
+            verified: false,
+            changed_for: Vec::new(),
         },
         material: row.material,
     }

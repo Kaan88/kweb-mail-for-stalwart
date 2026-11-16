@@ -24,6 +24,9 @@ pub struct KeyRow {
     pub fingerprint: String,
     /// The OpenPGP transferable public key (binary) or the DER certificate.
     pub material: Vec<u8>,
+    /// The key was learned from a mail's Autocrypt header or a key directory and the user has not marked it
+    /// verified: a good signature from it is only "first seen", never "verified".
+    pub unchecked: bool,
 }
 
 /// What the analysis needs besides the message.
@@ -466,6 +469,12 @@ fn first_seen(
     fingerprint: &str,
     good: SignatureState,
 ) -> SignatureState {
+    let good =
+        if good == SignatureState::Verified && ctx.keys.iter().any(|k| k.fingerprint == fingerprint && k.unchecked) {
+            SignatureState::FirstSeenKey
+        } else {
+            good
+        };
     match (ctx.first_seen)(from) {
         None => {
             out.record_first_seen = Some((from.to_string(), fingerprint.to_string()));

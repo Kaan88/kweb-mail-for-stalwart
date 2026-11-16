@@ -20,7 +20,7 @@ object CryptoRules {
         SignatureState.NOT_SIGNED -> null
         SignatureState.VERIFIED -> Tone.GOOD
         SignatureState.KEY_CHANGED, SignatureState.OTHER_ADDRESS, SignatureState.KEY_EXPIRED, SignatureState.KEY_REVOKED -> Tone.WARNING
-        SignatureState.CERTIFICATE_NOT_CHECKED, SignatureState.NO_KEY, SignatureState.UNSUPPORTED, SignatureState.UNREADABLE -> Tone.NEUTRAL
+        SignatureState.CERTIFICATE_NOT_CHECKED, SignatureState.FIRST_SEEN_KEY, SignatureState.NO_KEY, SignatureState.UNSUPPORTED, SignatureState.UNREADABLE -> Tone.NEUTRAL
         SignatureState.INVALID -> Tone.BAD
     }
 

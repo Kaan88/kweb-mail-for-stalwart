@@ -39,6 +39,9 @@ pub enum SignatureState {
     KeyExpired,
     /// The signature is valid, but the key had been revoked.
     KeyRevoked,
+    /// The signature is valid and the key is one that was only learned from a mail's Autocrypt header or a
+    /// key directory: nobody checked it, it is trusted on first use.
+    FirstSeenKey,
     /// A way of signing this app cannot check (the notes say which).
     Unsupported,
     /// The signature data could not be read.
@@ -170,6 +173,10 @@ pub struct KeyEntry {
     pub unlocked: bool,
     /// When it stops being valid, if it does (Unix seconds).
     pub expires_at: Option<i64>,
+    /// The user compared its fingerprint by hand and said so. Nothing else sets this.
+    pub verified: bool,
+    /// Addresses of this key for which a different key was seen first: this one is a change to be careful with.
+    pub changed_for: Vec<String>,
 }
 
 /// A key found in a message that the user may add to the keyring.

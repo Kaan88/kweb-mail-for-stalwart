@@ -31,8 +31,10 @@ class CryptoRulesTest {
         }
     }
 
-    @Test fun aCertificateThatCameWithTheMessageIsNotCalledGood() =
+    @Test fun aCertificateThatCameWithTheMessageIsNotCalledGood() {
         assertEquals(CryptoRules.Tone.NEUTRAL, CryptoRules.tone(view(SignatureState.CERTIFICATE_NOT_CHECKED)))
+        assertEquals(CryptoRules.Tone.NEUTRAL, CryptoRules.tone(view(SignatureState.FIRST_SEEN_KEY)))
+    }
 
     @Test fun aMismatchAndAChangedKeyAreWarningsAndAFalseSignatureIsBad() {
         assertEquals(CryptoRules.Tone.WARNING, CryptoRules.tone(view(SignatureState.OTHER_ADDRESS)))

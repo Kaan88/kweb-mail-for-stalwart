@@ -138,5 +138,19 @@
     <string name="crypto_sign_default_title">Sign new messages</string>
     <string name="crypto_sign_default_detail">Switches Sign on in every new message sent from an address you have a private key for. You can switch it off per message.</string>
     <string name="crypto_from_autocrypt">Learned from the Autocrypt header of a mail from %1$s</string>
+    <string name="crypto_chip_first_seen">Signed, key first seen in a mail</string>
+    <string name="crypto_why_first_seen">The signature is valid, but you never checked this key: it was only learned from a mail or a key directory the first time this sender used it. It proves the later mail comes from the same key, not that the key belongs to who it says. Compare its fingerprint with the sender in another way, then mark it verified in the Encryption settings.</string>
+    <string name="crypto_trust_verified">Verified by you</string>
+    <string name="crypto_trust_first_seen">Not verified: trusted on first sight, %1$s</string>
+    <string name="crypto_first_seen_on">First seen %1$s</string>
+    <string name="crypto_key_changed_for">Warning: for %1$s a different key was seen first. This one may be a new key of the same person, or someone else.</string>
+    <string name="crypto_verify">Mark verified</string>
+    <string name="crypto_unverify">Not verified</string>
+    <string name="crypto_wkd_look">Look for a key</string>
+    <string name="crypto_wkd_title">Look for a key for %1$s?</string>
+    <string name="crypto_wkd_body">This asks the web server of the mail provider of this address for a public key. The provider learns that you looked for this address. Nothing else is sent, and nothing is trusted: a key found this way is shown as not verified.</string>
+    <string name="crypto_wkd_go">Look</string>
+    <string name="crypto_wkd_found">A key for %1$s was found and added.</string>
+    <string name="crypto_wkd_failed">Nothing was found.</string>
     <string name="crypto_from_wkd">Found by a key directory lookup for %1$s</string>
 </resources>

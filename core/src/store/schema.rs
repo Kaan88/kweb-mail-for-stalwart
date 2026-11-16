@@ -286,6 +286,10 @@ pub(super) const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE drafts ADD COLUMN raw BLOB;
     ",
+    // 11: M9 stage 4. The user's word that a key was checked by hand.
+    "
+    ALTER TABLE crypto_keys ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

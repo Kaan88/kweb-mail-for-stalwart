@@ -39,11 +39,11 @@ fn looks_like_pkcs12(data: &[u8]) -> bool {
     data.first() == Some(&0x30) && data.windows(3).take(16).any(|w| w == [0x02, 0x01, 0x03])
 }
 
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn entry_of_pgp(key: &pgp::composed::SignedPublicKey, origin: KeyOrigin, detail: &str) -> Result<StoredKey> {
+pub(super) fn entry_of_pgp(key: &pgp::composed::SignedPublicKey, origin: KeyOrigin, detail: &str) -> Result<StoredKey> {
     let info = openpgp::info(key);
     let material = openpgp::public_bytes(key).map_err(Error::invalid)?;
     Ok(StoredKey {
@@ -60,6 +60,8 @@ fn entry_of_pgp(key: &pgp::composed::SignedPublicKey, origin: KeyOrigin, detail:
             needs_passphrase: false,
             unlocked: false,
             expires_at: info.expires,
+            verified: false,
+            changed_for: Vec::new(),
         },
         material,
     })
@@ -81,6 +83,8 @@ fn entry_of_cert(der: &[u8], origin: KeyOrigin, detail: &str) -> Result<StoredKe
             needs_passphrase: false,
             unlocked: false,
             expires_at: Some(info.not_after),
+            verified: false,
+            changed_for: Vec::new(),
         },
         material: der.to_vec(),
     })
@@ -90,8 +94,14 @@ fn entry_of_cert(der: &[u8], origin: KeyOrigin, detail: &str) -> Result<StoredKe
 /// that exists keeps its origin, its date and its private part, and only gets the new public material.
 fn merge(existing: Option<StoredKey>, mut new: StoredKey) -> StoredKey {
     if let Some(old) = existing {
-        new.entry.origin = old.entry.origin;
-        new.entry.origin_detail = old.entry.origin_detail;
+        // A key the user imports by hand is a stronger source than one only learned from mail or a directory.
+        let learned = matches!(old.entry.origin, KeyOrigin::Autocrypt | KeyOrigin::Wkd);
+        let by_hand = matches!(new.entry.origin, KeyOrigin::File | KeyOrigin::Pasted | KeyOrigin::Mail);
+        if !(learned && by_hand) {
+            new.entry.origin = old.entry.origin;
+            new.entry.origin_detail = old.entry.origin_detail;
+        }
+        new.entry.verified = old.entry.verified;
         new.entry.added_at = old.entry.added_at;
         new.entry.has_secret = old.entry.has_secret;
         new.entry.needs_passphrase = old.entry.needs_passphrase;
@@ -123,6 +133,14 @@ impl Core {
     pub fn crypto_keys(&self) -> Result<Vec<KeyEntry>> {
         let account_id = self.account_id()?;
         let mut keys: Vec<KeyEntry> = self.store.crypto_keys(&account_id)?.into_iter().map(|k| k.entry).collect();
+        for key in keys.iter_mut().filter(|k| !k.has_secret) {
+            for address in &key.emails {
+                let first = self.store.crypto_first_seen(&account_id, address).ok().flatten();
+                if first.is_some_and(|f| !f.eq_ignore_ascii_case(&key.fingerprint)) {
+                    key.changed_for.push(address.to_ascii_lowercase());
+                }
+            }
+        }
         for key in keys.iter_mut().filter(|k| k.has_secret && k.needs_passphrase) {
             key.unlocked = self.secrets.get(pass_name(&key.id)).ok().flatten().is_some_and(|p| !p.is_empty());
         }
@@ -159,6 +177,15 @@ impl Core {
         Ok(added)
     }
 
+    /// The user says they compared this key's fingerprint by hand (or takes that back). Only this call sets it.
+    pub fn crypto_set_verified(&self, id: String, verified: bool) -> Result<()> {
+        let account_id = self.account_id()?;
+        if !self.store.set_crypto_verified(&account_id, &id, verified)? {
+            return Err(Error::invalid("That key is no longer in the keyring."));
+        }
+        Ok(())
+    }
+
     /// Removes a key or certificate, and what was remembered about its fingerprint.
     pub fn crypto_remove_key(&self, id: String) -> Result<()> {
         let account_id = self.account_id()?;
@@ -188,6 +215,9 @@ impl Core {
         }
         let id = &message_id;
         let structure = self.with_connection(|conn| async move { conn.message_structure(id).await })?;
+        if let Some(s) = &structure {
+            self.learn_autocrypt(&self.account_id()?, s);
+        }
         let mut kind = structure.as_ref().map_or(CryptoKind::None, |s| analyze::kind_from_types(&s.tree));
         if kind == CryptoKind::None && structure.is_some() {
             // Armored text in the body: look at the text the app has anyway.
@@ -447,6 +477,7 @@ impl Core {
                 emails: k.entry.emails,
                 fingerprint: k.entry.fingerprint,
                 material: k.material,
+                unchecked: matches!(k.entry.origin, KeyOrigin::Autocrypt | KeyOrigin::Wkd) && !k.entry.verified,
             })
             .collect())
     }

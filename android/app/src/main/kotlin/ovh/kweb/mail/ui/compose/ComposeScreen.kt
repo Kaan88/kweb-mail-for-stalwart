@@ -282,6 +282,15 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
             confirmLabel = R.string.crypto_send_passphrase_go,
         )
     }
+    s.lookupFor?.let { address ->
+        AlertDialog(
+            onDismissRequest = vm::cancelLookup,
+            title = { Text(stringResource(R.string.crypto_wkd_title, address)) },
+            text = { Text(stringResource(R.string.crypto_wkd_body)) },
+            confirmButton = { TextButton(onClick = vm::lookUp) { Text(stringResource(R.string.crypto_wkd_go)) } },
+            dismissButton = { TextButton(onClick = vm::cancelLookup) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
     if (s.confirmPlain != null) {
         AlertDialog(
             onDismissRequest = vm::cancelQuestion,
@@ -555,6 +564,15 @@ private fun ProtectionBar(s: ComposeState, vm: ComposeViewModel) {
         if (check != null && !check.ready) {
             Text(check.problem.orEmpty(), color = colors.error, style = MaterialTheme.typography.bodySmall)
         }
+        // A key is only looked for when the user asks, one address at a time.
+        if (s.protection.encrypt && check != null && !check.ready) {
+            check.missing.forEach { address ->
+                androidx.compose.material3.TextButton(onClick = { vm.askLookup(address) }, enabled = !s.lookingUp) {
+                    Text(stringResource(R.string.crypto_wkd_look) + ": " + address)
+                }
+            }
+        }
+        s.lookupNote?.let { Text(it, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         check?.warnings?.forEach { Text(it, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
         if (s.protection.quotesDecrypted && !s.protection.encrypt) {
             Text(stringResource(R.string.crypto_quote_warning), color = colors.error, style = MaterialTheme.typography.bodySmall)

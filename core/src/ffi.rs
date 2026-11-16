@@ -9,6 +9,7 @@ mod admin_link;
 mod ai_chat;
 mod crypto;
 mod crypto_send;
+mod crypto_trust;
 mod download;
 mod enterprise;
 

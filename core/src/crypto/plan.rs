@@ -86,7 +86,7 @@ fn key_for<'a>(
     if found.is_empty() {
         return None;
     }
-    found.sort_by_key(|k| (!(k.entry.has_secret), std::cmp::Reverse(k.entry.added_at)));
+    found.sort_by_key(|k| (!(k.entry.has_secret), !k.entry.verified, std::cmp::Reverse(k.entry.added_at)));
     let chosen = found
         .iter()
         .find(|k| first_seen.is_some_and(|f| f == k.entry.fingerprint))
@@ -162,10 +162,14 @@ pub fn resolve(
                 Some((key, warning)) => {
                     chosen.push((address.clone(), key.entry.id.clone()));
                     warnings.extend(warning);
-                    if matches!(key.entry.origin, KeyOrigin::Autocrypt) {
-                        warnings.push(format!(
-                            "The key for {address} came from a mail's Autocrypt header and has not been checked by you."
-                        ));
+                    if matches!(key.entry.origin, KeyOrigin::Autocrypt | KeyOrigin::Wkd) && !key.entry.verified {
+                        let source = if key.entry.origin == KeyOrigin::Wkd {
+                            "a key directory lookup"
+                        } else {
+                            "a mail's Autocrypt header"
+                        };
+                        warnings
+                            .push(format!("The key for {address} came from {source} and has not been checked by you."));
                     }
                 }
                 None => missing.push(address.clone()),
