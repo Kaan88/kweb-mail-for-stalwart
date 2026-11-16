@@ -14,6 +14,8 @@ mod assistant;
 mod assistant_chat;
 #[path = "suite/assistant_converse.rs"]
 mod assistant_converse;
+#[path = "suite/assistant_history.rs"]
+mod assistant_history;
 #[path = "suite/attention.rs"]
 mod attention;
 #[path = "suite/attention_service.rs"]

@@ -801,6 +801,76 @@ pub struct AiAutoResult {
     pub message: String,
 }
 
+/// One earlier chat in the list (`ai_chats`).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiChatSummary {
+    pub id: String,
+    /// The first line of its first message.
+    pub title: String,
+    /// Unix seconds of its last message.
+    pub updated_at: i64,
+    pub provider: AiProvider,
+    /// The service it was last held with (`host` or `host:port`) and the model.
+    pub service: String,
+    pub model: String,
+    /// The subject of the conversation it was opened about, when it was.
+    pub about_subject: Option<String>,
+    /// It was held with the service and model that are set now.
+    pub current_service: bool,
+}
+
+/// One message of an earlier chat.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiChatMessage {
+    pub from_user: bool,
+    pub text: String,
+}
+
+/// An earlier chat opened again (`ai_chat_open`).
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiChatOpened {
+    pub messages: Vec<AiChatMessage>,
+    pub about_subject: Option<String>,
+    /// The service and model the chat was held with.
+    pub service: String,
+    pub model: String,
+    /// They are not the ones set now: the next message goes to the current ones.
+    pub service_changed: bool,
+}
+
+/// One mail in a catch-up, with the sentence the assistant gave it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiCatchUpItem {
+    pub message: AiMessageRef,
+    pub line: String,
+    /// The sender expects an answer or an action.
+    pub needs_answer: bool,
+}
+
+/// The catch-up items of one sender, newest first.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiCatchUpGroup {
+    /// The name, else the address.
+    pub sender: String,
+    pub items: Vec<AiCatchUpItem>,
+}
+
+/// The result of "Catch me up".
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiCatchUp {
+    pub groups: Vec<AiCatchUpGroup>,
+    /// Mails that were sent.
+    pub mails: u32,
+    /// Unread mail since then that was left out (the most is 30).
+    pub more: u32,
+    /// The time it looked back to (Unix seconds).
+    pub since: i64,
+    pub usage: Option<AiUsage>,
+    pub host: String,
+    pub model: String,
+    pub characters: u32,
+}
+
 /// The conversation a chat is about (`ai_chat_about`).
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct AiAbout {

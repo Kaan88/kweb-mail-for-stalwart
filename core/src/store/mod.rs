@@ -7,6 +7,7 @@
 mod bodies;
 mod bookkeeping;
 mod calendar;
+mod chats;
 mod contacts;
 mod crypto;
 mod drafts;

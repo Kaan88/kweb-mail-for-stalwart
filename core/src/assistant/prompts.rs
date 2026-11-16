@@ -128,8 +128,29 @@ The message id is the one the tools gave for the mail it is in; the last field i
 link only, as written in the mail, on one line, without the character |. If you find nothing \
 certain, answer with the single word NONE. Never guess.";
 
+/// The answer is read by `catchup::parse`.
+const CATCHUP: &str = "\
+Job: catch the user up on unread mail. The request lists the mails, each with a number, the sender, the \
+date, the subject and the first lines. Answer with one line for every mail, in exactly one of these \
+forms:
+ITEM | number | ANSWER | one short sentence
+ITEM | number | INFO | one short sentence
+The number is the mail's number in the request. ANSWER: the sender expects a reply, a decision or an \
+action from the user. INFO: the mail is for information only, or is automatic. The sentence says what \
+the mail is about, in the language of the mail, without the character |, and states only what the \
+subject and the first lines say. Write nothing else. At most 30 lines.";
+
 pub fn plan_system() -> String {
     format!("{SPARKLE_BASE}\n\n{PLAN}")
+}
+
+pub fn catchup_system() -> String {
+    format!("{SPARKLE_BASE}\n\n{CATCHUP}")
+}
+
+/// The first line of the request of "Catch me up".
+pub fn catchup_line(today: &str, time_zone: &str) -> String {
+    format!("Catch the user up on these unread mails. {}", day_line(today, time_zone))
 }
 
 pub fn check_system() -> String {

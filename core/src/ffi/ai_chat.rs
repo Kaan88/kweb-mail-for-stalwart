@@ -32,9 +32,9 @@ use crate::{
     },
     jmap,
     model::{
-        Action, Agenda, AiAbout, AiActionMode, AiApplied, AiAutoResult, AiChange, AiChatEnd, AiChatTurn, AiFinding,
-        AiSettings, AiStep, Calendar, EventDetail, EventInput, Label, Mailbox, MessageBody, MessageHeader,
-        SearchResult,
+        Action, Agenda, AiAbout, AiActionMode, AiApplied, AiAutoResult, AiChange, AiChatEnd, AiChatMessage,
+        AiChatOpened, AiChatSummary, AiChatTurn, AiFinding, AiSettings, AiStep, Calendar, EventDetail, EventInput,
+        Label, Mailbox, MessageBody, MessageHeader, SearchResult,
     },
     sync, Error, Result,
 };
@@ -263,6 +263,25 @@ pub(super) fn today_in(zone: chrono_tz::Tz, at: i64) -> String {
     zone.from_utc_datetime(&utc.naive_utc()).format("%Y-%m-%d, %A").to_string()
 }
 
+/// The name of a chat in the list: the first line of its first message, at most 60 characters.
+pub(super) fn chat_title(text: &str) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let line: String = line.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let mut chars = line.chars();
+    let head: String = chars.by_ref().take(60).collect();
+    match chars.next() {
+        Some(_) => format!("{}\u{2026}", head.trim_end()),
+        None => head,
+    }
+}
+
+/// `host` or `host:port` of a service's address, for the list; the address itself when it cannot be read.
+fn service_label(base_url: &str) -> String {
+    assistant::settings::check_base_url(base_url)
+        .map(|u| assistant::settings::host_label(&u))
+        .unwrap_or_else(|_| base_url.to_string())
+}
+
 pub(super) fn origin_of(settings: &AiSettings) -> Origin {
     Origin { provider: settings.provider, base_url: settings.base_url.clone(), model: settings.model.clone() }
 }
@@ -359,6 +378,7 @@ impl Core {
         }
         copy.origin = Some(origin);
 
+        let about_subject = copy.about.as_ref().map(|a| a.subject.clone());
         let at = now();
         let env = Env { zone: &time_zone, now: at, actions: settings.actions };
         let today = today_in(zone, at);
@@ -403,6 +423,11 @@ impl Core {
             _ => return Err(over()),
         }
         drop(stored);
+        // What the user wrote and the answer are kept for the list of earlier chats. Only a finished
+        // answer is; a failure to keep it never fails the send.
+        if turn.end == AiChatEnd::Answered && !turn.text.trim().is_empty() {
+            self.keep_chat(&account_id, &chat_id, text.trim(), &turn.text, &settings, about_subject.as_deref());
+        }
 
         // Automatic changes: the loop only proposed. What the user allowed is applied here, through
         // the same path and checks as a tap, one at a time, and shown as done cards. Stop ends it,
@@ -436,6 +461,100 @@ impl Core {
             });
         }
         Ok(turn)
+    }
+
+    /// The chats kept for this account, the most recently used first. Reads the device only.
+    pub fn ai_chats(&self) -> Result<Vec<AiChatSummary>> {
+        let account_id = self.account_id()?;
+        let current = assistant::load(&self.store, &*self.secrets, &account_id).ok().map(|s| origin_of(&s));
+        Ok(self
+            .store
+            .chat_list(&account_id)?
+            .into_iter()
+            .map(|c| {
+                let origin = Origin { provider: c.provider, base_url: c.base_url.clone(), model: c.model.clone() };
+                AiChatSummary {
+                    id: c.id,
+                    title: c.title,
+                    updated_at: c.updated_at,
+                    provider: c.provider,
+                    service: service_label(&c.base_url),
+                    model: c.model,
+                    about_subject: c.about_subject,
+                    current_service: current.as_ref() == Some(&origin),
+                }
+            })
+            .collect())
+    }
+
+    /// Makes the kept chat `chat_id` the current conversation (as `ai_chat_new` makes a new one, and
+    /// dropping the previous one with its suggestions) and returns its words for the screen. What is
+    /// carried over is the words only: automatic changes are off (the user switches them on again
+    /// for this chat) and, since what the model read earlier is not known, no change is made without
+    /// a tap in it. The next message goes to the service and model set now, which may not be those
+    /// the chat was held with (`service_changed`): it needs their own consent, as any chat does.
+    /// Invalid "this chat is no longer kept" for an id that is not there. Sends nothing.
+    pub fn ai_chat_open(&self, chat_id: String) -> Result<AiChatOpened> {
+        let account_id = self.account_id()?;
+        let stored = self
+            .store
+            .chat_load(&account_id, &chat_id)?
+            .ok_or_else(|| Error::invalid("this chat is no longer kept"))?;
+        let current = assistant::load(&self.store, &*self.secrets, &account_id).ok().map(|s| origin_of(&s));
+        let held = Origin {
+            provider: stored.info.provider,
+            base_url: stored.info.base_url.clone(),
+            model: stored.info.model.clone(),
+        };
+        let mut chat = Chat::new(&chat_id, &account_id);
+        let mut shown = Vec::new();
+        for message in stored.messages {
+            // Exchanges only: a user message, then the answer. Anything else in the row is skipped.
+            match (message.user, chat.turns.last()) {
+                (true, None | Some(Turn::Assistant { .. })) => {
+                    let (escaped, _) = prompts::escape_cut(&message.text, chat::USER_CHARS * 4);
+                    chat.turns.push(Turn::User(format!("{}{escaped}{}", chat::USER_OPEN, chat::USER_CLOSE)));
+                }
+                (false, Some(Turn::User(_))) => {
+                    chat.turns.push(Turn::Assistant { text: message.text.clone(), calls: Vec::new(), raw: None })
+                }
+                _ => continue,
+            }
+            shown.push(AiChatMessage { from_user: message.user, text: message.text });
+        }
+        // A row that ended on a question with no answer shows no dangling turn.
+        if matches!(chat.turns.last(), Some(Turn::User(_))) {
+            chat.turns.pop();
+            shown.pop();
+        }
+        // Text of mail may have reached the model in this chat: see `Chat::in_view`.
+        chat.mail_seen = true;
+        let changed = current.as_ref() != Some(&held);
+        *self.chat_lock() = Some(chat);
+        Ok(AiChatOpened {
+            messages: shown,
+            about_subject: stored.info.about_subject,
+            service: service_label(&held.base_url),
+            model: held.model,
+            service_changed: changed,
+        })
+    }
+
+    /// Removes the kept chat; the current conversation too when it is that one (its next send is then
+    /// "this conversation is over"). Never fails for an id that is not there.
+    pub fn ai_chat_delete(&self, chat_id: String) -> Result<()> {
+        let account_id = self.account_id()?;
+        self.store.chat_delete(&account_id, &chat_id)?;
+        self.ai_chat_close(chat_id);
+        Ok(())
+    }
+
+    /// Removes every kept chat of the account and the current conversation. Returns how many were kept.
+    pub fn ai_chats_delete_all(&self) -> Result<u32> {
+        let account_id = self.account_id()?;
+        let count = self.store.chat_delete_all(&account_id)?;
+        *self.chat_lock() = None;
+        Ok(count as u32)
     }
 
     /// Tells the chat which conversation it is about (`Some(thread id)`), or takes that back
@@ -559,6 +678,31 @@ impl Core {
 }
 
 impl Core {
+    /// Keeps one exchange of a chat for the list of earlier chats. Quiet on failure; nothing of the
+    /// text goes into an error or a log.
+    fn keep_chat(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        user_text: &str,
+        answer: &str,
+        settings: &AiSettings,
+        about_subject: Option<&str>,
+    ) {
+        let _ = self.store.chat_append(
+            account_id,
+            chat_id,
+            &chat_title(user_text),
+            now(),
+            settings.provider,
+            &settings.base_url,
+            &settings.model,
+            about_subject,
+            user_text,
+            answer,
+        );
+    }
+
     /// The one way a suggestion is applied: a tap (`automatic` false) and the automatic changes
     /// of a send (true) both come here, with the same gates. For an automatic one the chat must
     /// still have automatic changes on for this service and model and the kind must be in

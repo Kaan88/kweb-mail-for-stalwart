@@ -8,6 +8,7 @@ mod admin;
 mod admin_link;
 mod ai_chat;
 mod attention;
+mod catchup;
 mod crypto;
 mod crypto_send;
 mod crypto_trust;
@@ -1512,6 +1513,8 @@ impl Core {
             .map_err(|_| Error::invalid("the assistant is working on something: stop it first"))?;
         let after = assistant::reset(&self.store, &*self.secrets, &account_id)?;
         self.ai_chat_forget();
+        // The earlier chats go with the rest of the assistant's settings.
+        self.store.chat_delete_all(&account_id)?;
         Ok(after)
     }
 }

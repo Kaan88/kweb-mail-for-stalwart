@@ -307,6 +307,23 @@ pub(super) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, sender)
     );
     ",
+    // 14: M12 stage 6. Earlier chats of the assistant: what the user wrote and what it answered, per
+    // account, on the device only (no tool result, no mail text it looked up). `messages` is JSON.
+    "
+    CREATE TABLE ai_chats (
+        account_id    TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        id            TEXT NOT NULL,
+        title         TEXT NOT NULL,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL,
+        provider      TEXT NOT NULL,
+        base_url      TEXT NOT NULL,
+        model         TEXT NOT NULL,
+        about_subject TEXT,
+        messages      TEXT NOT NULL,
+        PRIMARY KEY (account_id, id)
+    );
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

@@ -11,6 +11,7 @@
 //! approves it. This file keeps the settings in the cache and the key in the host's secret store,
 //! and guards the one task that may run at a time.
 
+pub mod catchup;
 pub mod changes;
 pub mod chat;
 pub mod insights;
