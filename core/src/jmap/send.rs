@@ -565,6 +565,7 @@ mod tests {
             server_id: None,
             send_error: None,
             updated_at: 0,
+            protection: Default::default(),
         }
     }
 

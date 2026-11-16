@@ -107,6 +107,17 @@ async fn run(conn: &Connection, store: &Store, account_id: &str, now: i64, chang
         Err(e) => missed(e, &mut misses)?,
     }
     for row in store.drafts_to_save(account_id)? {
+        // A message that is to be encrypted, or that quotes decrypted text, is never saved to the server as the plain text it still is: its
+        // draft stays on this phone, and a copy made before Encrypt was switched on is removed.
+        if row.draft.protection.encrypt || row.draft.protection.quotes_decrypted {
+            if let Some(copy) = &row.draft.server_id {
+                match conn.destroy_email(copy).await {
+                    Ok(()) | Err(Error::Invalid { .. }) => store.draft_copy_lost(account_id, &row.draft.id)?,
+                    Err(e) => missed(e, &mut misses)?,
+                }
+            }
+            continue;
+        }
         match make_copy(conn, store, account_id, &row, &drafts.id).await {
             Ok(_) => misses = 0,
             // A copy the server will never take (a file that is gone from it): the text is
@@ -132,6 +143,22 @@ pub(super) async fn make_copy(
     row: &DraftRow,
     drafts_id: &str,
 ) -> Result<String> {
+    // A signed or encrypted message goes up as the very bytes that were made when the user sent it, whatever
+    // number of tries it takes. One that asked for protection and has no such bytes is never sent as plain text:
+    // it stays a draft with the reason (the caller turns this refusal into that).
+    if row.protected {
+        let Some(raw) = store.draft_raw(account_id, &row.draft.id)? else {
+            return Err(Error::invalid("the protected message is missing: it was not sent"));
+        };
+        let copy = conn.import_draft_copy(&raw, drafts_id, row.draft.server_id.as_deref()).await?;
+        store.draft_saved(account_id, &row.draft.id, &copy, row.rev)?;
+        return Ok(copy);
+    }
+    if row.draft.protection.encrypt || (row.draft.protection.sign && row.state != DraftState::Draft) {
+        return Err(Error::invalid(
+            "this message was to be signed or encrypted and was not: it was not sent. Send it again",
+        ));
+    }
     let identities = store.identities_list(account_id)?;
     let from = identities.iter().find(|i| i.id == row.draft.identity_id);
     let threading = threading_of(conn, store, account_id, row).await?;
@@ -144,7 +171,12 @@ pub(super) async fn make_copy(
 
 /// The Message-IDs an answer carries, looked up once (when the server can be asked) and kept.
 /// A forward, a new message and an opened server draft have what they have.
-async fn threading_of(conn: &Connection, store: &Store, account_id: &str, row: &DraftRow) -> Result<Threading> {
+pub(crate) async fn threading_of(
+    conn: &Connection,
+    store: &Store,
+    account_id: &str,
+    row: &DraftRow,
+) -> Result<Threading> {
     if let Some(known) = &row.threading {
         return Ok(known.clone());
     }
@@ -346,7 +378,15 @@ pub(super) async fn send_one(
     let Some(copy) = row.draft.server_id.as_deref() else { return Ok(()) };
     let sent = store.mailbox_by_role(account_id, "sent")?;
     let sent = sent.as_ref().map(|m| m.id.as_str());
-    let held = match hold_of(&row, now) {
+    let hold = hold_of(&row, now);
+    // A protected message has no Bcc header (a Bcc would be shown to everyone), so its envelope is always
+    // spelled out; a plain one has it only when the server is asked to hold it back.
+    let envelope = match (hold, row.protected) {
+        (Some(hold), _) => Some(hold),
+        (None, true) => Some(Hold::Immediate),
+        (None, false) => None,
+    };
+    let held = match envelope {
         Some(hold) => match held_for(store, account_id, &row, hold) {
             Ok(held) => Some(held),
             Err(Error::Invalid { msg }) => return refused(store, account_id, &row, &msg, changed),
@@ -356,7 +396,7 @@ pub(super) async fn send_one(
     };
     match conn.submit_with(&row.draft.identity_id, copy, drafts_id, sent, held.as_ref()).await {
         // Held by the server: the row stays until its time, for the undo.
-        Ok(_) if held.is_some() => store.draft_held(account_id, &row.draft.id),
+        Ok(_) if hold.is_some() => store.draft_held(account_id, &row.draft.id),
         Ok(_) => accepted(conn, store, account_id, &row, changed).await,
         Err(Error::Invalid { msg }) => refused(store, account_id, &row, &msg, changed),
         // The row stays `submitting`: the next pass asks the server how it went.

@@ -10,9 +10,10 @@ import org.junit.Before
 import org.junit.Test
 import ovh.kweb.mail.ui.compose.PickedFile
 import uniffi.kweb_core.Draft
+import uniffi.kweb_core.Protection
 import uniffi.kweb_core.Exception as CoreException
 
-private fun draft(body: String = "", subject: String = "") = Draft("d1", "i1", emptyList(), emptyList(), emptyList(), subject, body, emptyList(), null, false, null, null, 0L)
+private fun draft(body: String = "", subject: String = "") = Draft("d1", "i1", emptyList(), emptyList(), emptyList(), subject, body, emptyList(), null, false, null, null, 0L, Protection(false, false, false))
 
 private class FakeBackend(var started: Draft = draft()) : ShareBackend {
     val calls = ArrayList<String>()

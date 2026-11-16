@@ -77,6 +77,8 @@ import uniffi.kweb_core.Exception as CoreException
 
 data class CryptoSettingsState(
     val enabled: Boolean = false,
+    /** New messages start with Sign on (for an address that has a private key). */
+    val signDefault: Boolean = false,
     val keys: List<KeyEntry> = emptyList(),
     val loaded: Boolean = false,
     val failed: Boolean = false,
@@ -111,7 +113,8 @@ class CryptoSettingsViewModel(app: Application, private val session: AccountSess
         viewModelScope.launch {
             try {
                 val (on, keys) = withContext(Dispatchers.IO) { session.core.cryptoEnabled() to session.core.cryptoKeys() }
-                stateFlow.value = CryptoSettingsState(on, keys, loaded = true)
+                val sign = withContext(Dispatchers.IO) { session.core.cryptoSignDefault() }
+                stateFlow.value = CryptoSettingsState(on, sign, keys, loaded = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -122,6 +125,8 @@ class CryptoSettingsViewModel(app: Application, private val session: AccountSess
     }
 
     fun setEnabled(on: Boolean) = act { session.core.setCryptoEnabled(on) }
+
+    fun setSignDefault(on: Boolean) = act { session.core.setCryptoSignDefault(on) }
 
     fun remove(id: String) = act { session.core.cryptoRemoveKey(id) }
 
@@ -290,6 +295,16 @@ fun CryptoSettingsScreen(onBack: () -> Unit, vm: CryptoSettingsViewModel = viewM
                     onClick = { vm.setEnabled(!state.enabled) },
                 ) { KwebSwitch(checked = state.enabled, onCheckedChange = { vm.setEnabled(it) }) }
             }
+            if (state.enabled) {
+                Group(Modifier.padding(top = 12.dp)) {
+                    KeyRow(
+                        Groups.shape(0, 1),
+                        stringResource(R.string.crypto_sign_default_title),
+                        stringResource(R.string.crypto_sign_default_detail),
+                        onClick = { vm.setSignDefault(!state.signDefault) },
+                    ) { KwebSwitch(checked = state.signDefault, onCheckedChange = { vm.setSignDefault(it) }) }
+                }
+            }
             Text(
                 stringResource(if (state.enabled) R.string.crypto_not_searchable else R.string.crypto_off_note),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 12.dp),
@@ -403,6 +418,8 @@ private fun KeyEntryRow(shape: Shape, key: KeyEntry, onForget: () -> Unit = {}, 
         KeyOrigin.PASTED -> stringResource(R.string.crypto_from_paste)
         KeyOrigin.MAIL -> stringResource(R.string.crypto_from_mail, key.originDetail)
         KeyOrigin.OWN -> stringResource(R.string.crypto_from_own)
+        KeyOrigin.AUTOCRYPT -> stringResource(R.string.crypto_from_autocrypt, key.originDetail)
+        KeyOrigin.WKD -> stringResource(R.string.crypto_from_wkd, key.originDetail)
     }
     val expires = key.expiresAt?.let { stringResource(R.string.crypto_expires, dateFormat.withLocale(androidx.compose.ui.text.intl.Locale.current.platformLocale).format(Instant.ofEpochSecond(it).atZone(ZoneId.systemDefault()))) }
     val detail = listOfNotNull(

@@ -402,6 +402,8 @@ pub struct Mail {
     /// How many more message changes `Email/set` carries out before it answers `serverFail` to
     /// the rest (`None`: no limit). For the tests of a failure part-way.
     pub email_set_budget: Option<usize>,
+    /// How many more `Email/import` calls answer `serverFail` (for the tests of a retry).
+    pub import_fail: usize,
     /// `Email/get` that asks for body values fails (see `MockServer::set_bodies_fail`).
     pub bodies_fail: bool,
     /// The List-Id header of some messages, by message id.
@@ -525,6 +527,7 @@ impl Mail {
             push_enabled: true,
             next_mailbox: 100,
             email_set_budget: None,
+            import_fail: 0,
             bodies_fail: false,
             list_ids: BTreeMap::new(),
             unsubscribe: BTreeMap::new(),
@@ -858,6 +861,7 @@ impl Mail {
             "Email/query" => self.email_query(args),
             "Email/changes" => self.email_changes(args),
             "Email/set" => self.email_set(args),
+            "Email/import" => self.email_import(args),
             "Thread/get" => self.thread_get(args),
             "SearchSnippet/get" => self.snippet_get(args),
             other => Err(merr("unknownMethod", format!("the mock does not implement '{other}'"))),
@@ -1482,6 +1486,100 @@ impl Mail {
         }
         out.insert("newState".into(), json!(self.email_state()));
         Ok(Value::Object(out))
+    }
+
+    /// `Email/import`: a message from a blob that holds the whole RFC 5322 text, kept as it is.
+    fn email_import(&mut self, args: &Value) -> MResult {
+        if self.import_fail > 0 {
+            self.import_fail -= 1;
+            return Err(merr("serverFail", "mock: import fails"));
+        }
+        let old_state = self.email_state();
+        let mut out = Map::new();
+        out.insert("accountId".into(), json!(ACCOUNT_ID));
+        out.insert("oldState".into(), json!(old_state));
+        let (mut created, mut not_created) = (Map::new(), Map::new());
+        if let Some(Value::Object(emails)) = args.get("emails") {
+            for (key, object) in emails {
+                match self.import_one(object) {
+                    Ok(made) => drop(created.insert(key.clone(), made)),
+                    Err(e) => drop(not_created.insert(key.clone(), e)),
+                }
+            }
+        }
+        out.insert("created".into(), Value::Object(created));
+        if !not_created.is_empty() {
+            out.insert("notCreated".into(), Value::Object(not_created));
+        }
+        out.insert("newState".into(), json!(self.email_state()));
+        Ok(Value::Object(out))
+    }
+
+    fn import_one(&mut self, object: &Value) -> Result<Value, Value> {
+        let blob_id = object["blobId"].as_str().unwrap_or_default();
+        let Some((_, bytes)) = self.blob(blob_id) else {
+            return Err(json!({"type": "blobNotFound", "notFound": [blob_id]}));
+        };
+        let mailbox_ids = object.get("mailboxIds").and_then(flag_set).filter(|m| !m.is_empty());
+        let Some(mailbox_ids) = mailbox_ids else {
+            return Err(json!({"type": "invalidProperties", "properties": ["mailboxIds"]}));
+        };
+        let keywords = object.get("keywords").and_then(flag_set).unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let head = text
+            .split(
+                "
+
+",
+            )
+            .next()
+            .unwrap_or_default();
+        let header = |name: &str| {
+            head.lines()
+                .find(|l| {
+                    l.len() > name.len()
+                        && l[..name.len()].eq_ignore_ascii_case(name)
+                        && l[name.len()..].starts_with(':')
+                })
+                .map(|l| l[name.len() + 1..].trim().to_string())
+                .unwrap_or_default()
+        };
+        let one = |v: String| -> (String, String) {
+            match (v.find('<'), v.find('>')) {
+                (Some(a), Some(b)) if a < b => (v[..a].trim().trim_matches('"').to_string(), v[a + 1..b].to_string()),
+                _ => (String::new(), v),
+            }
+        };
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        let id = format!("e{seq}");
+        let email = Email {
+            id: id.clone(),
+            seq,
+            mailbox_ids: mailbox_ids.clone(),
+            keywords,
+            from_name: one(header("From")).0,
+            from_email: one(header("From")).1,
+            to: header("To").split(',').filter(|s| !s.trim().is_empty()).map(|s| one(s.trim().to_string())).collect(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            in_reply_to: Vec::new(),
+            references: Vec::new(),
+            thread: None,
+            text: None,
+            html: None,
+            attachments: Vec::new(),
+            subject: header("Subject"),
+            preview: String::new(),
+            received_at: now_secs(),
+            delivery: Vec::new(),
+            raw: Some(bytes),
+        };
+        let thread_id = email.thread_id();
+        self.emails.insert(id.clone(), email);
+        self.log_email(&id, Kind::Created);
+        self.touch_mailboxes(mailbox_ids);
+        Ok(json!({ "id": id, "blobId": format!("b{id}"), "threadId": thread_id, "size": 1200 }))
     }
 
     /// One entry of `create`: a message built from header properties, a body structure and

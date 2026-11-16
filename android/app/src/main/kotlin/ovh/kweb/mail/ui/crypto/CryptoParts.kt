@@ -51,6 +51,7 @@ fun PassphraseDialog(
     onDismiss: () -> Unit,
     showKeep: Boolean = true,
     body: String? = null,
+    confirmLabel: Int = R.string.crypto_passphrase_open,
 ) {
     var pass by remember { mutableStateOf("") }
     var keep by remember { mutableStateOf(false) }
@@ -86,7 +87,7 @@ fun PassphraseDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onSubmit(pass, keep) }) { Text(stringResource(R.string.crypto_passphrase_open)) } },
+        confirmButton = { TextButton(onClick = { onSubmit(pass, keep) }) { Text(stringResource(confirmLabel)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

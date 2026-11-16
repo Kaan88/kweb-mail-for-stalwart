@@ -30,7 +30,7 @@ fn secret_name(id: &str) -> String {
     format!("crypto.secret.{}", id.replace(':', "."))
 }
 
-fn pass_name(id: &str) -> String {
+pub(super) fn pass_name(id: &str) -> String {
     format!("crypto.pass.{}", id.replace(':', "."))
 }
 
@@ -388,7 +388,7 @@ impl Core {
     }
 
     /// The user's private keys for one analysis: read from the secret store, wiped when dropped.
-    fn secret_keys(&self, account_id: &str) -> Result<Vec<analyze::SecretKey>> {
+    pub(super) fn secret_keys(&self, account_id: &str) -> Result<Vec<analyze::SecretKey>> {
         use base64::{engine::general_purpose::STANDARD, Engine};
         let mut out = Vec::new();
         for key in self.store.crypto_keys(account_id)?.into_iter().filter(|k| k.entry.has_secret) {

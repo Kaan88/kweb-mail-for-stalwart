@@ -113,6 +113,7 @@ import ovh.kweb.mail.ui.thread.ThreadRules
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.RewriteStyle
+import ovh.kweb.mail.ui.crypto.PassphraseDialog
 
 /**
  * Writing a message: the draft with [draftId] from the core. [onLeave] goes back, [onSent] goes
@@ -271,6 +272,25 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
     }
 
     assistantState.session?.takeIf { it.owner == owner }?.let { AssistantSheet(it, assistant, onReplace = ::replaceWith) }
+    s.passphrasePrompt?.let { prompt ->
+        PassphraseDialog(
+            keyName = prompt.keyName,
+            wrong = prompt.wrong,
+            onSubmit = vm::submitPassphrase,
+            onDismiss = vm::cancelQuestion,
+            body = stringResource(R.string.crypto_send_passphrase_body, prompt.keyName),
+            confirmLabel = R.string.crypto_send_passphrase_go,
+        )
+    }
+    if (s.confirmPlain != null) {
+        AlertDialog(
+            onDismissRequest = vm::cancelQuestion,
+            title = { Text(stringResource(R.string.crypto_plain_reply_title)) },
+            text = { Text(stringResource(R.string.crypto_plain_reply_body)) },
+            confirmButton = { TextButton(onClick = vm::confirmPlainSend) { Text(stringResource(R.string.crypto_plain_reply_send)) } },
+            dismissButton = { TextButton(onClick = vm::cancelQuestion) { Text(stringResource(R.string.crypto_plain_reply_back)) } },
+        )
+    }
     if (askingLanguage) {
         TranslateDialog(
             initial = prefs.translateLanguage.orEmpty(),
@@ -466,6 +486,10 @@ private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester,
             )
         }
         Line()
+        if (s.canProtect) {
+            ProtectionBar(s, vm)
+            Line()
+        }
         s.attachments.forEach { attachment ->
             val size = remember(attachment.size) { SizeFormat.format(attachment.size.toLong(), Locale.getDefault()) }
             FileCard(attachment.name, size, busy = false, onRemove = { vm.removeAttachment(attachment) })
@@ -487,6 +511,54 @@ private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester,
                 }
             },
         )
+    }
+}
+
+/**
+ * Sign and Encrypt for this message, and what the keys allow. The words say what is protected (the text and the
+ * files) and what is not (the subject and the addresses), and who is told which recipients lack a key.
+ */
+@Composable
+private fun ProtectionBar(s: ComposeState, vm: ComposeViewModel) {
+    val colors = MaterialTheme.colorScheme
+    val check = s.check
+    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.FilterChip(
+                selected = s.protection.sign,
+                onClick = { vm.setSign(!s.protection.sign) },
+                enabled = !s.sending,
+                label = { Text(stringResource(R.string.crypto_sign)) },
+            )
+            androidx.compose.material3.FilterChip(
+                selected = s.protection.encrypt,
+                onClick = { vm.setEncrypt(!s.protection.encrypt) },
+                enabled = !s.sending,
+                label = { Text(stringResource(R.string.crypto_encrypt)) },
+            )
+            val protocol = check?.protocol
+            if (protocol != null) {
+                Text(
+                    stringResource(if (protocol == uniffi.kweb_core.KeyKind.PGP) R.string.crypto_protocol_pgp else R.string.crypto_protocol_smime),
+                    color = colors.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
+        if (s.protection.encrypt) {
+            Text(stringResource(R.string.crypto_subject_clear), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            if (s.protection.encrypt && s.bcc.isNotEmpty() && check?.bccHidden == true) {
+                Text(stringResource(R.string.crypto_bcc_hidden), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(stringResource(R.string.crypto_draft_local), color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+        if (check != null && !check.ready) {
+            Text(check.problem.orEmpty(), color = colors.error, style = MaterialTheme.typography.bodySmall)
+        }
+        check?.warnings?.forEach { Text(it, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        if (s.protection.quotesDecrypted && !s.protection.encrypt) {
+            Text(stringResource(R.string.crypto_quote_warning), color = colors.error, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

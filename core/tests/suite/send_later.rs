@@ -1055,6 +1055,7 @@ fn the_identity_calls_need_an_account() {
                 server_id: None,
                 send_error: None,
                 updated_at: 0,
+                protection: Default::default(),
             },
             0
         )

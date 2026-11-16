@@ -222,6 +222,25 @@ pub struct Draft {
     /// Why the last try to send it failed; `None` when it was never sent or the try worked.
     pub send_error: Option<String>,
     pub updated_at: i64,
+    /// Whether to sign and to encrypt it when it is sent (M9; only offered while the encryption
+    /// feature is on). Drafts written before this existed have neither.
+    #[serde(default)]
+    pub protection: Protection,
+}
+
+/// What the user asked for on one message: signed, encrypted, or both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Protection {
+    pub sign: bool,
+    pub encrypt: bool,
+    /// The text quotes a message that was encrypted (set by the core when it made the reply; never by the user).
+    pub quotes_decrypted: bool,
+}
+
+impl Protection {
+    pub fn any(self) -> bool {
+        self.sign || self.encrypt
+    }
 }
 
 /// A message the user sent that the core still holds back, so the send can be undone.

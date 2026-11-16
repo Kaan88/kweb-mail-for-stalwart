@@ -22,6 +22,8 @@ mod contacts;
 mod crypto;
 #[path = "suite/crypto_raw.rs"]
 mod crypto_raw;
+#[path = "suite/crypto_send.rs"]
+mod crypto_send;
 #[path = "suite/enterprise.rs"]
 mod enterprise;
 #[path = "suite/ffi.rs"]

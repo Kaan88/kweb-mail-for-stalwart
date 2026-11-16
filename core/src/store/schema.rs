@@ -280,6 +280,12 @@ pub(super) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (account_id, address)
     );
     ",
+    // 10: M9 stage 3. The finished bytes of a message that is signed or encrypted, made once when the user
+    // sends it (after the checks, before anything goes to the server) and used for every retry, so a retry
+    // uploads the same message and never makes a second, different one. Null for everything else.
+    "
+    ALTER TABLE drafts ADD COLUMN raw BLOB;
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

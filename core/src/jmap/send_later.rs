@@ -27,6 +27,8 @@ pub enum Hold {
     For(u32),
     /// At this time (Unix seconds).
     Until(i64),
+    /// Not held: the envelope is spelled out and the server sends at once.
+    Immediate,
 }
 
 /// A submission with an envelope of its own, which is how the hold is asked for. The server
@@ -43,6 +45,7 @@ impl Held {
         let parameter = match self.hold {
             Hold::For(secs) => json!({ "HOLDFOR": secs.to_string() }),
             Hold::Until(at) => json!({ "HOLDUNTIL": iso_utc(at) }),
+            Hold::Immediate => Value::Null,
         };
         let recipients: Vec<Value> = self.to.iter().map(|email| json!({ "email": email })).collect();
         json!({ "mailFrom": { "email": self.from, "parameters": parameter }, "rcptTo": recipients })

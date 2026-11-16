@@ -369,6 +369,16 @@ impl MockServer {
         );
     }
 
+    /// The next `n` `Email/import` calls fail with `serverFail`.
+    pub fn fail_next_imports(&self, n: usize) {
+        self.shared.mail().import_fail = n;
+    }
+
+    /// The whole RFC 5322 text of a message that was imported (the app's signed or encrypted messages).
+    pub fn raw_of(&self, id: &str) -> Option<Vec<u8>> {
+        self.shared.mail().emails.get(id).and_then(|e| e.raw.clone())
+    }
+
     /// After this many more message changes `Email/set` answers `serverFail` for the rest.
     pub fn set_email_set_budget(&self, budget: Option<usize>) {
         self.shared.mail().email_set_budget = budget;

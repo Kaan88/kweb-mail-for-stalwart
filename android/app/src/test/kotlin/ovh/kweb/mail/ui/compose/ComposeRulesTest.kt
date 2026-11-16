@@ -7,6 +7,7 @@ import org.junit.Test
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.Draft
+import uniffi.kweb_core.Protection
 
 class ComposeRulesTest {
     private fun draft(
@@ -18,7 +19,7 @@ class ComposeRulesTest {
         forward: Boolean = false,
         serverId: String? = null,
         sendError: String? = null,
-    ) = Draft("d1", "i1", to, emptyList(), emptyList(), subject, body, attachments, source, forward, serverId, sendError, 0)
+    ) = Draft("d1", "i1", to, emptyList(), emptyList(), subject, body, attachments, source, forward, serverId, sendError, 0, Protection(false, false, false))
 
     private val someone = Address("", "a@b.c")
     private val file = Attachment("blob", "a.pdf", "application/pdf", 10u, null, false)

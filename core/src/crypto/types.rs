@@ -103,6 +103,10 @@ pub enum KeyOrigin {
     Mail,
     /// The user's own key (has a private part on this phone).
     Own,
+    /// Learned from the `Autocrypt` header of a mail the user opened. Not checked by anyone: trust on first use.
+    Autocrypt,
+    /// Found by a Web Key Directory lookup the user asked for.
+    Wkd,
 }
 
 impl KeyOrigin {
@@ -112,6 +116,8 @@ impl KeyOrigin {
             KeyOrigin::Pasted => "paste",
             KeyOrigin::Mail => "mail",
             KeyOrigin::Own => "own",
+            KeyOrigin::Autocrypt => "autocrypt",
+            KeyOrigin::Wkd => "wkd",
         }
     }
 
@@ -120,6 +126,8 @@ impl KeyOrigin {
             "paste" => KeyOrigin::Pasted,
             "mail" => KeyOrigin::Mail,
             "own" => KeyOrigin::Own,
+            "autocrypt" => KeyOrigin::Autocrypt,
+            "wkd" => KeyOrigin::Wkd,
             _ => KeyOrigin::File,
         }
     }

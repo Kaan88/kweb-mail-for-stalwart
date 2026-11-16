@@ -20,6 +20,7 @@ mod errors;
 mod features;
 mod files;
 mod folders;
+mod import;
 mod jscal;
 mod jscontact;
 mod manage;

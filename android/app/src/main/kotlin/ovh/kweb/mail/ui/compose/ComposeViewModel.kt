@@ -33,6 +33,8 @@ import uniffi.kweb_core.Address
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.Draft
 import uniffi.kweb_core.Identity
+import uniffi.kweb_core.Protection
+import uniffi.kweb_core.SendCheck
 import uniffi.kweb_core.Exception as CoreException
 
 /** The three recipient fields. */
@@ -72,6 +74,16 @@ data class ComposeState(
     val saveFailed: Boolean = false,
     val suggestionsFor: Field? = null,
     val suggestions: List<Address> = emptyList(),
+    /** Sign and Encrypt as the user set them for this message (M9). */
+    val protection: Protection = Protection(sign = false, encrypt = false, quotesDecrypted = false),
+    /** The encryption feature is on and the sending address has a private key: the two switches are offered. */
+    val canProtect: Boolean = false,
+    /** What the keys allow for this message, from the keyring only; null while nothing is asked for. */
+    val check: SendCheck? = null,
+    /** The signing key is locked: its passphrase is asked for before anything is sent. */
+    val passphrasePrompt: PassphrasePrompt? = null,
+    /** The text quotes an encrypted message and the reply is not encrypted: sending asks first. */
+    val confirmPlain: ComposeAction? = null,
 ) {
     fun text(field: Field) = when (field) {
         Field.To -> toText
@@ -100,6 +112,16 @@ data class ComposeState(
     val ready: Boolean get() = phase == Phase.Ready
     val canSend: Boolean get() = ready && !sending && attaching.isEmpty()
 }
+
+/** What the user asked for, kept while a question is answered first. */
+sealed interface ComposeAction {
+    data object SendNow : ComposeAction
+
+    data class SendLater(val sendAt: Long) : ComposeAction
+}
+
+/** The question for the passphrase of the signing key. [wrong]: the last one did not open it. */
+data class PassphrasePrompt(val action: ComposeAction, val keyName: String, val wrong: Boolean)
 
 /** What the screen has to do once. */
 sealed interface ComposeEvent {
@@ -204,6 +226,7 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
             base = draft
             opened = draft
             saved = draft
+            val canProtect = withContext(Dispatchers.IO) { canProtect(identities, draft.identityId) }
             // A recipient handed in by the caller goes into a blank new message only; it is not saved until something is.
             val to = if (prefillTo != null && ComposeRules.isBlankNew(draft) && prefillTo !in draft.to) draft.to + prefillTo else draft.to
             state = ComposeState(
@@ -218,6 +241,8 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
                 subject = draft.subject,
                 body = draft.body,
                 attachments = draft.attachments,
+                protection = draft.protection,
+                canProtect = canProtect,
                 error = draft.sendError?.let { reason -> getApplication<Application>().getString(R.string.compose_send_failed_before, reason) },
             )
         }
@@ -237,7 +262,57 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
 
     fun setBody(value: String) = edit { it.copy(body = value) }
 
-    fun setIdentity(id: String) = edit { it.copy(identityId = id) }
+    fun setIdentity(id: String) {
+        edit { it.copy(identityId = id) }
+        viewModelScope.launch {
+            val can = withContext(Dispatchers.IO) { canProtect(state.identities, id) }
+            // A sender without a private key cannot sign or encrypt: both switches go off, so nothing is asked of it.
+            update { it.copy(canProtect = can, protection = if (can) it.protection else it.protection.copy(sign = false, encrypt = false)) }
+            refreshCheck()
+        }
+    }
+
+    /** The feature is on and [identityId] is an address with a private key of ours. Core call, local only. */
+    private fun canProtect(identities: List<Identity>, identityId: String): Boolean = try {
+        val email = identities.firstOrNull { it.id == identityId }?.email?.lowercase()
+        email != null && acct.core.cryptoEnabled() &&
+            acct.core.cryptoKeys().any { k -> k.hasSecret && k.emails.any { it.lowercase() == email } }
+    } catch (e: CoreException) {
+        false
+    }
+
+    fun setSign(on: Boolean) {
+        edit { it.copy(protection = it.protection.copy(sign = on)) }
+        refreshCheck()
+    }
+
+    fun setEncrypt(on: Boolean) {
+        edit { it.copy(protection = it.protection.copy(encrypt = on)) }
+        refreshCheck()
+    }
+
+    private var checkJob: Job? = null
+
+    /** Asks the core what the keys allow for the message as it stands now (keyring only, no network). */
+    fun refreshCheck() {
+        checkJob?.cancel()
+        if (!state.canProtect || !state.protection.let { it.sign || it.encrypt }) {
+            update { it.copy(check = null) }
+            return
+        }
+        checkJob = viewModelScope.launch {
+            val draft = assemble() ?: return@launch
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    acct.core.cryptoSendCheck(draft)
+                } catch (e: CoreException) {
+                    Log.w(Background.TAG, "checking the keys failed: ${e.javaClass.simpleName}")
+                    null
+                }
+            }
+            update { it.copy(check = result) }
+        }
+    }
 
     fun openCcBcc() = update { it.copy(ccBccOpen = true) }
 
@@ -257,13 +332,17 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
         clearSuggestions()
     }
 
-    fun remove(field: Field, address: Address) = edit { it.withAddresses(field, it.addresses(field) - address) }
+    fun remove(field: Field, address: Address) {
+        edit { it.withAddresses(field, it.addresses(field) - address) }
+        refreshCheck()
+    }
 
     /** A suggestion was picked: it becomes a chip and the typed text goes. */
     fun pick(field: Field, address: Address) {
         edit { it.withAddresses(field, Recipients.merge(it.addresses(field), listOf(address))).withText(field, "") }
         update { it.copy(marked = it.marked - field) }
         clearSuggestions()
+        refreshCheck()
     }
 
     fun clearSuggestions() {
@@ -285,7 +364,10 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
             it.withAddresses(field, merged).withText(field, consumed.rest)
                 .copy(marked = unmark(it.marked, field, consumed.rest, consumed.rejected))
         }
-        if (changed) scheduleSave()
+        if (changed) {
+            scheduleSave()
+            refreshCheck()
+        }
     }
 
     /** Updates the set of fields drawn as wrong for the text now in [field]. */
@@ -403,13 +485,20 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
     private fun assemble(): Draft? {
         val b = base ?: return null
         val s = state
-        return b.copy(identityId = s.identityId, to = s.to, cc = s.cc, bcc = s.bcc, subject = s.subject, body = s.body, attachments = s.attachments)
+        return b.copy(
+            identityId = s.identityId, to = s.to, cc = s.cc, bcc = s.bcc, subject = s.subject, body = s.body,
+            attachments = s.attachments, protection = s.protection,
+        )
     }
 
     /** [draft] with the core's own fields as they are now: a save or an upload may have changed them since it was assembled. */
     private fun withBookkeeping(draft: Draft): Draft {
         val b = base ?: return draft
-        return draft.copy(serverId = b.serverId, updatedAt = b.updatedAt, sendError = b.sendError)
+        // The quote flag is the core's (it set it when it made the reply); the two switches are the user's.
+        return draft.copy(
+            serverId = b.serverId, updatedAt = b.updatedAt, sendError = b.sendError,
+            protection = draft.protection.copy(quotesDecrypted = b.protection.quotesDecrypted),
+        )
     }
 
     /** Writes [draft] to the core unless it is what was written last. Returns false when the core refused. */
@@ -491,42 +580,7 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
         false
     }
 
-    fun send() {
-        val s = state
-        if (!s.canSend || done) return
-        saveJob?.cancel()
-        val context = getApplication<Application>()
-        if (!commitAll()) {
-            update { it.copy(error = context.getString(R.string.compose_error_bad_address)) }
-            return
-        }
-        if (assemble() == null) return
-        update { it.copy(sending = true, error = null, canLeaveAnyway = false) }
-        val mine = epoch
-        viewModelScope.launch {
-            try {
-                val pending = withContext(Dispatchers.IO) {
-                    // Assembled once the save or upload in front of it has finished, so it carries what they changed.
-                    lock.withLock {
-                        val draft = withBookkeeping(checkNotNull(assemble()))
-                        acct.core.send(draft, ComposeRules.UNDO_SECONDS)
-                    }
-                }
-                // The message is with the core whatever became of the screen: the list must hear of it.
-                Outbox.announce(acct.record.id, pending)
-                if (mine != epoch) return@launch
-                done = true
-                eventChannel.send(ComposeEvent.Sent)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: CoreException.Invalid) {
-                updateIn(mine) { it.copy(sending = false, error = e.msg) }
-            } catch (e: Exception) {
-                Log.w(Background.TAG, "sending failed", e)
-                updateIn(mine) { it.copy(sending = false, error = context.getString(R.string.compose_send_failed)) }
-            }
-        }
-    }
+    fun send() = begin(ComposeAction.SendNow)
 
     /**
      * "Send later": hands the message to the core to be sent at [sendAt] (Unix seconds). The same checks as
@@ -542,39 +596,156 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
             SendLaterRules.Check.TooSoon -> return update { it.copy(error = context.getString(R.string.send_later_too_soon)) }
             SendLaterRules.Check.TooFar -> return update { it.copy(error = context.getString(R.string.send_later_too_far)) }
         }
+        begin(ComposeAction.SendLater(sendAt))
+    }
+
+    /**
+     * Every send starts here. A plain message goes straight on. One that is to be signed or encrypted is first
+     * checked against the keys (nothing is sent or stored for it yet): what is missing is said, a locked key's
+     * passphrase is asked for now (before the Undo countdown can start), and a reply that quotes an encrypted
+     * message but is not encrypted is confirmed.
+     */
+    private fun begin(action: ComposeAction, plainConfirmed: Boolean = false) {
+        val s = state
+        if (!s.canSend || done) return
         saveJob?.cancel()
+        val context = getApplication<Application>()
         if (!commitAll()) {
             update { it.copy(error = context.getString(R.string.compose_error_bad_address)) }
             return
         }
         if (assemble() == null) return
-        update { it.copy(sending = true, error = null, canLeaveAnyway = false) }
+        update { it.copy(sending = true, error = null, canLeaveAnyway = false, passphrasePrompt = null, confirmPlain = null) }
         val mine = epoch
+        if (!state.protection.let { it.sign || it.encrypt }) {
+            run(action, null, false, mine)
+            return
+        }
+        viewModelScope.launch {
+            val draft = withBookkeeping(checkNotNull(assemble()))
+            val check = withContext(Dispatchers.IO) {
+                try {
+                    acct.core.cryptoSendCheck(draft)
+                } catch (e: CoreException) {
+                    null
+                }
+            }
+            if (check == null) {
+                updateIn(mine) { it.copy(sending = false, error = context.getString(R.string.crypto_send_check_failed)) }
+                return@launch
+            }
+            updateIn(mine) { it.copy(check = check) }
+            val key = check.needsPassphrase
+            when {
+                !check.ready -> updateIn(mine) { it.copy(sending = false, error = check.problem ?: context.getString(R.string.crypto_send_check_failed)) }
+                key != null -> updateIn(mine) { it.copy(passphrasePrompt = PassphrasePrompt(action, key, wrong = false)) }
+                check.quotesDecryptedUnencrypted && !plainConfirmed -> updateIn(mine) { it.copy(confirmPlain = action) }
+                else -> run(action, null, false, mine)
+            }
+        }
+    }
+
+    /** The passphrase was typed in the dialog. */
+    fun submitPassphrase(passphrase: String, keep: Boolean) {
+        val prompt = state.passphrasePrompt ?: return
+        update { it.copy(passphrasePrompt = null) }
+        run(prompt.action, passphrase, keep, epoch)
+    }
+
+    /** The passphrase question or the plain-reply question was dismissed: nothing was sent. */
+    fun cancelQuestion() = update { it.copy(passphrasePrompt = null, confirmPlain = null, sending = false) }
+
+    /** "Send without encrypting" was confirmed. */
+    fun confirmPlainSend() {
+        val action = state.confirmPlain ?: return
+        update { it.copy(confirmPlain = null, sending = false) }
+        begin(action, plainConfirmed = true)
+    }
+
+    private fun run(action: ComposeAction, passphrase: String?, keep: Boolean, mine: Int) {
+        val context = getApplication<Application>()
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    lock.withLock {
-                        val draft = withBookkeeping(checkNotNull(assemble()))
-                        acct.core.scheduleSend(draft, sendAt)
+                val protected = state.protection.let { it.sign || it.encrypt }
+                when (action) {
+                    ComposeAction.SendNow -> {
+                        val pending = withContext(Dispatchers.IO) {
+                            // Assembled once the save or upload in front of it has finished, so it carries what they changed.
+                            lock.withLock {
+                                val draft = withBookkeeping(checkNotNull(assemble()))
+                                if (protected) acct.core.sendProtected(draft, ComposeRules.UNDO_SECONDS, passphrase, keep)
+                                else acct.core.send(draft, ComposeRules.UNDO_SECONDS)
+                            }
+                        }
+                        // The message is with the core whatever became of the screen: the list must hear of it.
+                        Outbox.announce(acct.record.id, pending)
+                        if (mine != epoch) return@launch
+                        done = true
+                        eventChannel.send(ComposeEvent.Sent)
+                    }
+                    is ComposeAction.SendLater -> {
+                        withContext(Dispatchers.IO) {
+                            lock.withLock {
+                                val draft = withBookkeeping(checkNotNull(assemble()))
+                                if (protected) acct.core.scheduleSendProtected(draft, action.sendAt, passphrase, keep)
+                                else acct.core.scheduleSend(draft, action.sendAt)
+                            }
+                        }
+                        // The message is with the core whatever became of the screen: the confirmation must still be shown.
+                        ScheduledNotices.announce(action.sendAt)
+                        if (mine != epoch) return@launch
+                        done = true
+                        eventChannel.send(ComposeEvent.Leave)
                     }
                 }
-                // The message is with the core whatever became of the screen: the confirmation must still be shown.
-                ScheduledNotices.announce(sendAt)
-                if (mine != epoch) return@launch
-                done = true
-                eventChannel.send(ComposeEvent.Leave)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: CoreException.Invalid) {
-                updateIn(mine) { it.copy(sending = false, error = e.msg.ifBlank { context.getString(R.string.send_later_failed) }) }
+                wrongOrRefused(mine, e.msg, action, passphrase != null)
             } catch (e: CoreException.Temporary) {
-                Log.w(Background.TAG, "scheduling failed: no answer")
-                afterUnsureSchedule(mine, R.string.send_later_offline)
+                if (action is ComposeAction.SendLater) {
+                    Log.w(Background.TAG, "scheduling failed: no answer")
+                    afterUnsureSchedule(mine, R.string.send_later_offline)
+                } else {
+                    Log.w(Background.TAG, "sending failed", e)
+                    updateIn(mine) { it.copy(sending = false, error = context.getString(R.string.compose_send_failed)) }
+                }
             } catch (e: Exception) {
-                Log.w(Background.TAG, "scheduling failed", e)
-                afterUnsureSchedule(mine, R.string.send_later_unsure)
+                Log.w(Background.TAG, "sending failed", e)
+                if (action is ComposeAction.SendLater) {
+                    afterUnsureSchedule(mine, R.string.send_later_unsure)
+                } else {
+                    updateIn(mine) { it.copy(sending = false, error = context.getString(R.string.compose_send_failed)) }
+                }
             }
         }
+    }
+
+    /**
+     * The core refused. When a passphrase was typed and the key still wants one, it was the wrong one: the question
+     * comes back. Otherwise the core's words are shown (a missing key, a refusal of the server) and nothing was sent.
+     */
+    private suspend fun wrongOrRefused(mine: Int, message: String, action: ComposeAction, typed: Boolean) {
+        val context = getApplication<Application>()
+        if (typed) {
+            val draft = assemble()
+            val check = draft?.let { d ->
+                withContext(Dispatchers.IO) {
+                    try {
+                        acct.core.cryptoSendCheck(d)
+                    } catch (e: CoreException) {
+                        null
+                    }
+                }
+            }
+            val key = check?.needsPassphrase
+            if (key != null) {
+                updateIn(mine) { it.copy(passphrasePrompt = PassphrasePrompt(action, key, wrong = true)) }
+                return
+            }
+        }
+        val text = if (action is ComposeAction.SendLater) message.ifBlank { context.getString(R.string.send_later_failed) } else message
+        updateIn(mine) { it.copy(sending = false, error = text) }
     }
 
     /**

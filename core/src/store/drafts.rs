@@ -81,9 +81,12 @@ pub struct DraftRow {
     pub rev: i64,
     /// `None` until looked up.
     pub threading: Option<Threading>,
+    /// The finished, signed or encrypted message was made when the user sent it and is stored with the row
+    /// (`Store::draft_raw` reads it). Such a row is only ever sent from those bytes: see `compose::flush`.
+    pub protected: bool,
 }
 
-const COLUMNS: &str = "draft, server_id, send_error, state, send_at, dirty, discarded, rev, threading";
+const COLUMNS: &str = "draft, server_id, send_error, state, send_at, dirty, discarded, rev, threading, raw IS NOT NULL";
 
 fn json_error(e: serde_json::Error) -> Error {
     Error::store(e.to_string())
@@ -104,6 +107,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Option<DraftRow>> {
         discarded: r.get(6)?,
         rev: r.get(7)?,
         threading: threading.and_then(|t| serde_json::from_str(&t).ok()),
+        protected: r.get(9)?,
     }))
 }
 
@@ -157,7 +161,7 @@ fn write_user_draft(c: &Connection, account_id: &str, draft: &Draft, now: i64, w
         "INSERT INTO drafts (account_id, id, draft, send_error, updated_at, state, send_at, dirty, rev)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 1)
          ON CONFLICT(account_id, id) DO UPDATE SET draft = ?3, send_error = ?4, updated_at = ?5, state = ?6,
-             send_at = ?7, dirty = 1, rev = rev + 1",
+             send_at = ?7, dirty = 1, rev = rev + 1, raw = NULL",
         params![account_id, draft.id, json, error, now, w.state.column(), w.send_at],
     )?;
     Ok(())
@@ -206,6 +210,44 @@ impl Store {
             let w = Write { state: DraftState::Sending, send_at: Some(send_at), send_error: Some(None) };
             write_user_draft(c, account_id, draft, now, w)?;
             Ok(pending(&load(c, account_id, &draft.id)?.expect("just written")))
+        })
+    }
+
+    /// Like [`Store::draft_send`] for a message that is signed or encrypted: `raw` is the finished
+    /// message, stored in the same statement that makes the row `sending`, so no row is ever on its
+    /// way without them. A message that is on its way already stays as it is (a second tap).
+    pub fn draft_send_protected(
+        &self,
+        account_id: &str,
+        draft: &Draft,
+        raw: &[u8],
+        send_at: i64,
+        now: i64,
+    ) -> Result<PendingSend> {
+        self.write(|c| {
+            if let Some(row) = load(c, account_id, &draft.id)? {
+                if !row.discarded && row.state != DraftState::Draft {
+                    return Ok(pending(&row));
+                }
+            }
+            let w = Write { state: DraftState::Sending, send_at: Some(send_at), send_error: Some(None) };
+            write_user_draft(c, account_id, draft, now, w)?;
+            c.execute(
+                "UPDATE drafts SET raw = ?3 WHERE account_id = ?1 AND id = ?2",
+                params![account_id, draft.id, raw],
+            )?;
+            Ok(pending(&load(c, account_id, &draft.id)?.expect("just written")))
+        })
+    }
+
+    /// The finished message of a protected row.
+    pub fn draft_raw(&self, account_id: &str, id: &str) -> Result<Option<Vec<u8>>> {
+        self.read(|c| {
+            Ok(c.query_row("SELECT raw FROM drafts WHERE account_id = ?1 AND id = ?2", [account_id, id], |r| {
+                r.get::<_, Option<Vec<u8>>>(0)
+            })
+            .optional()?
+            .flatten())
         })
     }
 
@@ -297,7 +339,7 @@ impl Store {
     pub fn draft_undo_send(&self, account_id: &str, id: &str) -> Result<Draft> {
         self.write(|c| {
             let changed = c.execute(
-                "UPDATE drafts SET state = 'draft', send_at = NULL
+                "UPDATE drafts SET state = 'draft', send_at = NULL, raw = NULL
                  WHERE account_id = ?1 AND id = ?2 AND state = 'sending' AND discarded = 0",
                 [account_id, id],
             )?;
@@ -434,6 +476,26 @@ impl Store {
         })
     }
 
+    /// [`Store::draft_schedule`] for a signed or encrypted message, with its finished bytes.
+    pub fn draft_schedule_protected(
+        &self,
+        account_id: &str,
+        draft: &Draft,
+        raw: &[u8],
+        send_at: i64,
+        now: i64,
+    ) -> Result<()> {
+        self.write(|c| {
+            let w = Write { state: DraftState::Scheduling, send_at: Some(send_at), send_error: Some(None) };
+            write_user_draft(c, account_id, draft, now, w)?;
+            c.execute(
+                "UPDATE drafts SET raw = ?3 WHERE account_id = ?1 AND id = ?2",
+                params![account_id, draft.id, raw],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Marks the scheduling request as started. False when the row is not the version that was
     /// copied (or was thrown away meanwhile).
     pub fn draft_begin_schedule(&self, account_id: &str, id: &str, rev: i64, copy: &str) -> Result<bool> {
@@ -464,7 +526,7 @@ impl Store {
     pub fn draft_revert(&self, account_id: &str, id: &str) -> Result<()> {
         self.write(|c| {
             c.execute(
-                "UPDATE drafts SET state = 'draft', send_at = NULL
+                "UPDATE drafts SET state = 'draft', send_at = NULL, raw = NULL
                  WHERE account_id = ?1 AND id = ?2 AND state IN ('scheduling', 'schedule_submitting')",
                 [account_id, id],
             )?;
@@ -478,7 +540,10 @@ impl Store {
     pub fn draft_back(&self, account_id: &str, id: &str, dirty: bool) -> Result<Option<Draft>> {
         self.write(|c| {
             let changed = c.execute(
-                "UPDATE drafts SET state = 'draft', send_at = NULL, dirty = ?3
+                // A protected message's copy on the server is the finished one, not a draft the user can
+                // edit: it is always made again from the text (and removed, if it must not be kept).
+                "UPDATE drafts SET state = 'draft', send_at = NULL, dirty = CASE WHEN raw IS NOT NULL THEN 1 ELSE ?3 END,
+                     raw = NULL
                  WHERE account_id = ?1 AND id = ?2 AND state IN ('held', 'submitting') AND discarded = 0",
                 params![account_id, id, dirty],
             )?;
@@ -493,7 +558,7 @@ impl Store {
     pub fn draft_refused(&self, account_id: &str, id: &str, error: &str) -> Result<()> {
         self.write(|c| {
             c.execute(
-                "UPDATE drafts SET state = 'draft', send_at = NULL, send_error = ?3, dirty = 1
+                "UPDATE drafts SET state = 'draft', send_at = NULL, send_error = ?3, dirty = 1, raw = NULL
                  WHERE account_id = ?1 AND id = ?2",
                 [account_id, id, error],
             )?;
@@ -617,6 +682,7 @@ mod tests {
             server_id: None,
             send_error: None,
             updated_at: 1,
+            protection: Default::default(),
         }
     }
 

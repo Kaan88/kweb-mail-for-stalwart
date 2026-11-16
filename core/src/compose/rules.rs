@@ -810,6 +810,7 @@ mod tests {
             server_id: None,
             send_error: None,
             updated_at: 0,
+            protection: Default::default(),
         };
         assert!(matches!(check_recipients(&d), Err(Error::Invalid { .. })));
         d.bcc = vec![addr("", "hidden@x.org")];

@@ -5,11 +5,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.kweb_core.Draft
+import uniffi.kweb_core.Protection
 import uniffi.kweb_core.PendingSend
 
 class SignOutRulesTest {
     private fun draft(id: String, serverId: String? = null) =
-        Draft(id, "i", emptyList(), emptyList(), emptyList(), "", "", emptyList(), null, false, serverId, null, 0)
+        Draft(id, "i", emptyList(), emptyList(), emptyList(), "", "", emptyList(), null, false, serverId, null, 0, Protection(false, false, false))
 
     @Test fun nothingUnsentIsNotAny() = assertFalse(SignOutRules.unsent(emptyList(), emptyList()).any)
 

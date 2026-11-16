@@ -118,4 +118,25 @@
     <string name="crypto_attachments">Files in the encrypted message</string>
     <string name="crypto_attachment_failed">The file could not be opened.</string>
     <string name="crypto_attachment_note">Opened from memory and removed again when you leave; nothing of it is kept.</string>
+
+    <!-- M9 stage 3: signing and encrypting on sending -->
+    <string name="crypto_sign">Sign</string>
+    <string name="crypto_encrypt">Encrypt</string>
+    <string name="crypto_protocol_pgp">with OpenPGP</string>
+    <string name="crypto_protocol_smime">with S/MIME</string>
+    <string name="crypto_subject_clear">The text and the files are encrypted. The subject and the addresses are not: everyone who handles the message can read them.</string>
+    <string name="crypto_bcc_hidden">The Bcc recipients get the message but are not named in it.</string>
+    <string name="crypto_draft_local">While you write, this draft is kept on this phone only, not on the server.</string>
+    <string name="crypto_quote_warning">This reply quotes an encrypted message. Sent without encryption, the quoted text goes out readable. Switch on Encrypt, or remove the quote.</string>
+    <string name="crypto_send_passphrase_body">Your key %1$s is locked. Type its passphrase to sign this message.</string>
+    <string name="crypto_send_passphrase_go">Send</string>
+    <string name="crypto_send_check_failed">The keys could not be checked. Nothing was sent.</string>
+    <string name="crypto_plain_reply_title">Send without encryption?</string>
+    <string name="crypto_plain_reply_body">This reply contains text from an encrypted message, and it will be sent without encryption. The quoted text will be readable by anyone who can see the message on its way.</string>
+    <string name="crypto_plain_reply_send">Send anyway</string>
+    <string name="crypto_plain_reply_back">Go back</string>
+    <string name="crypto_sign_default_title">Sign new messages</string>
+    <string name="crypto_sign_default_detail">Switches Sign on in every new message sent from an address you have a private key for. You can switch it off per message.</string>
+    <string name="crypto_from_autocrypt">Learned from the Autocrypt header of a mail from %1$s</string>
+    <string name="crypto_from_wkd">Found by a key directory lookup for %1$s</string>
 </resources>

@@ -25,7 +25,8 @@ object ComposeRules {
 
     /** What the user can have changed: the rest of a draft is the core's bookkeeping. */
     fun sameContent(a: Draft, b: Draft): Boolean = a.identityId == b.identityId && a.to == b.to && a.cc == b.cc &&
-        a.bcc == b.bcc && a.subject == b.subject && a.body == b.body && a.attachments == b.attachments
+        a.bcc == b.bcc && a.subject == b.subject && a.body == b.body && a.attachments == b.attachments &&
+        a.protection.sign == b.protection.sign && a.protection.encrypt == b.protection.encrypt
 
     /**
      * Leaving throws the draft away instead of saving it: it was a blank new message when the

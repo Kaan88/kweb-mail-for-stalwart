@@ -12,7 +12,7 @@ use super::{
 const BOB_PASSPHRASE: &str = "bob-pass";
 const CAROL_PASSPHRASE: &str = "carol-pass";
 
-fn pgp_secret(file: &str, id: &str, stored: Option<&str>) -> SecretKey {
+pub(super) fn pgp_secret(file: &str, id: &str, stored: Option<&str>) -> SecretKey {
     let key = openpgp::parse_secret(&fx(file)).unwrap().remove(0);
     SecretKey {
         id: id.into(),
@@ -25,7 +25,7 @@ fn pgp_secret(file: &str, id: &str, stored: Option<&str>) -> SecretKey {
     }
 }
 
-fn carol_secret() -> SecretKey {
+pub(super) fn carol_secret() -> SecretKey {
     let (cert, pkcs8) = smime::import_pkcs12(&fx("carol.p12"), CAROL_PASSPHRASE).unwrap();
     SecretKey {
         id: "carol".into(),
@@ -38,12 +38,12 @@ fn carol_secret() -> SecretKey {
     }
 }
 
-fn open(raw: &[u8], keys: &[KeyRow], secrets: &[SecretKey], passphrase: Option<&str>) -> Outcome {
+pub(super) fn open(raw: &[u8], keys: &[KeyRow], secrets: &[SecretKey], passphrase: Option<&str>) -> Outcome {
     let lookup = |_: &str| None;
     analyze(raw, &Context { now: now(), keys, first_seen: &lookup, secrets, passphrase })
 }
 
-fn text_of(out: &Outcome) -> String {
+pub(super) fn text_of(out: &Outcome) -> String {
     let c = out.view.content.as_ref().expect("opened content");
     format!("{}{}", c.text.clone().unwrap_or_default(), c.html.clone().unwrap_or_default())
 }

@@ -14,6 +14,7 @@ pub mod rules;
 
 use std::collections::HashSet;
 
+pub(crate) use flush::threading_of;
 pub use flush::{flush, refresh_directory, Flushed};
 
 use crate::{
@@ -49,7 +50,11 @@ fn sender(header: &MessageHeader) -> Address {
 
 /// The files of a message that are files, not pictures its HTML shows.
 fn files(body: &MessageBody) -> Vec<Attachment> {
-    body.attachments.iter().filter(|a| !a.is_inline).cloned().collect()
+    // The signature of a signed message is a part of its own; it is not a file to pass on.
+    let signature = |a: &Attachment| {
+        matches!(a.mime_type.to_ascii_lowercase().as_str(), "application/pgp-signature" | "application/pkcs7-signature")
+    };
+    body.attachments.iter().filter(|a| !a.is_inline && !signature(a)).cloned().collect()
 }
 
 fn empty_draft(id: String, identity: Option<&Identity>, now: i64) -> Draft {
@@ -67,6 +72,7 @@ fn empty_draft(id: String, identity: Option<&Identity>, now: i64) -> Draft {
         server_id: None,
         send_error: None,
         updated_at: now,
+        protection: Default::default(),
     }
 }
 

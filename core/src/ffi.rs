@@ -8,6 +8,7 @@ mod admin;
 mod admin_link;
 mod ai_chat;
 mod crypto;
+mod crypto_send;
 mod download;
 mod enterprise;
 
@@ -569,20 +570,28 @@ impl Core {
         let account_id = self.account_id()?;
         let identities = self.ordered_identities(&account_id)?;
         let (id, at) = (compose::new_id()?, now());
-        let draft = match kind {
+        // (the source was encrypted, its text was decrypted for the quote)
+        let mut encrypted = (false, false);
+        let mut draft = match kind {
             DraftKind::New => compose::blank(&identities, id, at),
             DraftKind::Reply { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
+                let (body, was, opened) = self.answer_source(&message_id, body);
+                encrypted = (was, opened);
                 let delivered = self.delivered_to(&identities, &header, &body);
                 compose::answer(false, (&header, &body), &identities, Some(&delivered), id, at)
             }
             DraftKind::ReplyAll { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
+                let (body, was, opened) = self.answer_source(&message_id, body);
+                encrypted = (was, opened);
                 let delivered = self.delivered_to(&identities, &header, &body);
                 compose::answer(true, (&header, &body), &identities, Some(&delivered), id, at)
             }
             DraftKind::Forward { message_id } => {
                 let (header, body) = self.source(&account_id, &message_id)?;
+                let (body, was, opened) = self.answer_source(&message_id, body);
+                encrypted = (was, opened);
                 let delivered = self.delivered_to(&identities, &header, &body);
                 compose::forward((&header, &body), &identities, Some(&delivered), id, at)
             }
@@ -590,6 +599,8 @@ impl Core {
                 return self.open_draft(&account_id, &message_id, &identities, id, at)
             }
         };
+        draft.protection = self.starting_protection(&account_id, &draft.identity_id, encrypted.0);
+        draft.protection.quotes_decrypted = encrypted.1;
         self.store.draft_insert(&account_id, &draft, None, false)?;
         Ok(draft)
     }
@@ -685,6 +696,13 @@ impl Core {
     /// `send_error` set (at once when the server was reached, else with a later pass, and the
     /// listener's `cache_changed` is called).
     pub fn send(&self, draft: Draft, delay_secs: u32) -> Result<PendingSend> {
+        self.send_with(draft, delay_secs, &crypto_send::Typed::default())
+    }
+}
+
+impl Core {
+    /// [`Core::send`], with the passphrase typed for it (see `crypto_send`).
+    fn send_with(&self, draft: Draft, delay_secs: u32, typed: &crypto_send::Typed) -> Result<PendingSend> {
         let account_id = self.account_id()?;
         check_draft_id(&draft.id)?;
         compose::rules::check_recipients(&draft)?;
@@ -693,7 +711,15 @@ impl Core {
         }
         let draft = self.with_swapped_signature(&account_id, draft)?;
         let at = now();
-        let mut pending = self.store.draft_send(&account_id, &draft, at + i64::from(delay_secs), at)?;
+        let send_at = at + i64::from(delay_secs);
+        // A signed or encrypted message is made now, before anything is stored as sending: when it cannot be
+        // made (a key, a passphrase, a recipient's key is missing) the error is returned and the draft stays as it is.
+        let mut pending = if draft.protection.any() {
+            let raw = self.protected_message(&account_id, &draft, typed)?;
+            self.store.draft_send_protected(&account_id, &draft, &raw, send_at, at)?
+        } else {
+            self.store.draft_send(&account_id, &draft, send_at, at)?
+        };
         if (1..=jmap::MAX_HOLD_SECS).contains(&delay_secs) {
             self.hand_over(&account_id, &draft.id, delay_secs);
             match self.store.draft_get(&account_id, &draft.id)? {
@@ -714,7 +740,10 @@ impl Core {
         self.poke_in(delay_secs.saturating_add(3));
         Ok(pending)
     }
+}
 
+#[uniffi::export]
+impl Core {
     /// Takes a message back before it has gone and returns it as a draft. One the server holds
     /// back is cancelled there and put back in Drafts (this needs the connection: without it
     /// the call fails and the message still leaves at its time). Too late is `Error::Invalid`.
@@ -2310,6 +2339,12 @@ impl Core {
     /// checks as [`Core::send`]. The message can be taken back with [`Core::cancel_scheduled`]
     /// until it leaves.
     pub fn schedule_send(&self, draft: Draft, send_at: i64) -> Result<ScheduledSend> {
+        self.schedule_with(draft, send_at, &crypto_send::Typed::default())
+    }
+}
+
+impl Core {
+    fn schedule_with(&self, draft: Draft, send_at: i64, typed: &crypto_send::Typed) -> Result<ScheduledSend> {
         let account_id = self.account_id()?;
         check_draft_id(&draft.id)?;
         compose::rules::check_recipients(&draft)?;
@@ -2322,7 +2357,12 @@ impl Core {
         // The lock first: a pass that is running would take the row for a call that died and
         // make it a draft again. The row is written only once nothing else works on the mail.
         let _sending = self.rt.block_on(self.store.send_lock().lock());
-        self.store.draft_schedule(&account_id, &draft, send_at, at)?;
+        if draft.protection.any() {
+            let raw = self.protected_message(&account_id, &draft, typed)?;
+            self.store.draft_schedule_protected(&account_id, &draft, &raw, send_at, at)?;
+        } else {
+            self.store.draft_schedule(&account_id, &draft, send_at, at)?;
+        }
         let (store, account, id) = (&self.store, &account_id, &draft.id);
         let result = self
             .with_connection(|conn| async move { compose::later::schedule(&conn, store, account, id, send_at).await });
@@ -2334,7 +2374,10 @@ impl Core {
         self.poke();
         result
     }
+}
 
+#[uniffi::export]
+impl Core {
     /// The messages the server is holding back, soonest first. Asks the server.
     pub fn scheduled_sends(&self) -> Result<Vec<ScheduledSend>> {
         let account_id = self.account_id()?;
@@ -2352,8 +2395,26 @@ impl Core {
             compose::later::cancel_scheduled(&conn, store, account, submission).await
         })?;
         self.poke();
+        // A signed or encrypted message that is taken back is in Drafts as that finished message. A signed one is
+        // opened as a draft with Sign on (its text is plain); an encrypted one cannot be edited, so it stays in
+        // Drafts to be opened there.
+        let kind = self.crypto_probe(email_id.clone()).unwrap_or(crate::crypto::types::CryptoKind::None);
+        use crate::crypto::types::CryptoKind;
+        if matches!(kind, CryptoKind::PgpEncrypted | CryptoKind::PgpInline | CryptoKind::SmimeOpaque) {
+            return Err(Error::invalid(
+                "The message was taken back and will not be sent. It is encrypted, so it stays in your Drafts folder as it is: open it there, or write it again.",
+            ));
+        }
         let identities = self.ordered_identities(&account_id)?;
-        self.open_draft(&account_id, &email_id, &identities, compose::new_id()?, now()).map_err(|e| {
+        let opened = self.open_draft(&account_id, &email_id, &identities, compose::new_id()?, now());
+        let opened = match (opened, kind) {
+            (Ok(mut draft), CryptoKind::PgpSigned | CryptoKind::SmimeSigned) => {
+                draft.protection.sign = true;
+                self.store.draft_save(&account_id, &draft, now())
+            }
+            (other, _) => other,
+        };
+        opened.map_err(|e| {
             Error::temporary(format!(
                 "the send is cancelled and the message is a draft again in Drafts on the server, but opening it \
                  failed ({e}): open it from Drafts"

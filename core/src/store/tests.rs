@@ -930,6 +930,7 @@ fn draft(id: &str) -> Draft {
         server_id: None,
         send_error: None,
         updated_at: 1,
+        protection: Default::default(),
     }
 }
 

@@ -6,11 +6,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.kweb_core.Draft
+import uniffi.kweb_core.Protection
 import uniffi.kweb_core.PendingSend
 
 class ListRulesTest {
     private fun draft(id: String, error: String? = null) =
-        Draft(id, "i", emptyList(), emptyList(), emptyList(), "", "", emptyList(), null, false, null, error, 0)
+        Draft(id, "i", emptyList(), emptyList(), emptyList(), "", "", emptyList(), null, false, null, error, 0, Protection(false, false, false))
 
     @Test fun aTapInDraftsOpensComposeAndAnywhereElseTheThread() {
         assertTrue(ListRules.opensCompose("drafts"))

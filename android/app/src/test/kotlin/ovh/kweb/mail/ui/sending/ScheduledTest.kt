@@ -22,7 +22,7 @@ import uniffi.kweb_core.Exception as CoreException
 
 private fun held(id: String, at: Long, subject: String = "S$id", to: List<String> = listOf("a@x.org")) = ScheduledSend(id, subject, to, at)
 
-private fun draftOf(id: String) = Draft(id, "i", emptyList(), emptyList(), emptyList(), "S", "b", emptyList(), null, false, null, null, 0L)
+private fun draftOf(id: String) = Draft(id, "i", emptyList(), emptyList(), emptyList(), "S", "b", emptyList(), null, false, null, null, 0L, uniffi.kweb_core.Protection(false, false, false))
 
 private class FakeScheduled : ScheduledBackend {
     var list: List<ScheduledSend> = emptyList()
