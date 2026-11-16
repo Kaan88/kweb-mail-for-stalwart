@@ -42,6 +42,9 @@ pub trait Listener: Send + Sync {
     fn cache_changed(&self);
     /// The server fired a calendar or task reminder: show it now.
     fn reminder(&self, reminder: Reminder);
+    /// The server's calendars or events changed (also by this phone's own upload): the device calendar sync, if it
+    /// is on, should run. Nothing of the change is told.
+    fn calendar_changed(&self);
 }
 
 /// Timings, so tests can run in milliseconds. `Default` gives the production values.

@@ -28,6 +28,8 @@ mod crypto_raw;
 mod crypto_send;
 #[path = "suite/crypto_trust.rs"]
 mod crypto_trust;
+#[path = "suite/devcal.rs"]
+mod devcal;
 #[path = "suite/enterprise.rs"]
 mod enterprise;
 #[path = "suite/ffi.rs"]

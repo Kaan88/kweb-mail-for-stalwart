@@ -505,6 +505,16 @@ impl MockServer {
         assert!(self.shared.calendar.lock().unwrap().remove(id), "no event '{id}'");
     }
 
+    /// Another client changes an event (a JSCalendar patch); the calendar state moves.
+    pub fn patch_event(&self, id: &str, patch: Value) {
+        self.shared.calendar.lock().unwrap().patch(id, &patch);
+    }
+
+    /// The next `CalendarEvent/changes` answers `cannotCalculateChanges`.
+    pub fn forget_calendar_history(&self) {
+        self.shared.calendar.lock().unwrap().forget_history = true;
+    }
+
     /// An event as the server has it now.
     pub fn event(&self, id: &str) -> Option<Value> {
         self.shared.calendar.lock().unwrap().event(id)
@@ -1779,6 +1789,7 @@ fn call_plain(s: &Shared, name: &str, args: &Value) -> Result<Vec<(String, Value
         | "ParticipantIdentity/get"
         | "CalendarEvent/get"
         | "CalendarEvent/query"
+        | "CalendarEvent/changes"
         | "CalendarEvent/set" => s.calendar.lock().unwrap().call(name, args).map(one),
         "SieveScript/get" | "SieveScript/set" | "SieveScript/validate" => {
             let mut sieve = s.sieve.lock().unwrap();

@@ -36,6 +36,7 @@ struct Recorder {
 }
 
 impl Listener for Recorder {
+    fn calendar_changed(&self) {}
     fn status(&self, status: ConnectionStatus) {
         self.events.lock().unwrap().push(Ev::Status(status));
     }

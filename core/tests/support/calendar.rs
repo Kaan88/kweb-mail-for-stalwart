@@ -41,6 +41,10 @@ pub struct Calendar {
     /// Changes made right after the next `CalendarEvent/get`s, one each: another client writing
     /// between this client's read and its write. `(event id, property, new value)`.
     pub interfere: VecDeque<(String, String, Value)>,
+    /// What changed at which version: `(version after the change, event id, 'c' | 'u' | 'd')`, for `CalendarEvent/changes`.
+    log: Vec<(u64, String, char)>,
+    /// Makes `CalendarEvent/changes` answer `cannotCalculateChanges` once (the server lost its history).
+    pub forget_history: bool,
 }
 
 impl Default for Calendar {
@@ -55,6 +59,8 @@ impl Default for Calendar {
             max_span: Some("P52W1D".into()),
             scheduled: Vec::new(),
             interfere: VecDeque::new(),
+            log: Vec::new(),
+            forget_history: false,
         };
         calendar.add_calendar("cal1", "Personal", true, true);
         calendar
@@ -86,13 +92,23 @@ impl Calendar {
         fields.entry("calendarIds").or_insert_with(|| json!({ "cal1": true }));
         self.events.insert(id.clone(), event);
         self.order.push(id.clone());
+        self.log.push((self.version, id.clone(), 'c'));
         id
     }
 
     pub fn remove(&mut self, id: &str) -> bool {
         self.order.retain(|i| i != id);
         self.version += 1;
+        self.log.push((self.version, id.to_string(), 'd'));
         self.events.remove(id).is_some()
+    }
+
+    /// Another client changes an event: the patch is applied as `CalendarEvent/set` would and the state moves.
+    pub fn patch(&mut self, id: &str, patch: &Value) {
+        let next = apply_patch(&self.events[id], patch).expect("a patch that applies");
+        self.events.insert(id.to_string(), next);
+        self.version += 1;
+        self.log.push((self.version, id.to_string(), 'u'));
     }
 
     pub fn uid_of(&self, id: &str) -> Option<String> {
@@ -151,11 +167,13 @@ impl Calendar {
                     if let Some(event) = self.events.get_mut(&id).and_then(Value::as_object_mut) {
                         event.insert(property, value);
                         self.version += 1;
+                        self.log.push((self.version, id.clone(), 'u'));
                     }
                 }
                 answer
             }
             "CalendarEvent/query" => self.query(args),
+            "CalendarEvent/changes" => self.changes(args),
             "CalendarEvent/set" => self.set(args),
             other => Err(MethodError { kind: "unknownMethod", description: other.to_string() }),
         }
@@ -197,6 +215,56 @@ impl Calendar {
             }
         }
         Ok(json!({ "accountId": ACCOUNT_ID, "state": self.state(), "list": list, "notFound": not_found }))
+    }
+
+    /// `CalendarEvent/changes` as Stalwart answers it: an event made and destroyed inside the range is not
+    /// named, `maxChanges` cuts the list with `hasMoreChanges` and an intermediate new state, and a
+    /// state it does not know is `invalidArguments`.
+    fn changes(&mut self, args: &Value) -> Result<Value, MethodError> {
+        if std::mem::take(&mut self.forget_history) {
+            return Err(MethodError { kind: "cannotCalculateChanges", description: "history is gone".into() });
+        }
+        let since: u64 = args["sinceState"]
+            .as_str()
+            .and_then(|s| s.strip_prefix("cs"))
+            .and_then(|n| n.parse().ok())
+            .ok_or_else(|| invalid("invalid JMAP State"))?;
+        let max = args["maxChanges"].as_u64().map_or(usize::MAX, |m| m as usize);
+        let (mut created, mut updated, mut destroyed): (Vec<String>, Vec<String>, Vec<String>) = Default::default();
+        let (mut upto, mut more) = (since, false);
+        for (version, id, kind) in self.log.iter().filter(|(v, _, _)| *v > since) {
+            let known = [&created, &updated, &destroyed].iter().any(|l| l.contains(id));
+            if !known && created.len() + updated.len() + destroyed.len() >= max {
+                more = true;
+                break;
+            }
+            upto = *version;
+            match kind {
+                'c' => created.push(id.clone()),
+                'u' => {
+                    if !created.contains(id) && !updated.contains(id) {
+                        updated.push(id.clone());
+                    }
+                }
+                _ => {
+                    if let Some(at) = created.iter().position(|i| i == id) {
+                        created.remove(at);
+                    } else {
+                        updated.retain(|i| i != id);
+                        if !destroyed.contains(id) {
+                            destroyed.push(id.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if !more {
+            upto = self.version;
+        }
+        Ok(json!({
+            "accountId": ACCOUNT_ID, "oldState": args["sinceState"], "newState": format!("cs{upto}"),
+            "hasMoreChanges": more, "created": created, "updated": updated, "destroyed": destroyed,
+        }))
     }
 
     fn query(&self, args: &Value) -> Result<Value, MethodError> {
@@ -278,6 +346,7 @@ impl Calendar {
                 Ok(next) => {
                     self.events.insert(id.clone(), next);
                     self.version += 1;
+                    self.log.push((self.version, id.clone(), 'u'));
                     updated.insert(id.clone(), Value::Null);
                     if args["sendSchedulingMessages"] == true {
                         self.scheduled.push(id.clone());

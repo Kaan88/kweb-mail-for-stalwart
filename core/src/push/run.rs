@@ -188,7 +188,12 @@ impl Runner {
     fn on_event(&self, event: Event, conn: &Arc<Connection>) -> bool {
         self.reporter.set(ConnectionStatus::Live { last_event_at: now_secs() });
         match event {
-            Event::StateChange { .. } => true,
+            Event::StateChange { email, mailbox, calendar } => {
+                if calendar {
+                    self.deps.listener.calendar_changed();
+                }
+                email || mailbox
+            }
             // An alert needs no pass: the server fired it, the cache has nothing to do with it.
             Event::CalendarAlert { event_id, alert_id, recurrence_id } => {
                 self.announce_reminder(conn, event_id, alert_id, recurrence_id);

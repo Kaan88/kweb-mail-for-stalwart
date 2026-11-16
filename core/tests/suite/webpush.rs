@@ -123,6 +123,7 @@ struct Recorder {
 }
 
 impl Listener for Recorder {
+    fn calendar_changed(&self) {}
     fn status(&self, _: ConnectionStatus) {}
     fn notifications(&self, plan: Plan) {
         self.plans.lock().unwrap().push(plan);

@@ -14,6 +14,7 @@ mod clock;
 mod contacts;
 mod convert;
 mod crypto;
+pub mod devcal;
 mod download;
 mod enterprise;
 mod errors;
@@ -116,6 +117,8 @@ pub enum Event {
     StateChange {
         email: bool,
         mailbox: bool,
+        /// The user's calendars or their events changed (the device calendar sync follows this).
+        calendar: bool,
     },
     CalendarAlert {
         event_id: String,
@@ -454,11 +457,17 @@ impl Connection {
         .map_err(from_jmap)
     }
 
-    /// Opens the EventSource stream for Email, Mailbox and CalendarAlert changes (ping 60 s),
+    /// Opens the EventSource stream for Email, Mailbox, calendar and CalendarAlert changes (ping 60 s),
     /// with a 30 s open timeout.
     pub async fn events(&self) -> Result<EventStream> {
         let open = self.client.event_source(
-            Some([DataType::Email, DataType::Mailbox, DataType::CalendarAlert]),
+            Some([
+                DataType::Email,
+                DataType::Mailbox,
+                DataType::CalendarAlert,
+                DataType::CalendarEvent,
+                DataType::Calendar,
+            ]),
             false,
             Some(STREAM_PING_SECS),
             None,
@@ -527,9 +536,10 @@ fn read_event(item: jmap_client::Result<PushNotification>, account: &str) -> Opt
     use jmap_client::Error as E;
     match item {
         Ok(PushNotification::StateChange(changes)) => {
-            let types = changes.changes(account).into_iter().flatten().map(|(t, _)| t);
-            let (email, mailbox) = changed_types(types);
-            (email || mailbox).then_some(Ok(Event::StateChange { email, mailbox }))
+            let types: Vec<&DataType> = changes.changes(account).into_iter().flatten().map(|(t, _)| t).collect();
+            let (email, mailbox) = changed_types(types.iter().copied());
+            let calendar = types.iter().any(|t| matches!(t, DataType::CalendarEvent | DataType::Calendar));
+            (email || mailbox || calendar).then_some(Ok(Event::StateChange { email, mailbox, calendar }))
         }
         Ok(PushNotification::CalendarAlert(a)) => Some(Ok(Event::CalendarAlert {
             event_id: a.calendar_event_id,
@@ -661,7 +671,7 @@ mod tests {
     #[test]
     fn state_change_flags() {
         let flags = |types: &[DataType]| match read_event(state_change(types, "a1"), "a1") {
-            Some(Ok(Event::StateChange { email, mailbox })) => Some((email, mailbox)),
+            Some(Ok(Event::StateChange { email, mailbox, .. })) => Some((email, mailbox)),
             _ => None,
         };
         assert_eq!(flags(&[DataType::Email]), Some((true, false)));

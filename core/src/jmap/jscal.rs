@@ -33,12 +33,12 @@ fn text<'a>(object: &'a Value, key: &str) -> Option<&'a str> {
     object.get(key)?.as_str().filter(|s| !s.is_empty())
 }
 
-fn is_task(event: &Value) -> bool {
+pub(super) fn is_task(event: &Value) -> bool {
     event["@type"] == "Task"
 }
 
 /// The ids of the calendars an event is in.
-fn calendar_ids(event: &Value) -> Vec<&str> {
+pub(super) fn calendar_ids(event: &Value) -> Vec<&str> {
     let ids = event["calendarIds"].as_object().into_iter().flatten();
     ids.filter(|(_, member)| **member == true).map(|(id, _)| id.as_str()).collect()
 }
@@ -388,7 +388,7 @@ pub fn detail_at(
 /// The repeat rules of an event. Stalwart's name is `recurrenceRule` (one object); the plural is
 /// what older builds of the app wrote, which the server keeps as an unknown property and does not
 /// follow, so it is read as a fallback (and repaired on the next save, see [`update_patch`]).
-fn rules_of(event: &Value) -> Vec<&Value> {
+pub(super) fn rules_of(event: &Value) -> Vec<&Value> {
     if let Some(rule) = event.get("recurrenceRule").filter(|rule| rule.is_object()) {
         return vec![rule];
     }
@@ -401,7 +401,7 @@ fn has_legacy_rules(event: &Value) -> bool {
 }
 
 /// Whether the event has rules that exclude dates (`excludedRecurrenceRule`, or the plural).
-fn has_excluding_rules(event: &Value) -> bool {
+pub(super) fn has_excluding_rules(event: &Value) -> bool {
     event.get("excludedRecurrenceRule").is_some_and(|rule| rule.is_object())
         || event["excludedRecurrenceRules"].as_array().is_some_and(|rules| !rules.is_empty())
 }

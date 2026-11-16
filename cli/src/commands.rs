@@ -1185,6 +1185,7 @@ fn sign_out(core: &Core) -> Result<(), String> {
 struct Printer;
 
 impl Listener for Printer {
+    fn calendar_changed(&self) {}
     fn status(&self, status: ConnectionStatus) {
         println!("status: {}", describe_status(&status));
     }

@@ -11,6 +11,7 @@ mod crypto;
 mod crypto_send;
 mod crypto_trust;
 mod data;
+mod devcal;
 mod download;
 mod enterprise;
 mod filter_rules;
@@ -1136,6 +1137,7 @@ fn now() -> i64 {
 struct Silent;
 
 impl Listener for Silent {
+    fn calendar_changed(&self) {}
     fn status(&self, _: ConnectionStatus) {}
     fn notifications(&self, _: Plan) {}
     fn cache_changed(&self) {}

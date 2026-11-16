@@ -29,6 +29,7 @@ struct Recorder {
 }
 
 impl Listener for Recorder {
+    fn calendar_changed(&self) {}
     fn status(&self, status: ConnectionStatus) {
         if matches!(status, ConnectionStatus::Live { .. }) {
             *self.live.lock().unwrap() = true;

@@ -50,11 +50,11 @@ const FALLBACK_SPAN_SECS: u64 = 366 * 86_400;
 const NO_SUCH_EVENT: &str = "the event no longer exists on the server";
 
 impl Connection {
-    fn calendar_account_id(&self) -> String {
+    pub(super) fn calendar_account_id(&self) -> String {
         self.account_for(CALENDARS_CAPABILITY)
     }
 
-    async fn calendar_call(&self, calls: &[(&str, Value)]) -> Result<Vec<(String, Value)>> {
+    pub(super) async fn calendar_call(&self, calls: &[(&str, Value)]) -> Result<Vec<(String, Value)>> {
         self.call(&[CALENDARS_CAPABILITY], calls).await
     }
 
@@ -125,7 +125,7 @@ impl Connection {
 
     /// Every event and task of these calendars, whole. Each page is one request: the ids and,
     /// by reference, the events.
-    async fn events_in(&self, account: &str, calendars: &BTreeSet<String>) -> Result<Vec<Value>> {
+    pub(super) async fn events_in(&self, account: &str, calendars: &BTreeSet<String>) -> Result<Vec<Value>> {
         let limit = self.get_batch();
         let (mut out, mut seen) = (Vec::new(), BTreeSet::new());
         for calendar in calendars {
@@ -238,7 +238,7 @@ impl Connection {
     /// patches set whole maps, so an event someone else changed in between must not be written
     /// over: then it is read again and the patch rebuilt, once. An empty patch sends nothing.
     /// With `notify` the server also sends the scheduling messages the change calls for.
-    async fn change(
+    pub(super) async fn change(
         &self,
         account: &str,
         id: &str,
