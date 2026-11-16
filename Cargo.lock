@@ -839,7 +839,9 @@ version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
+ "getrandom 0.4.3",
  "hybrid-array",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -2028,7 +2030,7 @@ name = "kweb-core"
 version = "0.0.1"
 dependencies = [
  "aes 0.8.4",
- "aes-gcm 0.10.3",
+ "aes-gcm 0.11.1",
  "axum",
  "base64 0.22.1",
  "cbc 0.1.2",
