@@ -12,4 +12,5 @@ publish = false
 opt-level = "s"
 lto = true
 codegen-units = 1
-strip = true
+# Symbols stay: uniffi-bindgen reads the binding metadata from them; Gradle strips the library when packaging.
+strip = "debuginfo"
