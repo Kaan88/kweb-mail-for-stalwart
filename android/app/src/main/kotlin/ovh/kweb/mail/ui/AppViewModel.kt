@@ -29,6 +29,7 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.IntentAccount
 import ovh.kweb.mail.background.NotificationTarget
 import ovh.kweb.mail.background.Notifier
+import ovh.kweb.mail.ui.attention.HomeSetting
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import ovh.kweb.mail.ui.signin.SignInNotices
 import ovh.kweb.mail.ui.signin.SignInReturn
@@ -115,8 +116,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         return@collect
                     }
                 }
-                adopt(opened)
+                // The Home tab is on or off per account; read before the screens appear so the app can open on it.
+                val homeOn = opened?.let { s -> withContext(Dispatchers.IO) { runCatching { s.core.attentionSettings().home }.getOrDefault(false) } } ?: false
+                HomeSetting.set(homeOn)
+                adopt(opened, homeOn)
             }
+        }
+        // The Home tab was switched off while it was on the stack: it is not a screen any more.
+        viewModelScope.launch {
+            HomeSetting.enabled.collect { on -> if (!on) stackFlow.update { if (Route.Home in it) BackStack.withoutHome(it) else it } }
         }
         // The browser came back after the app was killed while it was in front: the sign-in is gone.
         viewModelScope.launch {
@@ -159,7 +167,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * The account the screens show is [now] (null: none). The first one is only noted; a different one starts the
      * screens over: the back stack is the list again and the view models of the old account are dropped.
      */
-    private fun adopt(now: AccountSession?) {
+    private fun adopt(now: AccountSession?, homeOn: Boolean = false) {
         val before = sessionFlow.value
         if (before?.record?.id == now?.record?.id) {
             // The same account (its login was refreshed): keep the screens.
@@ -171,10 +179,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         stores.session = now
         if (before != null) {
-            stackFlow.value = BackStack.afterAccountSwitch()
+            stackFlow.value = if (homeOn) BackStack.start(true) else BackStack.afterAccountSwitch()
             stores.clear()
             accountStore.clear()
             listCommandFlow.value = null
+        } else if (now != null && stackFlow.value == BackStack.initial) {
+            // The first account of this run: the app opens on Home when the user switched it on.
+            stackFlow.value = BackStack.start(homeOn)
         }
         serverUrlFlow.value = now?.record?.serverUrl
         sessionFlow.value = now

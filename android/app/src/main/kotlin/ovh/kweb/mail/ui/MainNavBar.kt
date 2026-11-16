@@ -24,12 +24,18 @@ data class MainTab(val route: Route, @StringRes val label: Int, @DrawableRes val
 
 /** The entries of the bottom bar, in order. */
 object MainTabs {
+    private val home = MainTab(Route.Home, R.string.tab_home, R.drawable.ic_home)
+
+    /** The four tabs of an app whose Home tab is off. */
     val all = listOf(
         MainTab(Route.MailList, R.string.tab_mail, R.drawable.ic_mail),
         MainTab(Route.Calendar, R.string.tab_calendar, R.drawable.ic_calendar),
         MainTab(Route.Contacts, R.string.tab_contacts, R.drawable.ic_person),
         MainTab(Route.Files, R.string.tab_files, R.drawable.ic_files),
     )
+
+    /** The tabs in order: Home first when the user switched it on. */
+    fun of(homeOn: Boolean): List<MainTab> = if (homeOn) listOf(home) + all else all
 }
 
 /**
@@ -37,9 +43,9 @@ object MainTabs {
  * screen; [mailUnread] is the count on the Mail entry, the Inbox's unread mail.
  */
 @Composable
-fun MainNavBar(selected: Route, mailUnread: Int, onSelect: (Route) -> Unit) {
+fun MainNavBar(selected: Route, mailUnread: Int, onSelect: (Route) -> Unit, homeOn: Boolean = false) {
     NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-        for (tab in MainTabs.all) {
+        for (tab in MainTabs.of(homeOn)) {
             val label = stringResource(tab.label)
             val on = tab.route == selected
             NavigationBarItem(

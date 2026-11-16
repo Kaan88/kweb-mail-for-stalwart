@@ -25,6 +25,12 @@ sealed interface Route {
     /** The agenda: a root beside the mail list. */
     data object Calendar : Route
 
+    /** The Home tab (tiles and the sparkle), the first root when the user switched it on: it sits on the mail list like the agenda does. */
+    data object Home : Route
+
+    /** Home and attention in Settings: the Home tab, its tiles and what the phone looks out for. */
+    data object HomeAttention : Route
+
     /** One event or task. [recurrenceId] is the occurrence of a repeating event that was opened, if any. */
     data class Event(val eventId: String, val recurrenceId: String?) : Route
 
@@ -33,7 +39,14 @@ sealed interface Route {
      * changing one. [account] is the owner's account when it is in a calendar shared with the user (null: the user's own).
      * [prefill] is what a new entry starts with when the assistant found it in a message (the user still saves it himself).
      */
-    data class EditEvent(val eventId: String?, val startHint: String?, val account: String? = null, val prefill: EventPrefill? = null) : Route
+    data class EditEvent(
+        val eventId: String?,
+        val startHint: String?,
+        val account: String? = null,
+        val prefill: EventPrefill? = null,
+        /** A new start for an entry that is being changed ("YYYY-MM-DDTHH:MM:SS"): the form opens with it, the user saves it himself. */
+        val startAt: String? = null,
+    ) : Route
 
     /** The contacts: the third root beside the mail list and the agenda. */
     data object Contacts : Route
@@ -181,7 +194,13 @@ object BackStack {
     fun switchTo(root: Route): List<Route> = if (root == Route.MailList) initial else initial + root
 
     /** The four screens the bottom bar leads to; only they show it. */
-    fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Calendar || route == Route.Contacts || route == Route.Files
+    fun isRoot(route: Route): Boolean = route == Route.MailList || route == Route.Home || route == Route.Calendar || route == Route.Contacts || route == Route.Files
+
+    /** What the app opens on: the Home tab over the mail list when it is switched on, the mail list otherwise. */
+    fun start(homeOn: Boolean): List<Route> = if (homeOn) switchTo(Route.Home) else initial
+
+    /** The Home tab was switched off: it is not a screen any more. */
+    fun withoutHome(stack: List<Route>): List<Route> = stack.filter { it != Route.Home }.ifEmpty { initial }
 
     /** The share is gone: back to the shared screen (it reads itself again), or the root when it is not on the stack. */
     fun backToShared(stack: List<Route>): List<Route> {

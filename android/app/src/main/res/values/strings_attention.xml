@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Home tab -->
+    <string name="tab_home">Home</string>
+    <string name="home_greeting_morning">Good morning</string>
+    <string name="home_greeting_afternoon">Good afternoon</string>
+    <string name="home_greeting_evening">Good evening</string>
+    <string name="home_search">Search mail</string>
+    <string name="home_tile_unread">Unread in Inbox</string>
+    <string name="home_tile_next_event">Next event</string>
+    <string name="home_tile_due_today">Due today</string>
+    <string name="home_tile_flagged">Flagged</string>
+    <string name="home_tile_files">Recent files</string>
+    <string name="home_unread_none">Nothing unread</string>
+    <string name="home_event_none">Nothing planned</string>
+    <string name="home_event_in">in %1$s</string>
+    <string name="home_event_now">now</string>
+    <string name="home_event_then">Then: %1$s</string>
+    <string name="home_event_all_day">today</string>
+    <plurals name="home_tasks">
+        <item quantity="one">%d task</item>
+        <item quantity="other">%d tasks</item>
+    </plurals>
+    <string name="home_tasks_none">All done</string>
+    <string name="home_tasks_more">and %1$d overdue</string>
+    <string name="home_tasks_tomorrow">%1$d more tomorrow</string>
+    <plurals name="home_flagged_count">
+        <item quantity="one">%d mail</item>
+        <item quantity="other">%d mails</item>
+    </plurals>
+    <string name="home_flagged_none">Nothing flagged</string>
+    <string name="home_flagged_oldest">Oldest: %1$s</string>
+    <plurals name="home_days">
+        <item quantity="one">%d day</item>
+        <item quantity="other">%d days</item>
+    </plurals>
+    <string name="home_today">today</string>
+    <string name="home_status_offline">No connection</string>
+    <string name="home_status_offline_since">No connection since %1$s</string>
+    <string name="home_status_sign_in">Sign in again</string>
+    <string name="home_status_away">Away</string>
+    <string name="home_status_away_until">Away until %1$s</string>
+    <string name="home_unit_minutes">%1$d min</string>
+    <string name="home_unit_hours">%1$d h</string>
+    <string name="home_unit_hours_minutes">%1$d h %2$d</string>
+    <string name="home_loading">Loading</string>
+
+    <!-- The sparkle and the sheet -->
+    <plurals name="att_sparkle">
+        <item quantity="one">Worth a look: %d thing found</item>
+        <item quantity="other">Worth a look: %d things found</item>
+    </plurals>
+    <string name="att_sheet_title">Worth a look</string>
+    <string name="att_sheet_sub">Found on the phone at %1$s. Nothing has been sent.</string>
+    <string name="att_sheet_foot">Buttons with a sparkle send what they name to %1$s. The others stay on the phone.</string>
+    <string name="att_close">Close</string>
+    <string name="att_group_mail">Mail</string>
+    <string name="att_group_calendar">Calendar</string>
+    <string name="att_group_tasks">Tasks</string>
+    <string name="att_dismissed">Dismissed</string>
+    <string name="att_dismiss">Dismiss</string>
+    <string name="att_mark">Worth a look in this mail</string>
+
+    <!-- The findings -->
+    <string name="att_overlap">%1$s %2$s overlaps %3$s</string>
+    <string name="att_no_place">%1$s at %2$s has no place or link</string>
+    <string name="att_no_place_in">In %1$s</string>
+    <plurals name="att_no_place_mails">
+        <item quantity="one">In %2$s · %1$d mail mentions it</item>
+        <item quantity="other">In %2$s · %1$d mails mention it</item>
+    </plurals>
+    <string name="att_invitation">%1$s, %2$s: not answered yet</string>
+    <string name="att_invitation_free">Free then</string>
+    <string name="att_invitation_overlaps">Overlaps %1$s</string>
+    <plurals name="att_busy">
+        <item quantity="one">%2$s is busy: %1$d event</item>
+        <item quantity="other">%2$s is busy: %1$d events</item>
+    </plurals>
+    <string name="att_busy_no_free">No free time between 09:00 and 18:00</string>
+    <string name="att_busy_free">Free time: %1$s</string>
+    <string name="att_tight">Little time between %1$s and %2$s</string>
+    <string name="att_tight_places">From %1$s to %2$s</string>
+    <plurals name="att_overdue">
+        <item quantity="one">%d task overdue</item>
+        <item quantity="other">%d tasks overdue</item>
+    </plurals>
+    <plurals name="att_no_time">
+        <item quantity="one">%d task due today without a time</item>
+        <item quantity="other">%d tasks due today without a time</item>
+    </plurals>
+    <plurals name="att_too_many">
+        <item quantity="one">%d task due today</item>
+        <item quantity="other">%d tasks due today</item>
+    </plurals>
+    <string name="att_may_finish">%1$s: a mail may finish it</string>
+    <string name="att_quoted_meta">“%1$s”, %2$s</string>
+    <string name="att_date_mail">A date in mail from %1$s</string>
+    <string name="att_deadline">A deadline in mail from %1$s</string>
+    <string name="att_invitation_file">%1$s sent an invitation</string>
+    <string name="att_waiting">%1$s asked you something</string>
+    <plurals name="att_waiting_meta">
+        <item quantity="one">“%2$s” · %1$d day ago</item>
+        <item quantity="other">“%2$s” · %1$d days ago</item>
+    </plurals>
+    <string name="att_more_names">%1$s and more</string>
+    <string name="att_today">Today</string>
+    <string name="att_tomorrow">Tomorrow</string>
+
+    <!-- Buttons: on the phone -->
+    <string name="att_open">Open</string>
+    <string name="att_open_mails">Open mails</string>
+    <string name="att_move">Move %1$s…</string>
+    <string name="att_find_slot">Find a slot</string>
+    <string name="att_answer">Answer…</string>
+    <string name="att_accept">Accept</string>
+    <string name="att_maybe">Maybe</string>
+    <string name="att_decline">Decline</string>
+    <string name="att_free_time">Free time</string>
+    <string name="att_directions">Directions</string>
+    <string name="att_move_today">Move to today</string>
+    <string name="att_mark_done">Mark done</string>
+    <string name="att_add_calendar">Add to calendar…</string>
+    <string name="att_add_task">Add task…</string>
+    <string name="att_slots_help">Free for %1$s; a tap opens the event in the editor at that time</string>
+    <string name="att_slots_free_list">Free: %1$s</string>
+    <string name="att_slots_none">No free time found</string>
+    <string name="att_duration_min">%1$d min</string>
+    <string name="att_duration_h">%1$d h</string>
+    <string name="att_duration_hm">%1$d h %2$d min</string>
+    <string name="att_range">%1$s to %2$s</string>
+
+    <!-- Buttons: with the service (phase 2 runs them) -->
+    <string name="att_svc_look_in_mail">Look in mail</string>
+    <string name="att_svc_plan_my_day">Plan my day</string>
+    <string name="att_svc_check_the_mail">Check the mail</string>
+    <string name="att_svc_add_dates">Add dates</string>
+    <string name="att_svc_reply_ideas">Reply ideas</string>
+
+    <!-- Results of a tap on the phone -->
+    <string name="att_answered">Answer sent</string>
+    <string name="att_answer_failed">The answer could not be sent. Try again.</string>
+    <string name="att_done_marked">Marked done</string>
+    <string name="att_done_failed">The task could not be changed. Try again.</string>
+    <plurals name="att_moved_today">
+        <item quantity="one">%d task moved to today</item>
+        <item quantity="other">%d tasks moved to today</item>
+    </plurals>
+    <string name="att_moved_failed">The tasks could not be moved. Try again.</string>
+    <string name="att_undo">Undo</string>
+    <string name="att_no_maps">No maps app was found</string>
+
+    <!-- Settings -->
+    <string name="att_settings_title">Home and attention</string>
+    <string name="att_settings_new">New</string>
+    <string name="att_settings_ai_detail">%1$s on · ask before each run</string>
+    <string name="att_settings_ai_detail_noask">%1$s on</string>
+    <string name="att_settings_ai_detail_off">Calendar, Tasks and Mail off</string>
+    <string name="att_settings_detail">Home tab and what the phone looks out for</string>
+    <string name="att_settings_home">Show Home tab</string>
+    <string name="att_settings_home_on">On: the app opens on Home</string>
+    <string name="att_settings_home_off">Off: the app opens on Mail</string>
+    <string name="att_settings_tiles">Tiles</string>
+    <string name="att_settings_delivery_detail">Only when there is a problem</string>
+    <string name="att_settings_away_detail">Only while it is on</string>
+    <string name="att_settings_tile_delivery">Delivery</string>
+    <string name="att_settings_tile_away">Away message</string>
+    <string name="att_settings_attention">Attention</string>
+    <string name="att_settings_cal">Calendar</string>
+    <string name="att_settings_cal_detail">Overlaps, no place soon, open invitations, busy days. On the phone, costs nothing.</string>
+    <string name="att_settings_tasks">Tasks</string>
+    <string name="att_settings_tasks_detail">Overdue, unscheduled, too many, a mail that may finish one. On the phone, costs nothing.</string>
+    <string name="att_settings_mail">Mail</string>
+    <string name="att_settings_mail_detail">Dates, deadlines, invitation files, questions waiting for you. On the phone, costs nothing.</string>
+    <string name="att_settings_scope">Which mail</string>
+    <string name="att_settings_scope_inbox">Inbox only</string>
+    <string name="att_settings_scope_notified">Inbox and notified folders</string>
+    <string name="att_settings_assistant">Assistant</string>
+    <string name="att_settings_service_detail">Used by the sparkle buttons · Assistant settings</string>
+    <string name="att_settings_ask">Ask before each run</string>
+    <string name="att_settings_ask_detail">Says what will be sent and waits for Send</string>
+    <string name="att_settings_cost">Show the cost note</string>
+    <string name="att_settings_cost_detail">What was sent and the tokens, under each result</string>
+    <string name="att_settings_foot">The phone looks for these by itself and sends nothing. Mail leaves the phone only when you tap a button with a sparkle, and only the mail it names. A change is made only when you tap Add on the card that shows it, with Undo. The assistant never sends mail and never changes an existing event: Move and Edit open the editor for you.</string>
+    <string name="att_settings_failed">The settings could not be saved. Try again.</string>
+    <string name="att_settings_reset">Bring back dismissed findings</string>
+    <string name="att_settings_reset_done">Dismissed findings are back</string>
+</resources>

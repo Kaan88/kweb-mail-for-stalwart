@@ -93,7 +93,7 @@ import uniffi.kweb_core.AiProvider
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewModel()) {
+fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm: AssistantSettingsViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
@@ -125,7 +125,7 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
             }
             val form = state.form
             when {
-                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm) { confirmReset = true }
+                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm, onOpenHomeAttention) { confirmReset = true }
                 state.phase == AssistantPhase.FAILED -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -193,7 +193,7 @@ fun AssistantScreen(onBack: () -> Unit, vm: AssistantSettingsViewModel = viewMod
 }
 
 @Composable
-private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel, onReset: () -> Unit) {
+private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel, onOpenHomeAttention: () -> Unit, onReset: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
         GroupColumn {
@@ -288,6 +288,9 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
                 vm.edit { it.copy(allowChat = v) }
             }
         }
+
+        // The sparkle buttons of Home and the other screens follow the switches above; their own settings are one tap away.
+        ovh.kweb.mail.ui.attention.HomeAttentionRow(onOpenHomeAttention, Modifier.padding(top = 16.dp))
 
         // What the chat may do about changes. There is no "automatic": a change is only ever suggested and waits for a tap.
         SectionLabel(stringResource(R.string.assistant_actions))
@@ -612,7 +615,7 @@ private fun switchDetail(form: AssistantRules.Form): String = when (val line = A
     }
 }
 
-private fun serviceName(service: AssistantRules.Service): Int = when (service) {
+internal fun serviceName(service: AssistantRules.Service): Int = when (service) {
     AssistantRules.Service.OPENAI -> R.string.assistant_svc_openai
     AssistantRules.Service.OPENROUTER -> R.string.assistant_svc_openrouter
     AssistantRules.Service.GEMINI -> R.string.assistant_svc_gemini

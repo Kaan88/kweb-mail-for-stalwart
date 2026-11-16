@@ -49,6 +49,8 @@ class EditEventViewModel(
     account: String? = null,
     /** What a NEW entry starts with (see [EventPrefill]); an entry that is being changed ignores it. */
     private val prefill: EventPrefill? = null,
+    /** A new start for an entry that is being changed ("YYYY-MM-DDTHH:MM:SS"): the form opens with it and counts as changed. */
+    private val startAt: String? = null,
 ) : AndroidViewModel(app) {
     private val backend = eventFormBackend({ session.core }, account)
     private val stateFlow = MutableStateFlow(EditState(creating = eventId == null))
@@ -72,8 +74,9 @@ class EditEventViewModel(
                     backend.calendars() to eventId?.let { backend.event(it) }
                 }
                 val menu = FormChoices.calendars(all, detail?.input?.calendarId)
-                val form = if (detail != null) {
-                    EventForms.fromInput(detail.input, detail.hasComplexRepeat)
+                val loadedForm = if (detail != null) EventForms.fromInput(detail.input, detail.hasComplexRepeat) else null
+                val form = if (detail != null && loadedForm != null) {
+                    EventPrefills.moveTo(loadedForm, startAt)
                 } else {
                     val calendar = FormChoices.defaultCalendar(menu)
                     if (calendar == null) {
@@ -90,7 +93,8 @@ class EditEventViewModel(
                     it.copy(
                         phase = if (readOnly) EditPhase.READ_ONLY else EditPhase.READY,
                         form = form,
-                        initial = form,
+                        // What the form was opened with is the way it was loaded, except a start the caller asked for: that is a change.
+                        initial = loadedForm ?: form,
                         calendars = menu,
                     )
                 }
@@ -153,7 +157,15 @@ internal object EventPrefills {
         return if (prefill.allDay) {
             titled.copy(allDay = true, startDate = at.toLocalDate(), endDate = at.toLocalDate())
         } else {
-            titled.withStart(at.toLocalDate(), at.toLocalTime().withSecond(0).withNano(0))
+            val started = titled.withStart(at.toLocalDate(), at.toLocalTime().withSecond(0).withNano(0))
+            if (prefill.durationMinutes > 0 && !prefill.isTask) started.withEnd(started.start.plusMinutes(prefill.durationMinutes.toLong()).toLocalDate(), started.start.plusMinutes(prefill.durationMinutes.toLong()).toLocalTime()) else started
         }
+    }
+
+    /** [loaded] with the start [startAt] ("YYYY-MM-DDTHH:MM:SS"); the length stays. A start that cannot be read, or an all-day entry, is left alone. */
+    fun moveTo(loaded: EventForm, startAt: String?): EventForm {
+        val at = startAt?.let { runCatching { LocalDateTime.parse(it.trim()) }.getOrNull() } ?: return loaded
+        if (loaded.allDay) return loaded
+        return loaded.withStart(at.toLocalDate(), at.toLocalTime().withSecond(0).withNano(0))
     }
 }

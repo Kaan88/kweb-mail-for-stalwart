@@ -102,6 +102,7 @@ fun SettingsScreen(
     onOpenFilters: () -> Unit,
     onOpenAssistant: () -> Unit,
     onOpenNotifications: () -> Unit,
+    onOpenHomeAttention: () -> Unit,
     onOpenDeviceCalendar: () -> Unit,
     onOpenScheduled: () -> Unit,
     onOpenSenders: () -> Unit,
@@ -258,6 +259,17 @@ fun SettingsScreen(
                     assistantLine(state.assistant),
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
                     onClick = onOpenAssistant,
+                )
+            }
+
+            SectionTitle(stringResource(R.string.att_settings_title))
+            Group {
+                SettingsRow(
+                    Groups.shape(0, 1),
+                    stringResource(R.string.att_settings_title),
+                    stringResource(R.string.att_settings_detail),
+                    icon = { Icon(painterResource(R.drawable.ic_home), contentDescription = null) },
+                    onClick = onOpenHomeAttention,
                 )
             }
 

@@ -43,6 +43,11 @@ import ovh.kweb.mail.ui.account.SecurityScreen
 import ovh.kweb.mail.ui.filters.FiltersScreen
 import ovh.kweb.mail.ui.folders.FoldersScreen
 import ovh.kweb.mail.ui.list.MailListScreen
+import ovh.kweb.mail.ui.attention.AttentionNav
+import ovh.kweb.mail.ui.attention.HomeSetting
+import ovh.kweb.mail.ui.home.HomeActions
+import ovh.kweb.mail.ui.home.HomeScreen
+import ovh.kweb.mail.ui.settings.HomeAttentionScreen
 import ovh.kweb.mail.ui.list.MailListViewModel
 import ovh.kweb.mail.ui.mailextras.LabelScreen
 import ovh.kweb.mail.ui.search.SearchScreen
@@ -182,7 +187,15 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     },
                 )
             }
-            val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo) }
+            val homeOn by HomeSetting.enabled.collectAsStateWithLifecycle()
+            val bottomBar: @Composable () -> Unit = { MainNavBar(stack.last(), unread, app::switchTo, homeOn) }
+            // What a finding of the attention layer can open: a conversation, or the editor (the user saves it himself).
+            val attentionNav = remember(app) {
+                AttentionNav(
+                    openThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                    openEditor = { app.open(it) },
+                )
+            }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
             // What a screen remembers (its scroll position) is kept while another screen is over it and dropped when its route leaves the stack.
             val stateHolder = rememberSaveableStateHolder()
@@ -209,6 +222,25 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )
+                Route.Home -> HomeScreen(
+                    actions = HomeActions(
+                        openMail = { app.switchTo(Route.MailList) },
+                        openFlagged = {
+                            mailList.selectFolder(null)
+                            mailList.selectFilter(uniffi.kweb_core.ListFilter.FLAGGED)
+                            app.switchTo(Route.MailList)
+                        },
+                        openCalendar = { app.switchTo(Route.Calendar) },
+                        openFiles = { app.switchTo(Route.Files) },
+                        openSearch = { app.open(Route.Search) },
+                        openDeliveryCheck = { app.open(Route.DeliveryCheck) },
+                        openAway = { app.open(Route.Away) },
+                    ),
+                    nav = attentionNav,
+                    bottomBar = bottomBar,
+                    appSnackbar = snackbar,
+                )
+                Route.HomeAttention -> HomeAttentionScreen(onBack = app::back, onOpenAssistant = { app.open(Route.Assistant) })
                 Route.Calendar -> CalendarScreen(
                     onOpenEvent = { eventId, recurrenceId -> app.open(Route.Event(eventId, recurrenceId)) },
                     onAddEvent = { app.open(Route.EditEvent(null, it)) },
@@ -230,7 +262,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 }
                 is Route.EditEvent -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account, prefill = route.prefill)
+                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account, prefill = route.prefill, startAt = route.startAt)
                     }
                 }
                 is Route.Contact -> key(route) {
@@ -352,7 +384,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     SendersScreen(onBack = app::back)
                 }
                 Route.Assistant -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                    AssistantScreen(onBack = app::back)
+                    AssistantScreen(onBack = app::back, onOpenHomeAttention = { app.open(Route.HomeAttention) })
                 }
                 Route.AssistantChat -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     ChatScreen(
@@ -411,6 +443,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenAdmin = { app.open(Route.Admin(ovh.kweb.mail.ui.admin.AdminScreen.Home)) },
                     onOpenAssistant = { app.open(Route.Assistant) },
                     onOpenNotifications = { app.open(Route.Notifications) },
+                    onOpenHomeAttention = { app.open(Route.HomeAttention) },
                     onOpenDeviceCalendar = { app.open(Route.DeviceCalendar) },
                     onOpenScheduled = { app.open(Route.Scheduled) },
                     onOpenSenders = { app.open(Route.Senders) },
