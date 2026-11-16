@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>kweb mail bento home options</title>
+<style>
+:root{--bg:#f6f4f5;--fg:#1c1c26;--muted:#656878;--line:#e0dde3;--card:#fff;--brand:#b72046;--bezel:#16171f}
+@media (prefers-color-scheme:dark){:root{--bg:#101118;--fg:#eceef4;--muted:#9a9fb2;--line:#2a2c3a;--card:#191b25;--brand:#ffb2bd;--bezel:#05060a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,"Segoe UI",Roboto,sans-serif;padding:36px 20px 72px}
+.wrap{max-width:1360px;margin:0 auto;display:flex;flex-direction:column;gap:30px}
+h1{font-size:30px;line-height:1.15;margin:0 0 8px}h2{font-size:21px;margin:0 0 6px}
+.lede{color:var(--muted);max-width:75ch;margin:0}
+table{border-collapse:collapse;width:100%;font-size:14px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-bottom:1px solid var(--line)}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--bg)}
+td:first-child{font-weight:700;white-space:nowrap}tr:last-child td{border-bottom:0}
+.small{font-size:13px;color:var(--muted);margin:8px 0 0;max-width:90ch}
+.variant{display:grid;grid-template-columns:auto auto minmax(260px,1fr);gap:26px;align-items:start;padding-top:24px;border-top:1px solid var(--line)}
+.cap{font-size:14px;color:var(--muted)}.cap ul{margin:6px 0 0;padding-left:18px}.cap li{margin:3px 0}
+.cap b{color:var(--fg)}.tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:8px;background:var(--line);color:var(--fg);margin-right:4px}
+.tag.ai{background:#ffddb9;color:#2b1700}
+.lbl{font-size:12px;color:var(--muted);text-align:center;margin-top:6px}
+.phone{width:376px;height:796px;border:8px solid var(--bezel);border-radius:40px;overflow:hidden;position:relative}
+.s{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);font:400 13px/1.35 Roboto,system-ui,"Segoe UI",sans-serif}
+.s *{box-sizing:border-box}
+.l{--bg:#fff8f7;--fg:#22191a;--var:#534344;--pri:#b72046;--opri:#fff;--pc:#ffd9de;--opc:#400012;--secc:#fadde0;--osecc:#2c1519;--terc:#ffddb9;--oterc:#2b1700;--scl:#fff0f0;--sc:#fceaea;--sch:#f6e3e4;--out:#857374;--outv:#d8c2c3;--err:#ba1a1a}
+.d{--bg:#1a1112;--fg:#f0dedf;--var:#d8c1c3;--pri:#ffb2bd;--opri:#670023;--pc:#8f0b37;--opc:#ffd9de;--secc:#5c3f43;--osecc:#ffd9de;--terc:#6b4300;--oterc:#ffddb9;--scl:#231a1b;--sc:#271e1f;--sch:#322829;--out:#a08c8d;--outv:#534344;--err:#ffb4ab}
+.sb{display:flex;justify-content:space-between;padding:9px 22px 4px;font-size:11px;font-weight:500;flex:none}
+.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{display:flex;align-items:center;gap:8px;padding:6px 14px 6px 18px;flex:none}.tb .t{flex:1;font-size:22px;font-weight:500}
+.av{width:34px;height:34px;border-radius:50%;background:var(--secc);color:var(--osecc);display:grid;place-items:center;font-weight:600;font-size:14px;flex:none}
+.body{flex:1;min-height:0;overflow:hidden;padding:4px 12px 10px;display:flex;flex-direction:column;gap:8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.t1{background:var(--scl);border-radius:22px;padding:13px 14px;display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--fg)}
+.t1.w{grid-column:span 2}.t1.hi{background:var(--pc);color:var(--opc)}.t1.sc{background:var(--sch)}.t1.tc{background:var(--terc);color:var(--oterc)}
+.t1 h4{margin:0;font-size:11.5px;font-weight:600;letter-spacing:.03em;display:flex;gap:6px;align-items:center;color:var(--var)}
+.t1.hi h4,.t1.tc h4{color:inherit;opacity:.8}
+.big{font-size:34px;line-height:1;font-weight:500}.mid{font-size:19px;line-height:1.15;font-weight:500}
+.sub{color:var(--var);font-size:12px}.t1.hi .sub,.t1.tc .sub{color:inherit;opacity:.8}
+.ell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;gap:8px;align-items:center;min-width:0}.row>div{min-width:0}
+.ok{width:8px;height:8px;border-radius:50%;background:#3f8f4f;flex:none}
+.pill{font-size:10.5px;font-weight:700;border-radius:8px;padding:1px 7px;background:var(--secc);color:var(--osecc);flex:none}
+.pill.ai{background:var(--terc);color:var(--oterc)}.t1.hi .pill{background:var(--opc);color:var(--pc)}
+.sw{width:34px;height:20px;border-radius:10px;border:2px solid var(--out);position:relative;flex:none}.sw:after{content:"";position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;background:var(--out)}
+.nv{display:flex;background:var(--sc);padding:10px 4px 14px;flex:none}
+.nv div{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--var);font-weight:500}
+.nv div span{width:52px;height:30px;border-radius:15px;display:grid;place-items:center}
+.nv .on{color:var(--fg);font-weight:700}.nv .on span{background:var(--secc);color:var(--osecc)}
+.fab{position:absolute;right:16px;bottom:84px;height:52px;padding:0 18px;border-radius:18px;background:var(--pc);color:var(--opc);display:flex;gap:10px;align-items:center;font-weight:600;font-size:14px;box-shadow:0 3px 10px rgba(0,0,0,.22)}
+.strip{display:flex;gap:8px;padding:0 12px 8px;flex:none;overflow:hidden}
+.t2{background:var(--sch);border-radius:18px;padding:9px 12px;display:flex;flex-direction:column;gap:1px;min-width:128px}.t2.er{background:var(--err);color:var(--bg)}
+.t2 b{font-size:13px;font-weight:600}.t2 small{font-size:11.5px;color:var(--var)}.t2.er small{color:inherit}
+.chips{display:flex;gap:8px;padding:0 14px 8px;flex:none}.c{height:30px;border-radius:10px;border:1px solid var(--out);padding:0 12px;display:flex;align-items:center;font-weight:500;font-size:12.5px;color:var(--var)}.c.on{background:var(--secc);color:var(--osecc);border-color:transparent}
+.lst{display:flex;flex-direction:column;gap:2px;padding:0 10px;flex:1;min-height:0;overflow:hidden}
+.it{display:flex;gap:12px;padding:10px 14px;background:var(--scl);border-radius:6px;align-items:flex-start}.it:first-child{border-radius:24px 24px 6px 6px}
+.it.u{background:var(--sch)}.it.u .nm,.it.u .sj{font-weight:700}.it .m{flex:1;min-width:0}.it .pv{color:var(--var);font-size:12.5px}
+.ag{display:flex;gap:10px;padding:10px 14px;background:var(--scl);border-radius:6px;align-items:center}.ag:first-child{border-radius:24px 24px 6px 6px}
+.ag .tm{width:46px;font-size:12px;color:var(--var);flex:none}.ag .bar{width:4px;height:34px;border-radius:2px;background:var(--pri);flex:none}
+.days{display:flex;justify-content:space-between;padding:0 18px 8px;flex:none;color:var(--var);font-size:11px;text-align:center}.days b{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;font-size:14px;color:var(--fg);font-weight:500}.days .on b{background:var(--pri);color:var(--opri)}
+@media(max-width:1240px){.variant{grid-template-columns:auto auto}.variant .cap{grid-column:1/-1}}
+@media(max-width:860px){.variant{grid-template-columns:auto}}
+</style>
+<body><div class="wrap">
+<header><h1>Bento home: four options</h1>
+<p class="lede">Crimson "Ward" palette, light and dark, 360 x 780 screens. Each variant uses data the core has today, except tiles marked <span class="tag ai">Assistant</span>, which need the opt-in assistant. Nothing here is built. Facts about other apps are from my own knowledge (late 2026) and were not re-checked online.</p></header>
+
+<section><h2>Comparison</h2>
+<table>
+<tr><th></th><th>A. Honest bento</th><th>B. Assistant bento</th><th>C. Today strip</th><th>D. Calendar-first</th></tr>
+<tr><td>Taps to inbox</td><td>1 (Mail tab) if Home is first; 0 if the user sets Mail as start tab</td><td>Same as A</td><td>0 (Mail stays the start tab)</td><td>1 (Mail tab); the Inbox tile gives 1 too</td></tr>
+<tr><td>Screens to keep per theme</td><td>+1 (Home, 5 tabs)</td><td>+1, plus tile states (off, loading, no consent, error)</td><td>+0 (a row on an existing screen)</td><td>+0 (a header on an existing screen)</td></tr>
+<tr><td>Data needed</td><td>All in the cache today (files: one live call)</td><td>Assistant: one call per tile, own consent and service</td><td>All in the cache today</td><td>All in the cache today</td></tr>
+<tr><td>Others do today</td><td>Gmail and Outlook mobile have no home screen; the widget on the launcher does this job</td><td>Gmail has Gemini summaries; Spark has AI summaries and a digest; Proton has none</td><td>Gmail shows a few cards above the list (events, packages); Spark has a Pins row</td><td>Outlook mobile shows a short agenda on its Calendar tab; Gmail and Proton do not mix mail in</td></tr>
+<tr><td>Recommendation</td><td>Skip. It repeats each tab's first screen and the drawer's Delivery check.</td><td>Only if the assistant gets a daily digest; then it has a reason to exist.</td><td><b>Build first.</b> Cheap, shows only what needs attention, hides when empty.</td><td>Build as the Calendar tab's header. Small and useful; add the mail tile only if asked.</td></tr>
+</table>
+<p class="small">Feature names for Gmail, Outlook, Proton and Spark are recollections and may be slightly off.</p></section>
+
+<div id="vs"></div>
+</div>
+<script>
+const P={
+ mail:'<path d="M3 6h18v12H3zM3 7l9 7 9-7"/>',cal:'<path d="M4 6h16v14H4zM4 10h16M8 3v4M16 3v4"/>',ppl:'<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>',fil:'<path d="M3 6h7l2 2h9v11H3z"/>',home:'<path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/>',
+ star:'<path d="M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2-5.6-3.2-5.6 3.2 1.3-6.2L3 9.5l6.3-.7z"/>',chk:'<path d="M5 12l4 4 10-10"/>',spark:'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/>',
+ bell:'<path d="M6 17V11a6 6 0 0112 0v6l2 2H4zM10 21h4"/>',pen:'<path d="M4 20l1-4L17 4l3 3L8 19z"/>',srch:'<circle cx="11" cy="11" r="6"/><path d="M20 20l-4-4"/>',clk:'<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/>',away:'<path d="M3 12l18-8-6 16-3-7z"/>',plus:'<path d="M12 5v14M5 12h14"/>',menu:'<path d="M4 7h16M4 12h16M4 17h16"/>'};
+const I=n=>'<svg class="i" viewBox="0 0 24 24">'+P[n]+'</svg>';
+const sb='<div class="sb"><span>9:41</span><span>5G 87%</span></div>';
+const nav=(on,home)=>'<div class="nv">'+(home?'<div class="'+(on=='h'?'on':'')+'"><span>'+I('home')+'</span>Home</div>':'')+'<div class="'+(on=='m'?'on':'')+'"><span>'+I('mail')+'</span>Mail</div><div class="'+(on=='c'?'on':'')+'"><span>'+I('cal')+'</span>Calendar</div><div><span>'+I('ppl')+'</span>Contacts</div><div><span>'+I('fil')+'</span>Files</div></div>';
+const ai='<span class="pill ai">Assistant</span>';
+const tile=(c,h,b)=>'<div class="t1 '+c+'"><h4>'+h+'</h4>'+b+'</div>';
+const unread=tile('w hi',I('mail')+' Unread in Inbox','<div class="row"><div class="big">12</div><div style="flex:1;margin-left:6px"><div class="ell"><b>Mira Costa</b> Release plan</div><div class="ell"><b>Dan Ortiz</b> Invoice 1042</div><div class="ell"><b>Ward Team</b> Weekly notes</div></div></div>');
+const ev=tile('',I('cal')+' Next event','<div class="mid">in 42 min</div><div class="sub ell">Standup, Room 2</div>');
+const tasks=tile('',I('chk')+' Due today','<div class="mid">3 tasks</div><div class="sub ell">Pay rent, call Ayse...</div>');
+const flag=tile('',I('star')+' Flagged','<div class="mid">5 mails</div><div class="sub ell">Oldest: 3 days</div>');
+const del=tile('',I('bell')+' Delivery','<div class="row"><span class="ok"></span><div class="mid">Live</div></div><div class="sub">Always-on, 2 s ago</div>');
+const files=tile('w sc',I('fil')+' Recent files','<div class="row"><span class="pill">PDF</span><div class="ell">Contract-v3.pdf</div><span class="sub" style="margin-left:auto">Mon</span></div><div class="row"><span class="pill">XLS</span><div class="ell">Budget 2027.xlsx</div><span class="sub" style="margin-left:auto">Sun</span></div>');
+const away=tile('w',I('away')+' Away message','<div class="row"><div style="flex:1"><div class="mid">Off</div><div class="sub">Tap to set dates and text</div></div><div class="sw"></div></div>');
+const hdr=t=>'<div class="tb"><div class="t">'+t+'</div>'+I('srch')+'<div class="av">K</div></div>';
+const A=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+unread+ev+tasks+flag+del+files+away+'</div></div>'+nav('h',true);
+const catchup=tile('w tc',I('spark')+' Catch me up '+ai,'<div style="font-size:13.5px">Mira wants a go on the release plan. Dan sent invoice 1042. Two newsletters can wait.</div><div class="sub">Summary of the last 24 h, made on tap</div>');
+const reply=tile('',I('pen')+' Needs a reply '+ai,'<div class="mid">4 mails</div><div class="sub ell">Mira, Dan, Ayse...</div>');
+const dates=tile('',I('cal')+' Dates in mail '+ai,'<div class="mid">2 found</div><div class="sub ell">Dinner Fri 19:30</div>');
+const B=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+catchup+reply+dates+tile('hi',I('mail')+' Unread','<div class="big">12</div><div class="sub ell">Mira, Dan, Ward Team</div>')+ev+tasks+tile('',I('star')+' Flagged','<div class="mid">5</div><div class="sub">mails</div>')+'<div class="t1 w sc"><h4>'+I('bell')+' Delivery and away</h4><div class="row"><span class="ok"></span><div>Live</div><div class="sub" style="margin-left:auto">Away message off</div></div></div></div></div>'+nav('h',true);
+const it=(a,n,s,p,u)=>'<div class="it '+(u?'u':'')+'"><div class="av">'+a+'</div><div class="m"><div class="nm ell">'+n+'</div><div class="sj ell">'+s+'</div><div class="pv ell">'+p+'</div></div></div>';
+const C=()=>sb+'<div class="tb">'+I('menu')+'<div class="t">Inbox</div>'+I('srch')+'<div class="av">K</div></div>'+
+'<div class="strip"><div class="t2"><b>Standup in 42 min</b><small>Room 2</small></div><div class="t2"><b>3 tasks due</b><small>Today</small></div><div class="t2 er"><b>Delivery stopped</b><small>Tap to fix</small></div></div>'+
+'<div class="chips"><div class="c on">All</div><div class="c">Unread</div><div class="c">Flagged</div></div>'+
+'<div class="lst">'+it('M','Mira Costa','Release plan','Shall we ship on Monday?',1)+it('D','Dan Ortiz','Invoice 1042','Attached is the invoice for...',1)+it('W','Ward Team','Weekly notes','Notes from the Tuesday call',0)+it('A','Ayse Kaya','Dinner Friday?','Booked a table for 19:30',0)+it('S','Stalwart','Server update','1.1.4 is out with fixes',0)+it('P','Pia Lund','Photos','Here are the ones from...',0)+'</div>'+
+'<div class="fab">'+I('pen')+' Compose</div>'+nav('m');
+const D=()=>sb+'<div class="tb"><div class="t">November</div><div class="pill">Today</div><div class="av">K</div></div>'+
+'<div class="days"><div><div>M</div><b>16</b></div><div class="on"><div>T</div><b>17</b></div><div><div>W</div><b>18</b></div><div><div>T</div><b>19</b></div><div><div>F</div><b>20</b></div><div><div>S</div><b>21</b></div><div><div>S</div><b>22</b></div></div>'+
+'<div class="body" style="padding-top:0"><div class="grid"><div class="t1 w hi"><h4>'+I('clk')+' Today, Tuesday 17</h4><div class="row"><div class="mid" style="flex:1">3 events, 3 tasks</div><div class="sub">Next in 42 min</div></div></div>'+
+tile('',I('mail')+' Inbox','<div class="mid">12 unread</div><div class="sub ell">Mira, Dan, Ward Team</div>')+tile('',I('chk')+' Due today','<div class="mid">3 tasks</div><div class="sub ell">Pay rent...</div>')+'</div>'+
+'<div style="display:flex;flex-direction:column;gap:2px;margin-top:2px"><div class="ag"><div class="tm">09:30</div><div class="bar"></div><div><b>Standup</b><div class="sub">Room 2</div></div></div><div class="ag"><div class="tm">12:00</div><div class="bar" style="background:var(--terc)"></div><div><b>Lunch with Pia</b><div class="sub">Cafe Nord</div></div></div><div class="ag"><div class="tm">16:00</div><div class="bar"></div><div><b>Release review</b><div class="sub">Video call</div></div></div></div></div>'+
+'<div class="fab">'+I('plus')+' New entry</div>'+nav('c');
+const T='<span class="tag">Today</span>',AI='<span class="tag ai">Assistant</span>';
+const V=[
+['A. Honest bento','Home is the first tab. Off by default (Settings, Home).',A,[
+ '<b>Unread</b>: Inbox unread count and the three newest unread senders and subjects. '+T,
+ '<b>Next event</b>: the cached agenda, countdown computed on the phone. '+T,
+ '<b>Due today</b>: tasks from the cache, due today or earlier. '+T,
+ '<b>Flagged</b>: starred count and age of the oldest. '+T,
+ '<b>Delivery</b>: the state of the drawer row and the Delivery check screen. '+T,
+ '<b>Recent files</b>: the last two FileNodes, live from the server (one network call). '+T,
+ '<b>Away message</b>: the vacation response on or off; a tap opens the editor. '+T]],
+['B. Assistant bento','A with three tiles that need the opt-in assistant. Without consent they do not appear and the home looks like A.',B,[
+ '<b>Catch me up</b>: a summary of the last 24 h of mail, made on tap and sent to the chosen service. '+AI,
+ '<b>Needs a reply</b>: mails the model judges to want an answer; count and names. '+AI,
+ '<b>Dates in mail</b>: dates and times found in recent mail; each can become a calendar entry through the apply card. '+AI,
+ '<b>Unread, Next event, Due today, Flagged, Delivery and away</b>: as in A, merged to make room. '+T,
+ 'Needs consent per service and model, a cost note, a stale state ("made 3 h ago") and an error state per tile. Mail leaves the phone only on the user\'s tap.']],
+['C. Today strip','Not a tab. The Mail tab as today with a row above the chips. The row holds 0 to 3 tiles and vanishes when nothing needs attention.',C,[
+ '<b>Next event</b>: the next event within 12 h, countdown and place. '+T,
+ '<b>Tasks due</b>: shown only when at least one is due today. '+T,
+ '<b>Delivery problem</b>: shown only when the connection is down or a permission is missing, in the error colour; a tap opens the fix. '+T,
+ 'Scrolls sideways; a tile can be dismissed for the day; a setting turns the strip off.']],
+['D. Calendar-first','The Calendar tab opens with a Today card and a mail tile above the agenda, for people who live in the calendar.',D,[
+ '<b>Today card</b>: counts of events and tasks today and the next event countdown. '+T,
+ '<b>Inbox tile</b>: unread count and newest senders; a tap opens the Inbox. '+T,
+ '<b>Due today</b>: tasks from the cache. '+T,
+ '<b>Agenda</b>: repeating events expanded in the core, unchanged. '+T,
+ 'The start tab can be set to Calendar in Settings; no new screen is needed.']]
+];
+const vs=document.getElementById('vs');
+V.forEach(([t,d,f,l])=>{const h=f();const e=document.createElement('section');e.className='variant';
+ e.innerHTML='<div><div class="phone"><div class="s l">'+h+'</div></div><div class="lbl">Light</div></div><div><div class="phone"><div class="s d">'+h+'</div></div><div class="lbl">Dark</div></div><div class="cap"><h2 style="color:var(--fg)">'+t+'</h2>'+d+'<ul>'+l.map(x=>'<li>'+x+'</li>').join('')+'</ul></div>';vs.appendChild(e)});
+</script></body></html>
