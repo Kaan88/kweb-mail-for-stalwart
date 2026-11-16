@@ -116,6 +116,12 @@
     <string name="theme_lavender">Lavender</string>
     <string name="theme_moss">Moss</string>
     <string name="theme_peach">Peach</string>
+    <string name="theme_ocean">Ocean</string>
+    <string name="theme_slate">Slate</string>
+    <string name="theme_sand">Sand</string>
+    <string name="theme_rose">Rose</string>
+    <string name="theme_sage">Sage</string>
+    <string name="theme_graphite">Graphite</string>
     <string name="theme_done">Done</string>
     <string name="appearance_title">Appearance</string>
     <string name="appearance_detail">%1$s \u00b7 %2$s</string>

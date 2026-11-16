@@ -42,4 +42,45 @@ class PalettesTest {
         assertEquals(ThemeChoice.Ward, ThemeChoice.fromKey("wallpaper", 29))
         assertEquals(ThemeChoice.Ward, ThemeChoice.fromKey("something old", 33))
     }
+
+    @Test
+    fun theSixNewThemesAreThereWithStableKeysAfterPeach() {
+        val keys = listOf("ocean", "slate", "sand", "rose", "sage", "graphite")
+        assertEquals(keys, ThemeChoice.entries.drop(ThemeChoice.entries.indexOf(ThemeChoice.Peach) + 1).map { it.key })
+        keys.forEach { assertEquals(it, ThemeChoice.fromKey(it, 35).key) }
+        assertEquals(ThemeChoice.Moss, ThemeChoice.fromKey("moss", 35))
+    }
+
+    private fun luminance(argb: Long): Double {
+        fun channel(shift: Int): Double {
+            val v = ((argb shr shift) and 0xFF) / 255.0
+            return if (v <= 0.03928) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+    }
+
+    private fun contrast(a: Long, b: Long): Double {
+        val (hi, lo) = luminance(a).let { x -> luminance(b).let { y -> maxOf(x, y) to minOf(x, y) } }
+        return (hi + 0.05) / (lo + 0.05)
+    }
+
+    @Test
+    fun everyOnColourReadsOnItsBackgroundInEveryTheme() {
+        val pairs = listOf(
+            "onSurface" to "background", "onSurfaceVariant" to "background", "onPrimary" to "primary",
+            "onPrimaryContainer" to "primaryContainer", "onSecondaryContainer" to "secondaryContainer",
+            "onTertiaryContainer" to "tertiaryContainer", "inverseOnSurface" to "inverseSurface",
+            "onSurface" to "surfaceContainer", "onSurface" to "surfaceContainerHigh",
+            "onSurfaceVariant" to "surfaceContainer",
+        )
+        PaletteTokens.palettes.forEach { (theme, palette) ->
+            listOf(palette.light, palette.dark).forEach { line ->
+                val c = PaletteTokens.parse(line)
+                pairs.forEach { (fg, bg) ->
+                    val ratio = contrast(c.getValue(fg), c.getValue(bg))
+                    assertTrue("$theme $fg on $bg is only $ratio", ratio >= 4.5)
+                }
+            }
+        }
+    }
 }

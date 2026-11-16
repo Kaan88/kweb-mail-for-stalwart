@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -34,6 +35,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ovh.kweb.mail.R
@@ -72,17 +75,14 @@ fun AppearanceScreen(onBack: () -> Unit) {
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             SectionTitle(stringResource(R.string.appearance_colour))
-            Group {
-                offered.forEachIndexed { i, option ->
-                    SettingsRow(
-                        Groups.shape(i, offered.size),
-                        stringResource(themeName(option)),
-                        if (option == ThemeChoice.Wallpaper) stringResource(R.string.theme_wallpaper_hint) else null,
-                        icon = { Dot(option) },
-                        onClick = { ThemeState.choose(context, option) },
-                        trailing = { RadioButton(selected = option == choice, onClick = null) },
-                    )
-                }
+            ColourGrid(offered, choice) { ThemeState.choose(context, it) }
+            if (ThemeChoice.Wallpaper in offered) {
+                Text(
+                    stringResource(R.string.theme_wallpaper_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                )
             }
             Preview()
 
@@ -130,6 +130,39 @@ private fun Preview() {
     }
 }
 
+/** The colours as a grid of swatches with names, three to a row, so every theme is in view on a phone. */
+@Composable
+private fun ColourGrid(options: List<ThemeChoice>, selected: ThemeChoice, onPick: (ThemeChoice) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.chunked(COLUMNS).forEach { rowOptions ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowOptions.forEach { option ->
+                    val on = option == selected
+                    val tile = Modifier.weight(1f).height(92.dp).clip(RoundedCornerShape(16.dp))
+                        .background(if (on) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer)
+                        .border(if (on) 2.dp else 0.dp, if (on) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(16.dp))
+                        .selectable(selected = on, role = Role.RadioButton, onClick = { onPick(option) })
+                        .padding(8.dp)
+                    Column(tile, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Dot(option)
+                        Text(
+                            stringResource(themeName(option)),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                }
+                repeat(COLUMNS - rowOptions.size) { Box(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+private const val COLUMNS = 3
+
 /** The colour a theme is known by; the wallpaper theme shows the phone's own primary colour. */
 @Composable
 private fun Dot(option: ThemeChoice) {
@@ -139,5 +172,5 @@ private fun Dot(option: ThemeChoice) {
         } else {
             MaterialTheme.colorScheme.primary
         }
-    Box(Modifier.size(28.dp).clip(CircleShape).background(color).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
+    Box(Modifier.size(32.dp).clip(CircleShape).background(color).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
 }

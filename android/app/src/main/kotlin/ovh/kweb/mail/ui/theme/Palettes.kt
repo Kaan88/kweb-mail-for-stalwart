@@ -10,6 +10,12 @@ enum class ThemeChoice(val key: String) {
     Lavender("lavender"),
     Moss("moss"),
     Peach("peach"),
+    Ocean("ocean"),
+    Slate("slate"),
+    Sand("sand"),
+    Rose("rose"),
+    Sage("sage"),
+    Graphite("graphite"),
     ;
 
     companion object {
@@ -66,6 +72,36 @@ object PaletteTokens {
             0xFF8E4E1C,
             "fff8f5 221a15 52443c 8e4e1c ffffff ffdcc6 301400 f8dccd 2a1709 e2e4b3 1c1d00 fff1ea fbebe3 f5e5dc 85736a d7c2b8 382e29 ffede4 ffb68a ba1a1a",
             "19120d efded5 d7c2b8 ffb68a 4f2500 703700 ffdcc6 5a4235 f8dccd 494a1e e2e4b3 211a15 261e19 312823 9f8d83 52443c efded5 382e29 8e4e1c ffb4ab",
+        ),
+        ThemeChoice.Ocean to Palette(
+            0xFF3D5F90,
+            "f9f9ff 191c20 43474e 3d5f90 ffffff d5e3ff 001c3b d9e3f8 121c2b f8d8fe 27132f f3f3fa ededf4 e7e8ee 74777f c4c6cf 2e3035 f0f0f7 a7c8ff ba1a1a",
+            "111318 e1e2e9 c4c6cf a7c8ff 03305f 234777 d5e3ff 3d4758 d9e3f8 553f5d f8d8fe 191c20 1d2024 282a2f 8d9199 43474e e1e2e9 2e3035 3d5f90 ffb4ab",
+        ),
+        ThemeChoice.Slate to Palette(
+            0xFF2E628C,
+            "f7f9ff 181c20 42474e 2e628c ffffff cde5ff 001d32 d5e4f6 0e1d2a eedcff 221533 f1f4f9 eceef3 e6e8ee 72777f c2c7cf 2d3135 eef1f6 9acbfa ba1a1a",
+            "101418 e0e2e8 c2c7cf 9acbfa 003352 0c4a72 cde5ff 3a4857 d5e4f6 4f4061 eedcff 181c20 1c2024 272a2f 8c9198 42474e e0e2e8 2d3135 2e628c ffb4ab",
+        ),
+        ThemeChoice.Sand to Palette(
+            0xFF7C580D,
+            "fff8f3 201b13 4e4539 7c580d ffffff ffdeaa 271900 f8dfbb 261904 d0ebc0 0c2006 fef2e5 f8ecdf f2e6d9 807667 d2c5b4 353027 fbefe2 efbf6d ba1a1a",
+            "17130b ece1d4 d2c5b4 efbf6d 422c00 5f4100 ffdeaa 54442a f8dfbb 374d2d d0ebc0 201b13 241f17 2f2921 9a8f80 4e4539 ece1d4 353027 7c580d ffb4ab",
+        ),
+        ThemeChoice.Rose to Palette(
+            0xFF8B4A61,
+            "fff8f8 22191c 514347 8b4a61 ffffff ffd9e3 3a071e ffd9e3 2b151c ffdcc2 2e1500 fff0f2 faeaed f5e4e7 837377 d5c2c6 372e30 fdedf0 ffb0c9 ba1a1a",
+            "191113 efdfe1 d5c2c6 ffb0c9 541d33 6f3349 ffd9e3 5a3f47 ffd9e3 623f20 ffdcc2 22191c 261d20 31282a 9e8c90 514347 efdfe1 372e30 8b4a61 ffb4ab",
+        ),
+        ThemeChoice.Sage to Palette(
+            0xFF38693C,
+            "f7fbf2 181d18 424940 38693c ffffff b9f0b7 002106 d4e8d0 101f10 bcebf2 001f23 f1f5ec ebefe6 e6e9e1 72796f c2c9bd 2d322c eef2e9 9ed49d ba1a1a",
+            "101410 e0e4db c2c9bd 9ed49d 043912 205026 b9f0b7 3a4b39 d4e8d0 1f4d53 bcebf2 181d18 1c211b 272b26 8c9389 424940 e0e4db 2d322c 38693c ffb4ab",
+        ),
+        ThemeChoice.Graphite to Palette(
+            0xFF5C5D6C,
+            "fcf8fa 1c1b1d 474648 5c5d6c ffffff e1e1f3 191b27 e2e1ec 1a1b23 dfe1f9 171b2c f6f3f4 f0edef ebe7e9 787678 c8c6c7 313032 f3f0f1 c4c5d6 ba1a1a",
+            "131315 e5e1e3 c8c6c7 c4c5d6 2d303d 444654 e1e1f3 45464f e2e1ec 424659 dfe1f9 1c1b1d 201f21 2a2a2b 929092 474648 e5e1e3 313032 5c5d6c ffb4ab",
         ),
     )
 

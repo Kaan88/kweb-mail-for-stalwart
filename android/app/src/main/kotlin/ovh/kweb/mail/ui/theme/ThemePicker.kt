@@ -9,6 +9,12 @@ fun themeName(choice: ThemeChoice): Int = when (choice) {
     ThemeChoice.Lavender -> R.string.theme_lavender
     ThemeChoice.Moss -> R.string.theme_moss
     ThemeChoice.Peach -> R.string.theme_peach
+    ThemeChoice.Ocean -> R.string.theme_ocean
+    ThemeChoice.Slate -> R.string.theme_slate
+    ThemeChoice.Sand -> R.string.theme_sand
+    ThemeChoice.Rose -> R.string.theme_rose
+    ThemeChoice.Sage -> R.string.theme_sage
+    ThemeChoice.Graphite -> R.string.theme_graphite
 }
 
 /** The name of a mode. */
