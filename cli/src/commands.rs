@@ -1026,6 +1026,25 @@ fn filters(core: &Core, what: Filters) -> Result<(), String> {
             println!("{}", filters_text(&core.set_filters_active(true).map_err(failed)?));
         }
         Filters::Off => println!("{}", filters_text(&core.set_filters_active(false).map_err(failed)?)),
+        Filters::Rules => println!("{:#?}", core.filters_state().map_err(failed)?),
+        Filters::RulesSave(path) => {
+            let json = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+            core.filters_state().map_err(failed)?;
+            println!("{:#?}", core.filters_save(json).map_err(failed)?);
+        }
+        Filters::RulesRaw(path) => {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+            core.filters_state().map_err(failed)?;
+            println!("{:#?}", core.filters_raw_save(text).map_err(failed)?);
+        }
+        Filters::RulesEnabled(on) => {
+            core.filters_state().map_err(failed)?;
+            println!("{:#?}", core.filters_set_enabled(on).map_err(failed)?);
+        }
+        Filters::RulesMigrate => {
+            core.filters_state().map_err(failed)?;
+            println!("{:#?}", core.filters_migrate_old().map_err(failed)?);
+        }
         Filters::AddFrom { message_id, folder_id } => {
             let current = core.filters().map_err(failed)?;
             if current.is_edited {

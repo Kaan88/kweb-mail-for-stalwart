@@ -109,6 +109,9 @@ Usage:
   kweb filters add-from <message-id> <folder-id>
                               add a rule: mail from that message's sender (or mailing list)
                               moves to that folder. Saved, but not switched on
+  kweb filters rules          Bulwark's model: the whole state (rules, external part, abilities)
+  kweb filters rules-save <file> | rules-raw <file> | rules-enabled on|off | rules-migrate
+                              write rules JSON, write script text, switch, remove kweb-filters
   kweb send <to> <subject> <text>
                               send a plain message now (no undo delay)
   kweb send-at <minutes-from-now> <to> <subject> <text>
@@ -322,6 +325,16 @@ pub enum Filters {
     On,
     Off,
     AddFrom { message_id: String, folder_id: String },
+    /// Bulwark's model (M12): the state, written out whole.
+    Rules,
+    /// Save a file of Bulwark's rules JSON.
+    RulesSave(String),
+    /// Write a file as the script text.
+    RulesRaw(String),
+    /// Switch the script on or off.
+    RulesEnabled(bool),
+    /// Remove the old kweb-filters script.
+    RulesMigrate,
 }
 
 /// What `kweb identity` does.
@@ -644,6 +657,13 @@ fn filters(rest: &[String]) -> Result<Filters, String> {
         [word, message_id, folder_id, more @ ..] if word == "add-from" => {
             no_more(more).map(|()| Filters::AddFrom { message_id: message_id.clone(), folder_id: folder_id.clone() })
         }
+        [word, more @ ..] if word == "rules" => no_more(more).map(|()| Filters::Rules),
+        [word, path, more @ ..] if word == "rules-save" => no_more(more).map(|()| Filters::RulesSave(path.clone())),
+        [word, path, more @ ..] if word == "rules-raw" => no_more(more).map(|()| Filters::RulesRaw(path.clone())),
+        [word, on, more @ ..] if word == "rules-enabled" && (on == "on" || on == "off") => {
+            no_more(more).map(|()| Filters::RulesEnabled(on == "on"))
+        }
+        [word, more @ ..] if word == "rules-migrate" => no_more(more).map(|()| Filters::RulesMigrate),
         [word, ..] if word == "add-from" => Err("filters add-from needs <message-id> and <folder-id>".into()),
         [other, ..] => Err(format!("filters takes text, on, off, add-from, or nothing, not '{other}'")),
     }

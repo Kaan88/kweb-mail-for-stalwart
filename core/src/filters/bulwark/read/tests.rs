@@ -18,7 +18,7 @@ fn written(external: &str, reqs: &[String]) -> String {
 
 fn parsed(text: &str) -> Parsed {
     match read(text, &ext(&["fileinto", "mailbox", "mailboxid", "regex", "date", "relational"])) {
-        Reading::Rules(p) => p,
+        Reading::Rules(p) => *p,
         other => panic!("{other:?}"),
     }
 }

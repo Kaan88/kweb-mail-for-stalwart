@@ -351,6 +351,22 @@ impl Sieve {
             }
             updated.insert(id.clone(), answer);
         }
+        let (mut destroyed, mut not_destroyed) = (Vec::new(), Map::new());
+        for id in args["destroy"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            match self.scripts.iter().position(|s| s.id == id) {
+                None => {
+                    not_destroyed.insert(id.to_string(), json!({ "type": "notFound" }));
+                }
+                Some(at) if self.scripts[at].active => {
+                    let why = "Deactivate Sieve script before deletion.";
+                    not_destroyed.insert(id.to_string(), json!({ "type": "scriptIsActive", "description": why }));
+                }
+                Some(at) => {
+                    self.scripts.remove(at);
+                    destroyed.push(json!(id));
+                }
+            }
+        }
         // The id may be a creation id of this request ("#s1"); one that is nothing is ignored.
         let target = args["onSuccessActivateScript"].as_str().map(|t| match t.strip_prefix('#') {
             Some(cid) => ids.get(cid).cloned().unwrap_or_default(),
@@ -367,6 +383,12 @@ impl Sieve {
         }
         self.version += 1;
         let mut answer = json!({ "accountId": ACCOUNT_ID, "oldState": old_state, "newState": self.state() });
+        if !destroyed.is_empty() {
+            answer["destroyed"] = Value::Array(destroyed);
+        }
+        if !not_destroyed.is_empty() {
+            answer["notDestroyed"] = Value::Object(not_destroyed);
+        }
         for (key, map) in
             [("created", created), ("notCreated", not_created), ("updated", updated), ("notUpdated", not_updated)]
         {

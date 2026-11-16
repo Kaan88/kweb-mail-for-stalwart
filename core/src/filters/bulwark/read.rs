@@ -21,7 +21,7 @@ pub enum Reading {
     /// A metadata comment that cannot be read, or a script whose rule part is not what the
     /// comment says and has nothing to mark where the external part begins.
     Opaque,
-    Rules(Parsed),
+    Rules(Box<Parsed>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,7 +129,7 @@ pub fn read(raw: &str, extensions: &[String]) -> Reading {
     };
     let keep_include = mentions_include(&external_text);
     let external_requires = tokens.into_iter().filter(|t| t != "include" || keep_include).collect();
-    Reading::Rules(Parsed { meta, external_requires, external: external_text, differs })
+    Reading::Rules(Box::new(Parsed { meta, external_requires, external: external_text, differs }))
 }
 
 #[cfg(test)]
