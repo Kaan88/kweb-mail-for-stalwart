@@ -103,7 +103,7 @@ fn all_day() -> Value {
 /// A daily series that began a week before the span and never ends.
 fn daily() -> Value {
     json!({"@type": "Event", "title": "Daily", "start": "2026-11-09T08:00:00", "timeZone": ZONE, "duration": "PT30M",
-        "recurrenceRules": [{"@type": "RecurrenceRule", "frequency": "daily"}]})
+        "recurrenceRule": {"@type": "RecurrenceRule", "frequency": "daily"}})
 }
 
 fn task() -> Value {
@@ -423,7 +423,7 @@ fn a_change_leaves_everything_the_app_does_not_own_on_the_server() {
     let rig = Rig::new();
     let mut event = invitation();
     event["x-custom"] = json!({"kept": true});
-    event["recurrenceRules"] = json!([{"frequency": "monthly", "byMonthDay": [1, 15]}]);
+    event["recurrenceRule"] = json!({"frequency": "monthly", "byMonthDay": [1, 15]});
     event["alerts"] = json!({"abs": {"trigger": {"@type": "AbsoluteTrigger", "when": "2026-11-20T06:00:00Z"}}});
     let id = rig.server.add_event(event.clone());
     let detail = rig.core.event(id.clone(), None).unwrap();
@@ -441,9 +441,27 @@ fn a_change_leaves_everything_the_app_does_not_own_on_the_server() {
     assert_eq!(stored["title"], "Renamed");
     assert_eq!(stored["x-custom"], event["x-custom"]);
     assert_eq!(stored["participants"], event["participants"]);
-    assert_eq!(stored["recurrenceRules"], event["recurrenceRules"], "a rule the app cannot hold is not touched");
+    assert_eq!(stored["recurrenceRule"], event["recurrenceRule"], "a rule the app cannot hold is not touched");
     assert_eq!(stored["alerts"]["abs"], event["alerts"]["abs"]);
     assert_eq!(stored["alerts"].as_object().unwrap().len(), 2);
+}
+
+#[test]
+fn a_series_an_older_build_wrote_with_the_plural_is_read_and_repaired_on_save() {
+    let rig = Rig::new();
+    let mut old = daily();
+    old.as_object_mut().unwrap().remove("recurrenceRule");
+    old["recurrenceRules"] = json!([{"@type": "RecurrenceRule", "frequency": "daily"}]);
+    let id = rig.server.add_event(old);
+    // Read as a repeat, so the agenda still shows the series.
+    assert_eq!(rig.agenda("2026-11-09T00:00:00", "2026-11-12T00:00:00").entries.len(), 3);
+    let mut edited = rig.core.event(id.clone(), None).unwrap().input;
+    edited.title = "Daily (renamed)".into();
+    rig.core.save_event(Some(id.clone()), edited).unwrap();
+    let stored = rig.server.event(&id).unwrap();
+    assert_eq!(stored["recurrenceRule"]["frequency"], "daily", "the real name is written");
+    assert!(stored.get("recurrenceRules").is_none(), "the plural is gone");
+    assert_eq!(rig.agenda("2026-11-09T00:00:00", "2026-11-12T00:00:00").entries.len(), 3);
 }
 
 #[test]
@@ -525,7 +543,7 @@ fn an_edit_of_a_series_changes_the_whole_series() {
     let mut single = rig.core.event(id.clone(), None).unwrap().input;
     single.repeat = None;
     rig.core.save_event(Some(id.clone()), single).unwrap();
-    assert!(rig.server.event(&id).unwrap().get("recurrenceRules").is_none());
+    assert!(rig.server.event(&id).unwrap().get("recurrenceRule").is_none());
     assert_eq!(rig.agenda("2026-11-09T00:00:00", "2026-12-09T00:00:00").entries.len(), 1);
 }
 

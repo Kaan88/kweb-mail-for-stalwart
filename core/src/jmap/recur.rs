@@ -1,7 +1,7 @@
 //! The dates of a repeating event, worked out here.
 //!
-//! Stalwart 1.1 does not expand repeating events in `CalendarEvent/query` (see `calendars`), so
-//! the core does it from the event's `recurrenceRules`. Everything is in wall-clock time of the
+//! `CalendarEvent/query` can expand repeating events on the server (see `calendars`), but the
+//! core fetches whole events and does it itself from the event's `recurrenceRule`. Everything is in wall-clock time of the
 //! event's own zone, as JSCalendar has it; the caller turns the dates into instants.
 //!
 //! Covered: daily, weekly, monthly and yearly rules with `interval`, `count`, `until`, `byDay`

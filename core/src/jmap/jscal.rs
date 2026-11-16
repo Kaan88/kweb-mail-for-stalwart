@@ -102,7 +102,7 @@ fn shape(event: &Value, reader: Tz) -> Option<Shape> {
     };
     let all_day = is_all_day(event, begin);
     let zone = if all_day { None } else { text(event, "timeZone").and_then(zone) }.unwrap_or(reader);
-    let repeats = event["recurrenceRules"].as_array().is_some_and(|rules| !rules.is_empty());
+    let repeats = !rules_of(event).is_empty();
     Some(Shape { task, all_day, zone, repeats, first, offset })
 }
 
@@ -198,7 +198,7 @@ fn instances<'a>(event: &'a Value, shape: &Shape, limit: NaiveDateTime) -> Vec<I
     if !shape.repeats {
         return vec![Instance { id: None, start: shape.first, patch: None }];
     }
-    let starts = recur::expand(&event["recurrenceRules"], shape.first, limit).unwrap_or_else(|| vec![shape.first]);
+    let starts = recur::expand(&json!(rules_of(event)), shape.first, limit).unwrap_or_else(|| vec![shape.first]);
     let overrides = event["recurrenceOverrides"].as_object();
     let mut out: Vec<Instance> = starts
         .into_iter()
@@ -224,7 +224,7 @@ fn find_instance<'a>(event: &'a Value, shape: &Shape, recurrence_id: &str) -> Op
         return Some(Instance { id: Some(key.clone()), start: parse_local(key)?, patch: Some(patch) });
     }
     let at = parse_local(recurrence_id)?;
-    let starts = recur::expand(&event["recurrenceRules"], shape.first, at).unwrap_or_else(|| vec![shape.first]);
+    let starts = recur::expand(&json!(rules_of(event)), shape.first, at).unwrap_or_else(|| vec![shape.first]);
     let id = format_local(at);
     starts.contains(&at).then(|| Instance { patch: overrides.and_then(|o| o.get(&id)), id: Some(id), start: at })
 }
@@ -385,6 +385,27 @@ pub fn detail_at(
     Ok(found)
 }
 
+/// The repeat rules of an event. Stalwart's name is `recurrenceRule` (one object); the plural is
+/// what older builds of the app wrote, which the server keeps as an unknown property and does not
+/// follow, so it is read as a fallback (and repaired on the next save, see [`update_patch`]).
+fn rules_of(event: &Value) -> Vec<&Value> {
+    if let Some(rule) = event.get("recurrenceRule").filter(|rule| rule.is_object()) {
+        return vec![rule];
+    }
+    event["recurrenceRules"].as_array().map(|rules| rules.iter().collect()).unwrap_or_default()
+}
+
+/// Whether the event carries the plural `recurrenceRules` that older builds wrote.
+fn has_legacy_rules(event: &Value) -> bool {
+    event["recurrenceRules"].as_array().is_some_and(|rules| !rules.is_empty())
+}
+
+/// Whether the event has rules that exclude dates (`excludedRecurrenceRule`, or the plural).
+fn has_excluding_rules(event: &Value) -> bool {
+    event.get("excludedRecurrenceRule").is_some_and(|rule| rule.is_object())
+        || event["excludedRecurrenceRules"].as_array().is_some_and(|rules| !rules.is_empty())
+}
+
 /// What the app can edit of an event as it is now, in the form [`detail`] reports it.
 pub fn current_input(event: &Value) -> Option<EventInput> {
     detail(event, &[], &[]).map(|d| d.input)
@@ -394,16 +415,16 @@ pub fn current_input(event: &Value) -> Option<EventInput> {
 /// (then the first is `None`): several rules, a rule with more parts than the app edits, a rule
 /// that excludes, or an occurrence that was changed. An occurrence that was only excluded is fine.
 fn repeat_of(event: &Value) -> (Option<RepeatRule>, bool) {
-    let Some(rules) = event["recurrenceRules"].as_array().filter(|rules| !rules.is_empty()) else {
+    let rules = rules_of(event);
+    if rules.is_empty() {
         return (None, false);
-    };
+    }
     let only_exclusions = event["recurrenceOverrides"].as_object().is_none_or(|all| {
         all.values()
             .all(|patch| patch.as_object().is_some_and(|p| p.len() == 1 && p.get("excluded") == Some(&json!(true))))
     });
-    let excluding_rules = event["excludedRecurrenceRules"].as_array().is_some_and(|r| !r.is_empty());
     match rules.as_slice() {
-        [rule] if only_exclusions && !excluding_rules => match simple_rule(rule) {
+        [rule] if only_exclusions && !has_excluding_rules(event) => match simple_rule(rule) {
             Some(rule) => (Some(rule), false),
             None => (None, true),
         },
@@ -634,7 +655,7 @@ pub fn create_object(input: &EventInput) -> Value {
         out.insert("locations".into(), json!({ "l1": location_json(input.location.trim()) }));
     }
     if let Some(repeat) = &input.repeat {
-        out.insert("recurrenceRules".into(), json!([rule_json(repeat)]));
+        out.insert("recurrenceRule".into(), rule_json(repeat));
     }
     let anchor = if input.is_task { "end" } else { "start" };
     let minutes: BTreeSet<u32> = input.alert_minutes.iter().copied().collect();
@@ -737,16 +758,22 @@ pub fn update_patch(existing: &Value, input: &EventInput) -> Result<Value> {
         }
     }
     let (repeat, complex) = repeat_of(existing);
-    if !complex && repeat != input.repeat {
+    let legacy = has_legacy_rules(existing);
+    if !complex && (repeat != input.repeat || legacy) {
         match &input.repeat {
-            Some(rule) => drop(patch.insert("recurrenceRules".into(), json!([rule_json(rule)]))),
+            Some(rule) => drop(patch.insert("recurrenceRule".into(), rule_json(rule))),
             None => {
-                patch.insert("recurrenceRules".into(), Value::Null);
+                patch.insert("recurrenceRule".into(), Value::Null);
                 // What excluded single occurrences of the series goes with it.
                 if existing.get("recurrenceOverrides").is_some_and(|o| !o.is_null()) {
                     patch.insert("recurrenceOverrides".into(), Value::Null);
                 }
             }
+        }
+        if legacy {
+            // The plural is what older builds of the app wrote and the server never read: the
+            // series is repaired by writing the real name and dropping the plural.
+            patch.insert("recurrenceRules".into(), Value::Null);
         }
     }
     if input.calendar_id != current.calendar_id {
@@ -821,7 +848,7 @@ pub fn exclude_patch(existing: &Value, recurrence_id: &str) -> Result<Value> {
     if parse_strict(recurrence_id).is_none() {
         return Err(Error::invalid("An occurrence is named by its start, such as 2026-11-12T10:00:00."));
     }
-    if existing["recurrenceRules"].as_array().is_none_or(|rules| rules.is_empty()) {
+    if rules_of(existing).is_empty() {
         return Err(Error::invalid("This event does not repeat."));
     }
     let mut overrides = existing["recurrenceOverrides"].as_object().cloned().unwrap_or_default();
@@ -872,7 +899,7 @@ mod tests {
     fn daily() -> Value {
         json!({"@type": "Event", "id": "d", "calendarIds": {"b": true}, "title": "Daily",
             "start": "2026-11-16T08:00:00", "timeZone": "Europe/Istanbul", "duration": "PT30M",
-            "recurrenceRules": [{"@type": "RecurrenceRule", "count": 5, "frequency": "daily"}]})
+            "recurrenceRule": {"@type": "RecurrenceRule", "count": 5, "frequency": "daily"}})
     }
 
     fn task() -> Value {
@@ -1027,7 +1054,7 @@ mod tests {
     fn a_series_in_a_zone_with_summer_time_keeps_its_wall_clock_time() {
         let weekly = json!({"@type": "Event", "id": "w", "calendarIds": {"b": true}, "title": "Weekly",
             "start": "2026-10-26T09:00:00", "timeZone": "America/New_York", "duration": "PT1H",
-            "recurrenceRules": [{"frequency": "weekly"}]});
+            "recurrenceRule": {"frequency": "weekly"}});
         let found = agenda_in("America/New_York", &[weekly], "2026-10-26T00:00:00", "2026-11-10T00:00:00");
         let starts: Vec<i64> = found.iter().map(|e| e.starts_at).collect();
         // The clocks went back on 2026-11-01: 09:00 is 13:00 UTC before and 14:00 UTC after.
@@ -1066,7 +1093,7 @@ mod tests {
     #[test]
     fn a_rule_that_is_not_understood_leaves_the_first_occurrence() {
         let mut series = daily();
-        series["recurrenceRules"] = json!([{"frequency": "daily", "bySetPosition": [1]}]);
+        series["recurrenceRule"] = json!({"frequency": "daily", "bySetPosition": [1]});
         let found = week(&[series]);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].recurrence_id.as_deref(), Some("2026-11-16T08:00:00"));
@@ -1248,7 +1275,11 @@ mod tests {
 
     fn repeats(rules: Value) -> Value {
         let mut event = daily();
-        event["recurrenceRules"] = rules;
+        event.as_object_mut().unwrap().remove("recurrenceRule");
+        match rules.as_array().map(Vec::as_slice) {
+            Some([one]) => event["recurrenceRule"] = one.clone(),
+            _ => event["recurrenceRules"] = rules,
+        }
         event
     }
 
@@ -1302,7 +1333,7 @@ mod tests {
             assert_eq!((d.input.repeat, d.has_complex_repeat), (None, true), "{rules}");
         }
         let mut event = daily();
-        event["excludedRecurrenceRules"] = json!([{"frequency": "weekly"}]);
+        event["excludedRecurrenceRule"] = json!({"frequency": "weekly"});
         assert!(detail_of(&event).has_complex_repeat);
     }
 
@@ -1403,7 +1434,7 @@ mod tests {
         assert_eq!(rule_json(&daily), json!({"@type": "RecurrenceRule", "frequency": "daily", "count": 5}));
         // What is written reads back as what was meant.
         let mut event = timed();
-        event["recurrenceRules"] = json!([rule_json(&weekly)]);
+        event["recurrenceRule"] = rule_json(&weekly);
         assert_eq!(detail_of(&event).input.repeat, Some(weekly));
     }
 
@@ -1505,26 +1536,46 @@ mod tests {
         let every_day =
             RepeatRule { frequency: Frequency::Daily, interval: 1, by_day: vec![], until: None, count: None };
         let with = |rule: Option<RepeatRule>| EventInput { repeat: rule, ..input() };
-        assert_eq!(
-            patch(&timed(), &with(Some(every_day.clone()))),
-            json!({"recurrenceRules": [rule_json(&every_day)]})
-        );
+        assert_eq!(patch(&timed(), &with(Some(every_day.clone()))), json!({"recurrenceRule": rule_json(&every_day)}));
         let counted = RepeatRule { count: Some(5), ..every_day.clone() };
         assert_eq!(patch(&daily(), &EventInput { repeat: Some(counted), ..detail_of(&daily()).input }), json!({}));
         let forever = EventInput { repeat: Some(every_day.clone()), ..detail_of(&daily()).input };
-        assert_eq!(patch(&daily(), &forever), json!({"recurrenceRules": [rule_json(&every_day)]}));
+        assert_eq!(patch(&daily(), &forever), json!({"recurrenceRule": rule_json(&every_day)}));
         // Removed: the exclusions of single occurrences go with it.
         let none = EventInput { repeat: None, ..detail_of(&daily()).input };
-        assert_eq!(patch(&daily(), &none), json!({"recurrenceRules": null}));
+        assert_eq!(patch(&daily(), &none), json!({"recurrenceRule": null}));
         let mut excluded = daily();
         excluded["recurrenceOverrides"] = json!({"2026-11-17T08:00:00": {"excluded": true}});
-        assert_eq!(patch(&excluded, &none), json!({"recurrenceRules": null, "recurrenceOverrides": null}));
+        assert_eq!(patch(&excluded, &none), json!({"recurrenceRule": null, "recurrenceOverrides": null}));
+    }
+
+    #[test]
+    fn the_plural_an_older_build_wrote_is_read_and_repaired_on_the_next_save() {
+        let mut legacy = daily();
+        legacy.as_object_mut().unwrap().remove("recurrenceRule");
+        legacy["recurrenceRules"] = json!([{"@type": "RecurrenceRule", "frequency": "daily", "count": 5}]);
+        // Read: it still repeats, and the app can edit it.
+        let input = detail_of(&legacy).input;
+        assert_eq!(input.repeat.as_ref().map(|r| (r.frequency, r.count)), Some((Frequency::Daily, Some(5))));
+        // Saved without a change of the rule: the real name is written and the plural goes.
+        let fixed = patch(&legacy, &input);
+        assert_eq!(fixed["recurrenceRule"], rule_json(&input.repeat.clone().unwrap()));
+        assert_eq!(fixed["recurrenceRules"], Value::Null);
+        // Removing the repeat clears both names.
+        let none = EventInput { repeat: None, ..input };
+        let cleared = patch(&legacy, &none);
+        assert_eq!((&cleared["recurrenceRule"], &cleared["recurrenceRules"]), (&Value::Null, &Value::Null));
+        // The singular wins when both are there, and an event with the real name needs no repair.
+        let mut both = legacy.clone();
+        both["recurrenceRule"] = json!({"frequency": "weekly"});
+        assert_eq!(detail_of(&both).input.repeat.map(|r| r.frequency), Some(Frequency::Weekly));
+        assert_eq!(patch(&daily(), &detail_of(&daily()).input), json!({}));
     }
 
     #[test]
     fn a_complex_repeat_rule_is_left_alone_whatever_the_input_says() {
         let mut complex = daily();
-        complex["recurrenceRules"] = json!([{"frequency": "monthly", "byMonthDay": [1, 15]}]);
+        complex["recurrenceRule"] = json!({"frequency": "monthly", "byMonthDay": [1, 15]});
         let input = detail_of(&complex).input;
         assert_eq!(input.repeat, None);
         assert_eq!(patch(&complex, &input), json!({}));
@@ -1708,7 +1759,7 @@ mod tests {
         assert_eq!(patch(&daily(), &plain), json!({"start": "2026-11-16T09:30:00"}));
         let mut both = task();
         both["start"] = json!("2026-11-17T09:00:00");
-        both["recurrenceRules"] = json!([{"frequency": "daily"}]);
+        both["recurrenceRule"] = json!({"frequency": "daily"});
         both["recurrenceOverrides"] = json!({"2026-11-18T09:00:00": {"excluded": true}});
         let due_later = EventInput { start: "2026-11-18T19:00:00".into(), ..detail_of(&both).input };
         assert_eq!(patch(&both, &due_later), json!({"due": "2026-11-18T19:00:00"}));
@@ -1801,7 +1852,7 @@ mod tests {
 
     fn weekly_from(start: &str) -> Value {
         json!({"@type": "Event", "id": "w", "calendarIds": {"b": true}, "title": "Weekly", "start": start,
-            "timeZone": "Europe/Istanbul", "duration": "PT1H", "recurrenceRules": [{"frequency": "weekly"}]})
+            "timeZone": "Europe/Istanbul", "duration": "PT1H", "recurrenceRule": {"frequency": "weekly"}})
     }
 
     #[test]
@@ -1820,8 +1871,8 @@ mod tests {
     #[test]
     fn a_series_by_set_position_is_followed() {
         let mut last_friday = weekly_from("2026-11-27T18:00:00");
-        last_friday["recurrenceRules"] =
-            json!([{"frequency": "monthly", "byDay": [{"day": "fr"}], "bySetPosition": [-1]}]);
+        last_friday["recurrenceRule"] =
+            json!({"frequency": "monthly", "byDay": [{"day": "fr"}], "bySetPosition": [-1]});
         let found = agenda_in("Europe/Istanbul", &[last_friday], "2026-11-01T00:00:00", "2027-01-31T00:00:00");
         let ids: Vec<_> = found.iter().map(|e| e.recurrence_id.clone().unwrap()).collect();
         assert_eq!(ids, ["2026-11-27T18:00:00", "2026-12-25T18:00:00", "2027-01-29T18:00:00"]);
@@ -1864,7 +1915,7 @@ mod tests {
     #[test]
     fn the_users_answer_is_read_per_occurrence() {
         let mut series = invitation();
-        series["recurrenceRules"] = json!([{"frequency": "daily", "count": 4}]);
+        series["recurrenceRule"] = json!({"frequency": "daily", "count": 4});
         series["recurrenceOverrides"] = json!({
             "2026-11-21T10:00:00": {"participants/m/participationStatus": "declined"},
             "2026-11-22T10:00:00": {"participants/m": {"participationStatus": "tentative"}},
@@ -1884,7 +1935,7 @@ mod tests {
     fn a_repeating_task_is_expanded_from_its_start_and_due_after_it() {
         let mut series = json!({"@type": "Task", "id": "r", "calendarIds": {"b": true}, "title": "Report",
             "start": "2026-11-16T09:00:00", "due": "2026-11-16T17:00:00", "timeZone": "Europe/Istanbul",
-            "recurrenceRules": [{"frequency": "daily", "count": 4}],
+            "recurrenceRule": {"frequency": "daily", "count": 4},
             "recurrenceOverrides": {
                 "2026-11-17T09:00:00": {"due": "2026-11-17T20:00:00"},
                 "2026-11-18T09:00:00": {"start": "2026-11-18T10:00:00"},
@@ -1954,7 +2005,7 @@ mod tests {
     fn the_detail_of_an_occurrence_of_a_repeating_task_is_its_due_time() {
         let series = json!({"@type": "Task", "id": "r", "calendarIds": {"b": true}, "title": "Report",
             "start": "2026-11-16T09:00:00", "due": "2026-11-16T17:00:00",
-            "recurrenceRules": [{"frequency": "daily"}],
+            "recurrenceRule": {"frequency": "daily"},
             "recurrenceOverrides": {"2026-11-18T09:00:00": {"due": "2026-11-18T20:00:00", "progress": "completed"}}});
         let calendars = [calendar("b", true)];
         let found = |rid: &str| detail_at(&series, &calendars, &me(), Some(rid)).unwrap();

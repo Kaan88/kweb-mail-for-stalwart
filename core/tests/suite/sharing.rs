@@ -137,7 +137,7 @@ fn set_up_owner(server: &MockServer) {
         s.calendar(OWNER).add_calendar("cal2", "Read only", true, false);
         s.calendar(OWNER).add(json!({"@type": "Event", "title": "Standup", "start": "2026-11-16T10:00:00",
         "timeZone": ZONE, "duration": "PT30M", "description": "Daily", "x-keep": "stays",
-        "recurrenceRules": [{"@type": "RecurrenceRule", "frequency": "weekly"}]}));
+        "recurrenceRule": {"@type": "RecurrenceRule", "frequency": "weekly"}}));
         s.calendar(OWNER).add(json!({"@type": "Event", "title": "Look only", "start": "2026-11-17T10:00:00",
         "timeZone": ZONE, "duration": "PT30M", "calendarIds": {"cal2": true}}));
         s.contacts(OWNER).add_address_book("b", "Team contacts", true);
@@ -479,7 +479,7 @@ fn a_change_to_a_shared_event_leaves_what_the_app_does_not_own() {
     let event = rig.server.sharing(|s| s.calendar(OWNER).event("ev1")).unwrap();
     assert_eq!(event["title"], "Standup, renamed");
     assert_eq!(event["x-keep"], "stays", "a property the app does not know stays");
-    assert_eq!(event["recurrenceRules"][0]["frequency"], "weekly");
+    assert_eq!(event["recurrenceRule"]["frequency"], "weekly");
     assert_eq!(event["description"], "Daily");
 }
 

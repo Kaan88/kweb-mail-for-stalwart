@@ -6,7 +6,9 @@
 //! core, as found against the real server:
 //!
 //! - `CalendarEvent/get` answers `id` always and the other properties only when asked for;
-//!   `recurrenceRules` only when `properties` is left out.
+//!   `recurrenceRules` (the plural an older build of the app wrote, which the real server keeps as
+//!   an unknown property and does not follow) only when `properties` is left out; the real name
+//!   `recurrenceRule` comes by name.
 //! - `CalendarEvent/query` filters by `inCalendar` (one id) and by `after`/`before`;
 //!   `inCalendars` and any other filter is `unsupportedFilter`. `expandRecurrences` needs both
 //!   `after` and `before` and does not expand: a series is found where its first start is in the
@@ -320,7 +322,7 @@ fn pick(object: &Value, props: Option<&[&str]>) -> Value {
     let Some(props) = props else { return object.clone() };
     let mut out = Map::new();
     for (key, value) in object.as_object().into_iter().flatten() {
-        // Stalwart 1.1 leaves the rules out when properties are named, even when they are asked for.
+        // Stalwart 1.1 leaves an unknown property (the plural `recurrenceRules`) out when properties are named.
         let withheld = key == "recurrenceRules";
         if key == "id" || (props.contains(&key.as_str()) && !withheld) {
             out.insert(key.clone(), value.clone());

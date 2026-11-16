@@ -117,7 +117,7 @@ fn set_up_owner(server: &MockServer) {
         s.calendar(OWNER).add_calendar("cal1", "Team calendar", true, true);
         s.calendar(OWNER).add(json!({"@type": "Event", "title": "Standup", "start": "2026-11-16T10:00:00",
             "timeZone": ZONE, "duration": "PT30M",
-            "recurrenceRules": [{"@type": "RecurrenceRule", "frequency": "weekly"}]}));
+            "recurrenceRule": {"@type": "RecurrenceRule", "frequency": "weekly"}}));
         s.contacts(OWNER).add_address_book("b", "Team contacts", true);
         s.contacts(OWNER).add_contact(json!({"name": {"full": "Zed Zimmer"}, "addressBookIds": {"b": true},
             "emails": {"e": {"address": "zed@shared.test"}}}));

@@ -57,7 +57,7 @@ fn get_request(account_id: &str, event_id: &str) -> Value {
         "using": [CORE_CAPABILITY, CALENDARS_CAPABILITY],
         "methodCalls": [["CalendarEvent/get", {
             "accountId": account_id,
-            // No `properties`: Stalwart 1.1 leaves some (`recurrenceRules`) out when properties are
+            // No `properties`: Stalwart 1.1 leaves unknown properties out when properties are
             // named, and a reminder for a moved occurrence needs the overrides to be there.
             "ids": [event_id],
         }, "a"]]
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn recurrence_id_selects_the_occurrence() {
         let event = json!({"@type": "Event", "title": "Weekly", "start": "2026-11-04T10:00:00",
-            "timeZone": "Europe/Istanbul", "recurrenceRules": [{"frequency": "weekly"}]});
+            "timeZone": "Europe/Istanbul", "recurrenceRule": {"frequency": "weekly"}});
         let r = make(event, Some("2026-11-18T10:00:00"));
         assert_eq!(r.local_start.as_deref(), Some("2026-11-18T10:00:00"));
         assert_eq!(r.time_zone.as_deref(), Some("Europe/Istanbul"));

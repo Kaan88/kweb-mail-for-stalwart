@@ -4,13 +4,19 @@
 //! code follows the server:
 //!
 //! - `CalendarEvent/query` filters by `inCalendar` (one id); `inCalendars` is `unsupportedFilter`.
-//! - It does not expand repeating events, whatever `expandRecurrences` says: a series is found
-//!   only when its first start is in the span, and each is one id. So the events of the
-//!   visible calendars are fetched whole and the occurrences are worked out in `jscal`.
-//! - `recurrenceRules` is in the answer only when `properties` is left out (asked for by name
-//!   it is missing; `recurrenceOverrides` came back by name on the local server, but is not
-//!   relied on), and `recurrenceOverrides` cannot be asked together with `utcStart`. Events are therefore fetched whole, and times are worked out
-//!   here from the local time and the zone.
+//! - A repeat is the object `recurrenceRule` (and `excludedRecurrenceRule`), never a plural: a
+//!   `recurrenceRules` array is kept as an unknown property (it comes back only when `properties`
+//!   is left out), the server does not follow it, and the `.ics` has no RRULE. Checked on the local
+//!   server 2026-11-16; earlier builds of the app wrote the plural, so this core reads it as a
+//!   fallback and repairs it on the next save. (The old note here said the server does not
+//!   expand repeating events: that was this bug. With the real name it does.)
+//! - `CalendarEvent/query` with `expandRecurrences` needs both `after` and `before`
+//!   (`invalidArguments` otherwise) and then answers one synthetic id per occurrence. The core
+//!   does not use it: it fetches the events whole and works the occurrences out in `jscal`, which
+//!   also covers the overrides and the zone. Without `expandRecurrences` a series is found when
+//!   any of its occurrences is in the span.
+//! - `recurrenceOverrides` cannot be asked together with `utcStart`. Events are therefore
+//!   fetched whole, and times are worked out here from the local time and the zone.
 //! - A patch into a map the event does not have yet (`alerts/x`, `recurrenceOverrides/x`) is
 //!   `invalidPatch`; whole maps are set instead.
 //! - Nothing is validated on write (a start of "nonsense" or a zone that does not exist is
