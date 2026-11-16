@@ -222,6 +222,8 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpenFolders = { folderId, action -> app.open(Route.Folders(folderId, action)) },
                     onOpenLabel = { id, name -> app.open(Route.Label(id, name)) },
                     onOpenChat = { app.open(Route.AssistantChat) },
+                    onOpenMail = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
+                    onAddToCalendar = { app.open(Route.EditEvent(null, it.start.take(10), prefill = it)) },
                     bottomBar = bottomBar,
                     appSnackbar = snackbar,
                 )

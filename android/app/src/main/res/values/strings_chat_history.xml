@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_earlier">Earlier chats</string>
+    <string name="chat_earlier_empty">No earlier chats yet. A chat is kept on this phone after the assistant has answered.</string>
+    <string name="chat_earlier_row">%1$s · %2$s</string>
+    <string name="chat_earlier_about">About: %1$s</string>
+    <string name="chat_earlier_delete">Delete this chat</string>
+    <string name="chat_earlier_failed">That chat could not be opened.</string>
+    <string name="chat_earlier_delete_failed">That chat could not be deleted.</string>
+    <string name="chat_held_with">This chat was held with %1$s (%2$s). Your next message goes to the service and model set now. Automatic changes are off in an earlier chat.</string>
+    <string name="assistant_chats_help">Chats are kept on this phone, for this account, with what you wrote and what the assistant answered. Nothing the assistant looked up is kept.</string>
+    <string name="assistant_chats_delete">Delete earlier chats</string>
+    <string name="assistant_chats_delete_title">Delete earlier chats?</string>
+    <string name="assistant_chats_delete_text">Every chat kept for this account is removed from this phone, and so is the chat that is open now. This cannot be undone.</string>
+    <string name="assistant_chats_delete_confirm">Delete</string>
+    <string name="assistant_chats_deleted">Earlier chats deleted.</string>
+    <string name="assistant_chats_delete_failed">The earlier chats could not be deleted.</string>
+</resources>

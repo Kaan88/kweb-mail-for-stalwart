@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="catchup_entry">Catch me up</string>
+    <string name="catchup_title">Catch me up</string>
+    <string name="catchup_close">Close</string>
+    <string name="catchup_running">Reading your unread mail…</string>
+    <string name="catchup_failed">The catch-up could not be made.</string>
+    <string name="catchup_since">Unread mail since %1$s</string>
+    <string name="catchup_more">%1$d more unread mails were left out. The most sent is 30.</string>
+    <plurals name="catchup_needing">
+        <item quantity="one">%1$d mail asks for an answer</item>
+        <item quantity="other">%1$d mails ask for an answer</item>
+    </plurals>
+    <string name="catchup_needs_answer">Asks for an answer</string>
+    <string name="catchup_find">Find to-dos and dates</string>
+</resources>

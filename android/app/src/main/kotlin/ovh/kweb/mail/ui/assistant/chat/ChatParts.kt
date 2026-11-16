@@ -137,6 +137,7 @@ internal fun NoteLine(note: ChatNote) {
         ChatNote.ToolsOff -> stringResource(R.string.chat_tools_off)
         ChatNote.Restarted -> stringResource(R.string.chat_restarted)
         ChatNote.NoAnswer -> stringResource(R.string.chat_no_answer)
+        is ChatNote.HeldWith -> stringResource(R.string.chat_held_with, note.service, note.model)
     }
     NoticeBar(text, error = false)
 }

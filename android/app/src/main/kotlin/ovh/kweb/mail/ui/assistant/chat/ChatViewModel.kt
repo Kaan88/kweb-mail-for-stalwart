@@ -34,6 +34,7 @@ import ovh.kweb.mail.ui.assistant.DraftText
 import ovh.kweb.mail.ui.assistant.RunRules
 import ovh.kweb.mail.ui.compose.DraftLauncher
 import uniffi.kweb_core.AiActionMode
+import uniffi.kweb_core.AiChatSummary
 import uniffi.kweb_core.AiChatListener
 import uniffi.kweb_core.AiLink
 import uniffi.kweb_core.AiStep
@@ -70,6 +71,11 @@ class ChatViewModel(app: Application, private val session: AccountSession) : And
     private var startedId: String? = null
 
     val state: StateFlow<ChatState> get() = stateFlow
+
+    private val historyFlow = MutableStateFlow<List<AiChatSummary>?>(null)
+
+    /** The earlier chats of this account for the list; null until read. */
+    val history: StateFlow<List<AiChatSummary>?> get() = historyFlow
 
     val events: Flow<ChatEvent> get() = eventChannel.receiveAsFlow()
 
@@ -127,6 +133,61 @@ class ChatViewModel(app: Application, private val session: AccountSession) : And
     fun newChat() {
         aboutRequest = null
         restart(restarted = false)
+    }
+
+    // ---- earlier chats ----
+
+    /** Reads the list of earlier chats (on the device only). A failure shows an empty list. */
+    fun loadHistory() {
+        viewModelScope.launch {
+            historyFlow.value = try {
+                withContext(Dispatchers.IO) { session.core.aiChats() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "reading the earlier chats failed: ${e.javaClass.simpleName}")
+                emptyList()
+            }
+        }
+    }
+
+    /** Opens an earlier chat: its words come back and the next message continues it. A running answer is stopped first. */
+    fun openEarlier(id: String) {
+        if (id == chatId && stateFlow.value.items.isNotEmpty()) return
+        cancelCore(stateFlow.value.runId)
+        viewModelScope.launch {
+            chatLock.withLock {
+                try {
+                    val opened = withContext(Dispatchers.IO) { session.core.aiChatOpen(id) }
+                    aboutRequest = null
+                    chatId = id
+                    startedId = id
+                    stateFlow.update { ChatRules.resumed(it, opened) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(Background.TAG, "opening an earlier chat failed: ${e.javaClass.simpleName}")
+                    stateFlow.update { it.copy(notice = UiMessage.Res(R.string.chat_earlier_failed)) }
+                    loadHistory()
+                }
+            }
+        }
+    }
+
+    /** Deletes one earlier chat; when it is the one on screen a new chat begins. */
+    fun deleteEarlier(id: String) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { session.core.aiChatDelete(id) }
+                historyFlow.update { list -> list?.filterNot { it.id == id } }
+                if (id == chatId) restart(restarted = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "deleting an earlier chat failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(notice = UiMessage.Res(R.string.chat_earlier_delete_failed)) }
+            }
+        }
     }
 
     // ---- about one conversation ----

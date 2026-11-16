@@ -64,6 +64,8 @@ data class AssistantSettingsState(
      */
     val chatConsent: ConsentAsk? = null,
     val error: UiMessage? = null,
+    /** A plain line after something went well ("Earlier chats deleted"). */
+    val info: UiMessage? = null,
     /** The address and model a chat found to take no tools, for the shown service; null when none is known. */
     val tools: AssistantRules.ToolsFact? = null,
 )
@@ -140,6 +142,23 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
             }
         }
     }
+
+    /** "Delete earlier chats": every kept chat of this account goes (on the device only), and so does the open conversation. */
+    fun deleteChats() {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { session.core.aiChatsDeleteAll() }
+                stateFlow.update { it.copy(info = UiMessage.Res(R.string.assistant_chats_deleted), error = null) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "deleting the earlier chats failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(error = AssistantMessages.of(e, R.string.assistant_chats_delete_failed)) }
+            }
+        }
+    }
+
+    fun dismissInfo() = stateFlow.update { it.copy(info = null) }
 
     private fun take(settings: AiSettings) {
         stored = settings

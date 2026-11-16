@@ -97,6 +97,7 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
     val state by vm.state.collectAsStateWithLifecycle()
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
+    var confirmChats by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { onBack() } }
@@ -123,9 +124,12 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
             state.error?.let {
                 NoticeBar(it.resolve(LocalResources.current), error = true, action = stringResource(R.string.assistant_dismiss) to vm::dismissError)
             }
+            state.info?.let {
+                NoticeBar(it.resolve(LocalResources.current), error = false, action = stringResource(R.string.assistant_dismiss) to vm::dismissInfo)
+            }
             val form = state.form
             when {
-                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm, onOpenHomeAttention) { confirmReset = true }
+                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm, onOpenHomeAttention, onDeleteChats = { confirmChats = true }) { confirmReset = true }
                 state.phase == AssistantPhase.FAILED -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -174,6 +178,21 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
         )
     }
 
+    if (confirmChats) {
+        AlertDialog(
+            onDismissRequest = { confirmChats = false },
+            title = { Text(stringResource(R.string.assistant_chats_delete_title)) },
+            text = { Text(stringResource(R.string.assistant_chats_delete_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmChats = false
+                    vm.deleteChats()
+                }) { Text(stringResource(R.string.assistant_chats_delete_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmChats = false }) { Text(stringResource(R.string.assistant_keep_editing)) } },
+        )
+    }
+
     state.models?.let { ModelsSheet(it, onPick = vm::pickModel, onRetry = vm::chooseModel, onClose = vm::closeModels) }
 
     if (confirmDiscard) {
@@ -193,7 +212,14 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
 }
 
 @Composable
-private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: AssistantSettingsViewModel, onOpenHomeAttention: () -> Unit, onReset: () -> Unit) {
+private fun Form(
+    state: AssistantSettingsState,
+    form: AssistantRules.Form,
+    vm: AssistantSettingsViewModel,
+    onOpenHomeAttention: () -> Unit,
+    onDeleteChats: () -> Unit,
+    onReset: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
         GroupColumn {
@@ -354,6 +380,19 @@ private fun Form(state: AssistantSettingsState, form: AssistantRules.Form, vm: A
                 Text(stringResource(R.string.assistant_save), style = MaterialTheme.typography.labelLarge)
             }
         }
+
+        // Earlier chats are kept on this phone; this removes them.
+        Text(
+            stringResource(R.string.assistant_chats_help),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
+            color = colors.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        TextButton(
+            onClick = onDeleteChats,
+            enabled = !state.saving && !state.switching && !state.resetting,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        ) { Text(stringResource(R.string.assistant_chats_delete)) }
 
         // Quiet, below the main action: it throws the settings, the keys and the agreements away.
         TextButton(

@@ -62,6 +62,9 @@ sealed interface ChatNote {
 
     /** The answer was empty and nothing came with it. */
     data object NoAnswer : ChatNote
+
+    /** An earlier chat held with another service or model than the ones set now: the next message goes to the current ones. */
+    data class HeldWith(val service: String, val model: String) : ChatNote
 }
 
 sealed interface ChatItem {
@@ -236,6 +239,20 @@ object ChatRules {
     /** A new chat: nothing of the old one stays. [restarted]: the core had dropped the old one, and the list says so. */
     fun cleared(state: ChatState, restarted: Boolean): ChatState = state.copy(
         items = if (restarted) listOf(ChatItem.Notice(ChatNote.Restarted)) else emptyList(),
+        running = false,
+        runId = null,
+        runStart = 0,
+        notice = null,
+        toolsOff = false,
+        draftBusy = false,
+        about = null,
+        auto = false,
+    )
+
+    /** An earlier chat opened again: its words are the list, with a note when it was held with another service or model. */
+    fun resumed(state: ChatState, opened: uniffi.kweb_core.AiChatOpened): ChatState = state.copy(
+        items = opened.messages.map { if (it.fromUser) ChatItem.Mine(it.text) else ChatItem.Theirs(it.text) } +
+            (if (opened.serviceChanged) listOf(ChatItem.Notice(ChatNote.HeldWith(opened.service, opened.model))) else emptyList()),
         running = false,
         runId = null,
         runStart = 0,

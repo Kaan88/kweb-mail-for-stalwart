@@ -137,6 +137,19 @@ fun HomeScreen(
         ovh.kweb.mail.ui.attention.SparkleEvents(sparkle, attention, snackbar, onOpenDraft = nav.openCompose)
     }
 
+    // "Catch me up" as an action beside the status chips, while the assistant may summarize.
+    val catchUp: ovh.kweb.mail.ui.catchup.CatchUpViewModel = viewModel()
+    val catchUpOffered by catchUp.offered.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(catchUp) {
+        catchUp.refreshOffered()
+        onPauseOrDispose { }
+    }
+    ovh.kweb.mail.ui.catchup.CatchUpHost(
+        catchUp,
+        onOpenThread = { threadId, messageId -> nav.openThread(threadId, messageId) },
+        onAddToCalendar = { nav.openEditor(ovh.kweb.mail.ui.Route.EditEvent(null, it.start.take(10), prefill = it)) },
+    )
+
     val tiles = found.settings?.tiles ?: ALL_TILES
     val now = state.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000)
     val clock = remember(now) { WordClock(ZoneId.systemDefault(), Locale.getDefault(), now) }
@@ -161,9 +174,18 @@ fun HomeScreen(
             Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            val chips = (tiles.delivery && state.problem != null) || (tiles.away && state.away)
+            val chips = (tiles.delivery && state.problem != null) || (tiles.away && state.away) || catchUpOffered
             if (chips) {
                 Row(Modifier.padding(horizontal = 2.dp).padding(bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (catchUpOffered) {
+                        StatusChip(
+                            stringResource(R.string.catchup_entry),
+                            painterResource(R.drawable.ic_sparkle),
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                            MaterialTheme.colorScheme.onTertiaryContainer,
+                            catchUp::start,
+                        )
+                    }
                     if (tiles.delivery && state.problem != null) {
                         val since = state.problemSince
                         val text = when {

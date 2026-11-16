@@ -168,6 +168,10 @@ fun MailListScreen(
     onOpenLabel: (labelId: String, name: String) -> Unit = { _, _ -> },
     /** Opens the chat with the assistant, from the entry in the drawer. */
     onOpenChat: () -> Unit = {},
+    /** Opens one mail of a catch-up result (the conversation and the message). */
+    onOpenMail: (threadId: String, messageId: String) -> Unit = { _, _ -> },
+    /** Opens the editor filled in from a card of the catch-up's "Find to-dos and dates". */
+    onAddToCalendar: (ovh.kweb.mail.ui.calendar.EventPrefill) -> Unit = {},
     bottomBar: @Composable () -> Unit,
     appSnackbar: SnackbarHostState,
     vm: MailListViewModel = viewModel(),
@@ -222,6 +226,12 @@ fun MailListScreen(
     val adminTick by accountSession.settings.changes.collectAsState()
     val adminEntry = remember(accountSession, adminTick) {
         AdminEntryRules.entry(accountSession.settings.adminKeyAccepted, accountSession.settings.adminMayDashboard)
+    }
+    val catchUp: ovh.kweb.mail.ui.catchup.CatchUpViewModel = viewModel()
+    val catchUpOffered by catchUp.offered.collectAsStateWithLifecycle()
+    LifecycleResumeEffect(catchUp) {
+        catchUp.refreshOffered()
+        onPauseOrDispose { }
     }
     var chatOffered by remember(accountSession) { mutableStateOf(false) }
     var chatAsked by remember(accountSession) { mutableIntStateOf(0) }
@@ -330,6 +340,7 @@ fun MailListScreen(
 
     if (accountSheet) AccountSheet(title = stringResource(R.string.accounts_title), onDismiss = { accountSheet = false })
 
+    ovh.kweb.mail.ui.catchup.CatchUpHost(catchUp, onOpenThread = onOpenMail, onAddToCalendar = onAddToCalendar)
     ModalNavigationDrawer(
         drawerState = drawerState,
         // No drawer from the edge while rows are being chosen (an open one can still be swiped shut).
@@ -372,6 +383,11 @@ fun MailListScreen(
                 onAdminEntry = { leaveDrawer { adminEntry?.let(onOpenAdminEntry) } },
                 onChat = if (chatOffered) {
                     { leaveDrawer { onOpenChat() } }
+                } else {
+                    null
+                },
+                onCatchUp = if (catchUpOffered) {
+                    { leaveDrawer { catchUp.start() } }
                 } else {
                     null
                 },
@@ -750,6 +766,8 @@ private fun DrawerContent(
     onAdminEntry: () -> Unit,
     /** The chat with the assistant; null while it is not switched on, and then there is no entry. */
     onChat: (() -> Unit)?,
+    /** "Catch me up"; null while the assistant may not summarize, and then there is no entry. */
+    onCatchUp: (() -> Unit)?,
     onSettings: () -> Unit,
     onAccountChosen: () -> Unit,
 ) {
@@ -850,6 +868,14 @@ private fun DrawerContent(
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
                     selected = false,
                     onClick = onChat,
+                )
+            }
+            if (onCatchUp != null) {
+                NavigationDrawerItem(
+                    label = { Text(stringResource(R.string.catchup_entry)) },
+                    icon = { Icon(painterResource(R.drawable.ic_sparkle), contentDescription = null) },
+                    selected = false,
+                    onClick = onCatchUp,
                 )
             }
             NavigationDrawerItem(

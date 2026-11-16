@@ -43,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -79,6 +80,8 @@ fun ChatScreen(
     val words = rememberChatWords()
     val listState = rememberLazyListState()
     var menuOpen by remember { mutableStateOf(false) }
+    var earlierOpen by rememberSaveable { mutableStateOf(false) }
+    val history by vm.history.collectAsStateWithLifecycle()
     // The explanation before automatic changes go on: "" from the menu, the card's id from "Accept, and accept the rest".
     var explaining by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -120,6 +123,15 @@ fun ChatScreen(
         )
     }
 
+    if (earlierOpen) {
+        EarlierChatsSheet(
+            chats = history,
+            onOpen = { id -> earlierOpen = false; vm.openEarlier(id) },
+            onDelete = vm::deleteEarlier,
+            onDismiss = { earlierOpen = false },
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -141,6 +153,15 @@ fun ChatScreen(
                                 onClick = {
                                     menuOpen = false
                                     vm.newChat()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_earlier)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_history), contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    vm.loadHistory()
+                                    earlierOpen = true
                                 },
                             )
                             if (state.gate == ChatGate.READY && state.actionsOn) {
