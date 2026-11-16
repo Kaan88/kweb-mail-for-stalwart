@@ -36,7 +36,7 @@ rusqlite = { version = "0.42", features = ["bundled"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 chrono-tz = "0.10"
 # RFC 8291 (Web Push message encryption) for push through Google.
-p256 = { version = "0.13", default-features = false, features = ["ecdh", "arithmetic", "ecdsa"] }
+p256 = { version = "0.14", default-features = false, features = ["ecdh", "arithmetic", "ecdsa"] }
 hkdf = "0.12"
 aes-gcm = "0.10"
 # M9: OpenPGP and S/MIME, pure Rust. rPGP without bzip2 (a C library); CMS/X.509 from RustCrypto.
