@@ -74,6 +74,55 @@ pub struct SubmissionInfo {
     pub send_at: i64,
 }
 
+/// A recipient the server refused while it took a message (RCPT TO), with its own reply.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Refused {
+    pub address: String,
+    /// The server's SMTP reply, such as "550 5.1.1 Mailbox does not exist." Not a secret.
+    pub reply: String,
+}
+
+/// What the server says it did with the recipients of a submission (`deliveryStatus`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Delivery {
+    pub refused: Vec<Refused>,
+    /// How many were not refused (accepted, queued or delivered).
+    pub accepted: usize,
+}
+
+impl Delivery {
+    /// Reads the `deliveryStatus` map. A recipient is refused when the server says `delivered:
+    /// "no"` or its reply is a 5xx; a server that says nothing has refused nothing.
+    pub fn from_status(status: &Value) -> Delivery {
+        let mut out = Delivery::default();
+        for (address, one) in status.as_object().into_iter().flatten() {
+            let reply = one["smtpReply"].as_str().unwrap_or_default().trim();
+            if one["delivered"] == "no" || reply.starts_with('5') {
+                out.refused.push(Refused { address: address.clone(), reply: reply.to_string() });
+            } else {
+                out.accepted += 1;
+            }
+        }
+        out
+    }
+
+    /// Every recipient was refused: nothing is queued, and the message is not sent.
+    pub fn none_accepted(&self) -> bool {
+        self.accepted == 0 && !self.refused.is_empty()
+    }
+
+    /// The reason the user reads: the server's own words per address.
+    pub fn reason(&self) -> String {
+        let each: Vec<String> = self
+            .refused
+            .iter()
+            .map(|r| if r.reply.is_empty() { r.address.clone() } else { format!("{}: {}", r.address, r.reply) })
+            .collect();
+        let who = if each.len() == 1 { "the recipient" } else { "any recipient" };
+        format!("the server did not accept {who}, so nothing was sent: {}", each.join("; "))
+    }
+}
+
 /// What one held message looks like to the user.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmailSummary {
@@ -111,6 +160,80 @@ impl Connection {
         let calls = [("EmailSubmission/query", query), ("EmailSubmission/get", get)];
         let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &calls).await?;
         Ok(submissions_from(response(&responses, "EmailSubmission/get")?))
+    }
+
+    /// What the server did with the recipients of one submission. A submission the server no
+    /// longer has says nothing (no refusals).
+    pub async fn delivery_of(&self, submission_id: &str) -> Result<Delivery> {
+        let args = json!({
+            "accountId": self.account_for(SUBMISSION_CAPABILITY),
+            "ids": [submission_id],
+            "properties": ["deliveryStatus"],
+        });
+        let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &[("EmailSubmission/get", args)]).await?;
+        let get = response(&responses, "EmailSubmission/get")?;
+        Ok(Delivery::from_status(&get["list"][0]["deliveryStatus"]))
+    }
+
+    /// Destroys submission records (the ones that can no longer be cancelled: destroying a
+    /// pending one does not stop the message). Records that are gone already do not matter.
+    pub async fn destroy_submissions(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let args = json!({ "accountId": self.account_for(SUBMISSION_CAPABILITY), "destroy": ids });
+        let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &[("EmailSubmission/set", args)]).await?;
+        response(&responses, "EmailSubmission/set").map(drop)
+    }
+
+    /// Removes the finished records (sent or cancelled) of one message, which the app has no
+    /// more use for once it has seen the message through. Best effort for the caller.
+    pub async fn destroy_finished_submissions_of(&self, email_id: &str) -> Result<()> {
+        let finished: Vec<String> = self
+            .submissions_of(email_id)
+            .await?
+            .into_iter()
+            .filter(|s| s.undo != Undo::Pending)
+            .map(|s| s.id)
+            .collect();
+        self.destroy_submissions(&finished).await
+    }
+
+    /// Removes finished records (sent or cancelled, never a pending one) to make room under the
+    /// server's `maxSubmissions`, except those of the messages in `protect` (copies of messages
+    /// the app is still settling: the record is the proof that one was sent). Takes at most 200
+    /// at a time. Returns how many were removed.
+    pub async fn prune_submissions(&self, protect: &[String]) -> Result<usize> {
+        let account = self.account_for(SUBMISSION_CAPABILITY);
+        let mut calls = Vec::new();
+        for status in ["final", "canceled"] {
+            let at = calls.len();
+            calls.push((
+                "EmailSubmission/query",
+                json!({ "accountId": account, "filter": { "undoStatus": status }, "limit": 200 }),
+            ));
+            calls.push((
+                "EmailSubmission/get",
+                json!({
+                    "accountId": account,
+                    "#ids": { "resultOf": format!("c{at}"), "name": "EmailSubmission/query", "path": "/ids" },
+                    "properties": ["emailId"],
+                }),
+            ));
+        }
+        let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &calls).await?;
+        let mut ids: Vec<String> = Vec::new();
+        for (_, get) in responses.iter().filter(|(name, _)| name == "EmailSubmission/get") {
+            for record in get["list"].as_array().into_iter().flatten() {
+                let (Some(id), Some(email)) = (record["id"].as_str(), record["emailId"].as_str()) else { continue };
+                if !protect.iter().any(|p| p == email) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+        ids.truncate(200);
+        self.destroy_submissions(&ids).await?;
+        Ok(ids.len())
     }
 
     /// Every submission of this message, held, sent or cancelled: how a send whose answer was

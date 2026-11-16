@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use super::flush::{accepted, held_for, make_copy, put_back, refused, send_one, standing, Standing};
+use super::flush::{accepted, held_for, make_copy, note_refused, put_back, refused, send_one, standing, Standing};
 use crate::{
     jmap::{is_unauthorized, Connection, CopyState, Hold, Undo},
     model::{Draft, ScheduledSend},
@@ -160,10 +160,14 @@ pub async fn schedule(
     };
     let sent = store.mailbox_by_role(account_id, "sent")?;
     let sent = sent.as_ref().map(|m| m.id.as_str());
-    match conn.submit_with(&row.draft.identity_id, &copy, &drafts.id, sent, Some(&held)).await {
-        Ok(submission) => {
+    let protect = store.unsettled_copy_ids(account_id)?;
+    match conn.submit_with(&row.draft.identity_id, &copy, &drafts.id, sent, Some(&held), &protect).await {
+        Ok(submitted) => {
+            note_refused(store, account_id, &copy, &submitted.refused);
+            // The record stays: it is how the server holds the message until its time, and how
+            // the user finds it to cancel. The next full account prunes it once it has gone.
             accepted(conn, store, account_id, &row, &mut false).await?;
-            Ok(scheduled(&row, &submission, send_at))
+            Ok(scheduled(&row, &submitted.id, send_at))
         }
         Err(Error::Invalid { msg }) => {
             refused(store, account_id, &row, &msg, &mut false)?;

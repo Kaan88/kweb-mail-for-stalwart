@@ -12,7 +12,7 @@ use serde_json::{json, Map, Value};
 
 use super::{
     errors::{from_jmap, unauthorized},
-    send_later::Held,
+    send_later::{Held, Refused},
     Connection, MAIL_CAPABILITY,
 };
 use crate::{
@@ -44,6 +44,15 @@ pub struct HeaderIds {
     pub message_id: Option<String>,
     pub in_reply_to: Vec<String>,
     pub references: Vec<String>,
+}
+
+/// A message the server took to send.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Submitted {
+    /// The submission's id.
+    pub id: String,
+    /// The recipients the server refused while taking it (the others were accepted).
+    pub refused: Vec<Refused>,
 }
 
 /// A file the server now holds.
@@ -216,11 +225,23 @@ impl Connection {
         drafts_id: &str,
         sent_id: Option<&str>,
     ) -> Result<()> {
-        self.submit_with(identity_id, email_id, drafts_id, sent_id, None).await.map(drop)
+        self.submit_with(identity_id, email_id, drafts_id, sent_id, None, &[]).await.map(drop)
     }
 
     /// Like [`Connection::submit`]; with `held` the server keeps the message back until the
-    /// time it names. Returns the id of the submission.
+    /// time it names. Returns the id of the submission and the recipients the server refused.
+    ///
+    /// Stalwart checks every recipient (RCPT TO) while it takes the submission, and a refusal does
+    /// not fail the call: the record is created (final when no recipient was accepted, so nothing
+    /// is queued) and the message moves to Sent all the same. So the answer is read back
+    /// (`deliveryStatus`): when no recipient was accepted the message is put back in Drafts, the
+    /// record is dropped and the reason (the server's SMTP reply) is an `Error::Invalid`; when only
+    /// some were refused the send stands and they are returned.
+    ///
+    /// The server counts every record against `maxSubmissions` (500 by default). A full account
+    /// is `overQuota`: the finished records (not the ones of `protect`, the copies of messages
+    /// still being settled) are removed and the submission tried once more, and when that does not
+    /// free room the draft stays with the reason instead of being tried for ever.
     pub async fn submit_with(
         &self,
         identity_id: &str,
@@ -228,33 +249,56 @@ impl Connection {
         drafts_id: &str,
         sent_id: Option<&str>,
         held: Option<&Held>,
-    ) -> Result<String> {
+        protect: &[String],
+    ) -> Result<Submitted> {
         let mut args =
             submission_args(&self.account_for(SUBMISSION_CAPABILITY), identity_id, email_id, drafts_id, sent_id);
         if let Some(held) = held {
             args["create"][CREATE_ID]["envelope"] = held.envelope();
         }
-        let responses = self.call(&[MAIL_CAPABILITY, SUBMISSION_CAPABILITY], &[("EmailSubmission/set", args)]).await?;
+        let capabilities = [MAIL_CAPABILITY, SUBMISSION_CAPABILITY];
+        let mut responses = self.call(&capabilities, &[("EmailSubmission/set", args.clone())]).await?;
+        if not_created_kind(response(&responses, "EmailSubmission/set")?) == Some("overQuota") {
+            let freed = self.prune_submissions(protect).await.unwrap_or(0);
+            if freed == 0 {
+                return Err(Error::invalid(
+                    "the server keeps a record of every message sent and its limit is reached; none could be cleared. Ask the administrator to raise the limit (maxSubmissions) or to clear old records",
+                ));
+            }
+            responses = self.call(&capabilities, &[("EmailSubmission/set", args)]).await?;
+        }
         let set = response(&responses, "EmailSubmission/set")?;
         let submission = match created_id(set) {
             Ok(id) => id,
             // The server answered, and the answer is no: the message was not sent. Whatever
             // the reason is called, the user has to see it and get the draft back; only a
-            // rate limit is worth waiting out.
+            // rate limit is worth waiting out. A full list of records is not cured by waiting.
             Err(e) => {
                 return Err(match (not_created_kind(set), e) {
+                    (Some("overQuota"), _) => Error::invalid(
+                        "the server keeps a record of every message sent and its limit is still reached: ask the administrator to raise it (maxSubmissions)",
+                    ),
                     (Some(kind), Error::Temporary { msg }) if kind != "rateLimit" => Error::invalid(msg),
                     (_, e) => e,
                 })
             }
         };
+        // What the server did with the recipients. Asked in a request of its own and best
+        // effort: a server that does not say is taken to have accepted them.
+        let delivery = self.delivery_of(&submission).await.unwrap_or_default();
+        if delivery.none_accepted() {
+            // Nothing was queued, yet the message was moved to Sent: put it back, drop the record.
+            let _ = self.restore_draft(email_id, drafts_id).await;
+            let _ = self.destroy_submissions(&[submission]).await;
+            return Err(Error::invalid(delivery.reason()));
+        }
         // The move to Sent rides on the submission and can fail on its own. The message is
         // sent either way; a copy left marked as a draft is put right, as far as that goes.
         let moved = responses.iter().any(|(name, args)| name == "Email/set" && args["updated"].get(email_id).is_some());
         if !moved {
             let _ = self.unmark_draft(email_id).await;
         }
-        Ok(submission)
+        Ok(Submitted { id: submission, refused: delivery.refused })
     }
 
     /// Takes the draft mark off a message that was sent.

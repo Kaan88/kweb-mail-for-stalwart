@@ -116,6 +116,13 @@ impl Rig {
         draft
     }
 
+    /// The messages in Sent with this subject (the seeded Sent folder has mail of its own).
+    fn sent_with(&self, subject: &str) -> Vec<String> {
+        let mut found = self.server.ids_in("sent");
+        found.retain(|id| self.server.view(id).subject == subject);
+        found
+    }
+
     /// The other connection to the cache file, for what `Core` does not show.
     fn store(&self) -> Store {
         Store::open(std::path::Path::new(&self.db_path)).unwrap()
@@ -556,6 +563,134 @@ fn a_message_the_server_refuses_for_good_comes_back_as_a_draft_with_the_reason()
     eventually("the message to be sent", || rig.server.submissions().len() == 1);
     eventually("the row to be gone", || rig.core.pending_sends().unwrap().is_empty());
     assert!(rig.core.drafts().unwrap().is_empty());
+}
+
+// ---- the server's own answer about the recipients and its record of the send ----------------
+
+const NO_MAILBOX: &str = "550 5.1.1 Mailbox does not exist.";
+
+#[test]
+fn a_message_no_recipient_of_which_was_accepted_stays_a_draft_with_the_servers_reason() {
+    for delay in [0_u32, 10] {
+        let rig = Rig::synced();
+        rig.server.refuse_recipient("bo@example.test", NO_MAILBOX);
+        let draft = rig.note("Nobody home");
+        let result = rig.core.send(draft.clone(), delay);
+        if delay > 0 {
+            // Handed over to the server at once (to be held): the user's own call says why.
+            assert!(matches!(&result, Err(Error::Invalid { msg }) if msg.contains(NO_MAILBOX)), "{result:?}");
+        } else {
+            result.unwrap();
+        }
+        rig.sync();
+        // The server took the submission as created (and moved the message to Sent): the core
+        // read the answer back, put the message back and kept the draft with the reason.
+        let drafts = rig.core.drafts().unwrap();
+        assert_eq!(drafts.len(), 1, "delay {delay}: it is a draft again");
+        let why = drafts[0].send_error.clone().unwrap_or_default();
+        assert!(why.contains(NO_MAILBOX) && why.contains("bo@example.test"), "{why}");
+        assert!(rig.core.pending_sends().unwrap().is_empty());
+        assert!(rig.server.submissions().is_empty() && rig.server.held().is_empty(), "nothing is sent");
+        assert!(rig.sent_with("Nobody home").is_empty(), "delay {delay}: nothing goes to Sent");
+        assert_eq!(rig.server.submission_records(), 0, "the useless record is dropped");
+        // The next pass gives the draft its copy in Drafts and nothing is ever sent.
+        rig.sync();
+        rig.sync();
+        assert_eq!(rig.server.ids_in("drafts").len(), 1);
+        assert!(rig.server.submissions().is_empty());
+
+        // Fixed (another address), it is sent once.
+        let mut again = rig.core.drafts().unwrap().remove(0);
+        again.to = vec![addr("", "better@example.test")];
+        rig.core.send(again, 0).unwrap();
+        rig.sync();
+        assert_eq!(rig.server.submissions().len(), 1);
+        assert!(rig.core.drafts().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn a_partial_refusal_lets_the_send_stand_and_is_kept_for_the_thread() {
+    let rig = Rig::synced();
+    rig.server.refuse_recipient("bo@example.test", NO_MAILBOX);
+    let mut draft = rig.note("Half of them");
+    draft.cc = vec![addr("", "ok@example.test")];
+    rig.core.send(draft, 0).unwrap();
+    rig.sync();
+    assert_eq!(rig.server.submissions().len(), 1, "the message went to the others");
+    assert!(rig.core.drafts().unwrap().is_empty());
+    let sent = rig.sent_with("Half of them");
+    assert_eq!(sent.len(), 1);
+    let refused = rig.core.refused_recipients(sent[0].clone()).unwrap();
+    assert_eq!(refused.len(), 1);
+    assert_eq!((refused[0].address.as_str(), refused[0].reply.as_str()), ("bo@example.test", NO_MAILBOX));
+    assert!(rig.core.refused_recipients("someone-elses".into()).unwrap().is_empty());
+}
+
+#[test]
+fn an_immediate_send_leaves_no_record_and_a_held_one_none_once_it_has_left() {
+    let rig = Rig::synced();
+    rig.core.send(rig.note("At once"), 0).unwrap();
+    rig.sync();
+    assert_eq!(rig.server.submissions().len(), 1);
+    assert_eq!(rig.server.submission_records(), 0, "the record of an immediate send is destroyed");
+
+    // Held for the undo window: the record stays while it can be taken back, and goes after.
+    let held = rig.note("After a moment");
+    rig.core.send(held, 2).unwrap();
+    rig.sync();
+    assert_eq!(rig.server.submission_records(), 1);
+    std::thread::sleep(Duration::from_millis(2300));
+    rig.sync();
+    assert_eq!(rig.server.submissions().len(), 2, "it went");
+    assert!(rig.core.pending_sends().unwrap().is_empty());
+    assert_eq!(rig.server.submission_records(), 0, "its record went with the row");
+}
+
+#[test]
+fn a_cancelled_send_is_never_sent() {
+    let rig = Rig::synced();
+    let draft = rig.note("Think twice");
+    rig.core.send(draft.clone(), 60).unwrap();
+    rig.sync();
+    assert_eq!(rig.server.submission_records(), 1);
+    rig.core.undo_send(draft.id).unwrap();
+    assert!(rig.server.submissions().is_empty());
+}
+
+#[test]
+fn a_full_account_is_cleared_of_finished_records_and_the_send_goes_once() {
+    let rig = Rig::synced();
+    // Records of messages that left (sent by another program, or a "send later" long gone).
+    rig.server.set_submission_limit(Some(3));
+    rig.server.fill_submission_records(3);
+    assert_eq!(rig.server.submission_records(), 3);
+    rig.core.send(rig.note("The next one"), 0).unwrap();
+    rig.sync();
+    assert_eq!(rig.server.submissions().len(), 3 + 1, "pruned, retried once, sent once");
+    assert_eq!(rig.server.submission_records(), 0);
+    assert!(rig.core.drafts().unwrap().is_empty());
+}
+
+#[test]
+fn an_account_that_stays_full_gives_the_draft_back_with_a_reason_and_is_not_retried_for_ever() {
+    let rig = Rig::synced();
+    rig.server.set_submission_limit(Some(2));
+    // Two records that cannot go: still pending (a scheduled send, say).
+    rig.server.fill_pending_submission_records(2);
+    let draft = rig.note("Cannot");
+    rig.core.send(draft.clone(), 0).unwrap();
+    rig.sync();
+    let drafts = rig.core.drafts().unwrap();
+    assert_eq!(drafts.len(), 1, "it is a draft again");
+    let why = drafts[0].send_error.clone().unwrap_or_default();
+    assert!(why.contains("maxSubmissions"), "{why}");
+    assert_eq!(rig.server.submission_records(), 2, "a pending record is never pruned");
+    let asked = rig.server.submission_set_calls();
+    rig.sync();
+    rig.sync();
+    assert_eq!(rig.server.submission_set_calls(), asked, "no more tries until the user sends again");
+    assert!(rig.server.submissions().is_empty());
 }
 
 #[test]

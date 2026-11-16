@@ -282,6 +282,21 @@ impl Store {
         })
     }
 
+    /// The server copies of messages whose send is not settled (held, submitted or being
+    /// scheduled): their submission records are the proof that they were sent, so they are not
+    /// removed to make room.
+    pub fn unsettled_copy_ids(&self, account_id: &str) -> Result<Vec<String>> {
+        self.read(|c| {
+            let rows = load_all(
+                c,
+                account_id,
+                "state IN ('held', 'submitting', 'schedule_submitting') AND discarded = 0",
+                "id",
+            )?;
+            Ok(rows.into_iter().filter_map(|row| row.draft.server_id).collect())
+        })
+    }
+
     /// Whether a message that is waiting to go (held back here or by the server, or being
     /// scheduled) is sent as this identity.
     pub fn identity_in_use(&self, account_id: &str, identity_id: &str) -> Result<bool> {

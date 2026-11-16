@@ -21,13 +21,13 @@ pub use admin::{
 };
 pub use ai_chat::{ai_parse_findings, ai_parse_ideas, AiChatListener};
 pub use download::{DownloadCancel, DownloadListener};
-pub use filter_rules::{ExternalBlock, FilterCapabilities, FiltersState, RuleMove};
 #[doc(hidden)]
 pub use enterprise::probe;
 pub use enterprise::{
     ChartPoint, DashboardHistory, DeletedItem, DeletedKind, DeletedPage, Delivery, DeliveryDetail, DeliveryPage,
     DeliveryStatus, DeliveryStep, LiveFigures, LiveListener, RecoveryState, ServerAlert, Tenant,
 };
+pub use filter_rules::{ExternalBlock, FilterCapabilities, FiltersState, RuleMove};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -53,9 +53,9 @@ use crate::{
         AiProvider, AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail,
         ContactList, ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace,
         FilterRule, Filters, Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses,
-        MessageBody, MessageHeader, MessageLabels, NewSecret, PendingSend, Person, Quota, Reminder, ScheduledSend,
-        SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox, SharedMessage,
-        SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
+        MessageBody, MessageHeader, MessageLabels, NewSecret, PendingSend, Person, Quota, RefusedRecipient, Reminder,
+        ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction, SharedMailbox,
+        SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -776,6 +776,14 @@ impl Core {
     /// The messages that are still held back (here or by the server) or waiting for a connection.
     pub fn pending_sends(&self) -> Result<Vec<PendingSend>> {
         self.store.pending_sends(&self.account_id()?)
+    }
+
+    /// The recipients the server refused when it took this message from the user (a message in
+    /// Sent that went to the others): empty for any other message. From the cache only. The
+    /// thread says "not delivered to ..." from it.
+    pub fn refused_recipients(&self, message_id: String) -> Result<Vec<RefusedRecipient>> {
+        let found = compose::refused_recipients(&self.store, &self.account_id()?, &message_id);
+        Ok(found.into_iter().map(|(address, reply)| RefusedRecipient { address, reply }).collect())
     }
 
     /// Addresses that match what the user typed in a recipient field, best first: the address
@@ -2223,6 +2231,13 @@ impl Core {
     pub fn set_label(&self, message_ids: Vec<String>, label_id: String, on: bool) -> Result<()> {
         let account_id = self.account_id()?;
         self.known_label(&account_id, &label_id)?;
+        // Another program's label is known only from mail that carries it: once the user has
+        // worked with it here it is kept, so taking it off the last message does not lose it.
+        let mut kept = self.kept_labels(&account_id)?;
+        if crate::labels::is_foreign(&label_id) && !kept.iter().any(|l| l.id == label_id) {
+            kept.push(Label { name: crate::labels::name_for(&label_id), id: label_id.clone() });
+            self.write_json(&account_id, crate::labels::LABELS_KEY, &kept)?;
+        }
         let mut seen = HashSet::new();
         let ids: Vec<String> = message_ids.into_iter().filter(|id| seen.insert(id.clone())).collect();
         let result = actions::submit_labels(&self.store, &account_id, &ids, &label_id, on);

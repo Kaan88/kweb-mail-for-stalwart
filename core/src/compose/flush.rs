@@ -24,7 +24,7 @@ use std::time::Instant;
 
 use crate::{
     compose::answer_threading,
-    jmap::{is_unauthorized, Connection, CopyState, Held, Hold, SubmissionInfo, Undo, MAX_HOLD_SECS},
+    jmap::{is_unauthorized, Connection, CopyState, Held, Hold, Refused, SubmissionInfo, Undo, MAX_HOLD_SECS},
     store::{DraftRow, DraftState, Store, Threading},
     Error, Result,
 };
@@ -299,7 +299,9 @@ pub(super) async fn put_back(
 ) -> Result<()> {
     let Some(copy) = &row.draft.server_id else { return Ok(()) };
     match conn.restore_draft(copy, drafts_id).await {
-        Ok(()) => drop(store.draft_back(account_id, &row.draft.id, false)?),
+        Ok(()) => {
+            drop(store.draft_back(account_id, &row.draft.id, false)?);
+        }
         // The copy is gone: the text is here, and the next save makes a new one.
         Err(Error::Invalid { .. }) => {
             store.draft_back(account_id, &row.draft.id, true)?;
@@ -394,10 +396,20 @@ pub(super) async fn send_one(
         },
         None => None,
     };
-    match conn.submit_with(&row.draft.identity_id, copy, drafts_id, sent, held.as_ref()).await {
+    let protect = store.unsettled_copy_ids(account_id)?;
+    match conn.submit_with(&row.draft.identity_id, copy, drafts_id, sent, held.as_ref(), &protect).await {
         // Held by the server: the row stays until its time, for the undo.
-        Ok(_) if hold.is_some() => store.draft_held(account_id, &row.draft.id),
-        Ok(_) => accepted(conn, store, account_id, &row, changed).await,
+        Ok(submitted) if hold.is_some() => {
+            note_refused(store, account_id, copy, &submitted.refused);
+            store.draft_held(account_id, &row.draft.id)
+        }
+        Ok(submitted) => {
+            note_refused(store, account_id, copy, &submitted.refused);
+            let result = accepted(conn, store, account_id, &row, changed).await;
+            // Nothing can take it back any more: the server keeps no record of it.
+            let _ = conn.destroy_submissions(&[submitted.id]).await;
+            result
+        }
         Err(Error::Invalid { msg }) => refused(store, account_id, &row, &msg, changed),
         // The row stays `submitting`: the next pass asks the server how it went.
         Err(e) => Err(e),
@@ -446,7 +458,36 @@ pub(super) async fn accepted(
         // Best effort: the message is sent whether or not the source can be marked.
         let _ = conn.mark_source(source, row.draft.is_forward).await;
     }
+    // The server counts every record against a limit, and the row that needed them is gone: the
+    // records that are finished (a pending one is left, it is still to be released) go too.
+    if let Some(copy) = &row.draft.server_id {
+        let _ = conn.destroy_finished_submissions_of(copy).await;
+    }
     Ok(())
+}
+
+/// The prefix of the notes about the recipients the server refused for a message that was
+/// sent to the others: the key goes on with the message's id.
+const REFUSED_NOTE: &str = "refused:";
+
+/// The recipients (address, the server's reply) it refused for a message that was sent to the
+/// others; empty when there were none or the message is not one of ours.
+pub fn refused_recipients(store: &Store, account_id: &str, email_id: &str) -> Vec<(String, String)> {
+    let Ok(Some(text)) = store.kv_get(account_id, &format!("{REFUSED_NOTE}{email_id}")) else { return Vec::new() };
+    let list: Vec<serde_json::Value> = serde_json::from_str(&text).unwrap_or_default();
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_string();
+    list.iter().map(|r| (text(&r["address"]), text(&r["reply"]))).filter(|(a, _)| !a.is_empty()).collect()
+}
+
+/// Remembers which recipients of a sent message the server refused, for the thread to say so.
+/// Best effort: the message is sent whether or not the note is kept.
+pub(super) fn note_refused(store: &Store, account_id: &str, email_id: &str, refused: &[Refused]) {
+    if refused.is_empty() {
+        return;
+    }
+    let list: Vec<serde_json::Value> =
+        refused.iter().map(|r| serde_json::json!({ "address": r.address, "reply": r.reply })).collect();
+    let _ = store.kv_set(account_id, &format!("{REFUSED_NOTE}{email_id}"), &serde_json::Value::Array(list).to_string());
 }
 
 pub(super) fn refused(store: &Store, account_id: &str, row: &DraftRow, why: &str, changed: &mut bool) -> Result<()> {

@@ -962,6 +962,14 @@ pub struct Unsubscribe {
     pub web_url: Option<String>,
 }
 
+/// A recipient the server refused while it took a message that went to the others: the thread
+/// can say "not delivered to ...". `reply` is the server's own SMTP reply, not a secret.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RefusedRecipient {
+    pub address: String,
+    pub reply: String,
+}
+
 /// A label the user puts on messages besides their folder. On the server it is a keyword.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Label {

@@ -418,6 +418,13 @@ pub struct Mail {
     pub submissions: Vec<Submission>,
     /// What `EmailSubmission/set` does instead of accepting.
     pub refusal: Option<Refusal>,
+    /// Recipients the server refuses at RCPT TO while it accepts the submission itself, as the
+    /// real one does: lower-case address to the SMTP reply.
+    pub refused_recipients: BTreeMap<String, String>,
+    /// The most submission records the account may hold (`overQuota` past it); `None` is no limit.
+    pub submission_limit: Option<usize>,
+    /// How many submissions were asked for (`create`), accepted or not.
+    pub submission_create_calls: usize,
     tx: broadcast::Sender<StreamMsg>,
 }
 
@@ -437,6 +444,8 @@ pub struct Submission {
     pub cancelled: bool,
     /// Destroyed: gone from the server's lists, but destroying does not stop a message.
     pub destroyed: bool,
+    /// The recipients the server refused when the submission was made, with its reply.
+    pub refused: Vec<(String, String)>,
 }
 
 impl Submission {
@@ -444,6 +453,9 @@ impl Submission {
     pub fn undo_status(&self, now_ms: u64) -> &'static str {
         if self.cancelled {
             "canceled"
+        } else if self.fully_refused() {
+            // Nothing was queued: the record is final at once.
+            "final"
         } else if now_ms < self.release_at_ms {
             "pending"
         } else {
@@ -451,9 +463,15 @@ impl Submission {
         }
     }
 
-    /// It has left, whatever happened to its record.
+    /// It has left, whatever happened to its record. A message no recipient of which was
+    /// accepted never leaves.
     pub fn has_left(&self, now_ms: u64) -> bool {
-        self.undo_status(now_ms) == "final"
+        self.undo_status(now_ms) == "final" && !self.fully_refused()
+    }
+
+    /// Every recipient was refused: nothing is queued.
+    pub fn fully_refused(&self) -> bool {
+        !self.recipients.is_empty() && self.refused.len() == self.recipients.len()
     }
 }
 
@@ -535,6 +553,9 @@ impl Mail {
             uploads: BTreeMap::new(),
             submissions: Vec::new(),
             refusal: None,
+            refused_recipients: BTreeMap::new(),
+            submission_limit: None,
+            submission_create_calls: 0,
             tx,
         };
         let now = now_secs();
@@ -1700,6 +1721,7 @@ impl Mail {
         let mut destroyed = Vec::new();
         let mut not_destroyed = Map::new();
         for (key, object) in args.get("create").and_then(Value::as_object).into_iter().flatten() {
+            self.submission_create_calls += 1;
             match self.accept_submission(object, identities) {
                 Ok(submission) => {
                     let now = now_ms();
@@ -1800,6 +1822,11 @@ impl Mail {
         if !identities.iter().any(|i| i == identity_id) {
             return Err(invalid("identityId", "no such identity"));
         }
+        if self.submission_limit.is_some_and(|limit| self.submissions.iter().filter(|s| !s.destroyed).count() >= limit)
+        {
+            let why = "There are too many email submissions, please delete some before adding a new one.";
+            return Err(json!({"type": "overQuota", "description": why}));
+        }
         let email_id = object["emailId"].as_str().unwrap_or_default();
         let email = self.emails.get(email_id).ok_or_else(|| invalid("emailId", "no such message"))?;
         let all = [&email.to, &email.cc, &email.bcc];
@@ -1858,7 +1885,12 @@ impl Mail {
         if recipients.is_empty() {
             return Err(json!({"type": "noRecipients"}));
         }
+        let refused: Vec<(String, String)> = recipients
+            .iter()
+            .filter_map(|r| self.refused_recipients.get(&r.to_lowercase()).map(|reply| (r.clone(), reply.clone())))
+            .collect();
         Ok(Submission {
+            refused,
             id: format!("s{}", self.submissions.len() + 1),
             identity_id: identity_id.to_string(),
             email_id: email_id.to_string(),
@@ -1935,7 +1967,22 @@ impl Mail {
 
     fn submission_json(&self, s: &Submission, now: u64) -> Value {
         let recipients: Vec<Value> = s.recipients.iter().map(|e| json!({ "email": e })).collect();
+        let delivery: Map<String, Value> = s
+            .recipients
+            .iter()
+            .map(|r| match s.refused.iter().find(|(a, _)| a == r) {
+                Some((_, reply)) => (r.clone(), json!({"delivered": "no", "smtpReply": reply, "displayed": "unknown"})),
+                None => {
+                    let delivered = if s.has_left(now) { "yes" } else { "queued" };
+                    (
+                        r.clone(),
+                        json!({"delivered": delivered, "smtpReply": "250 2.1.5 Queued", "displayed": "unknown"}),
+                    )
+                }
+            })
+            .collect();
         json!({
+            "deliveryStatus": delivery,
             "id": s.id, "identityId": s.identity_id, "emailId": s.email_id,
             "threadId": self.emails.get(&s.email_id).map(|e| e.thread_id()),
             "envelope": { "mailFrom": { "email": USERNAME, "parameters": null }, "rcptTo": recipients },

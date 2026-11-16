@@ -629,6 +629,55 @@ impl MockServer {
         self.shared.mail().refusal = refusal;
     }
 
+    /// The server refuses this recipient at RCPT TO, with this SMTP reply, while it accepts the
+    /// submission itself and answers it as created (`deliveryStatus.<address>.delivered` is `no`).
+    pub fn refuse_recipient(&self, address: &str, reply: &str) {
+        self.shared.mail().refused_recipients.insert(address.to_lowercase(), reply.to_string());
+    }
+
+    /// The most `EmailSubmission` records the account may hold; one more is `overQuota`.
+    pub fn set_submission_limit(&self, limit: Option<usize>) {
+        self.shared.mail().submission_limit = limit;
+    }
+
+    /// Records of messages that left, as another program or an old "send later" leaves them.
+    pub fn fill_submission_records(&self, n: usize) {
+        self.fill_records(n, 0);
+    }
+
+    /// Records of messages the server still holds back (they cannot be cleared).
+    pub fn fill_pending_submission_records(&self, n: usize) {
+        self.fill_records(n, state::now_ms() + 3_600_000);
+    }
+
+    fn fill_records(&self, n: usize, release_at_ms: u64) {
+        let mut mail = self.shared.mail();
+        for i in 0..n {
+            let id = format!("old{}", mail.submissions.len() + i);
+            mail.submissions.push(Submission {
+                id,
+                identity_id: "i1".into(),
+                email_id: format!("gone{i}"),
+                recipients: vec!["far@example.test".into()],
+                hold: None,
+                release_at_ms,
+                cancelled: false,
+                destroyed: false,
+                refused: Vec::new(),
+            });
+        }
+    }
+
+    /// How many submissions the server was asked to make (`create`), accepted or not.
+    pub fn submission_set_calls(&self) -> usize {
+        self.shared.mail().submission_create_calls
+    }
+
+    /// How many submission records the server holds (destroyed ones are gone).
+    pub fn submission_records(&self) -> usize {
+        self.shared.mail().submissions.iter().filter(|s| !s.destroyed).count()
+    }
+
     /// The next request that holds an `EmailSubmission/set` is carried out, and the answer is
     /// lost: the client gets a 500. The message is sent all the same.
     pub fn lose_next_submission_answer(&self) {

@@ -15,7 +15,7 @@ pub mod rules;
 use std::collections::HashSet;
 
 pub(crate) use flush::threading_of;
-pub use flush::{flush, refresh_directory, Flushed};
+pub use flush::{flush, refresh_directory, refused_recipients, Flushed};
 
 use crate::{
     jmap::HeaderIds,

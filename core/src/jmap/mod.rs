@@ -73,9 +73,9 @@ pub use manage::{
     SECURITY_NOT_ALLOWED, SECURITY_SIGN_IN_AGAIN,
 };
 pub use pushsub::{format_utc, normalize_key, NewSubscription, SubscriptionInfo, Verification};
-pub use send::{CopyState, HeaderIds, Uploaded};
+pub use send::{CopyState, HeaderIds, Submitted, Uploaded};
 pub use send_later::reply_to_json;
-pub use send_later::{EmailSummary, Held, Hold, IdentityFull, SubmissionInfo, Undo, MAX_HOLD_SECS};
+pub use send_later::{Delivery, EmailSummary, Held, Hold, IdentityFull, Refused, SubmissionInfo, Undo, MAX_HOLD_SECS};
 pub use sieve::{SieveLimits, SieveList, SieveScript, CHANGED as SIEVE_CHANGED};
 
 const MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";
