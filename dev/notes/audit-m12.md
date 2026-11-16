@@ -36,13 +36,13 @@ These are the places where a mistake loses or leaks data, or acts without the us
 - **Stage 3** (6a5c6b4 to 0f1c125): the three bugs and `$label:` tags. Bugs were real on the local server. Not built: a one-off repair of old repeating events (repaired on next save only).
 - **Stage 4** (835c185 to 9e94e34): device calendar. Design from Bulwark Mobile (AGPL), no code copied: confirm no file in `devcal/` resembles theirs closely. Checked through the provider only, never in a calendar app; series edits, attendees and Google push mode not covered.
 - **Stage 5** (b9c2d7e to c1b7729): `Chat::in_view`, state going backwards, notices, small checks, switch-off keeping edits, "Not delivered to". The switch-off dialog and the not-delivered line were never seen on a screen.
-- **Stage 6** (3484096, 51699d8, and earlier chats with Catch me up): to be filled in when the stage lands.
+- **Stage 6** (3484096, 51699d8, 8bf0633, 9dd191f, 09a5513): sender check, update check, earlier chats (migration 14, `ai_chats`) and Catch me up. **No screen of this stage was opened on the emulator** (it did not boot after a freeze); tests and the Gradle build only. Check first: the sender check believes only the topmost `Authentication-Results` whose authserv-id matches the topmost `Received` host with no sender header above it (Stalwart does not strip forged copies; probe mails "SMTP probe ..." are in the tester's Inbox); a reopened earlier chat never carries automatic changes or another service's consent; Catch me up sends only headers and cached first lines of at most 30 unread Inbox mails and parses the answer strictly; the update request carries nothing about the user. Commits 3484096 and 51699d8 were not compiled on their own. The local Stalwart got an extra loopback SMTP bind on port 25 for the probe.
 - **Stage 7** (77bdb92): six palettes. Seen on Appearance only; not on other screens or with pure black.
 - **Stage 8** (736439b to 6c0bc06): attention layer, Home tab, sparkle actions. 13 rules with English and Turkish patterns. Checked against a scripted stub service only, never a real model. Several rules are approximations (see PLAN.md "Stage 8 built").
 
 ## Never seen on any screen
 
-The "Remove anyway" device-calendar dialog; the "Not delivered to" line; the Home status chips; first-use consent for sparkle actions; the Calendar box and thread menu in dark; share notices; every M9 screen; the Service dropdown; the new palettes outside Appearance. Nothing of M12 has been seen on the owner's phone.
+Every stage 6 screen (sender chip and sheet, About update rows, Earlier chats, Catch me up); the "Remove anyway" device-calendar dialog; the "Not delivered to" line; the Home status chips; first-use consent for sparkle actions; the Calendar box and thread menu in dark; share notices; every M9 screen; the Service dropdown; the new palettes outside Appearance. Nothing of M12 has been seen on the owner's phone.
 
 ## Never run against the real thing
 
