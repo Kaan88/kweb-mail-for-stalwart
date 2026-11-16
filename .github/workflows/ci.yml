@@ -62,6 +62,21 @@ jobs:
       - run: ./gradlew testDebugUnitTest lintDebug
         working-directory: android
 
+      - name: Build the release APK
+        run: |
+          if [ -n "$KWEB_KEYSTORE_BASE64" ] && [ -n "$KWEB_KEYSTORE_PROPERTIES_TEXT" ]; then
+            d="$RUNNER_TEMP/kweb-release"; mkdir -p "$d"
+            echo "$KWEB_KEYSTORE_BASE64" | base64 -d > "$d/kweb-release.jks"
+            echo "$KWEB_KEYSTORE_PROPERTIES_TEXT" | grep -v '^storeFile=' > "$d/keystore.properties"
+            echo "storeFile=$d/kweb-release.jks" >> "$d/keystore.properties"
+            export KWEB_KEYSTORE_PROPERTIES="$d/keystore.properties"
+          fi
+          ./gradlew assembleRelease
+        working-directory: android
+        env:
+          KWEB_KEYSTORE_BASE64: ${{ secrets.KWEB_KEYSTORE_BASE64 }}
+          KWEB_KEYSTORE_PROPERTIES_TEXT: ${{ secrets.KWEB_KEYSTORE_PROPERTIES }}
+
       # The Kotlin side finds this function by its symbol name; a typo would only show on a phone.
       - name: Check the TLS init symbol is exported
         run: |
@@ -74,3 +89,8 @@ jobs:
         with:
           name: kweb-mail-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kweb-mail-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
