@@ -1,0 +1,32 @@
+name: Security audit
+
+# Checks the Rust dependencies against the RustSec advisory database once a week and
+# whenever Cargo.lock changes, so a new advisory shows up even in a quiet week.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths: ["Cargo.lock", "**/Cargo.toml"]
+  pull_request:
+    paths: ["Cargo.lock", "**/Cargo.toml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  gradle-wrapper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Refuses a gradle-wrapper.jar that is not one Gradle published.
+      - uses: gradle/actions/wrapper-validation@v4

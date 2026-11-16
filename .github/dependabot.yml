@@ -1,0 +1,54 @@
+# Weekly dependency updates, grouped so a week brings at most one PR per ecosystem
+# (security fixes come on their own, as soon as GitHub knows of them).
+version: 2
+
+updates:
+  # Rust: the core and the CLI (one workspace).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(cargo)"
+    groups:
+      cargo:
+        update-types: [minor, patch]
+    ignore:
+      # UniFFI 0.x: a new minor changes the generated bindings and the Gradle task;
+      # move it by hand together with the Kotlin side.
+      - dependency-name: uniffi
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # Android: Gradle version catalog, plugins and the wrapper.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(gradle)"
+    groups:
+      gradle:
+        update-types: [minor, patch]
+    ignore:
+      # Lifecycle 2.11 and later need compileSdk 37; the app stays on 36 for now (CLAUDE.md).
+      - dependency-name: "androidx.lifecycle:*"
+        versions: [">= 2.11.0"]
+      # JNA is the runtime UniFFI's Kotlin bindings expect; move it with UniFFI.
+      - dependency-name: "net.java.dev.jna:jna"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # The actions the workflows use.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "deps(actions)"
+    groups:
+      actions:
+        patterns: ["*"]
