@@ -51,6 +51,8 @@ class EditEventViewModel(
     private val prefill: EventPrefill? = null,
     /** A new start for an entry that is being changed ("YYYY-MM-DDTHH:MM:SS"): the form opens with it and counts as changed. */
     private val startAt: String? = null,
+    /** A place for an entry that is being changed: the form opens with it and counts as changed. */
+    private val place: String? = null,
 ) : AndroidViewModel(app) {
     private val backend = eventFormBackend({ session.core }, account)
     private val stateFlow = MutableStateFlow(EditState(creating = eventId == null))
@@ -76,7 +78,7 @@ class EditEventViewModel(
                 val menu = FormChoices.calendars(all, detail?.input?.calendarId)
                 val loadedForm = if (detail != null) EventForms.fromInput(detail.input, detail.hasComplexRepeat) else null
                 val form = if (detail != null && loadedForm != null) {
-                    EventPrefills.moveTo(loadedForm, startAt)
+                    EventPrefills.moveTo(loadedForm, startAt).let { f -> if (place.isNullOrBlank()) f else f.copy(location = place.trim()) }
                 } else {
                     val calendar = FormChoices.defaultCalendar(menu)
                     if (calendar == null) {

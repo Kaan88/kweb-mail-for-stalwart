@@ -196,6 +196,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     openThread = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                     openEditor = { app.open(it) },
                     openTasks = { calendar.showTasks(); app.switchTo(Route.Calendar) },
+                    openCompose = { app.open(Route.Compose(it)) },
                 )
             }
             val openShare = remember(app) { { kind: uniffi.kweb_core.ShareKind, id: String, name: String -> app.open(Route.Share(kind, id, name)) } }
@@ -266,7 +267,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 }
                 is Route.EditEvent -> key(route) {
                     CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
-                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account, prefill = route.prefill, startAt = route.startAt)
+                        EditEventScreen(route.eventId, route.startHint, onBack = app::back, onSaved = app::eventSaved, account = route.account, prefill = route.prefill, startAt = route.startAt, place = route.place)
                     }
                 }
                 is Route.Contact -> key(route) {

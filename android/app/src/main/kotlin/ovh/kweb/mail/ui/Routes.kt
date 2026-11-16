@@ -46,6 +46,8 @@ sealed interface Route {
         val prefill: EventPrefill? = null,
         /** A new start for an entry that is being changed ("YYYY-MM-DDTHH:MM:SS"): the form opens with it, the user saves it himself. */
         val startAt: String? = null,
+        /** A place or meeting link the assistant found for the entry that is being changed: the form opens with it, the user saves it himself. */
+        val place: String? = null,
     ) : Route
 
     /** The contacts: the third root beside the mail list and the agenda. */

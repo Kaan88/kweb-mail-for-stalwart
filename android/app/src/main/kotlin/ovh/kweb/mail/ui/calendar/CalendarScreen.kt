@@ -153,6 +153,8 @@ fun CalendarScreen(
             onService = onService,
         )
     }
+    val sparkle: ovh.kweb.mail.ui.attention.SparkleRunViewModel = viewModel()
+    ovh.kweb.mail.ui.attention.SparkleEvents(sparkle, attention, snackbar, onOpenDraft = attentionNav.openCompose)
     LaunchedEffect(vm) {
         vm.messages.collect {
             snackbar.currentSnackbarData?.dismiss()

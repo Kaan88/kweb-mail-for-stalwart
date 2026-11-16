@@ -131,6 +131,12 @@ fun HomeScreen(
         }
     }
 
+    // What the runs of the sparkle buttons say; while the sheet is open it shows them itself.
+    val sparkle: ovh.kweb.mail.ui.attention.SparkleRunViewModel = viewModel()
+    if (sheet == null) {
+        ovh.kweb.mail.ui.attention.SparkleEvents(sparkle, attention, snackbar, onOpenDraft = nav.openCompose)
+    }
+
     val tiles = found.settings?.tiles ?: ALL_TILES
     val now = state.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000)
     val clock = remember(now) { WordClock(ZoneId.systemDefault(), Locale.getDefault(), now) }

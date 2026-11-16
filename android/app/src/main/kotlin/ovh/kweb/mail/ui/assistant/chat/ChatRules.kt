@@ -417,7 +417,7 @@ object ChatRules {
     @Suppress("REDUNDANT_ELSE_IN_WHEN")
     fun stepKind(tool: AiToolKind): StepKind = when (tool) {
         AiToolKind.SEARCH_MAIL -> StepKind.SEARCH
-        AiToolKind.LIST_MESSAGES -> StepKind.LIST
+        AiToolKind.LIST_MESSAGES, AiToolKind.LIST_TASKS -> StepKind.LIST
         AiToolKind.READ_MESSAGE -> StepKind.READ_MESSAGE
         AiToolKind.READ_THREAD -> StepKind.READ_THREAD
         AiToolKind.LIST_FOLDERS -> StepKind.FOLDERS
@@ -426,7 +426,7 @@ object ChatRules {
         AiToolKind.READ_EVENT -> StepKind.EVENT
         AiToolKind.OPEN_MESSAGE -> StepKind.OPEN
         AiToolKind.DRAFT_REPLY -> StepKind.DRAFT
-        AiToolKind.ARCHIVE, AiToolKind.MOVE, AiToolKind.MARK, AiToolKind.TAG, AiToolKind.ADD_EVENT -> StepKind.SUGGEST
+        AiToolKind.ARCHIVE, AiToolKind.MOVE, AiToolKind.MARK, AiToolKind.TAG, AiToolKind.ADD_EVENT, AiToolKind.ADD_TASK -> StepKind.SUGGEST
         else -> StepKind.OTHER
     }
 

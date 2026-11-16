@@ -207,6 +207,19 @@ fun ThreadScreen(
         onPauseOrDispose { }
     }
     val sparkMenu = remember(found.findings, route.threadId) { ThreadMenu.entries(AttentionRules.forPlace(found.findings, Place.Thread(route.threadId))) }
+    // The results of the sparkle buttons of this conversation: inline above the text.
+    val sparkle: ovh.kweb.mail.ui.attention.SparkleRunViewModel = viewModel()
+    val sparkIds = remember(found.findings, route.threadId) {
+        AttentionRules.forPlace(found.findings, Place.Thread(route.threadId)).map { it.id }.toSet()
+    }
+    val sparkActions = remember(onAddToCalendar) {
+        ovh.kweb.mail.ui.attention.SparkleActions(
+            editNew = { onAddToCalendar(ovh.kweb.mail.ui.attention.SparkleRules.prefillOf(it)) },
+            editEvent = { _, _, _ -> },
+            openMail = { _, _ -> },
+        )
+    }
+    ovh.kweb.mail.ui.attention.SparkleEvents(sparkle, attention, snackbar, onOpenDraft = onCompose, active = active)
     val sparkClock = rememberWordClock(found.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000))
     val sparkTexts = remember(resources) { ResourceTexts(resources) }
     var sparkOpen by remember { mutableStateOf(false) }
@@ -408,7 +421,7 @@ fun ThreadScreen(
                                             when (entry) {
                                                 is ThreadMenuEntry.Calendar -> onAddToCalendar(entry.prefill.toEventPrefill())
                                                 is ThreadMenuEntry.Task -> onAddToCalendar(entry.prefill.toEventPrefill())
-                                                is ThreadMenuEntry.Service -> onService(entry.finding)
+                                                is ThreadMenuEntry.Service -> { onService(entry.finding); sparkle.start(entry.finding) }
                                             }
                                         },
                                     )
@@ -520,6 +533,7 @@ fun ThreadScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Medium,
             )
+            ovh.kweb.mail.ui.attention.SparkleBoxes(sparkIds, sparkActions, sparkle, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
             when {
                 state.messages.isEmpty() && state.offline -> CenteredNote(stringResource(R.string.thread_unavailable))
                 state.messages.isEmpty() -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -615,6 +629,7 @@ fun ThreadScreen(
     }
 
     assistantState.session?.takeIf { it.owner == owner }?.let { AssistantSheet(it, assistant) }
+    if (active) ovh.kweb.mail.ui.attention.SparkleDialog(sparkle) { it in sparkIds }
     if (moving) {
         MoveDialog(
             folders = folders,

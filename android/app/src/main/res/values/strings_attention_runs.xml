@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- What is sent: the dialog before a run of a button with a sparkle -->
+    <string name="att_run_ask_text">This sends %1$s to %2$s, using the model %3$s.</string>
+    <string name="att_run_ask_chat">It may also read other mail of this account to find the answer. This is the same agreement as the assistant chat.</string>
+    <plurals name="att_run_n_mails">
+        <item quantity="one">%d mail</item>
+        <item quantity="other">%d mails</item>
+    </plurals>
+    <plurals name="att_run_n_events">
+        <item quantity="one">%d event</item>
+        <item quantity="other">%d events</item>
+    </plurals>
+    <plurals name="att_run_n_tasks">
+        <item quantity="one">%d task</item>
+        <item quantity="other">%d tasks</item>
+    </plurals>
+    <string name="att_run_scope_from">%1$s (from %2$s: sender, subject and text)</string>
+    <string name="att_run_scope_the_event">the event (title, time and place)</string>
+    <string name="att_run_scope_more_mail">the mail it chooses to read</string>
+    <string name="att_run_scope_shortened">%1$s, shortened to fit</string>
+    <string name="att_run_scope_and">%1$s and %2$s</string>
+    <string name="att_run_sender_more">%1$s and %2$d more</string>
+
+    <!-- Running, stopping, failing -->
+    <string name="att_run_running">Asking %1$s…</string>
+    <string name="att_run_stop">Stop</string>
+    <string name="att_run_failed">The assistant could not finish this. Nothing was changed.</string>
+    <string name="att_run_start_failed">The assistant could not be asked. Nothing was sent.</string>
+    <string name="att_run_retry">Retry</string>
+    <string name="att_run_no_task">The assistant cannot work on this one.</string>
+
+    <!-- Result cards -->
+    <string name="att_run_new_event">New event</string>
+    <string name="att_run_new_task">New task</string>
+    <string name="att_run_found">Found in mail</string>
+    <string name="att_run_verdict">The mail and the task</string>
+    <string name="att_run_ideas">Reply ideas</string>
+    <string name="att_run_box_dates">To-dos and dates</string>
+    <plurals name="att_run_plan">
+        <item quantity="one">Plan for %1$s · %2$d new event</item>
+        <item quantity="other">Plan for %1$s · %2$d new events</item>
+    </plurals>
+    <string name="att_run_day_today">today</string>
+    <string name="att_run_edit">Edit</string>
+    <string name="att_run_edit_event">Edit event…</string>
+    <string name="att_run_add">Add</string>
+    <string name="att_run_add_both">Add both</string>
+    <string name="att_run_add_n">Add %1$d</string>
+    <plurals name="att_run_add_events">
+        <item quantity="one">Add %d event</item>
+        <item quantity="other">Add %d events</item>
+    </plurals>
+    <string name="att_run_dismiss">Dismiss</string>
+    <string name="att_run_ok">OK</string>
+    <string name="att_run_open_mail">Open mail</string>
+    <string name="att_run_due">Due %1$s</string>
+    <string name="att_run_when_range">%1$s, %2$s to %3$s</string>
+    <string name="att_run_when_at">%1$s, %2$s</string>
+    <string name="att_run_found_meta">“%1$s” · from %2$s</string>
+    <string name="att_run_verdict_finishes">This mail finishes it</string>
+    <string name="att_run_verdict_changes">This mail changes it</string>
+    <string name="att_run_verdict_unrelated">This mail has nothing to do with it</string>
+    <string name="att_run_view_only">Changes are switched off in the assistant settings. Edit opens the form with this filled in.</string>
+    <string name="att_run_view_only_plan">Changes are switched off in the assistant settings. A line opens the form with it filled in.</string>
+    <string name="att_run_edit_lines">Which events to add?</string>
+    <string name="att_run_ideas_hint">A tap opens a reply with this text. Nothing is sent.</string>
+
+    <!-- What happened -->
+    <string name="att_run_added_event">Added “%1$s”</string>
+    <string name="att_run_added_task">Added the task “%1$s”</string>
+    <plurals name="att_run_added_events">
+        <item quantity="one">Added %d event</item>
+        <item quantity="other">Added %d events</item>
+    </plurals>
+    <plurals name="att_run_added_tasks">
+        <item quantity="one">Added %d task</item>
+        <item quantity="other">Added %d tasks</item>
+    </plurals>
+    <string name="att_run_added_mixed">Added %1$s and %2$s</string>
+    <string name="att_run_batch_failed_n">%1$d could not be added: %2$s</string>
+    <string name="att_run_add_failed">It could not be added.</string>
+    <string name="att_run_undone">Taken back</string>
+    <string name="att_run_undo_failed">It could not be taken back.</string>
+    <string name="att_run_draft_failed">The reply could not be started.</string>
+
+    <!-- The cost note -->
+    <string name="att_run_cost">%1$s to %2$s · %3$s at %4$s</string>
+    <string name="att_run_cost_tokens">%1$s · %2$s</string>
+    <plurals name="att_run_sent_mails">
+        <item quantity="one">Sent %d mail</item>
+        <item quantity="other">Sent %d mails</item>
+    </plurals>
+    <string name="att_run_sent_event">Sent the event</string>
+    <string name="att_run_sent_event_lookups">Sent the event and what it read in your mail</string>
+    <string name="att_run_sent_day">Sent the events and tasks of the day</string>
+    <string name="att_run_sent_task_mail">Sent the task and 1 mail</string>
+    <string name="att_run_tokens_both">%1$s tokens in, %2$s out</string>
+    <string name="att_run_tokens_in">%1$s tokens in</string>
+    <string name="att_run_tokens_out">%1$s tokens out</string>
+</resources>

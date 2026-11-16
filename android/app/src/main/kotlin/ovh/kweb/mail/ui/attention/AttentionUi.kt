@@ -88,6 +88,8 @@ class AttentionNav(
     val openEditor: (Route.EditEvent) -> Unit,
     /** Shows the Tasks view of the Calendar tab. */
     val openTasks: () -> Unit = {},
+    /** Opens the composer on a draft (a reply idea was tapped); nothing is sent from here. */
+    val openCompose: (draftId: String) -> Unit = {},
 )
 
 /**
@@ -161,6 +163,17 @@ class FindingRunner(private val vm: AttentionViewModel, private val nav: Attenti
         }
     }
 
+    /** What the cards of a sparkle run open: the editor (new, or an existing event with a place), a mail. */
+    fun sparkleActions(): SparkleActions = SparkleActions(
+        editNew = { input ->
+            nav.openEditor(Route.EditEvent(null, input.start.take(10), prefill = SparkleRules.prefillOf(input)))
+        },
+        editEvent = { eventId, recurrenceId, place -> nav.openEditor(Route.EditEvent(eventId, null, place = place?.takeIf { it.isNotBlank() })) },
+        openMail = { threadId, messageId -> nav.openThread(threadId, messageId) },
+    )
+
+    fun openDraft(draftId: String) = nav.openCompose(draftId)
+
     /** A tap on a tasks finding that has no mail to open: the Tasks view. */
     fun openTasks() = nav.openTasks()
 
@@ -209,11 +222,13 @@ fun FindingCard(
     modifier: Modifier = Modifier,
     container: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     onService: (Finding) -> Unit = {},
+    /** Its service button is not drawn: the result of that run is shown beside it. */
+    hideService: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val resources = LocalResources.current
     val texts = remember(resources) { ResourceTexts(resources) }
-    val buttons = remember(finding) { AttentionRules.buttons(finding) }
+    val buttons = remember(finding, hideService) { if (hideService) Buttons(finding.phone.take(2), null) else AttentionRules.buttons(finding) }
     var mode by remember(finding.id) { mutableStateOf(Mode.NONE) }
     val open = AttentionRules.cardAction(finding)
     Column(
@@ -336,11 +351,22 @@ fun FindingList(
     modifier: Modifier = Modifier,
     container: Color = MaterialTheme.colorScheme.surfaceContainerLow,
     onService: (Finding) -> Unit = {},
+    sparkle: SparkleRunViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
 ) {
+    val runs by sparkle.runs.collectAsStateWithLifecycle()
+    val start = remember(sparkle, onService) { { f: Finding -> onService(f); sparkle.start(f) } }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         findings.forEachIndexed { index, finding ->
             androidx.compose.runtime.key(finding.id) {
                 val shape = Groups.shape(index, findings.size)
+                val run = runs[finding.id]
+                if (run != null) {
+                    SparkleRunBlock(run, runner.sparkleActions(), sparkle)
+                    // Check the mail: the verdict is beside the finding, whose Mark done stays the user's own change.
+                    if (run.phase == RunPhase.DONE && run.task is uniffi.kweb_core.AiSparkle.CheckTheMail) {
+                        FindingCard(finding, shape, runner, clock, container = container, hideService = true)
+                    }
+                } else {
                 val state = rememberSwipeToDismissBoxState(
                     confirmValueChange = {
                         if (it != SwipeToDismissBoxValue.Settled) onDismiss(finding)
@@ -355,11 +381,13 @@ fun FindingList(
                         }
                     },
                 ) {
-                    FindingCard(finding, shape, runner, clock, container = container, onService = onService)
+                    FindingCard(finding, shape, runner, clock, container = container, onService = start)
+                }
                 }
             }
         }
     }
+    SparkleDialog(sparkle) { id -> findings.any { it.id == id } }
 }
 
 @Composable
@@ -384,8 +412,12 @@ fun AttentionSheet(
             openThread = { t, m -> onClose(); nav.openThread(t, m) },
             openEditor = { r -> onClose(); nav.openEditor(r) },
             openTasks = { onClose(); nav.openTasks() },
+            openCompose = { d -> onClose(); nav.openCompose(d) },
         )
     }
+    val sparkle: SparkleRunViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+    SparkleEvents(sparkle, vm, snackbar, onOpenDraft = closing.openCompose)
     val runner = rememberFindingRunner(vm, closing)
     val colors = MaterialTheme.colorScheme
     val clock = rememberWordClock(state.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000))
@@ -431,6 +463,8 @@ fun AttentionSheet(
                     FindingList(list, runner, clock, onDismiss = vm::dismiss, container = colors.surfaceContainerHigh, onService = onService)
                 }
             }
+            // A result's Undo shows here: the screen's own snackbar is under the sheet.
+            androidx.compose.material3.SnackbarHost(snackbar)
             val service = state.service
             if (service != null && state.findings.any { it.service != null }) {
                 val name = AssistantRules.serviceOf(service.baseUrl).let {
