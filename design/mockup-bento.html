@@ -77,21 +77,30 @@ td:first-child{font-weight:700;white-space:nowrap}tr:last-child td{border-bottom
 .bub.a{align-self:flex-start;background:var(--sch);border-bottom-left-radius:6px}
 .stp{align-self:flex-start;font-size:11px;color:var(--var);display:flex;gap:5px;align-items:center}.stp .i{width:13px;height:13px}
 .inp{display:flex;gap:8px;align-items:center;height:44px;border-radius:22px;background:var(--sch);padding:0 14px;color:var(--var);flex:none}
+.sw.on{background:var(--pri);border-color:var(--pri)}.sw.on:after{left:16px;background:var(--opri)}
+.t1.tc .ar{display:flex;gap:8px;align-items:center;min-width:0}.t1.tc .ar>div:first-child{flex:1;min-width:0}.t1.tc .meta{font-size:11px;opacity:.8}.t1.tc .bt{background:var(--pri);color:var(--opri)}
+.fr{display:flex;gap:8px;align-items:center;font-size:12px}.fr .tm{width:40px;opacity:.8;flex:none}.fr.free{border:1px dashed currentColor;border-radius:8px;padding:1px 6px;opacity:.85}
+.gp{display:flex;flex-direction:column;gap:2px}
+.sr{display:flex;align-items:center;gap:10px;padding:7px 14px;background:var(--scl);border-radius:6px;min-height:36px}
+.sr:first-child{border-radius:20px 20px 6px 6px}.sr:last-child{border-radius:6px 6px 20px 20px}.sr:only-child{border-radius:20px}
+.sr .tx{flex:1;min-width:0}.sr .tt{font-size:13.5px}.sr .ss{font-size:10.5px;color:var(--var);line-height:1.3}.sr .vl{font-size:12px;color:var(--pri);font-weight:600;flex:none}
+.sr.dis{opacity:.45}.sr .i{color:var(--var)}
+.ft{font-size:10.5px;color:var(--var);padding:2px 10px}
 @media(max-width:1240px){.variant{grid-template-columns:auto auto}.variant .cap{grid-column:1/-1}}
 @media(max-width:860px){.variant{grid-template-columns:auto}}
 </style>
 <body><div class="wrap">
-<header><h1>Bento home: A is the pick, E adds the assistant</h1>
-<p class="lede">Crimson "Ward" palette, light and dark, 360 x 780 screens. Each variant uses data the core has today, except tiles marked <span class="tag ai">Assistant</span>, which need the opt-in assistant. Nothing here is built. Variant A is the owner's pick (2026-11-16); variant E (assistant for calendar and tasks) is new. Facts about other apps are from my own knowledge (late 2026) and were not re-checked online.</p></header>
+<header><h1>Bento home: A is the pick, B and F add the calendar assistant</h1>
+<p class="lede">Crimson "Ward" palette, light and dark, 360 x 780 screens. Each variant uses data the core has today, except tiles marked <span class="tag ai">Assistant</span>, which need the opt-in assistant. Nothing here is built. Variant A is the owner's pick (2026-11-16). B (home with the calendar assistant) and F (its settings) are new and replace the earlier &quot;Catch me up&quot; idea; E is unchanged. Facts about other apps are from my own knowledge (late 2026) and were not re-checked online.</p></header>
 
 <section><h2>Comparison</h2>
 <table>
-<tr><th></th><th>A. Bento home (owner's pick, 2026-11-16)</th><th>B. Assistant bento</th><th>C. Today strip</th><th>D. Calendar-first</th><th>E. Assistant for calendar and tasks</th></tr>
-<tr><td>Taps to inbox</td><td>1 (Mail tab) if Home is first; 0 if Mail is the start tab</td><td>Same as A</td><td>0</td><td>1; the Inbox tile gives 1 too</td><td>No change (lives in Calendar and Tasks)</td></tr>
-<tr><td>Screens to keep per theme</td><td>+1 (Home, 5 tabs), two states</td><td>+1, plus tile states</td><td>+0</td><td>+0</td><td>+1 chat sheet, +3 cards on existing screens</td></tr>
-<tr><td>Data needed</td><td>Cache today; files one live call; Delivery and Away tiles only when there is something to show</td><td>Assistant: one call per tile</td><td>Cache today</td><td>Cache today</td><td>Agenda in the cache; mail found by the assistant on a tap; tasks need a new read tool</td></tr>
-<tr><td>Others do today</td><td>Gmail and Outlook mobile have no home; the launcher widget does this</td><td>Gmail Gemini summaries; Spark digest</td><td>Gmail cards above the list</td><td>Outlook mobile short agenda</td><td>Gmail suggests events from mail; Gemini and Copilot answer calendar questions</td></tr>
-<tr><td>Recommendation</td><td><b>Build, with conditional Delivery and Away tiles.</b></td><td>Held. Only with a daily digest.</td><td>Keep as a cheaper companion to A.</td><td>Keep as a cheaper companion to A (Calendar header).</td><td>Build in two steps: dates and chat first (little new core), tasks and Plan my day later.</td></tr>
+<tr><th></th><th>A. Bento home (owner's pick, 2026-11-16)</th><th>B. Home with calendar assistant</th><th>C. Today strip</th><th>D. Calendar-first</th><th>E. Assistant for calendar and tasks</th><th>F. Its settings</th></tr>
+<tr><td>Taps to inbox</td><td>1 (Mail tab) if Home is first; 0 if Mail is the start tab</td><td>Same as A</td><td>0</td><td>1; the Inbox tile gives 1 too</td><td>No change (lives in Calendar and Tasks)</td><td>None (Settings, Home)</td></tr>
+<tr><td>Screens to keep per theme</td><td>+1 (Home, 5 tabs), two states</td><td>+1 over A: two states (tiles on, assistant off)</td><td>+0</td><td>+0</td><td>+1 chat sheet, +3 cards on existing screens</td><td>+1 screen, +1 small group on Assistant settings</td></tr>
+<tr><td>Data needed</td><td>Cache today; files one live call; Delivery and Away tiles only when there is something to show</td><td>As A, plus: the dates tile sends the newest 20 unread mails to the service on a tap; plan and overlaps use the cached agenda and tasks only</td><td>Cache today</td><td>Cache today</td><td>Agenda in the cache; mail found by the assistant on a tap; tasks need a new read tool</td><td>Settings kept in the core per account</td></tr>
+<tr><td>Others do today</td><td>Gmail and Outlook mobile have no home; the launcher widget does this</td><td>Gmail suggests events from mail; Outlook and Google show a day agenda</td><td>Gmail cards above the list</td><td>Outlook mobile short agenda</td><td>Gmail suggests events from mail; Gemini and Copilot answer calendar questions</td><td>Gmail and K-9 keep such switches under Settings</td></tr>
+<tr><td>Recommendation</td><td><b>Build, with conditional Delivery and Away tiles.</b></td><td><b>Build after A; the assistant tiles are off until set up.</b></td><td>Keep as a cheaper companion to A.</td><td>Keep as a cheaper companion to A (Calendar header).</td><td>Build in two steps: dates and chat first (little new core), tasks and Plan my day later.</td><td>Build with B; it is where the user controls what the assistant may show.</td></tr>
 </table>
 <p class="small">Feature names for Gmail, Outlook, Proton and Spark are recollections and may be slightly off.</p></section>
 
@@ -157,6 +166,26 @@ const E3=()=>sb+'<div class="tb"><div class="t">Tasks</div><div class="cs">'+I('
 const E4=()=>sb+'<div class="tb">'+I('menu')+'<div class="t" style="font-size:18px">Dinner Friday?</div><div class="av">A</div></div><div class="body" style="gap:8px"><div class="row"><div class="av">A</div><div><b>Ayse Kaya</b><div class="sub">to me · 08:50</div></div></div>'+
 '<div class="aic"><h5>'+I('spark')+' To-dos and dates</h5><div class="ar"><div><div class="ell"><b>Dinner at Lokanta</b></div><div class="meta">Fri 20 Nov, 19:30</div></div>'+bt('Add to calendar')+'</div><div class="ar"><div><div class="ell"><b>Pick up the keys</b></div><div class="meta">Sat 21 Nov, 10:00</div></div>'+bt('Add to calendar')+'</div><div class="meta">To-do: send the menu choices. Shown, not added.</div></div>'+
 '<div style="padding:4px 6px;font-size:13.5px;line-height:1.5">Hi! Booked a table for 19:30 at Lokanta on Friday. Can you send the menu choices before then? Also, the keys are ready on Saturday at 10:00.<br><br>Ayse</div></div>'+nav('m');
+
+const dl=(who,what,when)=>'<div class="ar"><div><div class="ell"><b>'+who+'</b> '+what+'</div><div class="meta">'+when+'</div></div>'+bt('Add','f')+'</div>';
+const datesT='<div class="t1 w tc"><h4>'+I('spark')+' Dates in your mail · 3<span class="bt f" style="margin-left:auto">Review</span></h4>'+dl('Ayse','Dinner at Lokanta','Fri 20, 19:30')+dl('Dr. Aksoy','Dentist check-up','Thu 19, 14:00')+dl('Mira','Release review','Mon 23, 10:00')+'</div>';
+const fr=(tm,t,c)=>'<div class="fr'+(c?' free':'')+'"><span class="tm">'+tm+'</span><span class="ell">'+t+'</span></div>';
+const planT='<div class="t1 w tc"><h4>'+I('spark')+" Today's plan<span class=\"pill\" style=\"margin-left:auto\">3 events, 3 tasks</span></h4>"+fr('09:30','Standup')+fr('10:00','Pay rent (task)')+fr('10:30','Free until 12:00, 1 h 30',1)+fr('12:00','Lunch with Pia')+fr('13:00','Sign Contract-v3 (task)')+'</div>';
+const overT=tile('tc',I('spark')+' Overlap','<div class="mid" style="font-size:15px">Thu 14:00</div><div class="sub ell">Dentist, Standup</div>');
+const flagS=tile('',I('star')+' Flagged','<div class="mid">5 mails</div><div class="sub ell">Oldest: 3 days</div>');
+const BA=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+unread+ev+tasks+datesT+planT+flagS+overT+'</div></div>'+nav('h',true);
+const quiet='<div class="sr" style="border-radius:20px;flex:none;background:var(--sch)">'+I('spark')+'<div class="tx tt" style="color:var(--var)">Assistant tiles are off</div><span class="vl">Set up</span></div>';
+const BB=()=>sb+hdr('Good morning')+'<div class="body"><div class="grid">'+unread+evB+tasksB+flag+files+'</div><div style="flex:1"></div>'+quiet+'</div>'+nav('h',true);
+const sw=on=>'<span class="sw'+(on?' on':'')+'"></span>';
+const sr=(t,sub,on,cls,val)=>'<div class="sr '+(cls||'')+'"><div class="tx"><div class="tt">'+t+'</div>'+(sub?'<div class="ss">'+sub+'</div>':'')+'</div>'+(val?'<span class="vl">'+val+'</span>':sw(on))+'</div>';
+const topS=t=>'<div class="tb"><svg class="i" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg><div class="t" style="font-size:20px">'+t+'</div></div>';
+const FA=()=>sb+topS('Home')+'<div class="body" style="gap:6px"><div class="gp">'+sr('Show Home tab','Off: the bar has four tabs',1)+'</div>'+
+'<div class="lab">Tiles</div><div class="gp">'+sr('Unread',0,1)+sr('Next event',0,1)+sr('Due today',0,1)+sr('Flagged',0,1)+sr('Recent files',0,1)+sr('Delivery','Only when there is a problem',1)+sr('Away message','Only when set',1)+'</div>'+
+'<div class="lab">Assistant tiles</div><div class="gp">'+sr('Uses OpenAI, gpt-5','Assistant settings',0,'','Open')+sr('Dates found in mail','Reads the newest 20 unread mails when you open Home, only after your tap the first time each day, and sends them to OpenAI',1)+'</div></div>';
+const FB=()=>sb+topS('Home')+'<div class="body" style="gap:6px"><div class="lab">Assistant tiles</div><div class="gp">'+sr('Uses OpenAI, gpt-5','Assistant settings',0,'','Open')+sr('Dates found in mail','Newest 20 unread mails, sent to OpenAI on your tap',1)+sr("Today's plan",'Made on the phone, nothing is sent',1)+sr('Overlaps in your calendar','No service needed, computed on the phone',1)+sr('Suggested tasks from mail','Shown as a card, never added by itself',0)+'</div>'+
+'<div class="lab">Behaviour</div><div class="gp">'+sr('Run when','',0,'','Only when I tap')+'<div class="sr dis"><div class="tx"><div class="tt">In the background hourly</div><div class="ss">Not yet</div></div></div>'+sr('Which mail','',0,'','Inbox only')+sr('Show the cost note','Roughly how much text was sent on the last run',1)+'</div>'+
+'<div class="ft">Every change the assistant proposes is made only when you tap the card that shows it. The assistant never sends mail or changes existing events from Home.</div></div>';
+const FC=()=>sb+topS('Assistant')+'<div class="body" style="gap:6px"><div class="gp">'+sr('Service','',0,'','OpenAI')+sr('Model','',0,'','gpt-5')+sr('Consent','Given for this service and model',1)+'</div><div class="lab">Home tiles</div><div class="gp">'+sr('Home tiles','3 of 4 on: dates, plan, overlaps, task suggestions',0,'','Open')+'</div><div class="lab">More</div><div class="gp">'+sr('Your instructions','',0,'','Set')+sr('Automatic changes','Off in new chats',0)+sr('Reset assistant settings','',0)+'</div></div>';
 const V=[
 ['A. Bento home, normal day',"Owner's pick (2026-11-16). Home is the first tab, off by default (Settings, Home). Delivery and Away are gone from the normal day; the free space goes to a taller Due today tile.",A,[
  '<b>Unread</b>: Inbox count and the three newest unread senders. '+T,
@@ -168,12 +197,17 @@ const V=[
  '<b>Delivery</b>: appears only on a problem, with the time it began; a tap opens the Delivery check. '+T,
  '<b>Away</b>: appears only when the vacation response is on, with its end date; a tap opens the editor. '+T,
  'Both tiles are conditional: the grid reflows without them (as in the normal day above) and nothing is reserved for them.'],"Owner's pick (2026-11-16)"],
-['B. Assistant bento','A with three tiles that need the opt-in assistant. Without consent they do not appear and the home looks like A.',B,[
- '<b>Catch me up</b>: a summary of the last 24 h of mail, made on tap and sent to the chosen service. '+AI,
- '<b>Needs a reply</b>: mails the model judges to want an answer; count and names. '+AI,
- '<b>Dates in mail</b>: dates and times found in recent mail; each can become a calendar entry through the apply card. '+AI,
- '<b>Unread, Next event, Due today, Flagged, Delivery and away</b>: as in A, merged to make room. '+T,
- 'Needs consent per service and model, a cost note, a stale state ("made 3 h ago") and an error state per tile. Mail leaves the phone only on the user\'s tap.']],
+['B.a Home with the calendar assistant','A with three assistant tiles, shown in the tertiary container colour and marked with a small sparkle. Home scrolls; Recent files and the rest of the cache tiles of A follow below the bottom edge.',BA,[
+ '<b>Dates in your mail</b>: the newest 20 unread mails are read by the service on a tap; one line per date with who, what and when and an Add button (a tap on a card showing that exact new event, with Undo); Review opens the list. '+AI,
+ "<b>Today's plan</b>: the day's events and tasks due, ordered, with a free slot marked. Made on the phone from the cached agenda and tasks; no service. Before a plan exists the tile shows the day's events and one button, Plan my day. "+AI,
+ '<b>Overlap Thursday 14:00</b>: shown only when two events overlap; computed on the phone, nothing is sent. '+AI,
+ "<b>Needs the service</b>: Dates in your mail only (and Suggested tasks from mail, not drawn here). <b>Does not</b>: Overlap and Today's plan.",
+ '<b>Consent</b>: the first tap on an assistant tile opens the existing consent dialog, which names the service and the model; without consent the tiles are not shown (B.b).',
+ '<b>Mail leaves the phone</b> only for a task the user started. With "Run when: When Home opens" the dates tile does not run by itself: it asks once per day ("Look for dates in 20 unread mails?") and runs after that tap.',
+ 'Cache tiles keep working as in A; nothing here reads a shared account.'],'Assistant'],
+['B.b Home with the assistant off','The same home without assistant tiles. One quiet row at the bottom opens Settings, Home, or the assistant set-up if no service is chosen.',BB,[
+ 'Shown when the assistant is not set up, consent was refused, or every assistant tile is switched off.',
+ "Nothing is sent and no model call is made in this state. Overlap and Today's plan are off too because they sit in the same group (open point: they could run without consent)."]],
 ['C. Today strip','Not a tab. The Mail tab as today with a row above the chips. The row holds 0 to 3 tiles and vanishes when nothing needs attention.',C,[
  '<b>Next event</b>: the next event within 12 h, countdown and place. '+T,
  '<b>Tasks due</b>: shown only when at least one is due today. '+T,
@@ -206,7 +240,20 @@ const V=[
  '<b>Data</b>: the open mail only, sent on the tap that started it. '+AI,
  '<b>Writes</b>: Add to calendar opens the card flow for that single date; to-dos stay a list until E.c exists.',
  '<b>Consent</b>: the existing per-service consent.',
- '<b>Effort</b>: about half a day; the result and add_event exist.'],'Assistant']
+ '<b>Effort</b>: about half a day; the result and add_event exist.'],'Assistant'],
+['F.a Settings: Home, tiles','Settings, Home. Same grouped rows and switches as the other settings screens. The first groups say what Home shows without the assistant.',FA,[
+ '<b>Show Home tab</b>: turns the Home tab on or off (off by default; with it off the bar has four tabs).',
+ '<b>Tiles</b>: one switch per cache tile. Delivery shows only when there is a problem and Away message only while it is on; the switch row says so, and no space is reserved for them.',
+ '<b>Assistant tiles</b>: greyed until a service is chosen and consented to. The first row names the service and model they use and opens Assistant settings.',
+ "<b>Dates found in mail</b>: reads the newest 20 unread mails and sends them to the service, only after the user taps the first time each day. <b>Today's plan</b>: orders the day from agenda and tasks on the phone. <b>Overlaps</b>: pure computation. <b>Suggested tasks from mail</b>: a card of to-dos, shown not added."],'Assistant'],
+['F.b Settings: Home, run rules and footer','The same screen scrolled down.',FB,[
+ '<b>Run when</b>: Only when I tap (default); When Home opens (asks once per day, then runs); In the background hourly (disabled, "not yet": it would send mail text with nobody there to tap).',
+ '<b>Which mail</b>: Inbox only (default) or Inbox and the folders notified for this account; never a shared account, Spam or Trash.',
+ '<b>Show the cost note</b>: a line under the assistant tiles saying roughly how much text was sent on the last run.',
+ '<b>Footer</b>: the rule the assistant works by on Home: a change is made only on a tap on its card; it never sends mail or changes existing events.'],'Assistant'],
+['F.c Settings: Assistant, new group','The existing Assistant settings screen with one new group, "Home tiles", so the two places point to each other.',FC,[
+ '<b>Home tiles</b>: one row linking to F.a and showing how many assistant tiles are on. Consent, service and model stay where they are.',
+ "A switch in F.a never grants consent: consent lives only in the assistant's own dialog, per service and model, and is asked on the first tap."]]
 ];
 const vs=document.getElementById('vs');
 V.forEach(([t,d,f,l,pick])=>{const h=f();const e=document.createElement('section');e.className='variant';
