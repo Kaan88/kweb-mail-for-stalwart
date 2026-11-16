@@ -12,6 +12,8 @@ import ovh.kweb.mail.accounts.AccountRecord
 import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Settings
+import uniffi.kweb_core.Exception as CoreException
+import uniffi.kweb_core.ProviderException
 
 /**
  * Switching the device calendar on and off for an account, and asking for a sync of it. Everything here is
@@ -50,34 +52,76 @@ object DeviceCalendarController {
         return true
     }
 
-    /**
-     * Turns it off: what was changed on the phone and not yet sent goes up first (best effort, a minute at most), then the
-     * Android account is removed, which takes its calendars and events from the phone. Blocks.
-     */
-    fun disable(context: Context, record: AccountRecord): Boolean {
-        val settings = Settings.of(context, record)
-        // First, so that no queued sync brings anything back while this runs.
-        settings.deviceCalendar = false
-        DeviceCalendarAccounts.find(context, record.id)?.let { account ->
-            ContentResolver.setSyncAutomatically(account, DeviceCalendarRules.AUTHORITY, false)
-            ContentResolver.cancelSync(account, DeviceCalendarRules.AUTHORITY)
-            if (hasPermission(context)) uploadBeforeRemoval(context, record, account)
-        }
-        DeviceCalendarNotices.clear(context, record)
-        return DeviceCalendarAccounts.remove(context, record.id)
+    /** How a switching off ended. */
+    sealed interface Disabled {
+        /** The Android account and its calendars are gone. */
+        data object Removed : Disabled
+
+        /** The Android account could not be removed. */
+        data object NotRemoved : Disabled
+
+        /**
+         * Edits made on the phone could not be sent, so nothing was removed and the device calendar is still on. [waiting]
+         * is how many events carry one (0 when that could not be counted); [run] says why the upload did not work. Only
+         * [disable] with `force` removes the calendars now, and those edits are then lost.
+         */
+        data class Waiting(val waiting: Int, val run: DeviceRun) : Disabled
     }
 
-    private fun uploadBeforeRemoval(context: Context, record: AccountRecord, account: Account) {
+    /**
+     * Turns it off. What was changed on the phone and not yet sent goes up first (a minute at most). When that does not work
+     * the Android account and its calendars stay, the device calendar stays on, and the answer says why: removing them would
+     * lose the edits without a word. With [force] (the user was told) they are removed anyway. Blocks.
+     */
+    fun disable(context: Context, record: AccountRecord, force: Boolean = false): Disabled {
+        val settings = Settings.of(context, record)
+        val account = DeviceCalendarAccounts.find(context, record.id)
+        // First, so that no queued sync brings anything back while this runs.
+        settings.deviceCalendar = false
+        if (account != null) {
+            ContentResolver.setSyncAutomatically(account, DeviceCalendarRules.AUTHORITY, false)
+            ContentResolver.cancelSync(account, DeviceCalendarRules.AUTHORITY)
+            val stuck = if (!force && hasPermission(context)) uploadBeforeRemoval(context, record, account) else null
+            if (stuck != null) {
+                // Back as it was: on, syncing, and the calendars with the edits still there.
+                settings.deviceCalendar = true
+                ContentResolver.setSyncAutomatically(account, DeviceCalendarRules.AUTHORITY, true)
+                return stuck
+            }
+        }
+        DeviceCalendarNotices.clear(context, record)
+        return if (DeviceCalendarAccounts.remove(context, record.id)) Disabled.Removed else Disabled.NotRemoved
+    }
+
+    /** Null when nothing is waiting or it all went up; else what is waiting and why it was not sent. */
+    private fun uploadBeforeRemoval(context: Context, record: AccountRecord, account: Account): Disabled.Waiting? {
+        var waiting = 0
         try {
-            val client = context.contentResolver.acquireContentProviderClient(DeviceCalendarRules.AUTHORITY) ?: return
+            val client = context.contentResolver.acquireContentProviderClient(DeviceCalendarRules.AUTHORITY) ?: return null
             try {
-                val session = Accounts.session(record.id) ?: return
-                session.core.deviceCalendarSync(CalendarContractProvider(client, account), record.id, java.util.TimeZone.getDefault().id)
+                val provider = CalendarContractProvider(client, account)
+                // 0 stays 0 when the provider cannot be asked: the upload is tried and a failure of it blocks.
+                waiting = try {
+                    provider.waitingEdits().also { if (it == 0) return null }
+                } catch (e: ProviderException) {
+                    0
+                }
+                val counted = waiting
+                val session = Accounts.session(record.id) ?: return Disabled.Waiting(counted, DeviceRun(DeviceRun.Kind.Failed))
+                val run = DeviceRun.of(session.core.deviceCalendarSync(provider, record.id, java.util.TimeZone.getDefault().id))
+                // The run left the phone as the server has it.
+                return if (run.good) null else Disabled.Waiting(counted, run)
             } finally {
                 client.close()
             }
+        } catch (e: CoreException.SignInNeeded) {
+            return Disabled.Waiting(waiting, DeviceRun(DeviceRun.Kind.SignIn))
+        } catch (e: CoreException.Temporary) {
+            return Disabled.Waiting(waiting, DeviceRun(DeviceRun.Kind.Failed))
         } catch (e: Exception) {
+            // The class of the error only: its text may be the provider's or the server's own words.
             Log.w(Background.TAG, "the last upload of the device calendar did not work (${e.javaClass.simpleName})")
+            return Disabled.Waiting(waiting, DeviceRun(DeviceRun.Kind.Other))
         }
     }
 

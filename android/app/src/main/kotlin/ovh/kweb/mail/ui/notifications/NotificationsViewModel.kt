@@ -34,6 +34,8 @@ data class NotificationsState(
     val account: String? = null,
     val mailEnabled: Boolean = true,
     val remindersEnabled: Boolean = true,
+    /** The server's notices (invited, changed, cancelled, shared) are shown; kept by the core, read with the addresses. */
+    val noticesEnabled: Boolean = true,
     val removeWhenReadElsewhere: Boolean = true,
     val preview: PreviewChoice = PreviewChoice.Full,
     /** The buttons of this account's mail notifications, in order (chosen on their own screen). */
@@ -42,20 +44,22 @@ data class NotificationsState(
 )
 
 /** The kinds of channel the screen opens in the system settings (an address's own channel is opened by [NotificationsViewModel.addressChannelSettings]). */
-enum class ChannelKind { Mail, Reminders }
+enum class ChannelKind { Mail, Reminders, Notices }
 
 /** The Notifications screen of one account: its switches (the same ones the Delivery check used), its addresses, its channels. */
 class NotificationsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
     private val settings get() = session.settings
     private val addresses = MutableStateFlow<List<AddressChoice>?>(null)
+    private val notices = MutableStateFlow(true)
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
 
-    val state: StateFlow<NotificationsState> = combine(settings.changes, addresses, Accounts.records, Accounts.names) { _, list, records, names ->
+    val state: StateFlow<NotificationsState> = combine(settings.changes, addresses, Accounts.records, Accounts.names, notices) { _, list, records, names, noticesOn ->
         val s = settings
         NotificationsState(
             account = AccountLabels.forNotice(session.record, records, names),
             mailEnabled = s.mailEnabled,
             remindersEnabled = s.remindersEnabled,
+            noticesEnabled = noticesOn,
             removeWhenReadElsewhere = s.removeWhenReadElsewhere,
             preview = s.previewChoice,
             buttons = s.notificationActions,
@@ -78,6 +82,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
                 addresses.value = withContext(Dispatchers.IO) {
                     session.core.addressNotify().also(::reconcileChannels)
                 }
+                notices.value = withContext(Dispatchers.IO) { session.core.noticesEnabled() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -92,6 +97,23 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
 
     fun setRemindersEnabled(value: Boolean) {
         settings.remindersEnabled = value
+    }
+
+    /** Shows or hides the server's notices for this account. Shown at once; put back if the core refuses. */
+    fun setNoticesEnabled(value: Boolean) {
+        val before = notices.value
+        notices.value = value
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { session.core.setNoticesEnabled(value) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "switching the notices failed", e)
+                notices.value = before
+                messageChannel.send(R.string.notifications_address_failed)
+            }
+        }
     }
 
     fun setRemoveWhenReadElsewhere(value: Boolean) {
@@ -138,6 +160,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
         val id = when (kind) {
             ChannelKind.Mail -> ChannelRules.mail(record)
             ChannelKind.Reminders -> Channels.REMINDERS
+            ChannelKind.Notices -> Channels.NOTICES
         }
         return Channels.settingsIntent(app, id)
     }

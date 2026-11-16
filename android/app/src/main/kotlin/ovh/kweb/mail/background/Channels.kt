@@ -23,6 +23,7 @@ object Channels {
     const val MAIL = "mail"
     const val QUIET = "mail_quiet"
     const val REMINDERS = "reminders"
+    const val NOTICES = "notices"
     const val CONNECTION = "connection"
     const val DOWNLOADS = "downloads"
     const val SYNC_PROBLEMS = "sync_problems"
@@ -38,6 +39,8 @@ object Channels {
             listOf(
                 NotificationChannel(REMINDERS, context.getString(R.string.channel_reminders), NotificationManager.IMPORTANCE_HIGH)
                     .apply { description = context.getString(R.string.channel_reminders_description) },
+                NotificationChannel(NOTICES, context.getString(R.string.channel_notices), NotificationManager.IMPORTANCE_DEFAULT)
+                    .apply { description = context.getString(R.string.channel_notices_description) },
                 NotificationChannel(CONNECTION, context.getString(R.string.channel_connection), NotificationManager.IMPORTANCE_MIN)
                     .apply {
                         description = context.getString(R.string.channel_connection_description)

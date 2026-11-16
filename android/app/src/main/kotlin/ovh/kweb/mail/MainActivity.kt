@@ -138,10 +138,17 @@ class MainActivity : ComponentActivity() {
     private fun handleNotificationIntent(intent: Intent) {
         if (handleShareIntent(intent)) return
         if (handleReplyIntent(intent) || handleReminderIntent(intent)) return
-        if (intent.getStringExtra(Notifier.EXTRA_OPEN) == Notifier.OPEN_DEVICE_CALENDAR) {
+        val open = intent.getStringExtra(Notifier.EXTRA_OPEN)
+        if (open == Notifier.OPEN_DEVICE_CALENDAR) {
             val account = intent.takeAccount()
             intent.removeExtra(Notifier.EXTRA_OPEN)
             app.openDeviceCalendar(account)
+            return
+        }
+        if (open == Notifier.OPEN_CALENDAR || open == Notifier.OPEN_SHARED) {
+            val account = intent.takeAccount()
+            intent.removeExtra(Notifier.EXTRA_OPEN)
+            app.openNotice(account, open == Notifier.OPEN_CALENDAR)
             return
         }
         val messageId = intent.getStringExtra(Notifier.EXTRA_MESSAGE_ID)

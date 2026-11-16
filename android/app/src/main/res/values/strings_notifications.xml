@@ -31,6 +31,8 @@
     <string name="notifications_mode_off">Do not notify</string>
     <string name="notifications_mode_off_detail">Not shown at all; the mail stays in your folders</string>
     <string name="notifications_reminders">Reminders</string>
+    <string name="notifications_notices">Invitations and sharing</string>
+    <string name="notifications_notices_detail">When someone invites you, changes or cancels an event, or shares something with you</string>
     <string name="notifications_address_failed">The choice could not be saved</string>
     <string name="notifications_channel_failed">This phone has no settings screen for that</string>
     <string name="notifications_sound_for">Sound and vibration for %1$s</string>

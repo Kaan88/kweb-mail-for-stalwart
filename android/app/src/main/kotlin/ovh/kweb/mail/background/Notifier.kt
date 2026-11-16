@@ -17,6 +17,7 @@ import ovh.kweb.mail.accounts.AccountLabels
 import ovh.kweb.mail.accounts.AccountRecord
 import ovh.kweb.mail.accounts.Accounts
 import uniffi.kweb_core.MailNotification
+import uniffi.kweb_core.Notice
 import uniffi.kweb_core.Plan
 import uniffi.kweb_core.Reminder
 
@@ -148,6 +149,47 @@ class Notifier(context: Context) {
             }
             .build()
         manager.notify(NotificationKeys.tag(record), id, notification)
+    }
+
+    /**
+     * Shows the server's notices (invited, changed, cancelled, shared) of [record], each as a notification of its own on the
+     * Invitations and sharing channel, the newest [NoticeRules.MOST] at most. The words are the other person's (a name, an
+     * event title) and are shown as text only. Returns true: the notices are handled, and the core tells the server so.
+     */
+    fun showNotices(record: AccountRecord, notices: List<Notice>): Boolean {
+        if (Settings.isGone(record)) return true
+        Channels.ensure(context)
+        val label = labelOf(record)
+        val now = Instant.now()
+        for (notice in NoticeRules.newest(notices)) {
+            val open = NotificationIntents.openNotice(context, record, NoticeRules.requestCode(notice), NoticeRules.opens(notice))
+            val title = if (NoticeRules.isEvent(notice)) {
+                context.getString(NoticeRules.titleRes(notice.kind), notice.who)
+            } else {
+                context.getString(NoticeRules.titleRes(notice.kind), notice.who, context.getString(NoticeRules.thingRes(notice.thing)))
+            }
+            val text = if (NoticeRules.isEvent(notice)) noticeEventText(notice, now) else null
+            val notification = NotificationCompat.Builder(context, Channels.NOTICES)
+                .setSmallIcon(R.drawable.ic_stat_mail)
+                .setContentTitle(title)
+                .setCategory(NotificationCompat.CATEGORY_EVENT)
+                .setAutoCancel(true)
+                .setContentIntent(open)
+                .apply {
+                    text?.let { setContentText(it) }
+                    label?.let { setSubText(it) }
+                }
+                .build()
+            manager.notify(NoticeRules.tag(record, notice), NoticeRules.ID, notification)
+        }
+        return true
+    }
+
+    /** The event's title, and when it is when the notice says. */
+    private fun noticeEventText(notice: Notice, now: Instant): String {
+        val title = notice.title.ifBlank { context.getString(R.string.notice_event_untitled) }
+        val time = ReminderRules.formatTime(notice.localStart, notice.timeZone, notice.allDay, ZoneId.systemDefault(), Locale.getDefault(), now)
+        return if (time == null) title else context.getString(R.string.notice_event_text, title, time)
     }
 
     /**
@@ -395,6 +437,12 @@ class Notifier(context: Context) {
         /** Extra of a notification intent that asks for a screen of the app instead of a message ([OPEN_DEVICE_CALENDAR]). */
         const val EXTRA_OPEN = "ovh.kweb.mail.extra.OPEN"
         const val OPEN_DEVICE_CALENDAR = "device_calendar"
+
+        /** A notice about an event was tapped: the agenda opens. */
+        const val OPEN_CALENDAR = "calendar"
+
+        /** A notice about a share was tapped: "Shared with me" opens. */
+        const val OPEN_SHARED = "shared"
 
         internal const val SUMMARY_ID = 1
         internal const val SERVICE_ID = 2

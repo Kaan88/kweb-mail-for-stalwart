@@ -39,6 +39,7 @@ import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.MessageBody
 import uniffi.kweb_core.MessageHeader
+import uniffi.kweb_core.RefusedRecipient
 import uniffi.kweb_core.Exception as CoreException
 
 /** The body of one message as the card shows it. */
@@ -66,6 +67,8 @@ data class ThreadState(
     val refreshed: Boolean = false,
     /** Nothing is cached and the server could not be asked. */
     val offline: Boolean = false,
+    /** The recipients the server refused for a message of the thread the user sent to the others, by message id. */
+    val refused: Map<String, List<RefusedRecipient>> = emptyMap(),
 ) {
     /** The subject of the oldest message that has one (the newest is often "Re: …"). */
     /** What Archive, Delete, Move and Spam act on, for a thread opened from [mailboxId]. */
@@ -394,9 +397,12 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
                 // Conversation view off: the thread screen holds the one message that was opened.
                 val all = core.threadMessages(route.threadId)
                 val shown = if (route.single && route.messageId != null) all.filter { it.id == route.messageId } else all
-                Triple(shown, core.mailboxes(), core.account()?.username)
+                // What the server refused for mail the user sent: from the cache, and only a message of the user's has any.
+                val refused = shown.associate { it.id to core.refusedRecipients(it.id) }.filterValues { it.isNotEmpty() }
+                Triple(shown, core.mailboxes(), core.account()?.username) to refused
             }
-            val (messages, mailboxes, me) = read
+            val (triple, refusedNow) = read
+            val (messages, mailboxes, me) = triple
             val before = stateFlow.value.messages
             val knownIds = before.map { it.id }.toSet()
             // Messages that arrive while the thread is open; the first set is the initial one.
@@ -413,6 +419,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
                     mailboxes = mailboxes,
                     myAddress = me?.takeIf { '@' in it },
                     loaded = true,
+                    refused = refusedNow,
                 )
             }
             if (active) {

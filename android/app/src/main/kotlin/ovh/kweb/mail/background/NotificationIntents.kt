@@ -81,6 +81,16 @@ internal object NotificationIntents {
         return PendingIntent.getActivity(context, requestCode, intent, FLAGS)
     }
 
+    /** Opens [MainActivity] on the agenda or on "Shared with me" ([open] is [Notifier.OPEN_CALENDAR] or [Notifier.OPEN_SHARED]). */
+    fun openNotice(context: Context, record: AccountRecord, requestCode: Int, open: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .setData(uri(record, "notice-$open", requestCode.toString()))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
+            .putExtra(Notifier.EXTRA_OPEN, open)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(context, requestCode, intent, FLAGS)
+    }
+
     /** Opens [MainActivity] without extras (the "Connected" entry and the test notification). */
     fun openAppPlain(context: Context, requestCode: Int): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)

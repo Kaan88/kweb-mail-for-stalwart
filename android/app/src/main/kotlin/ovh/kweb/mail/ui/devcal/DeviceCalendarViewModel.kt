@@ -51,6 +51,13 @@ class DeviceCalendarViewModel(app: Application, private val session: AccountSess
     private val busy = MutableStateFlow(false)
     private val permission = MutableStateFlow(DeviceCalendarController.hasPermission(app))
     private val messageChannel = Channel<Int>(Channel.BUFFERED)
+    private val blockedFlow = MutableStateFlow<DeviceCalendarController.Disabled.Waiting?>(null)
+
+    /**
+     * Set when switching off found edits made on the phone that could not be sent: nothing was removed and the screen asks
+     * whether to keep the device calendar on or to remove it anyway (and lose them). Null otherwise.
+     */
+    val blocked: StateFlow<DeviceCalendarController.Disabled.Waiting?> get() = blockedFlow
 
     val state: StateFlow<DeviceCalendarState> = combine(
         settings.changes, calendars, syncing, busy, permission,
@@ -134,13 +141,23 @@ class DeviceCalendarViewModel(app: Application, private val session: AccountSess
         }
     }
 
-    fun turnOff() {
+    /** The dialog was answered "Keep it on". */
+    fun keepOn() {
+        blockedFlow.value = null
+    }
+
+    /** Switches off; with [force] (the user was told what is lost) the calendars go even when edits could not be sent. */
+    fun turnOff(force: Boolean = false) {
         if (busy.value) return
         busy.value = true
+        blockedFlow.value = null
         viewModelScope.launch {
             try {
-                val done = withContext(Dispatchers.IO) { DeviceCalendarController.disable(getApplication(), session.record) }
-                if (!done) messageChannel.send(R.string.devcal_off_failed)
+                when (val done = withContext(Dispatchers.IO) { DeviceCalendarController.disable(getApplication(), session.record, force) }) {
+                    DeviceCalendarController.Disabled.Removed -> Unit
+                    DeviceCalendarController.Disabled.NotRemoved -> messageChannel.send(R.string.devcal_off_failed)
+                    is DeviceCalendarController.Disabled.Waiting -> blockedFlow.value = done
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

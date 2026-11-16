@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -74,6 +75,7 @@ import ovh.kweb.mail.ui.theme.KwebSwitch
 @Composable
 fun DeviceCalendarScreen(onBack: () -> Unit, vm: DeviceCalendarViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val blocked by vm.blocked.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
     val context = LocalContext.current
@@ -210,6 +212,27 @@ fun DeviceCalendarScreen(onBack: () -> Unit, vm: DeviceCalendarViewModel = viewM
         }
     }
 
+    blocked?.let { stuck ->
+        AlertDialog(
+            onDismissRequest = vm::keepOn,
+            title = { Text(stringResource(R.string.devcal_block_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (stuck.waiting > 0) {
+                            pluralStringResource(R.plurals.devcal_block_text, stuck.waiting, stuck.waiting)
+                        } else {
+                            stringResource(R.string.devcal_block_text_unknown)
+                        },
+                    )
+                    Text(blockReason(stuck.run), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = { TextButton(onClick = vm::keepOn) { Text(stringResource(R.string.devcal_block_keep)) } },
+            dismissButton = { TextButton(onClick = { vm.turnOff(force = true) }) { Text(stringResource(R.string.devcal_block_remove)) } },
+        )
+    }
+
     if (explaining) {
         AlertDialog(
             onDismissRequest = { explaining = false },
@@ -247,6 +270,18 @@ private fun runLine(run: DeviceRun): String = when (run.kind) {
     DeviceRun.Kind.Failed -> stringResource(R.string.devcal_result_failed)
     DeviceRun.Kind.Other -> stringResource(R.string.devcal_result_other, stringResource(R.string.devcal_result_failed))
 }
+
+/** Why edits made on the phone were not sent, in a line for the dialog that offers to remove the calendars anyway. */
+@Composable
+private fun blockReason(run: DeviceRun): String = stringResource(
+    when (run.kind) {
+        DeviceRun.Kind.Failed -> R.string.devcal_block_failed
+        DeviceRun.Kind.SignIn -> R.string.devcal_block_signin
+        DeviceRun.Kind.Denied -> R.string.devcal_block_denied
+        DeviceRun.Kind.StoppedDeletions, DeviceRun.Kind.StoppedEmpty -> R.string.devcal_block_stopped
+        DeviceRun.Kind.Ok, DeviceRun.Kind.Other -> R.string.devcal_block_other
+    },
+)
 
 /** What a good run did that the user should know: edits that were put back and changes taken from the server. */
 @Composable

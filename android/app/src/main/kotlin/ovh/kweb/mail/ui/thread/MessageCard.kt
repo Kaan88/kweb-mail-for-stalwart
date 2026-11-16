@@ -144,6 +144,8 @@ fun MessageCard(
     onOpenCryptoFile: (uniffi.kweb_core.CryptoAttachment) -> Unit = {},
     /** A thread of one message is drawn flat on the page (subject, sender, body, files), as in the owner's sheet, not as a card. */
     flat: Boolean = false,
+    /** The recipients the server refused when it took this message, which went to the others; empty for any other message. */
+    refused: List<uniffi.kweb_core.RefusedRecipient> = emptyList(),
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
@@ -186,7 +188,7 @@ fun MessageCard(
                 )
             }
         } else {
-            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe, crypto)
+            ExpandedHeader(header, sender, initial, body, myAddress, actions, labelNames, unsubscribe, crypto, refused)
             Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
                 // Mail the core opened (decrypted, or taken out of opaque signed data) is shown from the core's copy alone;
                 // remote content stays off for it when the core says so, whatever the user allowed.
@@ -212,6 +214,7 @@ private fun ExpandedHeader(
     labelNames: List<String>,
     unsubscribe: UnsubEntry?,
     crypto: CryptoUi?,
+    refused: List<uniffi.kweb_core.RefusedRecipient>,
 ) {
     var showDetails by remember(header.id) { mutableStateOf(false) }
     val loaded = (body as? BodyState.Loaded)?.body
@@ -261,9 +264,25 @@ private fun ExpandedHeader(
             modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
         )
         if (crypto != null) CryptoChip(crypto, onClick = actions.onCryptoChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
+        if (refused.isNotEmpty()) {
+            // The message went to the others; the server would not take these (its reply is in the details).
+            Text(
+                stringResource(R.string.thread_not_delivered, refused.joinToString(", ") { it.address }),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
+            )
+        }
         if (showDetails) {
             SelectionContainer {
                 Column(Modifier.padding(top = 8.dp)) {
+                    refused.filter { it.reply.isNotBlank() }.forEach {
+                        Text(
+                            stringResource(R.string.thread_not_delivered_reply, it.address, it.reply),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     DetailLine(R.string.thread_from, listOf(Address(header.fromName, header.fromEmail)))
                     DetailLine(R.string.thread_to, to)
                     DetailLine(R.string.thread_cc, cc)

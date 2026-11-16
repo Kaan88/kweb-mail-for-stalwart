@@ -11,6 +11,7 @@ import ovh.kweb.mail.devcal.DeviceCalendarController
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.Core
 import uniffi.kweb_core.Listener
+import uniffi.kweb_core.Notice
 import uniffi.kweb_core.Plan
 import uniffi.kweb_core.Reminder
 
@@ -62,6 +63,14 @@ class AccountSession internal constructor(
         override fun notifications(plan: Plan) = guarded("notifications") { Notifier(app).apply(record, plan) }
         override fun cacheChanged() = guarded("cacheChanged") { publishCacheChanged() }
         override fun reminder(reminder: Reminder) = guarded("reminder") { Notifier(app).showReminder(record, reminder) }
+        override fun notices(notices: List<Notice>): Boolean = try {
+            Notifier(app).showNotices(record, notices)
+        } catch (e: Exception) {
+            // Not handled: the core offers them again at the next pass.
+            Log.e(Background.TAG, "listener notices failed", e)
+            false
+        }
+
         override fun calendarChanged() = guarded("calendarChanged") { DeviceCalendarController.onCalendarChanged(app, record) }
     }
 

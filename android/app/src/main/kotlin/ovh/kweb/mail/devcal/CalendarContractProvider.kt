@@ -128,6 +128,16 @@ class CalendarContractProvider(private val client: ContentProviderClient, privat
             .mapNotNull { CalendarColumns.event(it, bySync) }
     }
 
+    /**
+     * How many events of the account carry an edit made on the phone that the sync has not sent yet: changed, deleted
+     * or made there. Counts only; nothing of an event is read.
+     */
+    fun waitingEdits(): Int = guard {
+        val ids = calendarIds().values.joinToString(",")
+        if (ids.isEmpty()) return@guard 0
+        rows(eventsUri, arrayOf(Events._ID), "${Events.CALENDAR_ID} IN ($ids) AND (${Events.DIRTY} = 1 OR ${Events.DELETED} = 1)", null).size
+    }
+
     override fun getEvent(rowId: Long): DeviceEvent? = guard {
         val bySync = calendarIds().entries.associate { it.value to it.key }
         rows(eventsUri, CalendarColumns.EVENT_PROJECTION, "${Events._ID}=?", arrayOf(rowId.toString()))

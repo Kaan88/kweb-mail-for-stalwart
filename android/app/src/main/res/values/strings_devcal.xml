@@ -24,6 +24,19 @@
     <string name="devcal_permission_continue">Continue</string>
     <string name="devcal_permission_denied">Without the calendar permission nothing can be shown on the phone. You can allow it in the app\'s settings.</string>
     <string name="devcal_permission_settings">App settings</string>
+    <string name="devcal_block_title">Changes not sent yet</string>
+    <plurals name="devcal_block_text">
+        <item quantity="one">%1$d change made on this phone has not been sent to the server. If you remove the calendars now, it will be lost.</item>
+        <item quantity="other">%1$d changes made on this phone have not been sent to the server. If you remove the calendars now, they will be lost.</item>
+    </plurals>
+    <string name="devcal_block_text_unknown">Changes made on this phone may not have been sent to the server. If you remove the calendars now, they will be lost.</string>
+    <string name="devcal_block_failed">The server could not be reached.</string>
+    <string name="devcal_block_signin">You need to sign in again before they can be sent.</string>
+    <string name="devcal_block_denied">The calendar permission is missing.</string>
+    <string name="devcal_block_stopped">The sync stopped before it sent them. The last sync says why.</string>
+    <string name="devcal_block_other">The sync did not work.</string>
+    <string name="devcal_block_keep">Keep it on</string>
+    <string name="devcal_block_remove">Remove anyway</string>
     <string name="devcal_off_failed">Switching off did not work. Try again.</string>
     <string name="devcal_on_failed">Switching on did not work. Try again.</string>
     <string name="devcal_choice_failed">The change was not saved. Try again.</string>

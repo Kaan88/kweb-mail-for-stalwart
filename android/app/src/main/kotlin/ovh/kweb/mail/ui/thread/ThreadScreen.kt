@@ -553,6 +553,7 @@ fun ThreadScreen(
                         labelNames = LabelRules.namesOf(labelsState.byMessage[header.id], labelsState.labels),
                         unsubscribe = unsubscribes[header.id],
                         crypto = cryptos[header.id],
+                        refused = state.refused[header.id].orEmpty(),
                         onOpenCryptoFile = { file ->
                             scope.launch {
                                 val opened = ovh.kweb.mail.ui.crypto.CryptoTemp.open(context, cryptoSession, header.id, file)

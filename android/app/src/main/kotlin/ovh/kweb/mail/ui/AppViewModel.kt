@@ -278,6 +278,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** A notice of the server was tapped: the agenda for one about an event, "Shared with me" for one about a share. */
+    fun openNotice(accountExtra: String?, calendar: Boolean) {
+        viewModelScope.launch {
+            val signedIn = SessionState.signedIn.first { it != null }
+            if (signedIn != true) return@launch
+            val target = if (calendar) BackStack.switchTo(Route.Calendar) else BackStack.initial + Route.Shared
+            intoAccount(accountExtra) { stackFlow.update { BackStack.showOver(it, target) } }
+        }
+    }
+
     /** The notification of a stopped device calendar sync was tapped: its screen opens over Settings. */
     fun openDeviceCalendar(accountExtra: String?) {
         viewModelScope.launch {

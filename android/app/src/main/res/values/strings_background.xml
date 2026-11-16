@@ -5,6 +5,21 @@
     <string name="channel_mail_description">New mail in your Inbox and in the folders you chose</string>
     <string name="channel_reminders">Reminders</string>
     <string name="channel_reminders_description">Calendar and task reminders</string>
+    <string name="channel_notices">Invitations and sharing</string>
+    <string name="channel_notices_description">When someone invites you to an event, changes or cancels one, or shares a mailbox, calendar or address book with you</string>
+    <string name="notice_event_invited">%1$s invited you</string>
+    <string name="notice_event_added">%1$s added an event to your calendar</string>
+    <string name="notice_event_changed">%1$s changed an event</string>
+    <string name="notice_event_cancelled">%1$s cancelled an event</string>
+    <string name="notice_share_new">%1$s shared %2$s with you</string>
+    <string name="notice_share_changed">%1$s changed what you can do in %2$s</string>
+    <string name="notice_share_ended">%1$s stopped sharing %2$s with you</string>
+    <string name="notice_thing_mailbox">a mailbox</string>
+    <string name="notice_thing_calendar">a calendar</string>
+    <string name="notice_thing_address_book">an address book</string>
+    <string name="notice_thing_other">something</string>
+    <string name="notice_event_untitled">An event</string>
+    <string name="notice_event_text">%1$s · %2$s</string>
     <string name="channel_connection">Connection</string>
     <string name="channel_connection_description">Silent entry that keeps the live connection to your server running</string>
 

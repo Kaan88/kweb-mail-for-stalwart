@@ -65,6 +65,8 @@
     <!-- Thread -->
     <string name="thread_me">me</string>
     <string name="thread_to_line">to %1$s</string>
+    <string name="thread_not_delivered">Not delivered to %1$s</string>
+    <string name="thread_not_delivered_reply">%1$s: %2$s</string>
     <string name="thread_from">From:</string>
     <string name="thread_to">To:</string>
     <string name="thread_cc">Cc:</string>

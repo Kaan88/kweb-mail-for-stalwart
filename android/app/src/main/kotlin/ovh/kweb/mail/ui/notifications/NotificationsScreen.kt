@@ -160,13 +160,22 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenBut
             Title(stringResource(R.string.notifications_reminders))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 SwitchRow(
-                    Groups.shape(0, 1),
+                    Groups.shape(0, 2),
                     stringResource(R.string.delivery_show_reminders),
                     null,
                     state.remindersEnabled,
                     vm::setRemindersEnabled,
                     soundDescription = stringResource(R.string.notifications_sound_for, stringResource(R.string.notifications_reminders)),
                     onSound = { openChannel(ChannelKind.Reminders) },
+                )
+                SwitchRow(
+                    Groups.shape(1, 2),
+                    stringResource(R.string.notifications_notices),
+                    stringResource(R.string.notifications_notices_detail),
+                    state.noticesEnabled,
+                    vm::setNoticesEnabled,
+                    soundDescription = stringResource(R.string.notifications_sound_for, stringResource(R.string.notifications_notices)),
+                    onSound = { openChannel(ChannelKind.Notices) },
                 )
             }
         }
