@@ -5,6 +5,7 @@ pub mod actions;
 #[cfg(target_os = "android")]
 mod android;
 pub mod assistant;
+pub mod attention;
 pub mod auth;
 pub mod compose;
 pub mod contacts;

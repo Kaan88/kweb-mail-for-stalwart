@@ -7,6 +7,7 @@
 mod admin;
 mod admin_link;
 mod ai_chat;
+mod attention;
 mod crypto;
 mod crypto_send;
 mod crypto_trust;
