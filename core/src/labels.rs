@@ -5,6 +5,11 @@
 //! and the name's UTF-8 bytes in lower-case hex: the server takes only ASCII keywords (and
 //! lowers their case), at most 128 bytes. The server cannot list the keywords in use, so the
 //! list of labels is kept by the app and completed from the keywords of the mail it has seen.
+//!
+//! Other programs' labels are read too (owner, 2026-11-16: read only): Bulwark and the filter
+//! editor's label action write `$label:<id>`, and such a keyword is a label named `<id>`. Its
+//! id stays the whole keyword, so adding or removing it on a message touches exactly that
+//! keyword. The app's own new labels keep the plain-name form above.
 
 use std::collections::HashSet;
 
@@ -21,6 +26,8 @@ pub const NAME_MAX_CHARS: usize = 60;
 /// The longest keyword the server takes, in bytes.
 const KEYWORD_MAX_BYTES: usize = 128;
 const PREFIX: &str = "kweb-";
+/// The keyword prefix of a label written by Bulwark (and by a filter rule's label action).
+const FOREIGN_PREFIX: &str = "$label:";
 /// The most bytes of a name that is hex-encoded: two hex digits each, behind the prefix.
 const ENCODED_NAME_MAX_BYTES: usize = (KEYWORD_MAX_BYTES - PREFIX.len()) / 2;
 
@@ -74,9 +81,23 @@ pub fn keyword_for(name: &str) -> String {
     format!("{PREFIX}{hex}")
 }
 
-/// The name a keyword stands for: the decoded name of a `kweb-` keyword, else the keyword itself.
+/// The name a keyword stands for: the decoded name of a `kweb-` keyword, the `<id>` of a
+/// `$label:<id>` keyword, else the keyword itself.
 pub fn name_for(keyword: &str) -> String {
+    if let Some(id) = foreign_name(keyword) {
+        return id.to_string();
+    }
     keyword.strip_prefix(PREFIX).and_then(decode_hex).unwrap_or_else(|| keyword.to_string())
+}
+
+/// Whether the keyword is another program's label (`$label:<id>`).
+pub fn is_foreign(keyword: &str) -> bool {
+    foreign_name(keyword).is_some()
+}
+
+/// The `<id>` of a `$label:<id>` keyword (one line, not blank).
+fn foreign_name(keyword: &str) -> Option<&str> {
+    keyword.strip_prefix(FOREIGN_PREFIX).filter(|id| !id.trim().is_empty() && !id.chars().any(char::is_control))
 }
 
 fn decode_hex(hex: &str) -> Option<String> {
@@ -89,9 +110,10 @@ fn decode_hex(hex: &str) -> Option<String> {
 }
 
 /// A keyword the server or a mail program uses for its own purposes: `$...`, and the IMAP flags
-/// (and the junk marks) without a `$`. Never offered as a label.
+/// (and the junk marks) without a `$`. Never offered as a label. `$label:<id>` is not one: it is
+/// another program's label.
 pub fn is_system(keyword: &str) -> bool {
-    keyword.starts_with('$')
+    (keyword.starts_with('$') && foreign_name(keyword).is_none())
         || keyword.starts_with('\\')
         || matches!(
             keyword,
@@ -192,6 +214,22 @@ mod tests {
             assert!(is_system(k), "{k}");
         }
         assert!(!is_system("work") && !is_system("kweb-576f726b"));
+    }
+
+    #[test]
+    fn another_programs_label_keyword_is_a_label_named_by_its_id() {
+        assert!(!is_system("$label:k3f9a") && !is_system("$label:Team"));
+        assert_eq!(name_for("$label:k3f9a"), "k3f9a");
+        assert_eq!(name_for("$label:Team"), "Team");
+        // Only a name after the prefix makes a label.
+        for k in ["$label:", "$label:  ", "$label1", "$labels"] {
+            assert!(is_system(k), "{k}");
+        }
+        let found: Vec<String> = ["$label:k3f9a", "$label:", "work"].iter().map(|s| s.to_string()).collect();
+        let all = merge(Vec::new(), &HashSet::new(), &found);
+        let ids: Vec<(&str, &str)> = all.iter().map(|l| (l.id.as_str(), l.name.as_str())).collect();
+        // The id is the whole keyword, so a toggle writes exactly that keyword.
+        assert_eq!(ids, [("$label:k3f9a", "k3f9a"), ("work", "work")]);
     }
 
     #[test]

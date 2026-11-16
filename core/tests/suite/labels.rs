@@ -219,6 +219,34 @@ fn a_label_changes_nothing_but_its_own_keyword() {
 }
 
 #[test]
+fn a_label_another_program_wrote_as_a_label_keyword_is_a_label_and_toggles_that_keyword() {
+    let rig = Rig::new();
+    // Bulwark, and the filter editor's label action, write `$label:<id>`.
+    rig.server.add_keyword(E1, "$label:team");
+    rig.server.add_keyword(E1, "$label:");
+    rig.sync();
+    let all = rig.core.labels().unwrap();
+    let team = all.iter().find(|l| l.name == "team").expect("the label is listed by its id");
+    assert_eq!(team.id, "$label:team", "the id is the whole keyword");
+    assert!(all.iter().all(|l| l.id != "$label:"), "a bare prefix is not a label");
+    assert_eq!(rig.labels_of(E1), ["$label:team"]);
+    // Put on another message and taken off the first: exactly that keyword changes.
+    rig.core.set_label(vec![E2.into()], team.id.clone(), true).unwrap();
+    rig.core.set_label(vec![E1.into()], team.id.clone(), false).unwrap();
+    rig.sync();
+    assert!(rig.server.keywords_of(E2).contains(&"$label:team".to_string()));
+    assert!(!rig.server.keywords_of(E1).contains(&"$label:team".to_string()));
+    assert!(rig.server.keywords_of(E1).contains(&"$label:".to_string()), "nothing else was touched");
+    // Taken off the last message that had it, it is still a label (it was worked with here).
+    rig.core.set_label(vec![E2.into()], team.id.clone(), false).unwrap();
+    rig.sync();
+    assert!(rig.core.labels().unwrap().iter().any(|l| l.id == "$label:team"));
+    // The app's own labels keep their plain form.
+    let work = rig.core.create_label("work".into()).unwrap();
+    assert_eq!(work.id, "work");
+}
+
+#[test]
 fn a_label_set_offline_is_kept_queued_and_survives_a_change_made_elsewhere() {
     let rig = Rig::new();
     let work = rig.core.create_label("Work".into()).unwrap();

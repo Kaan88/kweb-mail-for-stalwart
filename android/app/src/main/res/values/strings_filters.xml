@@ -83,7 +83,7 @@
     <string name="filters_keep_copy">Keep a copy</string>
     <string name="filters_reject_text">Message to the sender</string>
     <string name="filters_label_name">Label</string>
-    <string name="filters_label_note">Labels from a rule are written as $label:name keywords, which other mail programs show as labels.</string>
+    <string name="filters_label_note">Labels from a rule are written as $label:name keywords. This app lists them as labels too, and so do other mail programs.</string>
     <string name="filters_stop">Stop processing more rules</string>
     <string name="filters_stop_detail">Later rules are not tried for this mail</string>
     <string name="filters_include_spam">Include spam</string>
