@@ -318,6 +318,44 @@ impl Connection {
         Ok(crate::compose::rules::delivery_addresses(&texts))
     }
 
+    /// For each of these messages the other addresses it was sent to: its Cc and the addresses of its
+    /// `Delivered-To` and `X-Original-To` headers (where the server writes the mailbox a Bcc or a list
+    /// mail was delivered to). Only these properties are asked for, by id, in batches. A message the
+    /// server no longer has is left out; one with none of them has an empty list. Used to tell which of
+    /// the user's addresses a mail came to, so the headers of a cached window are fetched once.
+    pub async fn receivers(&self, ids: &[String]) -> Result<Vec<(String, Vec<Address>)>> {
+        const HEADERS: [&str; 2] = ["Delivered-To", "X-Original-To"];
+        let property = |name: &str| format!("header:{name}:asText:all");
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(self.get_batch()) {
+            let mut properties = vec!["id".to_string(), "cc".to_string()];
+            properties.extend(HEADERS.map(property));
+            let args = json!({ "accountId": self.account_id, "ids": chunk, "properties": properties });
+            let responses = self.call(&[MAIL_CAPABILITY], &[("Email/get", args)]).await?;
+            let get = response(&responses, "Email/get")?;
+            for email in get["list"].as_array().into_iter().flatten() {
+                let Some(id) = email["id"].as_str() else { continue };
+                let mut found: Vec<Address> = email["cc"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|a| {
+                        let address = a["email"].as_str()?.to_string();
+                        Some(Address { name: a["name"].as_str().unwrap_or_default().to_string(), email: address })
+                    })
+                    .collect();
+                let texts: Vec<String> = HEADERS.iter().flat_map(|name| strings(&email[property(name)])).collect();
+                found.extend(
+                    crate::compose::rules::delivery_addresses(&texts)
+                        .into_iter()
+                        .map(|email| Address { name: String::new(), email }),
+                );
+                out.push((id.to_string(), found));
+            }
+        }
+        Ok(out)
+    }
+
     /// Marks the message a reply or forward was made from as answered or forwarded.
     pub async fn mark_source(&self, email_id: &str, forwarded: bool) -> Result<()> {
         let keyword = if forwarded { "$forwarded" } else { "$answered" };

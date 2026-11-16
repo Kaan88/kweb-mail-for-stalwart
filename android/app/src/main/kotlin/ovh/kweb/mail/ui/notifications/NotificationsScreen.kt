@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
+import ovh.kweb.mail.background.PreviewChoice
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.theme.KwebSwitch
 import uniffi.kweb_core.AddressChoice
@@ -72,6 +73,7 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
     val resources = LocalResources.current
     val context = LocalContext.current
     var choosing by remember { mutableStateOf<AddressChoice?>(null) }
+    var choosingPreview by remember { mutableStateOf(false) }
 
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -79,6 +81,7 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
     }
     LaunchedEffect(vm) { vm.messages.collect { snackbar.showSnackbar(resources.getString(it)) } }
     val openChannel = { kind: ChannelKind -> if (!startSafely(context, vm, kind)) vm.noChannelScreen() }
+    val openAddressChannel = { choice: AddressChoice -> if (!startSafely(context, vm, choice)) vm.noChannelScreen() }
 
     Scaffold(
         topBar = {
@@ -100,18 +103,21 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
 
             Title(stringResource(R.string.notifications_mail))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                SwitchRow(Groups.shape(0, 4), stringResource(R.string.delivery_show_mail), null, state.mailEnabled, vm::setMailEnabled)
+                SwitchRow(Groups.shape(0, 5), stringResource(R.string.delivery_show_mail), null, state.mailEnabled, vm::setMailEnabled)
                 SwitchRow(
-                    Groups.shape(1, 4),
+                    Groups.shape(1, 5),
                     stringResource(R.string.delivery_remove_elsewhere),
                     stringResource(R.string.notifications_remove_detail),
                     state.removeWhenReadElsewhere,
                     vm::setRemoveWhenReadElsewhere,
                 )
-                LinkRow(Groups.shape(2, 4), stringResource(R.string.notifications_sound), stringResource(R.string.notifications_sound_detail)) {
+                LinkRow(Groups.shape(2, 5), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
+                    choosingPreview = true
+                }
+                LinkRow(Groups.shape(3, 5), stringResource(R.string.notifications_sound), stringResource(R.string.notifications_sound_detail)) {
                     openChannel(ChannelKind.Mail)
                 }
-                LinkRow(Groups.shape(3, 4), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
+                LinkRow(Groups.shape(4, 5), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
             }
 
             Title(stringResource(R.string.notifications_addresses))
@@ -131,15 +137,22 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
                         null,
                     )
                 } else {
-                    addresses.forEachIndexed { i, choice ->
+                    // One row for the choice and, for an address that is not off, one for its sound.
+                    val rows = addresses.sumOf { if (it.mode == AddressMode.OFF) 1 else 2 }
+                    var at = 0
+                    addresses.forEach { choice ->
                         LinkRow(
-                            Groups.shape(i, addresses.size + 1),
+                            Groups.shape(at++, rows),
                             choice.name.ifBlank { choice.address },
                             (if (choice.name.isBlank()) "" else choice.address + " · ") + stringResource(modeName(choice.mode)),
                         ) { choosing = choice }
-                    }
-                    LinkRow(Groups.shape(addresses.size, addresses.size + 1), stringResource(R.string.notifications_quiet_sound), stringResource(R.string.notifications_quiet_detail)) {
-                        openChannel(ChannelKind.Quiet)
+                        if (choice.mode != AddressMode.OFF) {
+                            LinkRow(
+                                Groups.shape(at++, rows),
+                                stringResource(R.string.notifications_address_sound),
+                                stringResource(R.string.notifications_address_sound_detail, choice.address),
+                            ) { openAddressChannel(choice) }
+                        }
                     }
                 }
             }
@@ -152,6 +165,40 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
                 }
             }
         }
+    }
+
+    if (choosingPreview) {
+        AlertDialog(
+            onDismissRequest = { choosingPreview = false },
+            title = { Text(stringResource(R.string.notifications_preview)) },
+            text = {
+                Column {
+                    PreviewChoice.entries.forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = state.preview == option, role = Role.RadioButton, onClick = {
+                                    vm.setPreview(option)
+                                    choosingPreview = false
+                                })
+                                .heightIn(min = 48.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = state.preview == option, onClick = null)
+                            Column(Modifier.padding(start = 12.dp)) {
+                                Text(stringResource(previewName(option)), style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    stringResource(previewDetail(option)),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { choosingPreview = false }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 
     choosing?.let { choice ->
@@ -195,6 +242,18 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
     }
 }
 
+private fun previewName(choice: PreviewChoice): Int = when (choice) {
+    PreviewChoice.Full -> R.string.notifications_preview_full
+    PreviewChoice.SubjectOnly -> R.string.notifications_preview_subject
+    PreviewChoice.Nothing -> R.string.notifications_preview_nothing
+}
+
+private fun previewDetail(choice: PreviewChoice): Int = when (choice) {
+    PreviewChoice.Full -> R.string.notifications_preview_full_detail
+    PreviewChoice.SubjectOnly -> R.string.notifications_preview_subject_detail
+    PreviewChoice.Nothing -> R.string.notifications_preview_nothing_detail
+}
+
 private fun modeName(mode: AddressMode): Int = when (mode) {
     AddressMode.NOTIFY -> R.string.notifications_mode_notify
     AddressMode.SILENT -> R.string.notifications_mode_silent
@@ -205,6 +264,16 @@ private fun modeDetail(mode: AddressMode): Int = when (mode) {
     AddressMode.NOTIFY -> R.string.notifications_mode_notify_detail
     AddressMode.SILENT -> R.string.notifications_mode_silent_detail
     AddressMode.OFF -> R.string.notifications_mode_off_detail
+}
+
+/** Opens the system's settings for the channel of an address; false when the phone has no such screen. */
+private fun startSafely(context: Context, vm: NotificationsViewModel, choice: AddressChoice): Boolean = try {
+    context.startActivity(vm.addressChannelSettings(choice))
+    true
+} catch (_: ActivityNotFoundException) {
+    false
+} catch (_: SecurityException) {
+    false
 }
 
 /** Opens the system's settings for a channel; false when the phone has no such screen. */

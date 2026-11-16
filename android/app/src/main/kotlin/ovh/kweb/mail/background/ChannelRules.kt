@@ -18,8 +18,44 @@ internal object ChannelRules {
     /** The id of the quiet mail channel of [record]. */
     fun quiet(record: AccountRecord): String = if (record.legacy) Channels.QUIET else "${Channels.QUIET}.${record.id}"
 
-    /** The channel a mail notification of [record] is posted in. */
-    fun forMail(record: AccountRecord, quiet: Boolean): String = if (quiet) quiet(record) else mail(record)
+    /**
+     * The channel of mail that came to one of the user's own addresses ([key]: the address in lower case, as
+     * the core names it). The id carries the account and the address, so nothing of one account is ever posted
+     * in another's channel and two addresses never share one. The legacy account has no group, but its address
+     * channels are told apart by its id like every other.
+     */
+    fun address(record: AccountRecord, key: String): String = "${Channels.MAIL}.a.${record.id}.$key"
+
+    /** The quiet channel of [key] (no sound or vibration): what an address set to "Quiet" has instead of [address]. */
+    fun addressQuiet(record: AccountRecord, key: String): String = "${Channels.QUIET}.a.${record.id}.$key"
+
+    /**
+     * The channel a mail notification of [record] is posted in: that of the address it came to ([address], null
+     * when it matched none of the user's addresses) or, with none, the account's default channel.
+     */
+    fun forMail(record: AccountRecord, quiet: Boolean, address: String? = null): String = when {
+        address == null -> if (quiet) quiet(record) else mail(record)
+        quiet -> addressQuiet(record, address)
+        else -> address(record, address)
+    }
+
+    /** The address a channel of [record] is made for; null for any other channel (also another account's). */
+    fun addressOf(record: AccountRecord, channelId: String): String? {
+        val loud = "${Channels.MAIL}.a.${record.id}."
+        val quiet = "${Channels.QUIET}.a.${record.id}."
+        return when {
+            channelId.startsWith(loud) -> channelId.removePrefix(loud)
+            channelId.startsWith(quiet) -> channelId.removePrefix(quiet)
+            else -> null
+        }?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * The address channels [record] should have: the loud one for each address that notifies, the quiet one for
+     * each address set to quiet, none for one that is off. [notify] and [quiet] hold addresses in lower case.
+     */
+    fun wantedAddressChannels(record: AccountRecord, notify: Collection<String>, quiet: Collection<String>): Set<String> =
+        notify.map { address(record, it) }.toSet() + quiet.map { addressQuiet(record, it) }
 
     /**
      * The channel group of [record]; null for the legacy account, whose `mail` channel exists without one (a
@@ -36,5 +72,5 @@ internal object ChannelRules {
 
     /** Whether [channelId] is one of the mail channels of [record]. */
     fun isMailChannelOf(record: AccountRecord, channelId: String): Boolean =
-        channelId == mail(record) || channelId == quiet(record)
+        channelId == mail(record) || channelId == quiet(record) || addressOf(record, channelId) != null
 }

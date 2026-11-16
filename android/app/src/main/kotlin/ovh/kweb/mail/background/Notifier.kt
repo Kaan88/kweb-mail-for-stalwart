@@ -56,8 +56,15 @@ class Notifier(context: Context) {
         val label = labelOf(record)
         if (allowed.post.isNotEmpty()) Channels.ensureAccount(context, record, label)
         allowed.cancel.forEach { manager.cancel(tag, it.androidId) }
-        val actions = Settings.of(context, record).notificationActions
-        allowed.post.forEach { manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen), actions)) }
+        val settings = Settings.of(context, record)
+        val actions = settings.notificationActions
+        val preview = settings.previewChoice
+        allowed.post.forEach {
+            // The channel of the address the mail came to is made when first needed.
+            it.address?.let { address -> Channels.ensureAddress(context, record, label, address, it.quiet) }
+            val channel = ChannelRules.forMail(record, it.quiet, it.address)
+            manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen), actions, channel, preview))
+        }
         updateSummary(record, idsAfter(onScreen, allowed).size)
     }
 
@@ -198,7 +205,8 @@ class Notifier(context: Context) {
     /** Posts one notification that needs it and is not in [tried] yet; false when none is left. */
     private fun refreshNext(record: AccountRecord, tried: MutableSet<Int>): Boolean {
         if (Settings.isGone(record)) return false
-        val actions = Settings.of(context, record).notificationActions
+        val settings = Settings.of(context, record)
+        val actions = settings.notificationActions
         val shown = try {
             manager.activeNotifications.filter { it.id >= NotificationKeys.FIRST_MAIL_ID && NotificationKeys.owns(record, it.tag, it.id) }
         } catch (_: RuntimeException) {
@@ -219,19 +227,35 @@ class Notifier(context: Context) {
             preview = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty(),
             receivedAt = entry.notification.`when` / 1000,
             silent = true,
-            // A refresh keeps the channel the mail was posted in.
-            quiet = entry.notification.channelId == ChannelRules.quiet(record),
+            quiet = false,
+            address = null,
         )
-        manager.notify(entry.tag, entry.id, mailNotification(record, again, labelOf(record), silent = true, actions = actions))
+        // A refresh keeps the channel the mail was posted in.
+        manager.notify(
+            entry.tag,
+            entry.id,
+            mailNotification(record, again, labelOf(record), true, actions, entry.notification.channelId, settings.previewChoice),
+        )
         return true
     }
 
-    private fun mailNotification(record: AccountRecord, n: MailNotification, label: String?, silent: Boolean, actions: List<MailAction>): Notification {
-        val builder = NotificationCompat.Builder(context, ChannelRules.forMail(record, n.quiet))
+    private fun mailNotification(
+        record: AccountRecord,
+        n: MailNotification,
+        label: String?,
+        silent: Boolean,
+        actions: List<MailAction>,
+        channelId: String,
+        preview: PreviewChoice,
+    ): Notification {
+        val texts = PreviewRules.shown(preview, n.from, n.subject, n.preview, context.getString(R.string.notification_new_mail))
+        val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_mail)
-            .setContentTitle(n.from)
-            .setContentText(n.subject)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(n.preview.ifBlank { n.subject }))
+            .setContentTitle(texts.title)
+            .apply {
+                if (texts.text.isNotEmpty()) setContentText(texts.text)
+                if (texts.big.isNotEmpty()) setStyle(NotificationCompat.BigTextStyle().bigText(texts.big))
+            }
             .setWhen(whenMillis(n.receivedAt, System.currentTimeMillis()))
             .setShowWhen(true)
             .setCategory(NotificationCompat.CATEGORY_EMAIL)
@@ -260,6 +284,18 @@ class Notifier(context: Context) {
             }
         }
         label?.let { builder.setSubText(it) }
+        if (PreviewRules.hasPublicVersion(preview)) {
+            // The lock screen shows what the user's choice allows, no more.
+            val publicVersion = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.drawable.ic_stat_mail)
+                .setContentTitle(texts.title)
+                .apply { if (texts.text.isNotEmpty()) setContentText(texts.text) }
+                .setWhen(whenMillis(n.receivedAt, System.currentTimeMillis()))
+                .setCategory(NotificationCompat.CATEGORY_EMAIL)
+                .apply { label?.let { setSubText(it) } }
+                .build()
+            builder.setPublicVersion(publicVersion)
+        }
         return builder.build()
     }
 

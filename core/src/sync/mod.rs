@@ -46,12 +46,33 @@ pub struct Outcome {
 pub async fn sync(conn: &Connection, store: &Store, account_id: &str) -> Result<Outcome> {
     let mailboxes = sync_mailboxes(conn, store, account_id).await?;
     let messages = sync_messages(conn, store, account_id).await?;
-    let changed = mailboxes.changed || messages.changed;
+    // The other recipients of mail the cache holds none for (new mail, and after an update the whole window,
+    // newest first, a batch per pass). Best effort: until they are in, such mail keeps the default channel.
+    let filled = fill_receivers(conn, store, account_id).await;
+    let changed = mailboxes.changed || messages.changed || filled;
     if changed {
         // Server data may have overwritten what the user already did offline.
         actions::reapply_pending(store, account_id)?;
     }
     Ok(Outcome { changed, full_resync: mailboxes.full_resync || messages.full_resync })
+}
+
+/// How many messages one pass asks the other recipients of.
+const RECEIVERS_PER_PASS: usize = 300;
+
+/// Fetches the Cc and delivery headers of the newest cached messages that have none yet (only those
+/// properties, by id). True when some were stored. A failure is not the pass's: the next one tries again.
+async fn fill_receivers(conn: &Connection, store: &Store, account_id: &str) -> bool {
+    let Ok(ids) = store.receivers_missing(account_id, RECEIVERS_PER_PASS) else { return false };
+    if ids.is_empty() {
+        return false;
+    }
+    let Ok(found) = conn.receivers(&ids).await else { return false };
+    // A message the server no longer has gets an empty answer too, so it is not asked again and again.
+    let known: HashSet<&str> = found.iter().map(|(id, _)| id.as_str()).collect();
+    let mut all = found.clone();
+    all.extend(ids.iter().filter(|id| !known.contains(id.as_str())).map(|id| (id.clone(), Vec::new())));
+    store.set_receivers(account_id, &all).is_ok()
 }
 
 /// Ids in the order given, each once.

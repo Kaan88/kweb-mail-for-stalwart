@@ -3,7 +3,7 @@
 use super::mailboxes::QUIET_ROLES;
 use super::messages::{query_headers, COLUMNS};
 use super::Store;
-use crate::model::MessageHeader;
+use crate::model::{Address, MessageHeader};
 use crate::notify::AddressMode;
 use crate::Result;
 use std::collections::HashMap;
@@ -32,6 +32,70 @@ impl Store {
                     rusqlite::params![account_id, address, mode.code()],
                 )?;
             }
+            Ok(())
+        })
+    }
+
+    /// The ids of up to `limit` cached messages whose other recipients (Cc, delivery headers) were
+    /// never fetched, newest first.
+    pub fn receivers_missing(&self, account_id: &str, limit: usize) -> Result<Vec<String>> {
+        self.read(|c| {
+            let mut stmt = c.prepare(
+                "SELECT id FROM messages WHERE account_id = ?1 AND recv_json IS NULL
+                 ORDER BY received_at DESC, id DESC LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![account_id, limit as i64], |r| r.get(0))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
+    /// Records the other recipients of messages (an empty list is an answer too). A message that is not
+    /// cached any more is skipped.
+    pub fn set_receivers(&self, account_id: &str, list: &[(String, Vec<Address>)]) -> Result<()> {
+        self.write(|c| {
+            let mut stmt = c.prepare_cached("UPDATE messages SET recv_json = ?3 WHERE account_id = ?1 AND id = ?2")?;
+            for (id, addresses) in list {
+                let json = serde_json::to_string(addresses).map_err(|e| crate::Error::store(e.to_string()))?;
+                stmt.execute(rusqlite::params![account_id, id, json])?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The other recipients (Cc and delivery addresses) of these messages; a message whose headers are not in
+    /// yet has no entry.
+    pub fn receivers_of(&self, account_id: &str, ids: &[String]) -> Result<HashMap<String, Vec<Address>>> {
+        self.read(|c| {
+            let mut stmt = c.prepare_cached(
+                "SELECT recv_json FROM messages WHERE account_id = ?1 AND id = ?2 AND recv_json IS NOT NULL",
+            )?;
+            let mut out = HashMap::new();
+            for id in ids {
+                let json: Option<String> =
+                    rusqlite::OptionalExtension::optional(stmt.query_row([account_id, id.as_str()], |r| r.get(0)))?;
+                if let Some(json) = json {
+                    out.insert(id.clone(), serde_json::from_str(&json).unwrap_or_default());
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// The route (see `notify::Route`) each shown notification was last posted on, by message id.
+    pub fn shown_routes(&self, account_id: &str) -> Result<HashMap<String, String>> {
+        self.read(|c| {
+            let mut stmt = c.prepare("SELECT message_id, route FROM notifications_shown WHERE account_id = ?1")?;
+            let rows = stmt.query_map([account_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        })
+    }
+
+    pub fn set_shown_route(&self, account_id: &str, message_id: &str, route: &str) -> Result<()> {
+        self.write(|c| {
+            c.execute(
+                "UPDATE notifications_shown SET route = ?3 WHERE account_id = ?1 AND message_id = ?2",
+                [account_id, message_id, route],
+            )?;
             Ok(())
         })
     }

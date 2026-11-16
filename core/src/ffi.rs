@@ -2005,7 +2005,7 @@ impl Core {
 
     /// The user's own addresses (the identities, from the cache) with what happens to mail that
     /// came to each: notify (the default), notify without sound, or do not notify. Kept on this
-    /// device. Which address a mail came to is decided from its cached To list: the address
+    /// device. Which address a mail came to is decided from its cached To and Cc lists and delivery headers: the address
     /// itself or with a plus tag; a mail to several of them takes the loudest choice, and one
     /// that matches none notifies.
     pub fn address_notify(&self) -> Result<Vec<notify::AddressChoice>> {

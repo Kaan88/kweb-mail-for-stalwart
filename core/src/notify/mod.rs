@@ -10,12 +10,12 @@
 
 mod addresses;
 
-pub use addresses::{choice_key, choices, AddressChoice, AddressMode};
+pub use addresses::{choice_key, choices, AddressChoice, AddressMode, Route};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    model::{Account, MessageHeader},
+    model::{Account, Address, MessageHeader},
     store::Store,
     Result,
 };
@@ -40,6 +40,9 @@ pub struct MailNotification {
     /// The mail came to an address the user chose "silent" for: post it in the quiet channel
     /// (shown, no sound or vibration), also the first time.
     pub quiet: bool,
+    /// The user's own address (lower case) the mail came to, by To, Cc or the delivery headers: the
+    /// mail goes in that address's channel. `None`: it matched none, so the account's default channel.
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -85,6 +88,21 @@ pub fn android_id(message_id: &str) -> i32 {
     (FIRST_MAIL_ID + hash % span) as i32
 }
 
+/// The notification of one message, on the default route.
+fn notification_for(m: &MessageHeader, silent: bool) -> MailNotification {
+    MailNotification {
+        message_id: m.id.clone(),
+        android_id: android_id(&m.id),
+        from: if m.from_name.is_empty() { m.from_email.clone() } else { m.from_name.clone() },
+        subject: m.subject.clone(),
+        preview: m.preview.clone(),
+        received_at: m.received_at,
+        silent,
+        quiet: false,
+        address: None,
+    }
+}
+
 /// Compares what should be shown with what is shown.
 ///
 /// - `desired`: unread mail of the Inbox and the folders that notify, that arrived after
@@ -108,16 +126,7 @@ pub fn plan(desired: &[MessageHeader], shown: &[String], on_screen: OnScreen) ->
             if announced && visible(&m.id) {
                 return None;
             }
-            Some(MailNotification {
-                message_id: m.id.clone(),
-                android_id: android_id(&m.id),
-                from: if m.from_name.is_empty() { m.from_email.clone() } else { m.from_name.clone() },
-                subject: m.subject.clone(),
-                preview: m.preview.clone(),
-                received_at: m.received_at,
-                silent: announced,
-                quiet: false,
-            })
+            Some(notification_for(m, announced))
         })
         .collect();
 
@@ -146,17 +155,52 @@ pub fn run(store: &Store, account: &Account, on_screen: OnScreen, now: i64) -> R
     };
     let desired = store.notifiable(&account.id, &inbox.id, account.signed_in_at)?;
     // The choices per receiving address: mail the user turned off is no part of what is wanted
-    // (so it is withdrawn if shown, and is not counted as swiped); silent mail is wanted, quietly.
+    // (so it is withdrawn if shown, and is not counted as swiped); silent mail is wanted, quietly. The
+    // address a mail came to is looked for in To, Cc and the delivery headers the cache has by now.
     let chosen = store.address_modes(&account.id)?;
-    let identities = if chosen.is_empty() { Vec::new() } else { store.identities_list(&account.id)? };
-    let (desired, quiet) = addresses::apply(desired, |m| m.to.as_slice(), |m| m.id.as_str(), &identities, &chosen);
+    let identities = store.identities_list(&account.id)?;
+    let ids: Vec<String> = desired.iter().map(|m| m.id.clone()).collect();
+    let others = store.receivers_of(&account.id, &ids)?;
+    let recipients: HashMap<String, Vec<Address>> = desired
+        .iter()
+        .map(|m| (m.id.clone(), m.to.iter().chain(others.get(&m.id).into_iter().flatten()).cloned().collect()))
+        .collect();
+    let (desired, routes) = addresses::apply(
+        desired,
+        |m| recipients.get(&m.id).cloned().unwrap_or_default(),
+        |m| m.id.as_str(),
+        &identities,
+        &chosen,
+    );
+    let shown_routes = store.shown_routes(&account.id)?;
     let shown: Vec<String> = store.shown_list(&account.id)?.into_iter().map(|(id, _)| id).collect();
     let mut plan = plan(&desired, &shown, on_screen);
     for n in &mut plan.post {
-        n.quiet = quiet.contains(&n.message_id);
+        let route = routes.get(&n.message_id).cloned().unwrap_or_default();
+        n.quiet = route.quiet;
+        n.address = route.address;
+    }
+    // A notification that is on screen in another channel than its route now says (a second address
+    // was chosen, the choice changed, the update brought the channels) is posted again, silently.
+    let posting: HashSet<String> = plan.post.iter().map(|n| n.message_id.clone()).collect();
+    for m in &desired {
+        let route = routes.get(&m.id).cloned().unwrap_or_default();
+        let visible = match on_screen {
+            OnScreen::Unknown => true,
+            OnScreen::Cleared => false,
+            OnScreen::Ids(ids) => ids.contains(&android_id(&m.id)),
+        };
+        if posting.contains(&m.id) || !visible || shown_routes.get(&m.id).is_none_or(|stored| *stored == route.code()) {
+            continue;
+        }
+        let mut n = notification_for(m, true);
+        (n.quiet, n.address) = (route.quiet, route.address);
+        plan.post.push(n);
     }
     for n in &plan.post {
         store.shown_add(&account.id, &n.message_id, now)?;
+        let route = Route { address: n.address.clone(), quiet: n.quiet };
+        store.set_shown_route(&account.id, &n.message_id, &route.code())?;
     }
     for c in &plan.cancel {
         store.shown_remove(&account.id, &c.message_id)?;
@@ -544,6 +588,78 @@ mod store_tests {
         let plan = pass(&store, &account);
         let quiet: Vec<(&str, bool)> = plan.post.iter().map(|n| (n.message_id.as_str(), n.quiet)).collect();
         assert_eq!(quiet, [("q", true), ("l", false)]);
+    }
+
+    fn address(email: &str) -> crate::model::Address {
+        crate::model::Address { name: String::new(), email: email.into() }
+    }
+
+    fn route_of(plan: &Plan, id: &str) -> (Option<String>, bool) {
+        let n = plan.post.iter().find(|n| n.message_id == id).unwrap();
+        (n.address.clone(), n.quiet)
+    }
+
+    #[test]
+    fn a_mail_goes_to_the_channel_of_the_address_it_came_to() {
+        let (store, account) = with_addresses();
+        let mail = [to(mail("m", NOW), &["Me@x.org"]), to(mail("w", NOW), &["work+tag@x.org"]), mail("l", NOW)];
+        store.upsert_messages(&account.id, &mail).unwrap();
+        let plan = pass(&store, &account);
+        assert_eq!(route_of(&plan, "m"), (Some("me@x.org".into()), false));
+        assert_eq!(route_of(&plan, "w"), (Some("work@x.org".into()), false));
+        assert_eq!(route_of(&plan, "l"), (None, false), "no address of mine: the default channel");
+    }
+
+    #[test]
+    fn cc_and_the_delivery_address_decide_when_to_does_not() {
+        let (store, account) = with_addresses();
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Off).unwrap();
+        // To a list; the server delivered it to me (a list), or to work (a Bcc, an alias), or Cc work.
+        let mail = [
+            to(mail("list", NOW), &["list@lists.org"]),
+            to(mail("bcc", NOW), &["list@lists.org"]),
+            to(mail("cc", NOW), &["boss@y.org"]),
+        ];
+        store.upsert_messages(&account.id, &mail).unwrap();
+        // Until the headers are in, such mail keeps the default (and is shown).
+        let first = pass(&store, &account);
+        assert_eq!(posted(&first), ["list", "cc", "bcc"]);
+        assert_eq!(route_of(&first, "cc"), (None, false));
+        // The headers arrive: "bcc" was delivered to work (off), "cc" has work in Cc, "list" came to me.
+        store
+            .set_receivers(
+                &account.id,
+                &[
+                    ("list".into(), vec![address("ME@x.org")]),
+                    ("bcc".into(), vec![address("work@x.org")]),
+                    ("cc".into(), vec![address("Work@x.org")]),
+                ],
+            )
+            .unwrap();
+        let plan = pass(&store, &account);
+        assert_eq!(cancelled(&plan), ["bcc", "cc"], "mail of an address that is off is withdrawn");
+        // "list" is on screen on the default route and goes to my address's channel, silently.
+        assert_eq!(posted(&plan), ["list"]);
+        assert!(plan.post[0].silent);
+        assert_eq!(route_of(&plan, "list"), (Some("me@x.org".into()), false));
+        // Once moved it stays: nothing more to do.
+        assert!(pass(&store, &account).is_empty());
+    }
+
+    #[test]
+    fn a_changed_choice_moves_a_mail_on_screen_to_the_other_channel_once() {
+        let (store, account) = with_addresses();
+        store.upsert_messages(&account.id, &[to(mail("w", NOW), &["work@x.org"])]).unwrap();
+        assert_eq!(route_of(&pass(&store, &account), "w"), (Some("work@x.org".into()), false));
+        assert!(pass(&store, &account).is_empty());
+        store.set_address_mode(&account.id, "work@x.org", AddressMode::Silent).unwrap();
+        let plan = pass(&store, &account);
+        assert_eq!(route_of(&plan, "w"), (Some("work@x.org".into()), true));
+        assert!(plan.post[0].silent && plan.cancel.is_empty());
+        assert!(pass(&store, &account).is_empty());
+        // The shade was emptied by a restart: it comes back in the same channel, silently.
+        let plan = run(&store, &account, OnScreen::Cleared, NOW).unwrap();
+        assert_eq!(route_of(&plan, "w"), (Some("work@x.org".into()), true));
     }
 
     #[test]

@@ -62,10 +62,48 @@ object Channels {
         ensureMail(context, context.getSystemService(NotificationManager::class.java), record, label)
     }
 
+    /**
+     * Makes the channel of one receiving address of [record] ([key] in lower case): the quiet one when [quiet], else
+     * the loud one, named after the address. Made when first needed; an existing one keeps what the user set in
+     * Android's settings.
+     */
+    fun ensureAddress(context: Context, record: AccountRecord, label: String?, key: String, quiet: Boolean) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val group = ChannelRules.group(record)
+        if (group != null) manager.createNotificationChannelGroup(NotificationChannelGroup(group, label ?: record.username))
+        val base = if (quiet) context.getString(R.string.channel_address_quiet, key) else key
+        val name = ChannelRules.name(base, record, label)
+        manager.createNotificationChannel(
+            if (quiet) quietChannel(context, ChannelRules.addressQuiet(record, key), name, group)
+            else loudChannel(context, ChannelRules.address(record, key), name, group),
+        )
+    }
+
+    /**
+     * Deletes the address channels of [record] that are not in [wanted] (an address that was set to "Do not
+     * notify", changed between loud and quiet, or is no longer one of the account's). A channel a notification
+     * on screen is still in is left for the next time: deleting it would take that notification away with it. A
+     * deleted channel that is made again later (same id) comes back with the settings it had.
+     */
+    fun reconcileAddresses(context: Context, record: AccountRecord, wanted: Set<String>) {
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val inUse = try {
+            manager.activeNotifications.map { it.notification.channelId }.toSet()
+        } catch (_: RuntimeException) {
+            return
+        }
+        for (channel in manager.notificationChannels) {
+            val id = channel.id
+            if (ChannelRules.addressOf(record, id) != null && id !in wanted && id !in inUse) manager.deleteNotificationChannel(id)
+        }
+    }
+
     /** Removes the channels and the group of a removed account. The legacy account's channel `mail` stays: it holds the user's choice. */
     fun forget(context: Context, record: AccountRecord) {
-        if (record.legacy) return
         val manager = context.getSystemService(NotificationManager::class.java)
+        manager.notificationChannels.filter { ChannelRules.addressOf(record, it.id) != null }
+            .forEach { manager.deleteNotificationChannel(it.id) }
+        if (record.legacy) return
         manager.deleteNotificationChannel(ChannelRules.mail(record))
         manager.deleteNotificationChannel(ChannelRules.quiet(record))
         ChannelRules.group(record)?.let { manager.deleteNotificationChannelGroup(it) }

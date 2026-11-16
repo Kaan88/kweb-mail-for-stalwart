@@ -395,6 +395,9 @@ async fn a_revoked_grant_ends_in_sign_in_needed_without_spinning() {
 #[tokio::test]
 async fn check_once_after_a_cleared_shade_posts_silently() {
     let r = rig(fast()).await;
+    // A first pass with nothing new brings the account's addresses into the cache, so the mail below is
+    // routed to its address's channel at once and not moved there by a later pass.
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
     let a = r.deliver("one");
     let b = r.deliver("two");
 
@@ -492,6 +495,7 @@ async fn cannot_calculate_changes_mid_session_still_ends_in_the_right_notificati
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn passes_that_overlap_announce_a_mail_once() {
     let r = rig(fast()).await;
+    push::check_once(&r.deps, OnScreen::Unknown).await.unwrap();
     let id = r.deliver("only once");
 
     let checks = (0..8).map(|_| {

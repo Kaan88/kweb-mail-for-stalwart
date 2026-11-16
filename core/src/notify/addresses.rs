@@ -2,11 +2,12 @@
 //!
 //! Each address of the account (its identities) can notify (the default), notify without sound
 //! ("silent": shown, in a quiet channel) or not notify at all. The choice is kept on the device
-//! only. Which address a message came to is decided from the cached To list alone (the cache
-//! holds neither Cc nor the delivery headers, and a notification must not cost a network call):
-//! an address of the message that is one of the user's own, exactly or with a plus tag
+//! only. Which address a message came to is decided from the cache alone (a notification must not
+//! cost a network call): its To list, its Cc list and the delivery headers the server wrote
+//! (`Delivered-To`, which is also where a Bcc shows), whichever of them the cache already holds. An
+//! address of the message that is one of the user's own counts, exactly or with a plus tag
 //! (`me+shop@x.org` for `me@x.org`). A message to several of the user's addresses takes the
-//! loudest choice; a message that matches none (a list, Bcc, Cc) takes the default.
+//! loudest choice (the first of them when equally loud); a message that matches none takes the default.
 
 use std::collections::{HashMap, HashSet};
 
@@ -75,48 +76,83 @@ pub fn choices(identities: &[Identity], chosen: &HashMap<String, AddressMode>) -
         .collect()
 }
 
-/// The mode of a message that was sent `to` these addresses. `own` are the keys of the user's
-/// addresses ([`own_keys`]), `chosen` the stored choices by [`choice_key`].
-pub fn mode_for(to: &[Address], own: &HashSet<String>, chosen: &HashMap<String, AddressMode>) -> AddressMode {
-    to.iter()
-        .filter_map(|a| {
-            let exact = address_key(&a.email);
-            if own.contains(&exact) {
-                return Some(exact);
-            }
-            plus_base(&a.email).filter(|base| own.contains(base))
-        })
-        .map(|key| chosen.get(&key).copied().unwrap_or(AddressMode::Notify))
-        .max()
-        .unwrap_or(AddressMode::Notify)
+/// The own address (as its key) that decides what happens to a message sent to these addresses, with
+/// its mode: the loudest, the first of them when equally loud. `None` when no address is the user's own.
+/// `own` are the keys of the user's addresses ([`own_keys`]), `chosen` the stored choices by [`choice_key`].
+pub fn receiving(
+    to: &[Address],
+    own: &HashSet<String>,
+    chosen: &HashMap<String, AddressMode>,
+) -> Option<(String, AddressMode)> {
+    let mut best: Option<(String, AddressMode)> = None;
+    for a in to {
+        let exact = address_key(&a.email);
+        let key =
+            if own.contains(&exact) { Some(exact) } else { plus_base(&a.email).filter(|base| own.contains(base)) };
+        let Some(key) = key else { continue };
+        let mode = chosen.get(&key).copied().unwrap_or(AddressMode::Notify);
+        if best.as_ref().is_none_or(|(_, m)| mode > *m) {
+            best = Some((key, mode));
+        }
+    }
+    best
 }
 
-/// Splits `desired` by the choices: what is left to show, and which of that is shown quietly.
-/// With no choices nothing is looked at.
+/// The mode of a message that was sent `to` these addresses; the default when none is the user's own.
+#[cfg(test)]
+fn mode_for(to: &[Address], own: &HashSet<String>, chosen: &HashMap<String, AddressMode>) -> AddressMode {
+    receiving(to, own, chosen).map_or(AddressMode::Notify, |(_, mode)| mode)
+}
+
+/// Where one mail notification goes: the own address it came to (its key; `None`: the account's default
+/// channel) and whether it is shown quietly.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Route {
+    pub address: Option<String>,
+    pub quiet: bool,
+}
+
+impl Route {
+    /// What is stored with a shown notification, to tell that it is in another channel than it should be.
+    pub fn code(&self) -> String {
+        match (&self.address, self.quiet) {
+            (None, false) => String::new(),
+            (None, true) => "q".to_string(),
+            (Some(a), false) => format!("n:{a}"),
+            (Some(a), true) => format!("q:{a}"),
+        }
+    }
+}
+
+/// Splits `desired` by the choices: what is left to show, and the route of each of those. Mail to an
+/// address that is off is dropped.
 pub fn apply<T>(
     desired: Vec<T>,
-    to_of: impl Fn(&T) -> &[Address],
+    to_of: impl Fn(&T) -> Vec<Address>,
     id_of: impl Fn(&T) -> &str,
     identities: &[Identity],
     chosen: &HashMap<String, AddressMode>,
-) -> (Vec<T>, HashSet<String>) {
-    if chosen.is_empty() {
-        return (desired, HashSet::new());
-    }
+) -> (Vec<T>, HashMap<String, Route>) {
     let own = own_keys(identities);
-    let mut quiet = HashSet::new();
+    let mut routes = HashMap::new();
     let kept = desired
         .into_iter()
-        .filter(|m| match mode_for(to_of(m), &own, chosen) {
-            AddressMode::Off => false,
-            AddressMode::Silent => {
-                quiet.insert(id_of(m).to_string());
-                true
+        .filter(|m| {
+            let Some((address, mode)) = receiving(&to_of(m), &own, chosen) else { return true };
+            match mode {
+                AddressMode::Off => false,
+                AddressMode::Silent => {
+                    routes.insert(id_of(m).to_string(), Route { address: Some(address), quiet: true });
+                    true
+                }
+                AddressMode::Notify => {
+                    routes.insert(id_of(m).to_string(), Route { address: Some(address), quiet: false });
+                    true
+                }
             }
-            AddressMode::Notify => true,
         })
         .collect();
-    (kept, quiet)
+    (kept, routes)
 }
 
 #[cfg(test)]
@@ -180,17 +216,43 @@ mod tests {
     }
 
     #[test]
-    fn apply_drops_the_off_mail_and_names_the_quiet() {
+    fn apply_drops_the_off_mail_and_routes_the_rest() {
         let ids = [identity("me@x.org"), identity("work@x.org")];
         let c = chosen(&[("me@x.org", AddressMode::Off), ("work@x.org", AddressMode::Silent)]);
-        let mail = vec![("a", vec![addr("me@x.org")]), ("b", vec![addr("work@x.org")]), ("c", vec![addr("z@y.org")])];
-        let (kept, quiet) = apply(mail, |m| m.1.as_slice(), |m| m.0, &ids, &c);
+        let mail = vec![("a", vec![addr("me@x.org")]), ("b", vec![addr("Work+x@x.org")]), ("c", vec![addr("z@y.org")])];
+        let (kept, routes) = apply(mail, |m| m.1.clone(), |m| m.0, &ids, &c);
         assert_eq!(kept.iter().map(|m| m.0).collect::<Vec<_>>(), ["b", "c"]);
-        assert_eq!(quiet, HashSet::from(["b".to_string()]));
-        // Nothing chosen, nothing looked at.
-        let (kept, quiet) =
-            apply(vec![("a", vec![addr("me@x.org")])], |m| m.1.as_slice(), |m| m.0, &ids, &HashMap::new());
-        assert_eq!((kept.len(), quiet.len()), (1, 0));
+        assert_eq!(routes.get("b"), Some(&Route { address: Some("work@x.org".into()), quiet: true }));
+        assert_eq!(routes.get("c"), None, "not one of mine: the default channel");
+        // Nothing chosen: mail to one of my addresses still has its address.
+        let (kept, routes) =
+            apply(vec![("a", vec![addr("ME@x.org")])], |m| m.1.clone(), |m| m.0, &ids, &HashMap::new());
+        assert_eq!(kept.len(), 1);
+        assert_eq!(routes["a"], Route { address: Some("me@x.org".into()), quiet: false });
+    }
+
+    #[test]
+    fn the_loudest_address_gives_the_route_and_the_first_wins_a_tie() {
+        let c = chosen(&[("me@x.org", AddressMode::Silent)]);
+        let both = [addr("me@x.org"), addr("work@x.org"), addr("shop@x.org")];
+        assert_eq!(receiving(&both, &own(), &c), Some(("work@x.org".into(), AddressMode::Notify)));
+        assert_eq!(receiving(&[addr("a@b.org")], &own(), &c), None);
+    }
+
+    #[test]
+    fn a_route_has_a_code_that_tells_one_from_the_other() {
+        let codes: HashSet<String> = [
+            Route::default(),
+            Route { address: None, quiet: true },
+            Route { address: Some("me@x.org".into()), quiet: false },
+            Route { address: Some("me@x.org".into()), quiet: true },
+            Route { address: Some("work@x.org".into()), quiet: false },
+        ]
+        .iter()
+        .map(Route::code)
+        .collect();
+        assert_eq!(codes.len(), 5);
+        assert_eq!(Route::default().code(), "");
     }
 
     #[test]

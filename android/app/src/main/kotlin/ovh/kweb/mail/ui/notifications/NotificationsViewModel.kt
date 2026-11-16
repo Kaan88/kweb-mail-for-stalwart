@@ -24,6 +24,7 @@ import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.ChannelRules
 import ovh.kweb.mail.background.Channels
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.background.PreviewChoice
 import uniffi.kweb_core.AddressChoice
 import uniffi.kweb_core.AddressMode
 
@@ -34,11 +35,12 @@ data class NotificationsState(
     val mailEnabled: Boolean = true,
     val remindersEnabled: Boolean = true,
     val removeWhenReadElsewhere: Boolean = true,
+    val preview: PreviewChoice = PreviewChoice.Full,
     val addresses: List<AddressChoice>? = null,
 )
 
-/** The three kinds of channel the screen opens in the system settings. */
-enum class ChannelKind { Mail, Quiet, Reminders }
+/** The kinds of channel the screen opens in the system settings (an address's own channel is opened by [NotificationsViewModel.addressChannelSettings]). */
+enum class ChannelKind { Mail, Reminders }
 
 /** The Notifications screen of one account: its switches (the same ones the Delivery check used), its addresses, its channels. */
 class NotificationsViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
@@ -53,6 +55,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
             mailEnabled = s.mailEnabled,
             remindersEnabled = s.remindersEnabled,
             removeWhenReadElsewhere = s.removeWhenReadElsewhere,
+            preview = s.previewChoice,
             addresses = list,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotificationsState())
@@ -69,7 +72,9 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
     fun load() {
         viewModelScope.launch {
             try {
-                addresses.value = withContext(Dispatchers.IO) { session.core.addressNotify() }
+                addresses.value = withContext(Dispatchers.IO) {
+                    session.core.addressNotify().also(::reconcileChannels)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -90,13 +95,21 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
         settings.removeWhenReadElsewhere = value
     }
 
+    fun setPreview(value: PreviewChoice) {
+        settings.previewChoice = value
+    }
+
     /** Sets what happens to mail that came to [address]. Shown at once; put back if the core refuses. */
     fun setAddress(address: String, mode: AddressMode) {
         val before = addresses.value ?: return
         addresses.value = NotificationsRules.with(before, address, mode)
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { session.core.setAddressNotify(address, mode) }
+                withContext(Dispatchers.IO) {
+                    session.core.setAddressNotify(address, mode)
+                    // An address set to "Do not notify" (or changed between loud and quiet) no longer has its old channel.
+                    reconcileChannels(NotificationsRules.with(before, address, mode))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -121,9 +134,25 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
         Channels.ensureAccount(app, record, AccountLabels.of(records)[record.id].takeIf { records.size > 1 })
         val id = when (kind) {
             ChannelKind.Mail -> ChannelRules.mail(record)
-            ChannelKind.Quiet -> ChannelRules.quiet(record)
             ChannelKind.Reminders -> Channels.REMINDERS
         }
         return Channels.settingsIntent(app, id)
+    }
+
+    /** The intent that opens the system's settings for the channel of [choice] (the loud or the quiet one, made first if need be). */
+    fun addressChannelSettings(choice: AddressChoice): Intent {
+        val app = getApplication<Application>()
+        val record = session.record
+        val records = Accounts.records.value
+        val key = NotificationsRules.key(choice.address)
+        val quiet = choice.mode == AddressMode.SILENT
+        Channels.ensureAddress(app, record, AccountLabels.of(records)[record.id].takeIf { records.size > 1 }, key, quiet)
+        return Channels.settingsIntent(app, ChannelRules.forMail(record, quiet, key))
+    }
+
+    /** Deletes the channels of addresses that no longer notify (or notify the other way), keeping any a notification is still in. */
+    private fun reconcileChannels(choices: List<AddressChoice>) {
+        val wanted = NotificationsRules.wantedChannels(session.record, choices)
+        Channels.reconcileAddresses(getApplication(), session.record, wanted)
     }
 }

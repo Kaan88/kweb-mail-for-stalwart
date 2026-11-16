@@ -85,6 +85,14 @@ class Settings(private val values: KeyValues) {
         get() = NotificationActionRules.parse(values.getString(NOTIFICATION_ACTIONS))
         set(value) = write { putString(NOTIFICATION_ACTIONS, NotificationActionRules.encode(value)) }
 
+    /**
+     * How much of a mail this account's notifications say ([PreviewRules]). Nothing stored reads as the full text;
+     * it applies to notifications posted from then on.
+     */
+    var previewChoice: PreviewChoice
+        get() = PreviewChoice.parse(values.getString(PREVIEW))
+        set(value) = write { putString(PREVIEW, value.key) }
+
     /** Back to "never chose": the default, also a later version's. */
     fun resetNotificationActions() = write { remove(NOTIFICATION_ACTIONS) }
 
@@ -178,6 +186,7 @@ class Settings(private val values: KeyValues) {
         remindersEnabled = old.remindersEnabled
         removeWhenReadElsewhere = old.removeWhenReadElsewhere
         old.values.getString(NOTIFICATION_ACTIONS)?.let { stored -> write { putString(NOTIFICATION_ACTIONS, stored) } }
+        old.values.getString(PREVIEW)?.let { stored -> write { putString(PREVIEW, stored) } }
     }
 
     /** Forgets the bookkeeping (not the switches). Used when the user removes the account. */
@@ -201,6 +210,7 @@ class Settings(private val values: KeyValues) {
         private const val REMINDERS = "show_reminders"
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
         private const val NOTIFICATION_ACTIONS = "notification_actions"
+        private const val PREVIEW = "notification_preview"
         private const val ADMIN_KEY = "admin_key_accepted"
         private const val ADMIN_DASHBOARD = "admin_may_dashboard"
         private const val CHECK_AT = "check_at"

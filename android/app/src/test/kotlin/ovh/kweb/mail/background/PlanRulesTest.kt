@@ -10,7 +10,7 @@ import uniffi.kweb_core.Plan
 
 class PlanRulesTest {
     private fun mail(id: Int, silent: Boolean = false, quiet: Boolean = false) =
-        MailNotification("m$id", id, "Sender", "Subject", "Preview", 1_000L, silent, quiet)
+        MailNotification("m$id", id, "Sender", "Subject", "Preview", 1_000L, silent, quiet, null)
 
     private val plan = Plan(post = listOf(mail(1001), mail(1002)), cancel = listOf(Cancel("m1003", 1003)))
 

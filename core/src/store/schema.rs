@@ -290,6 +290,14 @@ pub(super) const MIGRATIONS: &[&str] = &[
     "
     ALTER TABLE crypto_keys ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
     ",
+    // 12: M11 stage 1. The addresses a message was also delivered to (Cc, and the Delivered-To and
+    // X-Original-To headers the server wrote), as JSON; null until they were fetched (nothing is fetched
+    // again for a message that has them). And the route a mail notification was posted on (the receiving
+    // address and whether it was quiet), so a notification in the wrong channel is posted again.
+    "
+    ALTER TABLE messages ADD COLUMN recv_json TEXT;
+    ALTER TABLE notifications_shown ADD COLUMN route TEXT NOT NULL DEFAULT '';
+    ",
 ];
 
 /// Runs the migrations the database has not seen yet, each in its own transaction.

@@ -954,3 +954,49 @@ fn switching_an_address_off_withdraws_its_notification_and_on_again_brings_it_ba
     rig.core.set_address_notify("me@example.test".into(), AddressMode::Notify).unwrap();
     assert_eq!(posted(&rig.sync()), [id.as_str()], "the unread one is back; the swiped one is not");
 }
+
+// ---- Cc, Bcc and list mail per address (M11) -----------------------------------------------
+
+fn route(plan: &Plan, id: &str) -> Option<(Option<String>, bool)> {
+    plan.post.iter().find(|n| n.message_id == id).map(|n| (n.address.clone(), n.quiet))
+}
+
+#[test]
+fn a_mail_to_an_address_names_that_address_for_its_channel() {
+    let rig = addressed();
+    let plus = to_address(&rig, "p", &["Work+shop@example.test"]);
+    let other = to_address(&rig, "o", &["s@else.test"]);
+    let plan = rig.sync();
+    assert_eq!(route(&plan, &plus), Some((Some("work@example.test".into()), false)), "{plan:?}");
+    assert_eq!(route(&plan, &other), Some((None, false)), "no address of mine: the default channel");
+}
+
+#[test]
+fn cc_and_the_delivery_header_decide_the_address_when_to_does_not() {
+    let rig = addressed();
+    rig.core.set_address_notify("work@example.test".into(), AddressMode::Silent).unwrap();
+    let cc = rig.server.deliver("Dora", "dora@example.test", "cc", "preview");
+    rig.server.set_recipients(&cc, &[("", "boss@else.test")], &[("", "Work@example.test")]);
+    let bcc = rig.server.deliver("Dora", "dora@example.test", "bcc", "preview");
+    rig.server.set_recipients(&bcc, &[("", "list@lists.test")], &[]);
+    rig.server.set_delivery_headers(&bcc, &[("Delivered-To", "me@example.test")]);
+    let plan = rig.sync();
+    assert_eq!(route(&plan, &cc), Some((Some("work@example.test".into()), true)), "{plan:?}");
+    assert_eq!(route(&plan, &bcc), Some((Some("me@example.test".into()), false)), "{plan:?}");
+}
+
+#[test]
+fn the_other_recipients_are_fetched_once_and_only_by_id() {
+    let rig = addressed();
+    // The seeded window was fetched at the first sync; nothing is asked for again.
+    let before = rig.asked("Email/get");
+    assert!(rig.sync().is_empty());
+    assert_eq!(rig.asked("Email/get"), before, "nothing new, nothing fetched");
+    let id = to_address(&rig, "n", &["s@else.test"]);
+    rig.sync();
+    // A request for the new header and one for its other recipients: no second round for the window.
+    let after = rig.asked("Email/get");
+    assert!(after - before <= 3, "{} requests for one new mail", after - before);
+    rig.sync();
+    assert_eq!(rig.asked("Email/get"), after, "{id} has its recipients now");
+}
