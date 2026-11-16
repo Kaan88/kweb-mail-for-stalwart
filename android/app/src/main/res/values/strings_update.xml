@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_check">Check for updates</string>
+    <string name="update_never">Not checked yet</string>
+    <string name="update_last">Last checked %1$s. Newest version: %2$s</string>
+    <string name="update_last_none">Last checked %1$s. No release is published yet</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_available">Version %1$s is available</string>
+    <string name="update_current">You have the newest version (%1$s)</string>
+    <string name="update_none">No release is published yet</string>
+    <string name="update_failed">Could not check: %1$s</string>
+    <string name="update_failed_generic">the release page could not be read.</string>
+    <string name="update_download">Download version %1$s</string>
+    <string name="update_download_detail">Opens the release page in your browser. The app installs nothing by itself.</string>
+    <string name="update_weekly">Check once a week</string>
+    <string name="update_weekly_detail">Asks the project\'s release page on GitHub and sends nothing about you or your mail. A quiet notice tells you when a newer version is out.</string>
+    <string name="channel_updates">App updates</string>
+    <string name="channel_updates_description">A quiet notice when a newer version of the app is out. Only if you switched the weekly check on.</string>
+    <string name="update_notice_title">A new version of kweb mail is out</string>
+    <string name="update_notice_text">Version %1$s is on the release page.</string>
+</resources>

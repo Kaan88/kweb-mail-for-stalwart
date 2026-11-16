@@ -82,6 +82,36 @@ class UiPrefs(context: Context) {
         get() = prefs.getBoolean(REPLY_ALL, false)
         set(value) = prefs.edit { putBoolean(REPLY_ALL, value) }
 
+    /** The weekly check for a newer release is on (off by default). */
+    var updateWeekly: Boolean
+        get() = prefs.getBoolean(UPDATE_WEEKLY, false)
+        set(value) = prefs.edit { putBoolean(UPDATE_WEEKLY, value) }
+
+    /** When the update check last got an answer (milliseconds); 0 for never. */
+    var updateLastChecked: Long
+        get() = prefs.getLong(UPDATE_CHECKED, 0L)
+        set(value) = prefs.edit { putLong(UPDATE_CHECKED, value) }
+
+    /** The newest published version the last check saw; empty for none. */
+    var updateLatest: String
+        get() = prefs.getString(UPDATE_LATEST, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_LATEST, value) }
+
+    /** The release page the last check saw; empty for none. */
+    var updatePageUrl: String
+        get() = prefs.getString(UPDATE_PAGE, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_PAGE, value) }
+
+    /** The last check found a version newer than the installed one. */
+    var updateNewer: Boolean
+        get() = prefs.getBoolean(UPDATE_NEWER, false)
+        set(value) = prefs.edit { putBoolean(UPDATE_NEWER, value) }
+
+    /** The version the quiet notice was shown for, so it is not shown again for the same one. */
+    var updateNotified: String
+        get() = prefs.getString(UPDATE_NOTIFIED, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_NOTIFIED, value) }
+
     /** Puts the swipes, the delete question, the Undo time and the reply choice back as they were. */
     fun resetActions() = prefs.edit {
         remove(SWIPE_RIGHT)
@@ -97,6 +127,12 @@ class UiPrefs(context: Context) {
         const val CONFIRM_DELETE = "actions_confirm_delete"
         const val UNDO_SECONDS = "actions_undo_seconds"
         const val REPLY_ALL = "actions_reply_all"
+        const val UPDATE_WEEKLY = "update_weekly"
+        const val UPDATE_CHECKED = "update_last_checked"
+        const val UPDATE_LATEST = "update_latest"
+        const val UPDATE_PAGE = "update_page_url"
+        const val UPDATE_NEWER = "update_newer"
+        const val UPDATE_NOTIFIED = "update_notified"
         const val CONVERSATIONS = "reading_conversation_view"
         const val MARK_READ = "reading_mark_read"
         const val AFTER_ACTION = "reading_after_action"
