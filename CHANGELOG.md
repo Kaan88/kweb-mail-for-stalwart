@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- Mail filters that work with Bulwark's: a visual editor with every field, comparator and action, a switch per rule, reorder, delete with Undo, a raw editor, and the old filters moved over. Credit to Bulwark webmail for the format.
+- Fixed: repeating events did not repeat on the server; a send the server refused looked sent; sending could stop after 500 messages. Bulwark's tags show as labels.
+- Your own calendars in the phone's calendar (two-way for single events, series read-only).
+- Invitations, changes and shares from the server as notifications; "Not delivered to" in a thread.
+- An optional Home tab and a sparkle when something deserves a look (overlaps, open invitations, overdue tasks, dates in mail), with assistant actions only on your tap.
+- Sender check from your server's own results; earlier assistant chats; Catch me up.
+- A weekly update check against the release page, on by default (switch it off in About).
+- Six more colour themes, crimson by default, a sound button per receiving address, "Show with subfolders" kept per folder, your own instructions for the assistant.
+- The assistant asks before an automatic change outside the conversation in view; a full resync when the server's state goes backwards.
+
 ## 0.1.0
 
 First release.

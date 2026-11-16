@@ -82,9 +82,9 @@ class UiPrefs(context: Context) {
         get() = prefs.getBoolean(REPLY_ALL, false)
         set(value) = prefs.edit { putBoolean(REPLY_ALL, value) }
 
-    /** The weekly check for a newer release is on (off by default). */
+    /** The weekly check for a newer release is on (on by default from 0.2.0). */
     var updateWeekly: Boolean
-        get() = prefs.getBoolean(UPDATE_WEEKLY, false)
+        get() = prefs.getBoolean(UPDATE_WEEKLY, true)
         set(value) = prefs.edit { putBoolean(UPDATE_WEEKLY, value) }
 
     /** When the update check last got an answer (milliseconds); 0 for never. */

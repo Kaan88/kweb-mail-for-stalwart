@@ -8,6 +8,8 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.Channels
 import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.background.GooglePush
+import ovh.kweb.mail.background.UpdateScheduler
+import ovh.kweb.mail.ui.UiPrefs
 
 /**
  * Runs before any activity, service or receiver of the process, which is what the
@@ -27,6 +29,8 @@ class KwebApp : Application() {
 
     private fun warmUp() {
         try {
+            // The weekly update check is on by default, so it is scheduled here and not only from About (KEEP leaves a running schedule alone).
+            UpdateScheduler.apply(this, UiPrefs(this).updateWeekly)
             val accounts = Accounts.load(this)
             if (accounts.isEmpty()) return
             // Files of an opened encrypted message are only kept while its screen is open; a crash or kill may have left some.

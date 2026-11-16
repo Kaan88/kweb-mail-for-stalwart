@@ -83,7 +83,7 @@ object UpdateChecker {
     fun pageUri(url: String): Uri? = url.takeIf(UpdateRules::safePage)?.toUri()
 }
 
-/** The weekly check (off unless the user switched it on). */
+/** The weekly check (on unless the user switched it off in About). */
 class UpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         Channels.ensure(applicationContext)
