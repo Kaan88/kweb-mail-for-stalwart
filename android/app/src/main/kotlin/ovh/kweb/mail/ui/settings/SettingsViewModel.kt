@@ -221,8 +221,12 @@ class SettingsViewModel(app: Application, private val session: AccountSession) :
         }
         viewModelScope.launch {
             val result = try {
-                val filters = withContext(Dispatchers.IO) { session.core.filters() }
-                if (filters.isActive) FiltersRowState.On else FiltersRowState.Off
+                val filters = withContext(Dispatchers.IO) { session.core.filtersState() }
+                when {
+                    !filters.supported -> FiltersRowState.Unknown
+                    filters.active -> FiltersRowState.On
+                    else -> FiltersRowState.Off
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

@@ -303,7 +303,11 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
             try {
                 withContext(Dispatchers.IO) {
                     val core = acct.core
-                    core.blockSender(messageId)
+                    ovh.kweb.mail.ui.filters.BlockSender.block(core, address)
+                    // The rule is in place. A message that is in the Trash already stays there: deleting it would destroy it.
+                    val trashId = core.mailboxes().firstOrNull { it.role == "trash" }?.id
+                    val message = stateFlow.value.messages.firstOrNull { it.id == messageId }
+                    if (message != null && trashId != null && trashId !in message.mailboxIds) core.submitAll(MailActions.delete(listOf(messageId)))
                     // The delete waits in the outbox; without a live connection nothing else would send it soon.
                     if (core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
                 }

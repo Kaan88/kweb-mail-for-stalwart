@@ -56,8 +56,8 @@ class AwayViewModel(app: Application, private val session: AccountSession) : And
         viewModelScope.launch {
             // Only a hint on the screen: when the filters cannot be read, nothing is shown.
             try {
-                val filters = withContext(Dispatchers.IO) { session.core.filters() }
-                stateFlow.update { it.copy(filtersOn = filters.isActive) }
+                val filters = withContext(Dispatchers.IO) { session.core.filtersState() }
+                stateFlow.update { it.copy(filtersOn = filters.supported && filters.active) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -95,7 +95,21 @@ class AwayViewModel(app: Application, private val session: AccountSession) : And
         viewModelScope.launch {
             try {
                 val message = AwayRules.toMessage(state.form, state.zone)
-                withContext(Dispatchers.IO) { session.core.setAwayMessage(message) }
+                withContext(Dispatchers.IO) {
+                    session.core.setAwayMessage(message)
+                    // The away message switches the filter script off; with the include the filters run beside it,
+                    // so switching them on again keeps both. Best effort: the away message is saved already.
+                    if (state.filtersOn && message.isEnabled) {
+                        try {
+                            session.core.filtersState()
+                            session.core.filtersSetEnabled(true)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w(Background.TAG, "switching the filters on again failed: ${e.javaClass.simpleName}")
+                        }
+                    }
+                }
                 doneChannel.send(Unit)
             } catch (e: CancellationException) {
                 throw e
