@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Updates download by themselves on Wi-Fi and ask to install; a manual check offers Download and install.
+
 ## 0.2.0
 
 - Mail filters that work with Bulwark's: a visual editor with every field, comparator and action, a switch per rule, reorder, delete with Undo, a raw editor, and the old filters moved over. Credit to Bulwark webmail for the format.
