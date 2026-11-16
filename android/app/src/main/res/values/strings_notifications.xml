@@ -6,7 +6,6 @@
 
     <string name="notifications_title">Notifications</string>
     <string name="notifications_settings_detail">New mail, sound, addresses and reminders</string>
-    <string name="delivery_open_notifications">New mail, reminders, sound and addresses</string>
     <string name="notifications_for">Account: %1$s</string>
     <string name="notifications_mail">New mail</string>
     <string name="notifications_remove_detail">A notification goes when the mail is read, moved or deleted on another device</string>

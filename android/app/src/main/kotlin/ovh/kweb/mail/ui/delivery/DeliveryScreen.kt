@@ -113,7 +113,7 @@ private class CheckItem(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, onOpenNotifications: () -> Unit, vm: DeliveryViewModel = viewModel()) {
+fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val now by rememberNowMillis()
     val resources = LocalResources.current
@@ -182,22 +182,6 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, onOpenNotifica
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            SectionTitle(stringResource(R.string.delivery_what_to_show))
-            // The switches live on the Notifications screen (one place, one state); this row leads there.
-            Row(
-                Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onOpenNotifications).heightIn(min = 52.dp).padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.notifications_title), style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        stringResource(R.string.delivery_open_notifications),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
             Button(
                 onClick = vm::sendTestNotification,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp).height(52.dp),
@@ -205,14 +189,6 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, onOpenNotifica
                 Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.delivery_send_test), style = MaterialTheme.typography.titleSmall)
-            }
-            state.coreVersion?.let {
-                Text(
-                    it,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }

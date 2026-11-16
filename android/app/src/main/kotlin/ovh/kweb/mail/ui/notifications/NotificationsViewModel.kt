@@ -36,6 +36,8 @@ data class NotificationsState(
     val remindersEnabled: Boolean = true,
     val removeWhenReadElsewhere: Boolean = true,
     val preview: PreviewChoice = PreviewChoice.Full,
+    /** The buttons of this account's mail notifications, in order (chosen on their own screen). */
+    val buttons: List<ovh.kweb.mail.background.MailAction> = emptyList(),
     val addresses: List<AddressChoice>? = null,
 )
 
@@ -56,6 +58,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
             remindersEnabled = s.remindersEnabled,
             removeWhenReadElsewhere = s.removeWhenReadElsewhere,
             preview = s.previewChoice,
+            buttons = s.notificationActions,
             addresses = list,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotificationsState())

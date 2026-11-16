@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="about_title">About</string>
+    <string name="about_settings_detail">Version %1$s, licence and source</string>
+    <string name="about_version">Version</string>
+    <string name="about_version_value">%1$s (build %2$d)</string>
+    <string name="about_core">Core</string>
+    <string name="about_licence">Licence</string>
+    <string name="about_licence_value">MIT</string>
+    <string name="about_source">Source</string>
+    <string name="about_libraries">Licences of libraries</string>
+    <string name="about_libraries_detail">What the app is built on</string>
+</resources>

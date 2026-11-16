@@ -44,7 +44,6 @@ import ovh.kweb.mail.background.Settings
 import ovh.kweb.mail.background.StartFailure
 import ovh.kweb.mail.ui.SessionState
 import uniffi.kweb_core.ConnectionStatus
-import uniffi.kweb_core.coreVersion
 
 /** Everything the Delivery check shows. Texts and times are made from it by the screen. */
 data class DeliveryState(
@@ -59,7 +58,6 @@ data class DeliveryState(
     val mailEnabled: Boolean = true,
     val remindersEnabled: Boolean = true,
     val removeWhenReadElsewhere: Boolean = true,
-    val coreVersion: String? = null,
     val signingOut: Boolean = false,
     /** Push through Google of this account. */
     val push: PushView = PushView(),
@@ -70,7 +68,7 @@ data class DeliveryState(
 /** The state of the phone that the app cannot observe: re-read on every resume. */
 private data class SystemState(val notificationsAllowed: Boolean, val batteryExempt: Boolean, val backgroundRestricted: Boolean)
 
-private data class Extras(val host: String? = null, val version: String? = null, val signingOut: Boolean = false)
+private data class Extras(val host: String? = null, val signingOut: Boolean = false)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DeliveryViewModel(app: Application, private val session: AccountSession) : AndroidViewModel(app) {
@@ -111,7 +109,6 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
             mailEnabled = settings.mailEnabled,
             remindersEnabled = settings.remindersEnabled,
             removeWhenReadElsewhere = settings.removeWhenReadElsewhere,
-            coreVersion = extra.version,
             signingOut = extra.signingOut,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DeliveryState())
@@ -152,11 +149,11 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
 
     init {
         viewModelScope.launch {
-            val (host, version) = withContext(Dispatchers.IO) {
+            val host = withContext(Dispatchers.IO) {
                 val account = session.core.account()
-                hostOf(account?.serverUrl) to coreVersion()
+                hostOf(account?.serverUrl)
             }
-            extras.update { it.copy(host = host, version = version) }
+            extras.update { it.copy(host = host) }
         }
     }
 

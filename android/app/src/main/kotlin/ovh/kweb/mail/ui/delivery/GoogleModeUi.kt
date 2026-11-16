@@ -1,7 +1,16 @@
 package ovh.kweb.mail.ui.delivery
 
 import androidx.annotation.StringRes
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import ovh.kweb.mail.ui.list.Groups
+import ovh.kweb.mail.ui.theme.KwebSwitch
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -152,18 +161,36 @@ fun GoogleModeDialog(turningOn: Boolean, onConfirm: () -> Unit, onDismiss: () ->
 }
 
 /**
- * The mode group of the Delivery check: why the account went back to the connection (if it did), the notes while the
- * mode is on, and the button that asks to switch. [now] is the screen's clock.
+ * The mode of the Delivery check as one switch: on is push through Google, off is the permanent connection. The
+ * switch asks first (the dialog carries the warning), so a tap only opens the question. Under it: why the account
+ * went back to the connection (if it did) and, while the mode is on, the notes.
  */
 @Composable
 fun GoogleModeSection(view: PushView, @Suppress("UNUSED_PARAMETER") now: Long, onAsk: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        view.fallback?.takeIf { view.mode != DeliveryMode.Google }?.let {
-            Text(pushFallbackLine(it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    val on = view.mode == DeliveryMode.Google
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(Groups.shape(0, 1))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                .toggleable(value = on, enabled = !view.busy, role = Role.Switch, onValueChange = { onAsk() })
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.push_title), style = MaterialTheme.typography.bodyLarge)
+                Text(pushRowLine(view), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            KwebSwitch(checked = on, onCheckedChange = null, enabled = !view.busy)
         }
-        if (view.mode == DeliveryMode.Google) PushNotes()
-        TextButton(onClick = onAsk, enabled = !view.busy) {
-            Text(stringResource(if (view.mode == DeliveryMode.Google) R.string.push_mode_on else R.string.push_mode_off))
+        Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            view.fallback?.takeIf { !on }?.let {
+                Text(pushFallbackLine(it), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+            }
+            if (on) PushNotes()
         }
     }
 }

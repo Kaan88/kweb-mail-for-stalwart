@@ -67,7 +67,7 @@ import uniffi.kweb_core.AddressMode
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: NotificationsViewModel = viewModel()) {
+fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenButtons: () -> Unit, vm: NotificationsViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val resources = LocalResources.current
@@ -103,21 +103,22 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, vm: Notif
 
             Title(stringResource(R.string.notifications_mail))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                SwitchRow(Groups.shape(0, 5), stringResource(R.string.delivery_show_mail), null, state.mailEnabled, vm::setMailEnabled)
+                SwitchRow(Groups.shape(0, 6), stringResource(R.string.delivery_show_mail), null, state.mailEnabled, vm::setMailEnabled)
                 SwitchRow(
-                    Groups.shape(1, 5),
+                    Groups.shape(1, 6),
                     stringResource(R.string.delivery_remove_elsewhere),
                     stringResource(R.string.notifications_remove_detail),
                     state.removeWhenReadElsewhere,
                     vm::setRemoveWhenReadElsewhere,
                 )
-                LinkRow(Groups.shape(2, 5), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
+                LinkRow(Groups.shape(2, 6), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
                     choosingPreview = true
                 }
-                LinkRow(Groups.shape(3, 5), stringResource(R.string.notifications_sound), stringResource(R.string.notifications_sound_detail)) {
+                LinkRow(Groups.shape(3, 6), stringResource(R.string.notifications_sound), stringResource(R.string.notifications_sound_detail)) {
                     openChannel(ChannelKind.Mail)
                 }
-                LinkRow(Groups.shape(4, 5), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
+                LinkRow(Groups.shape(4, 6), stringResource(R.string.notif_buttons_title), buttonsLine(state.buttons), onOpenButtons)
+                LinkRow(Groups.shape(5, 6), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
             }
 
             Title(stringResource(R.string.notifications_addresses))
@@ -339,3 +340,8 @@ private fun LinkRow(shape: Shape, title: String, detail: String?, onClick: (() -
         TwoLines(title, detail, Modifier.weight(1f))
     }
 }
+
+/** The quiet line of the buttons row: "Delete, Mark read, Reply", or "None". */
+@Composable
+private fun buttonsLine(actions: List<ovh.kweb.mail.background.MailAction>): String =
+    if (actions.isEmpty()) stringResource(R.string.notif_buttons_none) else actions.map { stringResource(ovh.kweb.mail.ui.settings.mailActionName(it)) }.joinToString(", ")

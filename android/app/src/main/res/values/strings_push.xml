@@ -52,6 +52,4 @@
     <string name="push_reason_not_verified">your server\'s verification never arrived</string>
     <string name="push_reason_subscription_gone">your server dropped the subscription</string>
     <string name="push_reason_unreachable">your server could not be reached</string>
-    <string name="push_mode_on">Switch off push through Google</string>
-    <string name="push_mode_off">Use push through Google instead</string>
 </resources>

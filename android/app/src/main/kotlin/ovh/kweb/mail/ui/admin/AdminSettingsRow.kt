@@ -5,8 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.stringResource
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Icon
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -38,7 +37,7 @@ fun AdminSettingsRow(shape: Shape, onOpen: () -> Unit, modifier: Modifier = Modi
         stringResource(R.string.admin_title),
         modifier = modifier,
         detail = settingsLine(state)?.let { stringResource(it) },
-        leading = { Icon(Icons.Filled.Lock, contentDescription = null) },
+        leading = { Icon(painterResource(R.drawable.ic_admin), contentDescription = null) },
         onClick = onOpen,
     )
 }

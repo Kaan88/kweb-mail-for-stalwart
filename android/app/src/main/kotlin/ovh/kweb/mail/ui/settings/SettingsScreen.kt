@@ -20,6 +20,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Info
+import ovh.kweb.mail.BuildConfig
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
@@ -66,8 +68,6 @@ import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.away.AwayLine
 import ovh.kweb.mail.ui.away.AwayRules
 import ovh.kweb.mail.ui.delivery.DeliveryViewModel
-import ovh.kweb.mail.ui.delivery.GoogleModeDialog
-import ovh.kweb.mail.ui.delivery.pushRowLine
 import ovh.kweb.mail.ui.delivery.SignOutDialog
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.theme.ThemePickerDialog
@@ -85,7 +85,7 @@ import uniffi.kweb_core.Quota
 fun SettingsScreen(
     onBack: () -> Unit,
     onOpenDeliveryCheck: () -> Unit,
-    onOpenNotificationButtons: () -> Unit,
+    onOpenAbout: () -> Unit,
     onOpenReading: () -> Unit,
     onOpenCrypto: () -> Unit,
     onOpenAway: () -> Unit,
@@ -109,7 +109,6 @@ fun SettingsScreen(
     val resources = LocalResources.current
     var pickingTheme by remember { mutableStateOf(false) }
     val signOutPrompt by delivery.signOutPrompt.collectAsStateWithLifecycle()
-    val googlePrompt by delivery.googlePrompt.collectAsStateWithLifecycle()
 
     LifecycleResumeEffect(vm) {
         vm.load()
@@ -141,19 +140,17 @@ fun SettingsScreen(
             SectionTitle(
                 if (several && shown != null) stringResource(R.string.accounts_settings_account) + " · " + shown.label else stringResource(R.string.settings_account),
             )
-            val canAdd = onAddAccount != null
-            val accountRows = if (canAdd) 3 else 2
             Group {
-                SettingsRow(Groups.shape(0, accountRows), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
-                SettingsRow(Groups.shape(1, accountRows), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
-                if (canAdd) {
-                    SettingsRow(
-                        Groups.shape(2, accountRows),
-                        stringResource(R.string.accounts_add),
-                        icon = { Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = onAddAccount,
-                    )
-                }
+                SettingsRow(Groups.shape(0, 3), stringResource(R.string.settings_name), state.name.ifEmpty { "…" })
+                SettingsRow(Groups.shape(1, 3), stringResource(R.string.settings_server), state.server.ifEmpty { "…" })
+                SettingsRow(
+                    Groups.shape(2, 3),
+                    stringResource(if (several) R.string.accounts_remove else R.string.sign_out),
+                    if (deliveryState.signingOut) stringResource(R.string.settings_signing_out) else null,
+                    icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                    titleColor = MaterialTheme.colorScheme.error,
+                    onClick = if (deliveryState.signingOut) null else ({ delivery.askSignOut() }),
+                )
             }
 
             SecurityGroup(state, onOpenMasked, onOpenSecurity, onSignInAgain, onOpenAdmin)
@@ -167,7 +164,7 @@ fun SettingsScreen(
                     Groups.shape(0, 1),
                     stringResource(R.string.reading_title),
                     stringResource(R.string.reading_settings_detail),
-                    icon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
+                    icon = { Icon(painterResource(R.drawable.ic_article), contentDescription = null) },
                     onClick = onOpenReading,
                 )
             }
@@ -175,48 +172,41 @@ fun SettingsScreen(
             SectionTitle(stringResource(R.string.settings_mail))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 7),
+                    Groups.shape(0, 6),
                     stringResource(R.string.away_title),
                     awayLine(state.away),
                     icon = { Icon(painterResource(R.drawable.ic_schedule), contentDescription = null) },
                     onClick = onOpenAway,
                 )
                 SettingsRow(
-                    Groups.shape(1, 7),
+                    Groups.shape(1, 6),
                     stringResource(R.string.filters_title),
                     filtersLine(state.filters),
                     icon = { Icon(painterResource(R.drawable.ic_filter), contentDescription = null) },
                     onClick = onOpenFilters,
                 )
                 SettingsRow(
-                    Groups.shape(2, 7),
+                    Groups.shape(2, 6),
                     stringResource(R.string.scheduled_title),
                     state.scheduled?.takeIf { it > 0 }?.let { pluralStringResource(R.plurals.scheduled_count, it, it) },
                     icon = { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null) },
                     onClick = onOpenScheduled,
                 )
                 SettingsRow(
-                    Groups.shape(3, 7),
+                    Groups.shape(3, 6),
                     stringResource(R.string.senders_title),
                     icon = { Icon(Icons.Filled.Person, contentDescription = null) },
                     onClick = onOpenSenders,
                 )
                 SettingsRow(
-                    Groups.shape(4, 7),
-                    stringResource(R.string.notifications_title),
-                    stringResource(R.string.notifications_settings_detail),
-                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
-                    onClick = onOpenNotifications,
-                )
-                SettingsRow(
-                    Groups.shape(5, 7),
+                    Groups.shape(4, 6),
                     stringResource(R.string.crypto_title),
                     stringResource(R.string.crypto_settings_detail),
                     icon = { Icon(Icons.Filled.Lock, contentDescription = null) },
                     onClick = onOpenCrypto,
                 )
                 SettingsRow(
-                    Groups.shape(6, 7),
+                    Groups.shape(5, 6),
                     stringResource(R.string.assistant_title),
                     assistantLine(state.assistant),
                     icon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) },
@@ -224,53 +214,57 @@ fun SettingsScreen(
                 )
             }
 
+            SectionTitle(stringResource(R.string.notifications_title))
+            Group {
+                SettingsRow(
+                    Groups.shape(0, 2),
+                    stringResource(R.string.notifications_title),
+                    stringResource(R.string.notifications_settings_detail),
+                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
+                    onClick = onOpenNotifications,
+                )
+                SettingsRow(
+                    Groups.shape(1, 2),
+                    stringResource(R.string.delivery_check_title),
+                    stringResource(R.string.settings_delivery_detail),
+                    icon = { Icon(painterResource(R.drawable.ic_sync), contentDescription = null) },
+                    onClick = onOpenDeliveryCheck,
+                )
+            }
+
             SectionTitle(stringResource(R.string.settings_app))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 4),
+                    Groups.shape(0, 2),
                     stringResource(R.string.theme_title),
                     stringResource(themeName(theme)),
                     icon = { Icon(painterResource(R.drawable.ic_palette), contentDescription = null) },
                     onClick = { pickingTheme = true },
                 )
                 SettingsRow(
-                    Groups.shape(1, 4),
-                    stringResource(R.string.delivery_check_title),
-                    stringResource(R.string.settings_delivery_detail),
-                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
-                    onClick = onOpenDeliveryCheck,
-                )
-                SettingsRow(
-                    Groups.shape(2, 4),
-                    stringResource(R.string.notif_buttons_title),
-                    notificationButtonsLine(state.notificationActions),
-                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
-                    onClick = onOpenNotificationButtons,
-                )
-                SettingsRow(
-                    Groups.shape(3, 4),
-                    stringResource(R.string.push_title),
-                    pushRowLine(deliveryState.push),
-                    icon = { Icon(Icons.Filled.Notifications, contentDescription = null) },
-                    onClick = if (deliveryState.push.busy) null else ({ delivery.askGoogleMode() }),
+                    Groups.shape(1, 2),
+                    stringResource(R.string.about_title),
+                    stringResource(R.string.about_settings_detail, BuildConfig.VERSION_NAME),
+                    icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                    onClick = onOpenAbout,
                 )
             }
 
-            Group(Modifier.padding(top = 16.dp)) {
-                SettingsRow(
-                    Groups.shape(0, 1),
-                    stringResource(if (several) R.string.accounts_remove else R.string.sign_out),
-                    if (deliveryState.signingOut) stringResource(R.string.settings_signing_out) else null,
-                    icon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                    titleColor = MaterialTheme.colorScheme.error,
-                    onClick = if (deliveryState.signingOut) null else ({ delivery.askSignOut() }),
-                )
+            // Last of all, so it is never in the way of the rows above (the accounts sheet has it too).
+            if (onAddAccount != null) {
+                Group(Modifier.padding(top = 16.dp)) {
+                    SettingsRow(
+                        Groups.shape(0, 1),
+                        stringResource(R.string.accounts_add),
+                        icon = { Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = onAddAccount,
+                    )
+                }
             }
         }
     }
 
     if (pickingTheme) ThemePickerDialog(onDismiss = { pickingTheme = false })
-    googlePrompt?.let { GoogleModeDialog(it, onConfirm = delivery::confirmGoogleMode, onDismiss = delivery::dismissGoogleMode) }
     signOutPrompt?.let {
         SignOutDialog(it, onConfirm = delivery::signOut, onDismiss = delivery::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size))
     }
@@ -486,8 +480,3 @@ internal fun SectionTitle(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
-
-/** The quiet line of the notification buttons row: "Delete, Mark read, Reply", or "None". */
-@Composable
-private fun notificationButtonsLine(actions: List<ovh.kweb.mail.background.MailAction>): String =
-    if (actions.isEmpty()) stringResource(R.string.notif_buttons_none) else actions.map { stringResource(mailActionName(it)) }.joinToString(", ")

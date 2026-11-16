@@ -127,6 +127,9 @@ sealed interface Route {
     /** Which buttons a mail notification of the account has, reached from Settings. */
     data object NotificationButtons : Route
 
+    /** Version, licence, source and the licences of the libraries, reached from Settings. */
+    data object About : Route
+
     data object Settings : Route
 
     /** Reading: pictures, the list and the message text, reached from Settings. */

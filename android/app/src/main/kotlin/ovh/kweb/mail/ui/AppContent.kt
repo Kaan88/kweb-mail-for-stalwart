@@ -401,7 +401,7 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 Route.Settings -> SettingsScreen(
                     onBack = app::back,
                     onOpenDeliveryCheck = { app.open(Route.DeliveryCheck) },
-                    onOpenNotificationButtons = { app.open(Route.NotificationButtons) },
+                    onOpenAbout = { app.open(Route.About) },
                     onOpenReading = { app.open(Route.Reading) },
                     onOpenCrypto = { app.open(Route.Crypto) },
                     onOpenAway = { app.open(Route.Away) },
@@ -421,18 +421,19 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                     onOpen = { threadId, messageId -> app.open(Route.Thread(threadId, null, messageId)) },
                 )
                 Route.NotificationButtons -> ovh.kweb.mail.ui.settings.NotificationButtonsScreen(onBack = app::back)
+                Route.About -> ovh.kweb.mail.ui.settings.AboutScreen(onBack = app::back)
                 Route.Reading -> ovh.kweb.mail.ui.settings.ReadingScreen(onBack = app::back, onOpenSenders = { app.open(Route.RemoteSenders) })
                 Route.RemoteSenders -> ovh.kweb.mail.ui.settings.RemoteSendersScreen(onBack = app::back)
                 Route.Crypto -> ovh.kweb.mail.ui.crypto.CryptoSettingsScreen(onBack = app::back)
                 Route.DeliveryCheck -> DeliveryScreen(
                     onBack = app::back,
                     onSignInAgain = { app.open(Route.SignInAgain) },
-                    onOpenNotifications = { app.open(Route.Notifications) },
                 )
                 Route.Notifications -> CompositionLocalProvider(LocalViewModelStoreOwner provides app.stores.owner(route)) {
                     NotificationsScreen(
                         onBack = app::back,
                         onOpenFolders = { app.open(Route.Folders()) },
+                        onOpenButtons = { app.open(Route.NotificationButtons) },
                     )
                 }
                 // Their sign-in is cancelled when the route leaves the stack (its store is cleared with it).
