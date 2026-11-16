@@ -18,7 +18,7 @@ use super::{
     wire::{specs_chars, turn_chars, Reply, ToolCall, ToolResult, ToolSpec, ToolsRefused, Turn},
 };
 use crate::{
-    model::{AiActionMode, AiChatEnd, AiChatTurn, AiProposal, AiProvider, AiStep},
+    model::{AiActionMode, AiChange, AiChatEnd, AiChatTurn, AiProposal, AiProvider, AiStep, AiToolKind},
     Error, Result,
 };
 
@@ -113,6 +113,10 @@ pub struct Chat {
     pub auto: Option<Origin>,
     /// The conversation this chat is about, until the first message is sent.
     pub about: Option<About>,
+    /// Text of mail (or of a calendar entry, which an invitation can fill) has reached the model in
+    /// this chat: the conversation attached at the start, or the result of a tool that reads
+    /// either. From then on a suggestion could have been written by a sender, so see [`Chat::in_view`].
+    pub mail_seen: bool,
 }
 
 impl Chat {
@@ -128,6 +132,7 @@ impl Chat {
             next: 1,
             auto: None,
             about: None,
+            mail_seen: false,
         }
     }
 
@@ -136,9 +141,33 @@ impl Chat {
         self.auto.is_some() && self.auto == self.origin
     }
 
-    /// Whether the change of this suggestion is applied without a tap.
+    /// Whether the change of this suggestion is applied without a tap: automatic changes are on,
+    /// the kind is in [`changes::automatic`] and the change stays in view.
     pub fn applies_itself(&self, proposal: &AiProposal) -> bool {
-        self.automatic() && changes::automatic(&proposal.change, proposal.risk)
+        self.automatic() && changes::automatic(&proposal.change, proposal.risk) && self.in_view(&proposal.change)
+    }
+
+    /// The scope of an automatic change. Until mail text has reached the model in this chat nothing
+    /// a sender wrote can be behind a suggestion, so the allow-list alone decides. After that a
+    /// mail could have asked for it ("archive the bank's mail", "add this event"), so only a
+    /// change to messages of the conversation the chat was opened about is automatic: a message of
+    /// another conversation, any message in a chat opened about none, and a new calendar entry all
+    /// wait for the user's tap (the card is shown as always). Nothing sets `mail_seen` back.
+    pub fn in_view(&self, change: &AiChange) -> bool {
+        if !self.mail_seen {
+            return true;
+        }
+        let Some(about) = &self.about else { return false };
+        match change {
+            AiChange::AddEvent { .. } => false,
+            AiChange::Archive { messages }
+            | AiChange::Move { messages, .. }
+            | AiChange::MarkRead { messages, .. }
+            | AiChange::Star { messages, .. }
+            | AiChange::Tag { messages, .. } => {
+                !messages.is_empty() && messages.iter().all(|m| m.thread_id == about.thread_id)
+            }
+        }
     }
 }
 
@@ -302,6 +331,10 @@ fn drive(
         user.push_str(&about.block);
         user.push_str("\n\n");
     }
+    // The text of the conversation is mail text: a suggestion may have been written by its sender.
+    if chat.turns.is_empty() && chat.about.is_some() {
+        chat.mail_seen = true;
+    }
     user.push_str(&prompts::events_frame(&chat.events));
     user.push_str(USER_OPEN);
     user.push_str(&escaped);
@@ -386,6 +419,21 @@ fn drive(
             if let Some(step) = toolbox.describe(call) {
                 on_step(step);
             }
+            // What a tool returns about mail or calendar entries is text a sender may have written.
+            if matches!(
+                tools::kind_of(&call.name),
+                Some(
+                    AiToolKind::SearchMail
+                        | AiToolKind::ListMessages
+                        | AiToolKind::ReadMessage
+                        | AiToolKind::ReadThread
+                        | AiToolKind::ListEvents
+                        | AiToolKind::ReadEvent
+                        | AiToolKind::ListTasks
+                )
+            ) {
+                chat.mail_seen = true;
+            }
             let ran = toolbox.run(call)?;
             out.steps += 1;
             let (content, is_error) = match ran.outcome {
@@ -441,9 +489,9 @@ fn proposals_per_run(chat: &Chat) -> usize {
 /// model is told so with the next message.
 fn withdraw_oldest(chat: &mut Chat, out: &mut AiChatTurn) {
     // What the core is about to apply by itself does not wait for a tap, so it is not withdrawn.
-    let auto = chat.automatic();
-    let waits =
-        |e: &Entry| e.state == State::Pending && !(auto && changes::automatic(&e.proposal.change, e.proposal.risk));
+    let itself: Vec<String> =
+        chat.entries.iter().filter(|e| chat.applies_itself(&e.proposal)).map(|e| e.proposal.id.clone()).collect();
+    let waits = |e: &Entry| e.state == State::Pending && !itself.contains(&e.proposal.id);
     let pending = chat.entries.iter().filter(|e| waits(e)).count();
     let mut over = pending.saturating_sub(PENDING);
     for entry in chat.entries.iter_mut().filter(|e| waits(e)) {

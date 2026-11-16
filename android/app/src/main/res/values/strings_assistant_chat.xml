@@ -170,7 +170,7 @@
     <string name="chat_auto_off">Turn off automatic changes</string>
     <string name="chat_auto_banner">Automatic changes are on in this chat.</string>
     <string name="chat_auto_title">Make changes without asking?</string>
-    <string name="chat_auto_text">From now on, in this chat only, the assistant\'s suggestions to mark, star, label, archive or move mail, and to add an entry to your own calendar, are done at once. Each one appears here as done, with Undo. A mail could try to trick the assistant into suggesting something, which is why only changes that stay in your account and can be undone are automatic. Everything else still asks you first.</string>
+    <string name="chat_auto_text">From now on, in this chat only, the assistant\'s suggestions to mark, star, label, archive or move mail, and to add an entry to your own calendar, are done at once. Each one appears here as done, with Undo. A mail could try to trick the assistant into suggesting something, which is why only changes that stay in your account and can be undone are automatic, and why, once the assistant has read mail, only changes to the conversation this chat was opened about are. Everything else still asks you first.</string>
     <string name="chat_auto_confirm">Turn on</string>
     <string name="chat_auto_cancel">Cancel</string>
     <string name="chat_auto_failed">Automatic changes could not be switched on.</string>

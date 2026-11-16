@@ -407,16 +407,16 @@ impl Core {
         // Automatic changes: the loop only proposed. What the user allowed is applied here, through
         // the same path and checks as a tap, one at a time, and shown as done cards. Stop ends it,
         // and what is left waits for a tap.
-        let mut done = 0;
-        let automatic = self.chat_lock().as_ref().is_some_and(|c| c.id == chat_id && c.automatic());
-        for proposal in turn.proposals.iter().filter(|_| automatic) {
-            if running.is_cancelled() || done >= chat::AUTO_PER_RUN {
+        let itself: Vec<bool> = {
+            let chat = self.chat_lock();
+            let chat = chat.as_ref().filter(|c| c.id == chat_id);
+            turn.proposals.iter().map(|p| chat.is_some_and(|c| c.applies_itself(p))).collect()
+        };
+        let by_itself: Vec<_> = turn.proposals.iter().zip(&itself).filter(|(_, itself)| **itself).collect();
+        for (proposal, _) in by_itself.into_iter().take(chat::AUTO_PER_RUN) {
+            if running.is_cancelled() {
                 break;
             }
-            if !changes::automatic(&proposal.change, proposal.risk) {
-                continue;
-            }
-            done += 1;
             let (result, left_open) = self.apply_entry(&proposal.id, true);
             turn.automatic.push(match result {
                 Ok(applied) => AiAutoResult {
@@ -562,7 +562,7 @@ impl Core {
     /// The one way a suggestion is applied: a tap (`automatic` false) and the automatic changes
     /// of a send (true) both come here, with the same gates. For an automatic one the chat must
     /// still have automatic changes on for this service and model and the kind must be in
-    /// [`changes::automatic`], else it is left as it is (it waits for a tap) and the second value
+    /// [`changes::automatic`] and be in view (`Chat::in_view`), else it is left as it is (it waits for a tap) and the second value
     /// says so (true: still open).
     pub(super) fn apply_entry(&self, proposal_id: &str, automatic: bool) -> (Result<AiApplied>, bool) {
         // Asked before the chat is locked, so the two locks are never held together.
@@ -571,13 +571,19 @@ impl Core {
             let mut chat = self.book_lock(proposal_id);
             let chat = chat.as_mut().filter(|c| Some(&c.account_id) == signed_in.as_ref()).ok_or_else(gone)?;
             let (account_id, origin) = (chat.account_id.clone(), chat.origin.clone());
-            let allowed_alone = chat.automatic();
+            let proposal = chat
+                .entries
+                .iter()
+                .find(|e| e.proposal.id == proposal_id && e.state == State::Pending)
+                .map(|e| e.proposal.clone())
+                .ok_or_else(gone)?;
+            let allowed = chat.applies_itself(&proposal);
             let entry = chat
                 .entries
                 .iter_mut()
                 .find(|e| e.proposal.id == proposal_id && e.state == State::Pending)
                 .ok_or_else(gone)?;
-            if automatic && !(allowed_alone && changes::automatic(&entry.proposal.change, entry.proposal.risk)) {
+            if automatic && !allowed {
                 return Err(Error::invalid("this suggestion waits for the user"));
             }
             // Single use: a second tap finds it no longer pending.
