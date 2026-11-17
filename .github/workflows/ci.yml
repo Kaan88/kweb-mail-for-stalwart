@@ -180,11 +180,20 @@ jobs:
           sed -e "s/commit: v.*/commit: $GITHUB_SHA/" -e '/^Binaries:/d' -e '/^AllowedAPKSigningKeys:/d'             dev/fdroid/ovh.kweb.mail.yml > fd/metadata/ovh.kweb.mail.yml
           cd fd
           echo "sdk_path: $ANDROID_HOME" > config.yml
+          # F-Droid's server brings its own Gradle launcher; here the project's wrapper stands in for it.
+          printf '#!/bin/sh
+exec "%s/android/gradlew" "$@"
+' "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/gradle-shim"
+          chmod +x "$RUNNER_TEMP/gradle-shim" "$GITHUB_WORKSPACE/android/gradlew"
+          echo "gradle: $RUNNER_TEMP/gradle-shim" >> config.yml
           chmod 600 config.yml
           # The tool expects to run inside a git repository that holds the recipe, as fdroiddata is.
           git init -q . && git add metadata && git -c user.name=ci -c user.email=ci@invalid commit -q -m recipe
           code=$(sed -n 's/^val appVersionCode = //p' ../android/app/build.gradle.kts)
-          fdroid build --verbose --test "ovh.kweb.mail:$code"
+          # Without the runner's own Rust on the PATH: the recipe has to bring it, as on F-Droid's server.
+          fd=$(command -v fdroid)
+          PATH=$(echo "$PATH" | tr ':' '
+' | grep -v '\.cargo/bin' | paste -sd:) "$fd" build --verbose --test "ovh.kweb.mail:$code"
           # The tool reports a failed build without failing itself.
           test -n "$(find . -name '*.apk')"
           find . -name '*.apk' -exec sha256sum {} +
