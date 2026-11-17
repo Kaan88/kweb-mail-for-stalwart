@@ -186,7 +186,7 @@ android {
         versionName = appVersionName
         // Also filters the ABIs of JNA's bundled libjnidispatch.
         ndk { abiFilters += rustAbis }
-        // False in the F-Droid build, which has no updater (src/fdroid/AndroidManifest.xml).
+        // False in the "fdroid" flavor, which has no updater.
         buildConfigField("boolean", "UPDATER", "true")
     }
 
@@ -221,12 +221,19 @@ android {
         }
     }
 
-    buildTypes.create("fdroid") {
-        initWith(buildTypes.getByName("release"))
-        // F-Droid signs it itself (or compares it with the project's signature for a reproducible build).
-        signingConfig = null
-        buildConfigField("boolean", "UPDATER", "false")
-        matchingFallbacks += "release"
+    // Two stores. "github" is the build with the updater. "fdroid" has none (src/fdroid/AndroidManifest.xml):
+    // F-Droid delivers updates itself. F-Droid's build server has no keystore, so its APK comes out unsigned;
+    // built here with the keystore it carries the project's signature (for a reproducible-build entry).
+    flavorDimensions += "store"
+    productFlavors {
+        create("github") {
+            dimension = "store"
+            isDefault = true
+        }
+        create("fdroid") {
+            dimension = "store"
+            buildConfigField("boolean", "UPDATER", "false")
+        }
     }
 
     buildFeatures {
@@ -240,6 +247,11 @@ android {
     }
 }
 
+// The F-Droid flavor is only ever released: no fdroidDebug, so assembleDebug builds one APK.
+androidComponents.beforeVariants { variant ->
+    if (variant.productFlavors.any { it.second == "fdroid" } && variant.buildType == "debug") variant.enable = false
+}
+
 androidComponents.onVariants { variant ->
     val cap = variant.name.replaceFirstChar { it.uppercase() }
     val native = if (skipNative) null else tasks.register<CargoNdkTask>("buildRust$cap") {
@@ -247,7 +259,7 @@ androidComponents.onVariants { variant ->
         description = "Builds libkweb_core.so for ${rustAbis.joinToString()} with cargo-ndk"
         repoRoot.set(layout.dir(provider { rustRepoRoot }))
         rustSources.from(rustSourceFiles)
-        release.set(variant.buildType == "release" || variant.buildType == "fdroid")
+        release.set(variant.buildType == "release")
         abis.set(rustAbis)
         minSdk.set(minSdkVersion)
         outDir.set(layout.buildDirectory.dir("rust/jniLibs/${variant.name}"))

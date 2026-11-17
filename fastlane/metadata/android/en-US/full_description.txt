@@ -8,4 +8,4 @@ A native Android client for Stalwart 1.1 and later: mail, calendar, contacts and
 
 <b>AI assistant (optional, bring your own)</b>: off until you enter a service and agree to it. Mail is only sent to the service you named, for a task you started.
 
-The app only talks to the server you sign in to.
+By itself the app only talks to the server you sign in to. Everything else is optional and starts with you: pictures in a mail, the AI service you entered, a key lookup you ask for, Google push.

@@ -41,7 +41,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.text.format.Formatter
 import androidx.compose.runtime.DisposableEffect
-import ovh.kweb.mail.BuildConfig
 import ovh.kweb.mail.background.UpdateChecker
 import ovh.kweb.mail.background.UpdateDownloader
 import ovh.kweb.mail.background.UpdateFiles

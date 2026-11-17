@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs the Gradle wrapper of android/ with the development environment and build output on the
-# home drive:   dev/gradle.sh assembleDebug      dev/gradle.sh lintDebug testDebugUnitTest
-# The APK ends up in ~/.cache/kweb-mail/gradle/app/outputs/apk/debug/.
+# home drive:   dev/gradle.sh assembleDebug      dev/gradle.sh lintGithubDebug testGithubDebugUnitTest
+# The APK ends up in ~/.cache/kweb-mail/gradle/app/outputs/apk/github/debug/.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=env.sh

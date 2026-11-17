@@ -2,22 +2,23 @@
 
 ## Decision (owner, 2026-11-17)
 
-Both are published. The GitHub release keeps the updater (the `release` build, signed with the project's key). F-Droid ships the `fdroid` build, which has no updater and is signed by F-Droid with its own key. The two signatures differ, so a user cannot move from one source to the other without reinstalling, and F-Droid does not verify the build against the project's signature. Reproducibility is therefore a property to check ourselves (two builds of the `fdroid` type must be identical), not a requirement of the store. Say this in the store description when the entry is submitted.
+Both are published. The GitHub release keeps the updater (the `github` flavor, signed with the project's key). F-Droid ships the `fdroid` flavor, which has no updater. To begin with F-Droid signs it with its own key: the two signatures then differ, a user cannot move from one source to the other without reinstalling, and the store description should say so. One signature for both is possible later (see "Reproducible build", way 3) and is the aim once the build is shown to be reproducible.
 
-Next steps, in order: (1) remove the pre-built `rustls-platform-verifier` AAR (build it from source or copy its Kotlin classes in); (2) pin NDK, Rust and cargo-ndk and put the same versions in the recipe; (3) build `assembleFdroid` twice on two paths and compare with `diffoscope`; (4) open the merge request on fdroiddata with `ovh.kweb.mail.yml`. Nothing here has been built yet: the session that wrote it had no Android SDK.
+Next steps, in order: (1) remove the pre-built `rustls-platform-verifier` AAR (build it from source or copy its Kotlin classes in); (2) pin NDK, Rust and cargo-ndk and put the same versions in the recipe; (3) build `assembleFdroidRelease` twice on two paths and compare with `diffoscope`; (4) open the merge request on fdroiddata with `ovh.kweb.mail.yml`. The recipe has not been run on F-Droid's build server.
 
 ## How it works
 
-- `./gradlew assembleFdroid` (in `android/`) builds the F-Droid variant: the build type `fdroid` is the release build without the updater (no `REQUEST_INSTALL_PACKAGES`, no `UpdateInstallActivity`, no `UpdateActionReceiver`, no weekly check, no update rows in About) and unsigned. Output: `android/app/build/outputs/apk/fdroid/`.
+- `./gradlew assembleFdroidRelease` (in `android/`) builds the F-Droid variant: the product flavor `fdroid` is the release build without the updater (no `REQUEST_INSTALL_PACKAGES`, no `UpdateInstallActivity`, no `UpdateActionReceiver`, no weekly check, no update rows in About). It is signed with the project's key where the keystore is present and unsigned elsewhere (F-Droid's server). Output: `android/app/build/outputs/apk/fdroid/release/`. There is no debug variant of this flavor; `assembleRelease` builds both flavors.
 - `ovh.kweb.mail.yml` is a draft of the recipe for the fdroiddata repository. The NDK (`r28c`) and cargo-ndk (`4.1.2`) versions in it are placeholders: use the ones the release is really built with.
 - The store text and changelogs are in `fastlane/metadata/android/en-US/`; add `changelogs/<versionCode>.txt` per release.
 
 ## Reproducible build
 
-F-Droid's reproducible mode compares its own build with an APK signed by you, so the two must be the same file apart from the signature. The `release` build (with the updater) and the `fdroid` build differ, so they can never match. Two ways:
+F-Droid's reproducible mode compares its own build with an APK signed by you, so the two must be the same file apart from the signature. The `github` build (with the updater) and the `fdroid` build differ, so they can never match. Three ways:
 
 1. Publish the `fdroid` build as the GitHub release too (the updater goes away there too). Then F-Droid can ship your signature (`Binaries:` and `AllowedAPKSigningKeys:` in the recipe).
-2. Keep both. F-Droid signs its build with its own key, which is not the key of the GitHub APK: users cannot switch from one to the other without reinstalling. Reproducibility is then only a property to check (two builds of the `fdroid` type are byte-identical), not something F-Droid verifies.
+2. Keep both. F-Droid signs its build with its own key, which is not the key of the GitHub APK: users cannot switch from one to the other without reinstalling. Reproducibility is then only a property to check (two builds of the `fdroid` flavor are byte-identical), not something F-Droid verifies.
+3. Keep both and share the signature: attach the `fdroid` APK, signed with the project's key, to each GitHub release as a second file and name it in the recipe (`Binaries:`, `AllowedAPKSigningKeys:`). F-Droid then ships the project's signature if its own build is identical, and a user can change between the GitHub and the F-Droid build without reinstalling. It needs a build that really is reproducible, and a release fails on F-Droid whenever it is not.
 
 What is in place: no signing blob in the APK (`dependenciesInfo`), the Rust core built with `--locked` and with build paths and the build id removed (`CargoNdkTask`), shrinking (R8) is deterministic. What is not done or not checked:
 - Nothing has been built twice and compared yet. Do that first (`diffoscope`), on two different checkout paths.

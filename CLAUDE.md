@@ -83,7 +83,7 @@ Run `source dev/env.sh` first (it also moves `CARGO_TARGET_DIR` off the NTFS dri
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cd android && sh gradlew assembleDebug lintDebug testDebugUnitTest -PskipNative   # Kotlin only, host-built bindings
+cd android && sh gradlew assembleDebug lintGithubDebug testGithubDebugUnitTest -PskipNative   # Kotlin only, host-built bindings
 cd android && sh gradlew assembleDebug                                            # needs NDK + cargo-ndk (installed)
 ```
 

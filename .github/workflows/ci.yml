@@ -59,7 +59,7 @@ jobs:
       - run: ./gradlew assembleDebug
         working-directory: android
 
-      - run: ./gradlew testDebugUnitTest lintDebug
+      - run: ./gradlew testGithubDebugUnitTest lintGithubDebug
         working-directory: android
 
       - name: Build the release APK
@@ -88,9 +88,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: kweb-mail-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/apk/github/debug/*.apk
 
       - uses: actions/upload-artifact@v7
         with:
           name: kweb-mail-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/*/release/*.apk

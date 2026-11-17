@@ -15,25 +15,27 @@ RepoType: git
 Repo: https://github.com/Kaan88/kweb-mail-for-stalwart.git
 
 Builds:
-  - versionName: 0.2.3
-    versionCode: 6
-    commit: v0.2.3
+  # Placeholder: the first release that contains the "fdroid" flavor (0.2.3 and older cannot be built this way).
+  - versionName: 0.2.4
+    versionCode: 7
+    commit: v0.2.4
     subdir: android/app
     sudo:
       - apt-get update
       - apt-get install -y curl build-essential
-    init: |
-      curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.0 \
-        --target aarch64-linux-android --target x86_64-linux-android
+    # The product flavor "fdroid" (assembleFdroidRelease): no updater, no REQUEST_INSTALL_PACKAGES.
     gradle:
       - fdroid
-    prebuild:
+    # Not tried on F-Droid's build server. Gradle must find cargo on its PATH: check that the PATH set here
+    # reaches the Gradle step, and if it does not, install Rust where the PATH already points.
+    build:
+      - curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.0
+        --target aarch64-linux-android --target x86_64-linux-android
       - export PATH=$HOME/.cargo/bin:$PATH
       - cargo install cargo-ndk --locked --version 4.1.2
     ndk: r28c
-    # Applies only to the "fdroid" build type: no updater, no REQUEST_INSTALL_PACKAGES.
 
 AutoUpdateMode: Version v%v
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 0.2.3
-CurrentVersionCode: 6
+CurrentVersion: 0.2.4
+CurrentVersionCode: 7

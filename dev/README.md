@@ -22,7 +22,7 @@ dev/stalwart-run.sh        # start the test server (http://127.0.0.1:18080); dev
 python3 dev/seed_mail.py   # sample mail (see below)
 dev/emulator.sh            # start the emulator without a window; `window` shows it, `stop` ends it
 dev/gradle.sh assembleDebug
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb install -r android/app/build/outputs/apk/github/debug/app-github-debug.apk
 ```
 
 In the emulator the app signs in to `http://127.0.0.1:18080`: `dev/emulator.sh` runs `adb reverse`, which maps the emulator's port to this machine's. (The core accepts plain `http` only for 127.0.0.1, `localhost` and `::1`, so `10.0.2.2` does not work.) Sign in as `tester@kweb.test`; the password is in `~/tools/stalwart-test/etc/tester.txt`. The Allow page then returns to the app through `ovh.kweb.mail:/oauth/callback`, as on the phone.
@@ -143,5 +143,5 @@ is on `/mnt/E/cargo-target/kweb-mail` when `/mnt/E` is mounted, else `~/.cache/k
 - The signing key is outside the repository: `~/tools/kweb-release/kweb-release.jks` (alias `kweb`), with its passwords in `~/tools/kweb-release/keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`). **Back both up somewhere safe.** Losing the key means a new app identity: nobody could update, they would have to uninstall.
 - Gradle reads the properties file from `KWEB_KEYSTORE_PROPERTIES` if set, else from the path above. If the file is missing the release APK is unsigned and Gradle prints one line saying so.
 - Version: `appVersionCode` and `appVersionName` at the top of `android/app/build.gradle.kts`. The code goes up by one per release (a new code makes the app register for push again after an update). Add an entry to `CHANGELOG.md`.
-- Build: `cd android && ./gradlew.bat assembleRelease` (shrinking on, arm64-v8a and x86_64 only); output `android/app/build/outputs/apk/release/`. Tag `vX.Y.Z` and make a draft GitHub release with the signed APK.
+- Build: `cd android && ./gradlew.bat assembleRelease` (shrinking on, arm64-v8a and x86_64 only); output `android/app/build/outputs/apk/github/release/` (and the F-Droid variant without the updater in `apk/fdroid/release/`, see `dev/fdroid/README.md`). Tag `vX.Y.Z` and make a draft GitHub release with the signed APK.
 - CI: the android job builds `assembleRelease` and uploads `kweb-mail-release-apk`. To have CI sign it, add two repository secrets: `KWEB_KEYSTORE_BASE64` (`base64 -w0 kweb-release.jks`) and `KWEB_KEYSTORE_PROPERTIES` (the contents of the properties file, with `storeFile` ignored: CI rewrites it to the decoded keystore). Without them the artifact is unsigned.
