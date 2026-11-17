@@ -7,12 +7,17 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
+import uniffi.kweb_core.PublicLink
+import uniffi.kweb_core.PublicLinkLimits
 
 /** The picture on a row. */
 enum class FileIcon { Folder, Picture, Text, Pdf, Other }
 
 /** What a row's menu can offer. */
-enum class RowAction { Open, Save, Rename, Move, Delete }
+enum class RowAction { Open, Save, Rename, Move, PublicLink, Delete }
+
+/** How long a new public link works; the labels are in the string resources. */
+enum class LinkValidity(val seconds: ULong) { Day(86_400uL), Week(604_800uL), Month(2_592_000uL), Year(31_536_000uL) }
 
 /** The answer to "that name is already there". */
 enum class ConflictChoice { Replace, KeepBoth, Skip }
@@ -167,8 +172,41 @@ object FileRules {
     fun canMoveHere(moving: FileEntry, trail: List<FileEntry>, mayAdd: Boolean): Boolean =
         mayAdd && trail.none { it.id == moving.id } && trail.lastOrNull()?.id != moving.parentId
 
-    /** What the menu of a row offers, in order, for the rights of the entry. */
-    fun rowActions(entry: FileEntry): List<RowAction> = buildList {
+    /** A public link can be made for [entry]: the server has the feature, and it is a file in the user's own space. */
+    fun publicLinkAllowed(entry: FileEntry, supported: Boolean): Boolean =
+        supported && entry.accountId == null && entry.kind == FileKind.FILE
+
+    /** The validity choices the server's limits allow, shortest first; when none fits, the one nearest the default. */
+    fun linkChoices(limits: PublicLinkLimits): List<LinkValidity> {
+        val fits = LinkValidity.entries.filter { it.seconds >= limits.minExpiresIn && it.seconds <= limits.maxExpiresIn }
+        return fits.ifEmpty { listOf(nearest(LinkValidity.entries, limits.defaultExpiresIn)) }
+    }
+
+    /** The choice nearest the server's default validity. */
+    fun defaultValidity(limits: PublicLinkLimits, choices: List<LinkValidity> = linkChoices(limits)): LinkValidity =
+        nearest(choices, limits.defaultExpiresIn)
+
+    private fun nearest(choices: List<LinkValidity>, target: ULong): LinkValidity =
+        choices.minBy { if (it.seconds >= target) it.seconds - target else target - it.seconds }
+
+    /** The validity to ask the server for: [validity] kept inside the server's limits. */
+    fun expiresIn(validity: LinkValidity, limits: PublicLinkLimits): ULong {
+        val low = limits.minExpiresIn
+        val high = if (limits.maxExpiresIn >= low) limits.maxExpiresIn else low
+        return validity.seconds.coerceIn(low, high)
+    }
+
+    /** The file has as many live links as the server allows (a limit of 0 means none was set). */
+    fun atLinkLimit(links: List<PublicLink>, limits: PublicLinkLimits): Boolean =
+        limits.maxPerFile > 0u && links.size.toUInt() >= limits.maxPerFile
+
+    /** A moment as the locale writes a medium date and a short time, for "Expires ...". */
+    fun dateTimeText(epochSeconds: Long, zone: ZoneId, locale: Locale): String =
+        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(locale)
+            .format(Instant.ofEpochSecond(epochSeconds).atZone(zone))
+
+    /** What the menu of a row offers, in order, for the rights of the entry; [publicLinks] says the server has public links. */
+    fun rowActions(entry: FileEntry, publicLinks: Boolean = false): List<RowAction> = buildList {
         when (entry.kind) {
             FileKind.FOLDER -> add(RowAction.Open)
             FileKind.FILE -> {
@@ -181,6 +219,7 @@ object FileRules {
             add(RowAction.Rename)
             add(RowAction.Move)
         }
+        if (publicLinkAllowed(entry, publicLinks)) add(RowAction.PublicLink)
         if (entry.mayDelete) add(RowAction.Delete)
     }
 

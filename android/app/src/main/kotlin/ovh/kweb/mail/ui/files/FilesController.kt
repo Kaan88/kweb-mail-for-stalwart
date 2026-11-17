@@ -26,6 +26,8 @@ import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
 import uniffi.kweb_core.FileListing
 import uniffi.kweb_core.FileSpace
+import uniffi.kweb_core.PublicLink
+import uniffi.kweb_core.PublicLinkLimits
 
 /** A window over a change the user is making. */
 sealed interface FilesDialog {
@@ -38,6 +40,20 @@ sealed interface FilesDialog {
         val entry: FileEntry,
         val trail: List<FileEntry>,
         val listing: FileListing? = null,
+        val error: UiMessage? = null,
+    ) : FilesDialog
+
+    /**
+     * The public links of [entry]. [links] is null while they load; [revoking] is the link the user is asked about;
+     * [copiedId] the link last put on the clipboard; [error] says why something failed.
+     */
+    data class PublicLinks(
+        val entry: FileEntry,
+        val validity: LinkValidity,
+        val links: List<PublicLink>? = null,
+        val revoking: PublicLink? = null,
+        val working: Boolean = false,
+        val copiedId: String? = null,
         val error: UiMessage? = null,
     ) : FilesDialog
 }
@@ -86,6 +102,8 @@ data class FilesState(
     /** How far that download is; its total is null when neither the server nor the list says. */
     val openingProgress: DownloadProgress? = null,
     val upload: UploadState? = null,
+    /** The server's limits for public links; null while unknown or when the server has none (the entry is then not offered). */
+    val publicLinkLimits: PublicLinkLimits? = null,
 ) {
     /** The listing is for the top level or a folder, not the choice of spaces. */
     val atSpaceChoice: Boolean get() = space == null && (spaces?.size ?: 0) > 1
@@ -109,6 +127,9 @@ sealed interface FilesEvent {
 
     /** A picked document could not be read. */
     data class Unreadable(val name: String) : FilesEvent
+
+    /** A public link was made: the screen puts [url] on the clipboard. The link is never logged. */
+    data class CopyLink(val url: String) : FilesEvent
 
     /** An upload ended. */
     data class UploadDone(val total: Int, val tally: UploadTally) : FilesEvent
@@ -136,6 +157,9 @@ class FilesController(
     private var listGen = 0
     private var searchGen = 0
     private var moveGen = 0
+    private var linksGen = 0
+    private var limitsGen = 0
+    private var limitsAsked = false
     private var searchJob: Job? = null
     private var openJob: Job? = null
     private var openGen = 0
@@ -204,6 +228,9 @@ class FilesController(
         listGen++
         searchGen++
         moveGen++
+        linksGen++
+        limitsGen++
+        limitsAsked = false
         searchJob?.cancel()
         openJob?.cancel()
         openGen++
@@ -239,9 +266,22 @@ class FilesController(
                     )
                 }
                 if (space != null && (kept == null || reloadKept)) load(clear = kept == null, refreshing = false)
+                if (list.any { it.accountId == null }) loadLimits()
             }.onFailure { e ->
                 if (flow.value.spaces == null) flow.update { it.copy(loading = false, refreshing = false, error = FilesWords.message(e)) }
             }
+        }
+    }
+
+    /** Asks once whether the server has public links. A failure counts as "not yet known" and is asked again later; null is final. */
+    private fun loadLimits() {
+        if (limitsAsked) return
+        limitsAsked = true
+        val gen = limitsGen
+        scope.launch {
+            val result = call { backend.publicLinkLimits() }
+            if (gen != limitsGen) return@launch
+            result.onSuccess { limits -> flow.update { it.copy(publicLinkLimits = limits) } }.onFailure { limitsAsked = false }
         }
     }
 
@@ -463,6 +503,7 @@ class FilesController(
 
     fun dismissDialog() {
         moveGen++
+        linksGen++
         flow.update { it.copy(dialog = null, dialogError = null) }
     }
 
@@ -471,6 +512,93 @@ class FilesController(
     fun askRename(entry: FileEntry) = flow.update { it.copy(dialog = FilesDialog.Rename(entry), dialogError = null) }
 
     fun askDelete(entry: FileEntry) = flow.update { it.copy(dialog = FilesDialog.Delete(entry), dialogError = null) }
+
+    // ---- public links
+
+    /** Opens the public links of [entry] and reads them; nothing happens where [FileRules.publicLinkAllowed] says no. */
+    fun askPublicLinks(entry: FileEntry) {
+        val limits = flow.value.publicLinkLimits ?: return
+        if (!FileRules.publicLinkAllowed(entry, supported = true)) return
+        val validity = FileRules.defaultValidity(limits)
+        flow.update { it.copy(dialog = FilesDialog.PublicLinks(entry, validity), dialogError = null) }
+        loadLinks(entry)
+    }
+
+    fun linksRetry() {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        flow.update { s -> s.copy(dialog = d.copy(links = null, error = null)) }
+        loadLinks(d.entry)
+    }
+
+    private fun loadLinks(entry: FileEntry) {
+        val gen = ++linksGen
+        scope.launch {
+            val result = call { backend.publicLinks(entry) }
+            if (gen != linksGen) return@launch
+            result.onSuccess { links -> updateLinks(entry) { it.copy(links = links, error = null) } }
+                .onFailure { e -> updateLinks(entry) { it.copy(error = FilesWords.message(e)) } }
+        }
+    }
+
+    /** Changes the open links dialog if it is still the one for [entry]. */
+    private fun updateLinks(entry: FileEntry, change: (FilesDialog.PublicLinks) -> FilesDialog.PublicLinks) {
+        flow.update { s ->
+            val d = s.dialog
+            if (d is FilesDialog.PublicLinks && d.entry.id == entry.id) s.copy(dialog = change(d)) else s
+        }
+    }
+
+    fun chooseValidity(validity: LinkValidity) {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        updateLinks(d.entry) { it.copy(validity = validity) }
+    }
+
+    /** Makes a link with the chosen validity; it goes on top of the list and its address is handed to the screen to copy. */
+    fun makeLink() {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        val limits = flow.value.publicLinkLimits ?: return
+        val links = d.links ?: return
+        if (d.working || FileRules.atLinkLimit(links, limits)) return
+        val expiresIn = FileRules.expiresIn(d.validity, limits)
+        updateLinks(d.entry) { it.copy(working = true, error = null) }
+        scope.launch {
+            val result = call { backend.publicLinkCreate(d.entry, expiresIn) }
+            result.onSuccess { link ->
+                updateLinks(d.entry) { it.copy(links = listOf(link) + it.links.orEmpty(), working = false, copiedId = link.id) }
+                channel.trySend(FilesEvent.CopyLink(link.url))
+            }.onFailure { e -> updateLinks(d.entry) { it.copy(working = false, error = FilesWords.message(e)) } }
+        }
+    }
+
+    /** The screen put the address of link [id] on the clipboard. */
+    fun linkCopied(id: String) {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        updateLinks(d.entry) { it.copy(copiedId = id) }
+    }
+
+    fun askRevoke(link: PublicLink) {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        updateLinks(d.entry) { it.copy(revoking = link, error = null) }
+    }
+
+    fun cancelRevoke() {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        updateLinks(d.entry) { it.copy(revoking = null) }
+    }
+
+    /** Revokes the link the user was asked about; it stops working at once on the server and leaves the list. */
+    fun revokeLink() {
+        val d = flow.value.dialog as? FilesDialog.PublicLinks ?: return
+        val link = d.revoking ?: return
+        if (d.working) return
+        updateLinks(d.entry) { it.copy(working = true) }
+        scope.launch {
+            val result = call { backend.publicLinkRevoke(d.entry, link.id) }
+            result.onSuccess { _ ->
+                updateLinks(d.entry) { it.copy(links = it.links?.filter { l -> l.id != link.id }, revoking = null, working = false) }
+            }.onFailure { e -> updateLinks(d.entry) { it.copy(revoking = null, working = false, error = FilesWords.message(e)) } }
+        }
+    }
 
     /** Opens the move dialog on the folder the entry is in (the top level for a search result). */
     fun askMove(entry: FileEntry) {

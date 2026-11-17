@@ -89,6 +89,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.ZoneId
 import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.account.rememberCopier
 import ovh.kweb.mail.ui.accounts.AccountAvatarButton
 import ovh.kweb.mail.ui.contacts.SearchPill
 import ovh.kweb.mail.ui.calendar.NoticeBar
@@ -134,6 +135,17 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
     // Leaving for another screen for good (not a rotation) closes the "Opening" window: the file must not pop up later.
     DisposableEffect(c) { onDispose { if (activity?.isChangingConfigurations != true) c.cancelOpening() } }
 
+    // A public link is a secret: marked sensitive so the system does not show it in the clipboard preview.
+    val copyLink = rememberCopier(sensitive = true) {}
+    val shareLink: (String) -> Unit = { url ->
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
+        try {
+            context.startActivity(Intent.createChooser(send, null))
+        } catch (_: ActivityNotFoundException) {
+            scope.launch { appSnackbar.showSnackbar(resources.getString(R.string.files_link_no_app)) }
+        }
+    }
+
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { target ->
         if (target == null) c.cancelSave() else c.save(target.toString())
     }
@@ -175,6 +187,7 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
                             ),
                         )
                     }
+                    is FilesEvent.CopyLink -> copyLink(event.url)
                     is FilesEvent.Unreadable -> scope.launch { appSnackbar.showSnackbar(resources.getString(R.string.files_unreadable, event.name)) }
                     is FilesEvent.UploadDone -> {
                         val done = event.tally.uploaded
@@ -256,13 +269,14 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
                         }
                         RowAction.Rename -> c.askRename(entry)
                         RowAction.Move -> c.askMove(entry)
+                        RowAction.PublicLink -> c.askPublicLinks(entry)
                         RowAction.Delete -> c.askDelete(entry)
                     }
                 },
             )
         }
     }
-    FilesDialogHost(state, c)
+    FilesDialogHost(state, c, onCopyLink = copyLink, onShareLink = shareLink)
 }
 
 /** The head of Files: the same rounded field as the Inbox and Contacts, with the account at its right end. */
@@ -386,7 +400,7 @@ private fun Body(
                     results.isEmpty() -> item(key = "none") { Centered { Hint(stringResource(R.string.files_search_none)) } }
                     else -> itemsIndexed(results, key = { _, e -> "r/${e.id}" }) { index, entry ->
                         val where = entry.parentId?.let { state.folderNames[it] }?.let { resources.getString(R.string.files_in_folder, it) }
-                        EntryRow(entry, index, results.size, subtitle = listOfNotNull(FileRules.subtitle(entry, zone, locale, sizeUnits).ifEmpty { null }, where).joinToString(" · "), onAction)
+                        EntryRow(entry, index, results.size, subtitle = listOfNotNull(FileRules.subtitle(entry, zone, locale, sizeUnits).ifEmpty { null }, where).joinToString(" · "), state.publicLinkLimits != null, onAction)
                     }
                 }
             }
@@ -426,7 +440,7 @@ private fun Body(
                             listing == null -> item(key = "loading") { Centered { CircularProgressIndicator() } }
                             listing.entries.isEmpty() -> item(key = "empty") { Centered { Hint(stringResource(R.string.files_empty)) } }
                             else -> itemsIndexed(listing.entries, key = { _, e -> e.id }) { index, entry ->
-                                EntryRow(entry, index, listing.entries.size, subtitle = FileRules.subtitle(entry, zone, locale, sizeUnits), onAction)
+                                EntryRow(entry, index, listing.entries.size, subtitle = FileRules.subtitle(entry, zone, locale, sizeUnits), state.publicLinkLimits != null, onAction)
                             }
                         }
                     }
@@ -530,8 +544,8 @@ private fun GroupRow(
 
 /** One file or folder, with its menu (the three dots, or a long press) for what its rights allow. */
 @Composable
-private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String, onAction: (FileEntry, RowAction) -> Unit) {
-    val actions = remember(entry) { FileRules.rowActions(entry) }
+private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String, publicLinks: Boolean, onAction: (FileEntry, RowAction) -> Unit) {
+    val actions = remember(entry, publicLinks) { FileRules.rowActions(entry, publicLinks) }
     // "Share" for a folder of the user's own space; the entries of a shared space are not the user's to share.
     val openShare = LocalOpenShare.current
     val shareable = ShareRules.fileFolderShareable(entry)
@@ -541,6 +555,7 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
         RowAction.Save to R.string.files_save,
         RowAction.Rename to R.string.files_rename,
         RowAction.Move to R.string.files_move,
+        RowAction.PublicLink to R.string.files_public_link,
         RowAction.Delete to R.string.files_delete,
     )
     run {
@@ -596,5 +611,6 @@ private fun actionIcon(action: RowAction): androidx.compose.ui.graphics.painter.
     RowAction.Save -> painterResource(R.drawable.ic_download)
     RowAction.Rename -> androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Filled.Edit)
     RowAction.Move -> painterResource(R.drawable.ic_folder)
+    RowAction.PublicLink -> painterResource(R.drawable.ic_link)
     RowAction.Delete -> androidx.compose.ui.graphics.vector.rememberVectorPainter(Icons.Filled.Delete)
 }

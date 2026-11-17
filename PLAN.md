@@ -538,6 +538,14 @@ Postern (MIT, same author) already has, in Rust: the OAuth flow with client regi
 
 The owner asked for the milestones to go on without stopping for questions. Each line is a choice made on the way; the code follows it until the owner says otherwise.
 
+Public links to files (owner, 2026-11-17: "make a PR for this feature"; the server side is the owner's Stalwart fork, github.com/Kaan88/stalwart, `FORK.md`)
+- A file of the user's own space gets "Public link" in its menu when the server has the fork's share-link API (`POST /api/sharelink/{limits,list,create,revoke}`); official Stalwart answers 404 and nothing is shown. Asked once when the spaces load, not cached across starts (`core/src/jmap/public_links.rs`, `Core::public_link_*`, android `ui/files`, `kweb files link`).
+- Files only, own space only: node ids repeat between accounts, and the server lets only the owner make links. Every request also sends the file's name and size, and the server refuses a file that does not match, so a link is never made for another file.
+- The link the app shows is the server address it signed in to plus the path the server returns, never a host from the answer. The link is a secret: never logged, never in an error, never cached; copying marks the clip sensitive (Android 13+).
+- Validity: 1 day, 7 days, 30 days or 1 year, within the server's limits (it keeps every link between one hour and a year and allows 20 per file); revoke asks first and works at once.
+- No Turkish strings: the app has no Turkish locale yet.
+- Checked: core tests against a mock of the fork's API (`core/tests/suite/public_links.rs`), the CLI parser tests; the fork's API itself was checked by its own end-to-end tests. Not checked: the Android dialog on an emulator or phone (no emulator in the session that built it; the CI build is the only compile check), and the app against a real fork server.
+
 Notification buttons (owner, 2026-11-15: the buttons of a mail notification become a setting; default Delete, Mark read, Reply, also for installs that never chose)
 - Per account, like the three notification switches beside it: stored in the account's own settings file (`notification_actions`, the keys `archive`, `delete`, `read`, `reply` in order). The first account added after a sign-out of an old single-account install takes the old choice over with the switches.
 - Nothing stored means "never chose" and reads as the default, so there is no migration step: an existing install gets Delete, Mark read, Reply on its next notification. "Use the default" removes the stored value again, so such an account would follow a later change of the default.
