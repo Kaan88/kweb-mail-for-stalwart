@@ -181,6 +181,8 @@ jobs:
           cd fd
           echo "sdk_path: $ANDROID_HOME" > config.yml
           chmod 600 config.yml
+          # The tool expects to run inside a git repository that holds the recipe, as fdroiddata is.
+          git init -q . && git add metadata && git -c user.name=ci -c user.email=ci@invalid commit -q -m recipe
           code=$(sed -n 's/^val appVersionCode = //p' ../android/app/build.gradle.kts)
           fdroid build --verbose --test "ovh.kweb.mail:$code"
           # The tool reports a failed build without failing itself.
