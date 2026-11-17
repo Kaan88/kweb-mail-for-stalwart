@@ -130,6 +130,11 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(UPDATE_APK_SHA, "").orEmpty()
         set(value) = prefs.edit { putString(UPDATE_APK_SHA, value) }
 
+    /** What changed in the newest release, as plain text from the core; empty for none. Shown as text only. */
+    var updateNotes: String
+        get() = prefs.getString(UPDATE_NOTES, "").orEmpty()
+        set(value) = prefs.edit { putString(UPDATE_NOTES, value) }
+
     /** Puts the swipes, the delete question, the Undo time and the reply choice back as they were. */
     fun resetActions() = prefs.edit {
         remove(SWIPE_RIGHT)
@@ -155,6 +160,7 @@ class UiPrefs(context: Context) {
         const val UPDATE_APK_URL = "update_apk_url"
         const val UPDATE_APK_SIZE = "update_apk_size"
         const val UPDATE_APK_SHA = "update_apk_sha"
+        const val UPDATE_NOTES = "update_notes"
         const val CONVERSATIONS = "reading_conversation_view"
         const val MARK_READ = "reading_mark_read"
         const val AFTER_ACTION = "reading_after_action"

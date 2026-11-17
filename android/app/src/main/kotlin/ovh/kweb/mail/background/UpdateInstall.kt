@@ -232,7 +232,15 @@ fun UiPrefs.rememberApk(info: UpdateInfo) {
     updateApkUrl = info.apkUrl
     updateApkSize = info.apkSize.toLong()
     updateApkSha = info.apkSha256
+    updateNotes = info.notes
 }
+
+/** The release notes for [version] when they are the ones the last check saw; empty otherwise. */
+fun UiPrefs.notesFor(version: String): String = if (version == updateLatest) updateNotes else ""
+
+/** A notice's long text: the notes when there are some, else [text]. */
+fun androidx.core.app.NotificationCompat.Builder.withNotes(text: String, notes: String): androidx.core.app.NotificationCompat.Builder =
+    setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(if (notes.isEmpty()) text else "$text\n\n$notes"))
 
 /**
  * The background download of the file of [version]: queued on an unmetered network (or on any network when the user
@@ -291,7 +299,7 @@ object UpdateNotices {
         context.getSystemService(android.app.NotificationManager::class.java).cancel(UpdateRules.NOTIFICATION_TAG, AVAILABLE_ID)
         val open = Intent(context, UpdateInstallActivity::class.java).putExtra(UpdateInstallActivity.EXTRA_VERSION, version)
         val tap = PendingIntent.getActivity(context, READY_ID, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        post(context, READY_ID, context.getString(R.string.update_ready_title, version), context.getString(R.string.update_ready_text), tap, null)
+        post(context, READY_ID, context.getString(R.string.update_ready_title, version), context.getString(R.string.update_ready_text), tap, null, UiPrefs(context).notesFor(version))
     }
 
     /** The metered case: the version is announced with a Download button instead of being downloaded. */
@@ -302,7 +310,7 @@ object UpdateNotices {
             Intent(context, UpdateActionReceiver::class.java).setAction(UpdateActionReceiver.DOWNLOAD).putExtra(UpdateActionReceiver.VERSION, version),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        post(context, AVAILABLE_ID, context.getString(R.string.update_available_title, version), context.getString(R.string.update_available_text), tap, context.getString(R.string.update_action_download) to tap)
+        post(context, AVAILABLE_ID, context.getString(R.string.update_available_title, version), context.getString(R.string.update_available_text), tap, context.getString(R.string.update_action_download) to tap, UiPrefs(context).notesFor(version))
     }
 
     fun clear(context: Context) {
@@ -311,7 +319,7 @@ object UpdateNotices {
         nm.cancel(UpdateRules.NOTIFICATION_TAG, AVAILABLE_ID)
     }
 
-    private fun post(context: Context, id: Int, title: String, text: String, tap: PendingIntent, action: Pair<String, PendingIntent>?) {
+    private fun post(context: Context, id: Int, title: String, text: String, tap: PendingIntent, action: Pair<String, PendingIntent>?, notes: String) {
         val b = androidx.core.app.NotificationCompat.Builder(context, Channels.UPDATES)
             .setSmallIcon(R.drawable.ic_stat_mail)
             .setContentTitle(title)
@@ -320,6 +328,7 @@ object UpdateNotices {
             .setOnlyAlertOnce(true)
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_LOW)
             .setContentIntent(tap)
+            .withNotes(text, notes)
         action?.let { b.addAction(0, it.first, it.second) }
         try {
             context.getSystemService(android.app.NotificationManager::class.java).notify(UpdateRules.NOTIFICATION_TAG, id, b.build())
@@ -355,12 +364,14 @@ class UpdateInstallActivity : Activity() {
     private var version = ""
     private var sessionId = -1
     private var waitingForSetting = false
+    private var notesSeen = false
     private var receiver: BroadcastReceiver? = null
     private var dialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         version = intent.getStringExtra(EXTRA_VERSION).orEmpty()
+        notesSeen = intent.getBooleanExtra(EXTRA_NOTES_SEEN, false)
         if (!UpdateInstallRules.safeVersion(version)) {
             finish()
             return
@@ -368,6 +379,7 @@ class UpdateInstallActivity : Activity() {
         if (savedInstanceState != null) {
             sessionId = savedInstanceState.getInt(STATE_SESSION, -1)
             waitingForSetting = savedInstanceState.getBoolean(STATE_SETTING, false)
+            notesSeen = savedInstanceState.getBoolean(STATE_NOTES, notesSeen)
         }
         if (sessionId == -1) proceed()
     }
@@ -376,6 +388,7 @@ class UpdateInstallActivity : Activity() {
         super.onSaveInstanceState(outState)
         outState.putInt(STATE_SESSION, sessionId)
         outState.putBoolean(STATE_SETTING, waitingForSetting)
+        outState.putBoolean(STATE_NOTES, notesSeen)
     }
 
     override fun onResume() {
@@ -398,6 +411,21 @@ class UpdateInstallActivity : Activity() {
             file.delete()
             UpdateNotices.clear(this)
             say(UpdateDownloader.refusalText(this, refusal))
+            return
+        }
+        // What changed, before the install: Install goes on, Later keeps the file for another time.
+        val notes = UiPrefs(this).notesFor(version)
+        if (!notesSeen && notes.isNotEmpty()) {
+            dialog = AlertDialog.Builder(this)
+                .setTitle(getString(R.string.update_notes_title, version))
+                .setMessage(notes)
+                .setPositiveButton(R.string.update_notes_install) { _, _ ->
+                    notesSeen = true
+                    proceed()
+                }
+                .setNegativeButton(R.string.update_notes_later) { _, _ -> finish() }
+                .setOnCancelListener { finish() }
+                .show()
             return
         }
         if (!packageManager.canRequestPackageInstalls()) {
@@ -483,10 +511,13 @@ class UpdateInstallActivity : Activity() {
 
     companion object {
         const val EXTRA_VERSION = "version"
+        const val EXTRA_NOTES_SEEN = "notes_seen"
+        private const val STATE_NOTES = "notes"
         private const val STATE_SESSION = "session"
         private const val STATE_SETTING = "setting"
         private const val ACTION_STATUS = "ovh.kweb.mail.UPDATE_INSTALL_STATUS"
 
-        fun intent(context: Context, version: String): Intent = Intent(context, UpdateInstallActivity::class.java).putExtra(EXTRA_VERSION, version)
+        fun intent(context: Context, version: String, notesSeen: Boolean = false): Intent =
+            Intent(context, UpdateInstallActivity::class.java).putExtra(EXTRA_VERSION, version).putExtra(EXTRA_NOTES_SEEN, notesSeen)
     }
 }
