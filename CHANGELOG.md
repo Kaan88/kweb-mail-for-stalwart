@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- The app no longer contains a pre-built library: the part that checks server certificates is built from source (copied from rustls-platform-verifier, unchanged).
+- A second build without the built-in updater, for F-Droid, signed with the same key. Release builds are reproducible on Linux.
+
 ## 0.2.3
 
 - Public links to your files: a link anyone can download from until it expires, with Copy, Share and Revoke. Only on servers that offer share links (the Stalwart fork at Kaan88/stalwart); hidden elsewhere.

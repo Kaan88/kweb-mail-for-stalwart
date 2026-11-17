@@ -1,0 +1,2 @@
+- The app no longer contains a pre-built library: the part that checks server certificates is built from source.
+- A second build without the built-in updater, for F-Droid.
