@@ -26,6 +26,17 @@ val rustSourceFiles = files(
     rustRepoRoot.resolve("Cargo.lock"),
 )
 
+/** Where cargo is: on the PATH, or else where rustup put it (F-Droid's build server does not pass a PATH on). */
+object Cargo {
+    val exe: String by lazy {
+        val name = if (System.getProperty("os.name").lowercase().contains("win")) "cargo.exe" else "cargo"
+        val onPath = System.getenv("PATH").orEmpty().split(File.pathSeparator).any { File(it, name).isFile }
+        val cargoHome = System.getenv("CARGO_HOME") ?: File(System.getProperty("user.home"), ".cargo").path
+        val installed = File(cargoHome, "bin/$name")
+        if (!onPath && installed.isFile) installed.absolutePath else "cargo"
+    }
+}
+
 abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations) : DefaultTask() {
     @get:Internal abstract val repoRoot: DirectoryProperty
     @get:InputFiles @get:PathSensitive(PathSensitivity.RELATIVE) abstract val rustSources: ConfigurableFileCollection
@@ -56,9 +67,9 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
         val root = repoRoot.get().asFile
         val problems = mutableListOf<String>()
 
-        if (probe("cargo", "--version", dir = root) == null) {
+        if (probe(Cargo.exe, "--version", dir = root) == null) {
             problems += "cargo is not on PATH (install Rust from https://rustup.rs)."
-        } else if (probe("cargo", "ndk", "--version", dir = root) == null) {
+        } else if (probe(Cargo.exe, "ndk", "--version", dir = root) == null) {
             problems += "cargo-ndk is not installed (cargo install cargo-ndk)."
         }
         val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
@@ -82,7 +93,7 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
         out.mkdirs()
         exec.exec {
             workingDir = root
-            val cmd = mutableListOf("cargo", "ndk")
+            val cmd = mutableListOf(Cargo.exe, "ndk")
             abis.get().forEach { cmd += listOf("-t", it) }
             cmd += listOf("--platform", minSdk.get().toString(), "-o", out.absolutePath, "build", "-p", "kweb-core")
             if (release.get()) cmd += listOf("--release", "--locked")
@@ -119,7 +130,7 @@ abstract class UniffiBindingsTask @Inject constructor(private val exec: ExecOper
         } else {
             exec.exec {
                 workingDir = root
-                commandLine("cargo", "build", "-p", "kweb-core")
+                commandLine(Cargo.exe, "build", "-p", "kweb-core")
             }
             val os = System.getProperty("os.name").lowercase()
             val fileName = when {
@@ -138,7 +149,7 @@ abstract class UniffiBindingsTask @Inject constructor(private val exec: ExecOper
         exec.exec {
             workingDir = root
             commandLine(
-                "cargo", "run", "-q", "-p", "kweb-core", "--features", "bindgen", "--bin", "uniffi-bindgen", "--",
+                Cargo.exe, "run", "-q", "-p", "kweb-core", "--features", "bindgen", "--bin", "uniffi-bindgen", "--",
                 "generate", library.absolutePath, "--language", "kotlin", "--no-format", "--out-dir", out.absolutePath,
             )
         }
