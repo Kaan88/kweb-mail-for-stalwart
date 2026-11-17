@@ -5,7 +5,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -14,6 +16,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,11 +46,15 @@ import androidx.compose.ui.unit.dp
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.FileEntry
+import ovh.kweb.mail.ui.calendar.rememberLocale
 import uniffi.kweb_core.FileKind
+import uniffi.kweb_core.PublicLink
+import uniffi.kweb_core.PublicLinkLimits
+import java.time.ZoneId
 
 /** The dialog of [FilesState.dialog], if there is one. The typed text lives in the dialog, saved across a rotation. */
 @Composable
-internal fun FilesDialogHost(state: FilesState, c: FilesController) {
+internal fun FilesDialogHost(state: FilesState, c: FilesController, onCopyLink: (String) -> Unit, onShareLink: (String) -> Unit) {
     when (val dialog = state.dialog) {
         null -> Unit
         FilesDialog.NewFolder -> NameDialog(
@@ -74,6 +81,7 @@ internal fun FilesDialogHost(state: FilesState, c: FilesController) {
         )
         is FilesDialog.Delete -> DeleteDialog(dialog.entry, state.busy, state.dialogError, onConfirm = { c.delete(dialog.entry) }, onDismiss = c::dismissDialog)
         is FilesDialog.Move -> MoveDialog(dialog, state, c)
+        is FilesDialog.PublicLinks -> PublicLinksDialog(dialog, state.publicLinkLimits, c, onCopyLink, onShareLink)
     }
     state.upload?.conflict?.let { ConflictDialog(it, c) }
     state.opening?.let { name ->
@@ -263,5 +271,152 @@ private fun MoveRow(name: String, icon: FileIcon, shape: Shape, onClick: () -> U
     ) {
         FileIconBadge(icon, size = 32)
         Text(name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+
+private fun validityLabel(validity: LinkValidity): Int = when (validity) {
+    LinkValidity.Day -> R.string.files_link_1_day
+    LinkValidity.Week -> R.string.files_link_7_days
+    LinkValidity.Month -> R.string.files_link_30_days
+    LinkValidity.Year -> R.string.files_link_1_year
+}
+
+/**
+ * The public links of one file: the live ones with Copy, Share and Revoke, and a place to make a new one. A link is
+ * a secret: it goes only to the clipboard or the share sheet, never into a log.
+ */
+@Composable
+private fun PublicLinksDialog(
+    dialog: FilesDialog.PublicLinks,
+    limits: PublicLinkLimits?,
+    c: FilesController,
+    onCopy: (String) -> Unit,
+    onShare: (String) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val links = dialog.links
+    val choices = remember(limits) { limits?.let { FileRules.linkChoices(it) }.orEmpty() }
+    val atLimit = links != null && limits != null && FileRules.atLinkLimit(links, limits)
+    val zone = remember { ZoneId.systemDefault() }
+    val locale = rememberLocale()
+    AlertDialog(
+        onDismissRequest = { if (!dialog.working) c.dismissDialog() },
+        title = { Text(stringResource(R.string.files_public_links), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.files_public_links_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                )
+                Box(Modifier.padding(top = 12.dp).heightIn(min = 48.dp, max = 240.dp).fillMaxWidth()) {
+                    when {
+                        links == null && dialog.error != null -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(dialog.error.resolve(LocalResources.current), color = colors.error)
+                            TextButton(onClick = c::linksRetry) { Text(stringResource(R.string.retry)) }
+                        }
+                        links == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                        links.isEmpty() -> Text(stringResource(R.string.files_no_public_link), color = colors.onSurfaceVariant, modifier = Modifier.padding(vertical = 8.dp))
+                        else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            itemsIndexed(links, key = { _, l -> l.id }) { i, link ->
+                                LinkRow(
+                                    link = link,
+                                    shape = Groups.shape(i, links.size),
+                                    expires = FileRules.dateTimeText(link.expires, zone, locale),
+                                    busy = dialog.working,
+                                    onCopy = {
+                                        onCopy(link.url)
+                                        c.linkCopied(link.id)
+                                    },
+                                    onShare = { onShare(link.url) },
+                                    onRevoke = { c.askRevoke(link) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (dialog.copiedId != null) {
+                    Text(
+                        stringResource(R.string.files_link_copied),
+                        color = colors.primary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                if (links != null) {
+                    if (atLimit && limits != null) {
+                        Text(
+                            stringResource(R.string.files_link_limit, limits.maxPerFile.toInt()),
+                            color = colors.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    } else {
+                        Text(
+                            stringResource(R.string.files_link_valid_for),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                        )
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (choice in choices) {
+                                FilterChip(
+                                    selected = dialog.validity == choice,
+                                    onClick = { c.chooseValidity(choice) },
+                                    enabled = !dialog.working,
+                                    label = { Text(stringResource(validityLabel(choice))) },
+                                )
+                            }
+                        }
+                    }
+                    // A reason for a failed Make or Revoke; a failed load is shown in place of the list.
+                    if (dialog.error != null) ErrorLine(dialog.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = c::makeLink, enabled = links != null && !atLimit && !dialog.working) { Text(stringResource(R.string.files_link_make)) }
+        },
+        dismissButton = { TextButton(onClick = c::dismissDialog, enabled = !dialog.working) { Text(stringResource(R.string.files_link_close)) } },
+    )
+    if (dialog.revoking != null) {
+        AlertDialog(
+            onDismissRequest = { if (!dialog.working) c.cancelRevoke() },
+            title = { Text(stringResource(R.string.files_link_revoke)) },
+            text = { Text(stringResource(R.string.files_link_revoke_text)) },
+            confirmButton = {
+                TextButton(onClick = c::revokeLink, enabled = !dialog.working) {
+                    Text(stringResource(R.string.files_link_revoke), color = colors.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = c::cancelRevoke, enabled = !dialog.working) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+}
+
+@Composable
+private fun LinkRow(link: PublicLink, shape: Shape, expires: String, busy: Boolean, onCopy: () -> Unit, onShare: () -> Unit, onRevoke: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(colors.surfaceContainerHigh)
+            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 2.dp),
+    ) {
+        Text(link.url, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            stringResource(R.string.files_link_expires, expires),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Row {
+            TextButton(onClick = onCopy, enabled = !busy) { Text(stringResource(R.string.files_link_copy)) }
+            TextButton(onClick = onShare, enabled = !busy) { Text(stringResource(R.string.files_link_share)) }
+            TextButton(onClick = onRevoke, enabled = !busy) { Text(stringResource(R.string.files_link_revoke), color = colors.error) }
+        }
     }
 }

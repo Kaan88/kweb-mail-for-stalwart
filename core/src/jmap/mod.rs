@@ -26,6 +26,7 @@ mod jscal;
 mod jscontact;
 mod manage;
 mod notices;
+mod public_links;
 mod pushsub;
 mod recur;
 mod send;

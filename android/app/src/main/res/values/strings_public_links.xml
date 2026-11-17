@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Public links for a file in the user's own space (only on servers that have them) -->
+    <string name="files_public_link">Public link</string>
+    <string name="files_public_links">Public links</string>
+    <string name="files_public_links_hint">Anyone with the link can download this file until the link expires.</string>
+    <string name="files_no_public_link">No public link yet</string>
+    <string name="files_link_make">Make link</string>
+    <string name="files_link_copy">Copy</string>
+    <string name="files_link_share">Share</string>
+    <string name="files_link_revoke">Revoke</string>
+    <string name="files_link_revoke_text">Revoke this link? It stops working at once.</string>
+    <string name="files_link_close">Close</string>
+    <string name="files_link_copied">Link copied</string>
+    <string name="files_link_valid_for">Valid for</string>
+    <string name="files_link_1_day">1 day</string>
+    <string name="files_link_7_days">7 days</string>
+    <string name="files_link_30_days">30 days</string>
+    <string name="files_link_1_year">1 year</string>
+    <string name="files_link_expires">Expires %1$s</string>
+    <string name="files_link_limit">This file has the most links allowed (%1$d)</string>
+    <string name="files_link_no_app">No app on this phone can share a link.</string>
+</resources>
