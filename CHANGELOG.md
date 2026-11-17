@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3
+
+- Public links to your files: a link anyone can download from until it expires, with Copy, Share and Revoke. Only on servers that offer share links (the Stalwart fork at Kaan88/stalwart); hidden elsewhere.
+- Library updates (base64, GitHub Actions).
+
 ## 0.2.2
 
 - When an update is found, a popup says what changed, with Install or Later; the notes are also in the update notices and in About.
