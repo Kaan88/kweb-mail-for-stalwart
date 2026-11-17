@@ -1,5 +1,13 @@
 # F-Droid
 
+## Decision (owner, 2026-11-17)
+
+Both are published. The GitHub release keeps the updater (the `release` build, signed with the project's key). F-Droid ships the `fdroid` build, which has no updater and is signed by F-Droid with its own key. The two signatures differ, so a user cannot move from one source to the other without reinstalling, and F-Droid does not verify the build against the project's signature. Reproducibility is therefore a property to check ourselves (two builds of the `fdroid` type must be identical), not a requirement of the store. Say this in the store description when the entry is submitted.
+
+Next steps, in order: (1) remove the pre-built `rustls-platform-verifier` AAR (build it from source or copy its Kotlin classes in); (2) pin NDK, Rust and cargo-ndk and put the same versions in the recipe; (3) build `assembleFdroid` twice on two paths and compare with `diffoscope`; (4) open the merge request on fdroiddata with `ovh.kweb.mail.yml`. Nothing here has been built yet: the session that wrote it had no Android SDK.
+
+## How it works
+
 - `./gradlew assembleFdroid` (in `android/`) builds the F-Droid variant: the build type `fdroid` is the release build without the updater (no `REQUEST_INSTALL_PACKAGES`, no `UpdateInstallActivity`, no `UpdateActionReceiver`, no weekly check, no update rows in About) and unsigned. Output: `android/app/build/outputs/apk/fdroid/`.
 - `ovh.kweb.mail.yml` is a draft of the recipe for the fdroiddata repository. The NDK (`r28c`) and cargo-ndk (`4.1.2`) versions in it are placeholders: use the ones the release is really built with.
 - The store text and changelogs are in `fastlane/metadata/android/en-US/`; add `changelogs/<versionCode>.txt` per release.
