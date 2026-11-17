@@ -6,6 +6,12 @@ A native Android client for Stalwart 1.1 and later: mail, calendar, contacts and
 
 <b>Calendar, tasks, contacts and files</b>, shared folders and calendars, and an optional mirror of your calendars into the phone's calendar.
 
+<b>Home (optional)</b>: a first tab of tiles with your unread mail, the next event, tasks due today, flagged mail and recent files. It points out overlapping events, open invitations, overdue tasks and dates in mail, by plain rules on your phone, without any AI.
+
+<b>Mail filters</b>: rules in a visual editor, kept on the server as a Sieve script.
+
+<b>Your account and your server</b>: masked addresses and account security (password, two-step codes, app passwords, passkeys). For administrators, with an API key: the mail queue, accounts, blocked addresses and the log search; on a server with an Enterprise licence also a live dashboard, delivery history and recovery of deleted items.
+
 <b>AI assistant (optional, bring your own)</b>: off until you enter a service and agree to it. Mail is only sent to the service you named, for a task you started.
 
 By itself the app only talks to the server you sign in to. Everything else is optional and starts with you: pictures in a mail, the AI service you entered, a key lookup you ask for, Google push.
