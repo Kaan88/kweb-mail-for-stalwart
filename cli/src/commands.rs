@@ -16,7 +16,9 @@ use kweb_core::{
 
 use crate::{
     ai,
-    args::{Away, Command, Files, Filters, Folder, Identity as IdentityCommand, Label, Masked, Share, Shared},
+    args::{
+        Away, Command, Files, Filters, Folder, Identity as IdentityCommand, Label, LinkAction, Masked, Share, Shared,
+    },
     timefmt,
 };
 
@@ -893,6 +895,36 @@ fn files(core: &Core, space: Option<String>, what: Files) -> Result<(), String> 
         Files::Rm { id } => {
             core.file_delete(space, id).map_err(fail)?;
             println!("deleted");
+        }
+        Files::Link { id, what } => {
+            if space.is_some() {
+                return Err("public links can only be made for your own files".into());
+            }
+            let Some(limits) = core.public_link_limits().map_err(fail)? else {
+                return Err("this server has no public links".into());
+            };
+            let entry = find_file(core, &space, &id)?;
+            // The link is a secret: printed only here, on the user's own request.
+            match what {
+                LinkAction::List => {
+                    let links = core.public_links(entry).map_err(fail)?;
+                    if links.is_empty() {
+                        println!("no public links");
+                    }
+                    for link in links {
+                        println!("{}  expires {}  [{}]", link.url, timefmt::utc(link.expires), one_line(&link.id));
+                    }
+                }
+                LinkAction::New { days } => {
+                    let expires_in = days.map_or(limits.default_expires_in, |d| d * 86_400);
+                    let link = core.public_link_create(entry, expires_in).map_err(fail)?;
+                    println!("{}  expires {}  [{}]", link.url, timefmt::utc(link.expires), one_line(&link.id));
+                }
+                LinkAction::Revoke { link } => {
+                    core.public_link_revoke(entry, link).map_err(fail)?;
+                    println!("revoked");
+                }
+            }
         }
     }
     Ok(())

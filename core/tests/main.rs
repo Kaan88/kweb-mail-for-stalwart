@@ -52,6 +52,8 @@ mod labels;
 mod manage;
 #[path = "suite/mock_server.rs"]
 mod mock_server;
+#[path = "suite/public_links.rs"]
+mod public_links;
 #[path = "suite/push.rs"]
 mod push;
 #[path = "suite/reading.rs"]

@@ -53,6 +53,8 @@ pub struct UpdateInfo {
     pub apk_size: u64,
     /// ... and its SHA-256 as 64 lower-case hex digits (empty: GitHub gave none).
     pub apk_sha256: String,
+    /// What changed, from the release's description, as plain text (see [`plain_notes`]); empty: none.
+    pub notes: String,
 }
 
 impl UpdateInfo {
@@ -65,6 +67,7 @@ impl UpdateInfo {
             apk_url: String::new(),
             apk_size: 0,
             apk_sha256: String::new(),
+            notes: String::new(),
         }
     }
 }
@@ -165,7 +168,8 @@ fn read_release_at(json: &Value, current: &str, base: &str) -> UpdateInfo {
         return none;
     }
     let page = json["html_url"].as_str().filter(|u| u.starts_with(base)).unwrap_or_default();
-    let mut info = UpdateInfo { newer: is_newer(current, &latest), latest, page_url: page.to_string(), ..none };
+    let notes = plain_notes(json["body"].as_str().unwrap_or_default());
+    let mut info = UpdateInfo { newer: is_newer(current, &latest), latest, page_url: page.to_string(), notes, ..none };
     let files = format!("{base}{DOWNLOAD_PART}");
     let apk = json["assets"].as_array().into_iter().flatten().find(|a| {
         a["name"].as_str().is_some_and(|n| n.to_ascii_lowercase().ends_with(".apk"))
@@ -183,6 +187,62 @@ fn read_release_at(json: &Value, current: &str, base: &str) -> UpdateInfo {
             .unwrap_or_default();
     }
     info
+}
+
+/// The most of the release notes the app shows.
+const MAX_NOTES: usize = 4000;
+
+/// The release's description (Markdown, written by the project) as plain text for a dialog: line ends
+/// made plain, control characters dropped, headings, emphasis and code marks taken off, list items as
+/// bullets, `[text](address)` as the text alone, blank runs collapsed, at most [`MAX_NOTES`] characters.
+/// The host shows it as text only, never as HTML or a link.
+pub fn plain_notes(body: &str) -> String {
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out: Vec<String> = Vec::new();
+    for line in body.lines() {
+        let line: String = line.chars().filter(|c| !c.is_control() || *c == '\t').collect();
+        let trimmed = line.trim_end();
+        let indent = trimmed.len() - trimmed.trim_start().len();
+        let mut text = trimmed.trim_start().to_string();
+        let mut prefix = "";
+        if let Some(rest) = text.strip_prefix('#') {
+            text = rest.trim_start_matches('#').trim_start().to_string();
+        } else if let Some(rest) = ["- ", "* ", "+ "].iter().find_map(|m| text.strip_prefix(m)) {
+            prefix = if indent >= 2 { "    • " } else { "• " };
+            text = rest.to_string();
+        }
+        let text = unlink(&text).replace("**", "").replace("__", "").replace('`', "");
+        let line = format!("{prefix}{}", text.trim());
+        if line.is_empty() && out.last().is_none_or(|l| l.is_empty()) {
+            continue;
+        }
+        out.push(line);
+    }
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    let text = out.join("\n");
+    if text.chars().count() <= MAX_NOTES {
+        return text;
+    }
+    let cut: String = text.chars().take(MAX_NOTES).collect();
+    let cut = cut.rsplit_once('\n').map(|(a, _)| a.to_string()).filter(|a| !a.is_empty()).unwrap_or(cut);
+    format!("{cut}\n…")
+}
+
+/// `[text](address)` becomes `text`; anything else stays as it is.
+fn unlink(line: &str) -> String {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('[') {
+        let Some(close) = rest[open..].find("](").map(|i| open + i) else { break };
+        let Some(end) = rest[close + 2..].find(')').map(|i| close + 2 + i) else { break };
+        out.push_str(&rest[..open]);
+        out.push_str(&rest[open + 1..close]);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Where a download may start and where it may be sent on to.
@@ -440,6 +500,22 @@ mod tests {
         assert!(info.newer && info.page_url.is_empty());
         // The same version: not newer.
         assert!(!read_release(&ok, "0.2.0").newer);
+    }
+
+    #[test]
+    fn the_notes_come_as_plain_text() {
+        let body = "## What changed\r\n\r\n- **Updates** download by themselves.\r\n  * See [the page](https://example.test/x) \u{7}now\r\n\r\n\r\nUse `kweb` freely.\r\n\r\n";
+        assert_eq!(
+            plain_notes(body),
+            "What changed\n\n• Updates download by themselves.\n    • See the page now\n\nUse kweb freely."
+        );
+        assert_eq!(plain_notes(""), "");
+        // An unclosed link stays as written.
+        assert_eq!(plain_notes("a [b](c"), "a [b](c");
+        let cut = plain_notes(&"- line\n".repeat(2000));
+        assert!(cut.chars().count() <= MAX_NOTES + 2 && cut.ends_with("\n…"), "{}", cut.len());
+        let info = read_release(&json!({"tag_name":"v0.3.0","body":"- one"}), "0.2.0");
+        assert_eq!(info.notes, "• one");
     }
 
     #[test]

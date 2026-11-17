@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2
+
+- When an update is found, a popup says what changed, with Install or Later; the notes are also in the update notices and in About.
+- Maintenance: weekly dependency updates and a security audit of the libraries.
+
 ## 0.2.1
 
 - Updates download by themselves on Wi-Fi and ask to install; a manual check offers Download and install.

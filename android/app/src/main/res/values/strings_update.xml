@@ -45,4 +45,12 @@
     <string name="update_available_title">Version %1$s is available</string>
     <string name="update_available_text">It is not downloaded yet, because the connection is metered.</string>
     <string name="update_action_download">Download</string>
+    <string name="update_notes_title">What\'s new in version %1$s</string>
+    <string name="update_notes_install">Install</string>
+    <string name="update_notes_download">Download and install</string>
+    <string name="update_notes_page">Open release page</string>
+    <string name="update_notes_later">Later</string>
+    <string name="update_notes_none">The release page has no notes for this version.</string>
+    <string name="update_notes_row">What\'s new in version %1$s</string>
+    <string name="update_notes_row_detail">What changed since the version you have.</string>
 </resources>

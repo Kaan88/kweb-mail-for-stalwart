@@ -4,6 +4,9 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -89,6 +92,9 @@ fun AboutScreen(onBack: () -> Unit) {
     var apkUrl by remember { mutableStateOf(prefs.updateApkUrl) }
     var apkSize by remember { mutableStateOf(prefs.updateApkSize) }
     var auto by remember { mutableStateOf(prefs.updateAuto) }
+    var notes by remember { mutableStateOf(prefs.updateNotes) }
+    // The "what's new" popup: opened by a check that found a newer version, or by its row.
+    var showNotes by remember { mutableStateOf(false) }
     var ready by remember { mutableStateOf(newer && UpdateInstallRules.safeVersion(latest) && UpdateFiles.file(context, latest).isFile) }
     var downloading by remember { mutableStateOf<Pair<Long, Long?>?>(null) }
     var downloadError by remember { mutableStateOf<String?>(null) }
@@ -96,6 +102,75 @@ fun AboutScreen(onBack: () -> Unit) {
     val downloadFailure = stringResource(R.string.update_failed_generic)
     // Leaving the screen ends a download that is running here.
     DisposableEffect(Unit) { onDispose { cancel?.cancel() } }
+    val canInstall = newer && latest.isNotEmpty() && UpdateInstallRules.safeVersion(latest) && apkUrl.isNotEmpty()
+    val showPage = newer && latest.isNotEmpty() && UpdateChecker.pageUri(pageUrl) != null
+    fun openPage() {
+        UpdateChecker.pageUri(pageUrl)?.let { page ->
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (_: ActivityNotFoundException) {
+                // No browser: nothing to open.
+            }
+        }
+    }
+    // [seen]: the notes were just shown, so the install screen does not show them again.
+    fun startDownload(seen: Boolean) {
+        val token = DownloadCancel()
+        cancel = token
+        downloading = 0L to apkSize.takeIf { it > 0 }
+        downloadError = null
+        val version = latest
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                UpdateDownloader.download(context, version, apkUrl, apkSize, prefs.updateApkSha, token) { done, total ->
+                    downloading = done to (total ?: apkSize.takeIf { it > 0 })
+                }
+            }
+            downloading = null
+            cancel = null
+            when (outcome) {
+                is UpdateDownloader.Outcome.Done -> {
+                    ready = true
+                    // The system's own prompt follows; nothing is installed without the user's tap there.
+                    context.startActivity(UpdateInstallActivity.intent(context, version, notesSeen = seen))
+                }
+                is UpdateDownloader.Outcome.Refused -> downloadError = UpdateDownloader.refusalText(context, outcome.why)
+                is UpdateDownloader.Outcome.Failed -> downloadError = outcome.message ?: downloadFailure
+                UpdateDownloader.Outcome.Cancelled -> Unit
+            }
+        }
+    }
+    if (showNotes && newer && latest.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showNotes = false },
+            title = { Text(stringResource(R.string.update_notes_title, latest)) },
+            text = {
+                Text(
+                    notes.ifEmpty { stringResource(R.string.update_notes_none) },
+                    Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                when {
+                    downloading != null -> Unit
+                    canInstall && ready -> TextButton(onClick = {
+                        showNotes = false
+                        context.startActivity(UpdateInstallActivity.intent(context, latest, notesSeen = true))
+                    }) { Text(stringResource(R.string.update_notes_install)) }
+                    canInstall -> TextButton(onClick = {
+                        showNotes = false
+                        startDownload(seen = true)
+                    }) { Text(stringResource(R.string.update_notes_download)) }
+                    showPage -> TextButton(onClick = {
+                        showNotes = false
+                        openPage()
+                    }) { Text(stringResource(R.string.update_notes_page)) }
+                }
+            },
+            dismissButton = { TextButton(onClick = { showNotes = false }) { Text(stringResource(R.string.update_notes_later)) } },
+        )
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -134,10 +209,9 @@ fun AboutScreen(onBack: () -> Unit) {
                     },
                 )
             }
-            val canInstall = newer && latest.isNotEmpty() && UpdateInstallRules.safeVersion(latest) && apkUrl.isNotEmpty()
-            val showPage = newer && latest.isNotEmpty() && UpdateChecker.pageUri(pageUrl) != null
             val rowsList = buildList {
                 add("check")
+                if (newer && latest.isNotEmpty() && notes.isNotEmpty()) add("notes")
                 if (canInstall) add("install")
                 if (showPage) add("page")
                 add("weekly")
@@ -174,9 +248,18 @@ fun AboutScreen(onBack: () -> Unit) {
                                     apkUrl = prefs.updateApkUrl
                                     apkSize = prefs.updateApkSize
                                     ready = UpdateInstallRules.safeVersion(latest) && UpdateFiles.file(context, latest).isFile
+                                    notes = prefs.updateNotes
+                                    // A newer version was found: say what changed, with the next step as its button.
+                                    if (result.isSuccess && newer && latest.isNotEmpty()) showNotes = true
                                 }
                             }),
                             trailing = if (checking) ({ CircularProgressIndicator(Modifier.padding(4.dp), strokeWidth = 2.dp) }) else null,
+                        )
+                        "notes" -> SettingsRow(
+                            shape,
+                            stringResource(R.string.update_notes_row, latest),
+                            stringResource(R.string.update_notes_row_detail),
+                            onClick = { showNotes = true },
                         )
                         "install" -> {
                             val progress = downloading
@@ -202,32 +285,7 @@ fun AboutScreen(onBack: () -> Unit) {
                                     downloadError?.let { stringResource(R.string.update_failed_download, it) }
                                         ?: if (apkSize > 0) stringResource(R.string.update_download_detail, Formatter.formatShortFileSize(context, apkSize))
                                         else stringResource(R.string.update_download_detail_nosize),
-                                    onClick = {
-                                        val token = DownloadCancel()
-                                        cancel = token
-                                        downloading = 0L to apkSize.takeIf { it > 0 }
-                                        downloadError = null
-                                        val version = latest
-                                        scope.launch {
-                                            val outcome = withContext(Dispatchers.IO) {
-                                                UpdateDownloader.download(context, version, apkUrl, apkSize, prefs.updateApkSha, token) { done, total ->
-                                                    downloading = done to (total ?: apkSize.takeIf { it > 0 })
-                                                }
-                                            }
-                                            downloading = null
-                                            cancel = null
-                                            when (outcome) {
-                                                is UpdateDownloader.Outcome.Done -> {
-                                                    ready = true
-                                                    // The system's own prompt follows; nothing is installed without the user's tap there.
-                                                    context.startActivity(UpdateInstallActivity.intent(context, version))
-                                                }
-                                                is UpdateDownloader.Outcome.Refused -> downloadError = UpdateDownloader.refusalText(context, outcome.why)
-                                                is UpdateDownloader.Outcome.Failed -> downloadError = outcome.message ?: downloadFailure
-                                                UpdateDownloader.Outcome.Cancelled -> Unit
-                                            }
-                                        }
-                                    },
+                                    onClick = { startDownload(seen = false) },
                                 )
                             }
                         }
@@ -235,15 +293,7 @@ fun AboutScreen(onBack: () -> Unit) {
                             shape,
                             stringResource(R.string.update_page),
                             stringResource(R.string.update_page_detail),
-                            onClick = {
-                                UpdateChecker.pageUri(pageUrl)?.let { page ->
-                                    try {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, page).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                                    } catch (_: ActivityNotFoundException) {
-                                        // No browser: nothing to open.
-                                    }
-                                }
-                            },
+                            onClick = { openPage() },
                         )
                         "weekly" -> SettingsRow(
                             shape,

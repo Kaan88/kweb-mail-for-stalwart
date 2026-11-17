@@ -68,6 +68,12 @@ Usage:
   kweb files mkdir <name> [folder-id]
                               make a folder
   kweb files rm <id>          delete a file, or a folder with everything in it, for good
+  kweb files link <file-id>   list the public links of one of your files (only on servers
+                              with public links; anyone with a link can download the file)
+  kweb files link <file-id> new [days]
+                              make a public link valid for days (default: the server's)
+  kweb files link <file-id> rm <link-id>
+                              revoke a public link: it stops working at once
                               every files command takes --space <account-id> to work in a
                               shared space (see files spaces) instead of your own
   kweb shared                 list the accounts of other users that share mail, calendars
@@ -299,6 +305,15 @@ pub enum Files {
     Get { id: String, path: String },
     Mkdir { name: String, folder: Option<String> },
     Rm { id: String },
+    Link { id: String, what: LinkAction },
+}
+
+/// What `kweb files link` does.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkAction {
+    List,
+    New { days: Option<u64> },
+    Revoke { link: String },
 }
 
 /// What `kweb shared` does.
@@ -516,6 +531,18 @@ fn files(rest: &[String]) -> Result<Command, String> {
         ["rm", id] => Files::Rm { id: id.to_string() },
         ["rm"] => return Err("files rm needs an <id>".into()),
         ["rm", _, extra, ..] => return too_many(extra),
+        ["link"] => return Err("files link needs a <file-id>".into()),
+        ["link", id] => Files::Link { id: id.to_string(), what: LinkAction::List },
+        ["link", id, "new"] => Files::Link { id: id.to_string(), what: LinkAction::New { days: None } },
+        ["link", id, "new", days] => {
+            let days = days.parse::<u64>().ok().filter(|d| (1..=365).contains(d)).ok_or("days must be 1 to 365")?;
+            Files::Link { id: id.to_string(), what: LinkAction::New { days: Some(days) } }
+        }
+        ["link", id, "rm", link] => {
+            Files::Link { id: id.to_string(), what: LinkAction::Revoke { link: link.to_string() } }
+        }
+        ["link", _, "rm"] => return Err("files link rm needs a <link-id>".into()),
+        ["link", _, extra, ..] => return too_many(extra),
         [folder] => Files::List { folder: Some(folder.to_string()) },
         [_, extra, ..] => return too_many(extra),
     };
@@ -1459,6 +1486,16 @@ mod tests {
         assert_eq!(p(&["files", "get", "f1", "out"]), f(None, Files::Get { id: "f1".into(), path: "out".into() }));
         assert_eq!(p(&["files", "mkdir", "N"]), f(None, Files::Mkdir { name: "N".into(), folder: None }));
         assert_eq!(p(&["files", "rm", "f1"]), f(None, Files::Rm { id: "f1".into() }));
+        assert_eq!(p(&["files", "link", "f1"]), f(None, Files::Link { id: "f1".into(), what: LinkAction::List }));
+        assert_eq!(
+            p(&["files", "link", "f1", "new", "30"]),
+            f(None, Files::Link { id: "f1".into(), what: LinkAction::New { days: Some(30) } })
+        );
+        assert_eq!(
+            p(&["files", "link", "f1", "rm", "77"]),
+            f(None, Files::Link { id: "f1".into(), what: LinkAction::Revoke { link: "77".into() } })
+        );
+        assert!(p(&["files", "link", "f1", "new", "0"]).is_err());
         assert!(p(&["files", "put"]).is_err() && p(&["files", "rm"]).is_err() && p(&["files", "get", "f1"]).is_err());
         assert!(p(&["files", "--space"]).is_err() && p(&["files", "--bogus"]).is_err());
         assert!(p(&["files", "rm", "f1", "--replace"]).is_err());

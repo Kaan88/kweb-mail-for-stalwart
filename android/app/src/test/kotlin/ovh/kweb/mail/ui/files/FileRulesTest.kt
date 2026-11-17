@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
+import uniffi.kweb_core.PublicLinkLimits
 
 internal fun entry(
     id: String = "1",
@@ -239,5 +240,54 @@ class FileRulesTest {
         assertEquals("CONSOLE.txt", FileRules.serverName("CONSOLE.txt"))
         val cut = FileRules.serverName("é".repeat(200) + ".txt")
         assertTrue(cut.toByteArray().size <= 255 && cut.endsWith(".txt"))
+    }
+
+    private fun limits(default: ULong = 604_800uL, min: ULong = 3_600uL, max: ULong = 31_536_000uL, perFile: UInt = 5u) =
+        PublicLinkLimits(defaultExpiresIn = default, minExpiresIn = min, maxExpiresIn = max, maxPerFile = perFile)
+
+    @Test fun anOwnFileOffersAPublicLinkWhenTheServerHasThem() {
+        assertEquals(
+            listOf(RowAction.Open, RowAction.Save, RowAction.Rename, RowAction.Move, RowAction.PublicLink, RowAction.Delete),
+            FileRules.rowActions(entry(), publicLinks = true),
+        )
+    }
+
+    @Test fun aFolderOffersNoPublicLink() {
+        assertFalse(RowAction.PublicLink in FileRules.rowActions(entry(kind = FileKind.FOLDER), publicLinks = true))
+    }
+
+    @Test fun aFileOfASharedSpaceOffersNoPublicLink() {
+        assertFalse(RowAction.PublicLink in FileRules.rowActions(entry().copy(accountId = "x"), publicLinks = true))
+    }
+
+    @Test fun aServerWithoutPublicLinksOffersNone() {
+        assertFalse(RowAction.PublicLink in FileRules.rowActions(entry(), publicLinks = false))
+        assertFalse(RowAction.PublicLink in FileRules.rowActions(entry()))
+    }
+
+    @Test fun theChoicesStayInsideTheLimits() {
+        assertEquals(LinkValidity.entries, FileRules.linkChoices(limits()))
+        assertEquals(listOf(LinkValidity.Day, LinkValidity.Week), FileRules.linkChoices(limits(max = 700_000uL)))
+        assertEquals(listOf(LinkValidity.Week, LinkValidity.Month, LinkValidity.Year), FileRules.linkChoices(limits(min = 100_000uL)))
+    }
+
+    @Test fun whenNoChoiceFitsTheNearestToTheDefaultIsOffered() {
+        val l = limits(default = 2_000_000uL, min = 1_000_000uL, max = 1_500_000uL)
+        assertEquals(listOf(LinkValidity.Month), FileRules.linkChoices(l))
+        // What is asked for is still kept inside the limits.
+        assertEquals(1_500_000uL, FileRules.expiresIn(LinkValidity.Month, l))
+    }
+
+    @Test fun theDefaultChoiceIsTheNearestToTheServersDefault() {
+        assertEquals(LinkValidity.Week, FileRules.defaultValidity(limits(default = 604_800uL)))
+        assertEquals(LinkValidity.Day, FileRules.defaultValidity(limits(default = 3_600uL)))
+        assertEquals(LinkValidity.Year, FileRules.defaultValidity(limits(default = 99_999_999uL)))
+    }
+
+    @Test fun theLinkLimitPerFileIsReachedAtTheCount() {
+        val link = { id: String -> uniffi.kweb_core.PublicLink(id = id, url = "u$id", created = 1L, expires = 2L) }
+        assertFalse(FileRules.atLinkLimit(listOf(link("a")), limits(perFile = 2u)))
+        assertTrue(FileRules.atLinkLimit(listOf(link("a"), link("b")), limits(perFile = 2u)))
+        assertFalse(FileRules.atLinkLimit(listOf(link("a"), link("b")), limits(perFile = 0u)))
     }
 }

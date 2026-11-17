@@ -24,6 +24,8 @@ import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
 import uniffi.kweb_core.FileListing
 import uniffi.kweb_core.FileSpace
+import uniffi.kweb_core.PublicLink
+import uniffi.kweb_core.PublicLinkLimits
 
 private val own = FileSpace(accountId = null, name = "", mayAddAtTop = true, maxUpload = 1000uL)
 private val shared = FileSpace(accountId = "x", name = "boss@example.org", mayAddAtTop = false, maxUpload = 1000uL)
@@ -72,6 +74,25 @@ private class FakeBackend : FilesBackend {
 
     override fun delete(account: String?, id: String) {
         calls += "delete:$id"
+    }
+
+    var limits: PublicLinkLimits? = null
+    var links = CopyOnWriteArrayList<PublicLink>()
+    var failLinkCreate: Exception? = null
+
+    override fun publicLinkLimits() = limits
+    override fun publicLinks(file: FileEntry): List<PublicLink> {
+        calls += "links:${file.id}"
+        return links.toList()
+    }
+    override fun publicLinkCreate(file: FileEntry, expiresIn: ULong): PublicLink {
+        failLinkCreate?.let { throw it }
+        calls += "linkCreate:${file.id}:$expiresIn"
+        return PublicLink(id = "L${links.size + 1}", url = "https://example.org/p/${links.size + 1}", created = 1L, expires = 2L).also { links.add(0, it) }
+    }
+    override fun publicLinkRevoke(file: FileEntry, linkId: String) {
+        calls += "linkRevoke:${file.id}:$linkId"
+        links.removeAll { it.id == linkId }
     }
 
     /** What the next download reports before it ends, and whether it ends the way a stop does. */
@@ -533,5 +554,94 @@ class FilesControllerTest {
         shown()
         c.reset()
         assertEquals(FilesState(), c.state.value)
+    }
+
+    private val sevenDays = PublicLinkLimits(defaultExpiresIn = 604_800uL, minExpiresIn = 3_600uL, maxExpiresIn = 31_536_000uL, maxPerFile = 2u)
+
+    private fun linksDialog() = c.state.value.dialog as? FilesDialog.PublicLinks
+
+    @Test fun aServerWithoutPublicLinksHasNoLimits() {
+        shown()
+        Thread.sleep(100)
+        assertNull(c.state.value.publicLinkLimits)
+        c.askPublicLinks(entry(id = "f"))
+        assertNull(c.state.value.dialog)
+    }
+
+    @Test fun theLimitsAreKeptAndTheLinksOfAFileAreListed() {
+        backend.limits = sevenDays
+        backend.links.add(PublicLink("L0", "https://example.org/p/0", 1L, 2L))
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "f"))
+        await("links") { linksDialog()?.links != null }
+        assertEquals(listOf("L0"), linksDialog()!!.links!!.map { it.id })
+        assertEquals(LinkValidity.Week, linksDialog()!!.validity)
+    }
+
+    @Test fun aFolderOrASharedFileOpensNoLinksDialog() {
+        backend.limits = sevenDays
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "a", kind = FileKind.FOLDER))
+        c.askPublicLinks(entry(id = "f").copy(accountId = "x"))
+        assertNull(c.state.value.dialog)
+    }
+
+    @Test fun makingALinkPutsItOnTopAndAsksTheScreenToCopyIt() {
+        backend.limits = sevenDays
+        backend.links.add(PublicLink("L0", "https://example.org/p/0", 1L, 2L))
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "f"))
+        await("links") { linksDialog()?.links != null }
+        c.chooseValidity(LinkValidity.Day)
+        c.makeLink()
+        await("made") { linksDialog()?.links?.size == 2 && linksDialog()?.working == false }
+        assertEquals(listOf("L2", "L0"), linksDialog()!!.links!!.map { it.id })
+        assertEquals("L2", linksDialog()!!.copiedId)
+        assertTrue("linkCreate:f:86400" in backend.calls)
+    }
+
+    @Test fun aRefusedLinkSaysWhy() {
+        backend.limits = sevenDays
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "f"))
+        await("links") { linksDialog()?.links != null }
+        backend.failLinkCreate = CoreException.Invalid("Too many links.")
+        c.makeLink()
+        await("error") { linksDialog()?.error != null }
+        assertEquals(0, linksDialog()!!.links!!.size)
+    }
+
+    @Test fun noLinkIsMadeAtTheLimit() {
+        backend.limits = sevenDays
+        backend.links.add(PublicLink("L0", "u0", 1L, 2L))
+        backend.links.add(PublicLink("L1", "u1", 1L, 2L))
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "f"))
+        await("links") { linksDialog()?.links != null }
+        c.makeLink()
+        Thread.sleep(100)
+        assertTrue(backend.calls.none { it.startsWith("linkCreate") })
+    }
+
+    @Test fun revokingAsksFirstThenRemovesTheLink() {
+        backend.limits = sevenDays
+        backend.links.add(PublicLink("L0", "u0", 1L, 2L))
+        shown()
+        await("limits") { c.state.value.publicLinkLimits != null }
+        c.askPublicLinks(entry(id = "f"))
+        await("links") { linksDialog()?.links != null }
+        val link = linksDialog()!!.links!!.single()
+        c.askRevoke(link)
+        assertEquals(link, linksDialog()!!.revoking)
+        assertTrue(backend.calls.none { it.startsWith("linkRevoke") })
+        c.revokeLink()
+        await("revoked") { linksDialog()?.revoking == null && linksDialog()?.working == false }
+        assertEquals(emptyList<PublicLink>(), linksDialog()!!.links)
+        assertTrue("linkRevoke:f:L0" in backend.calls)
     }
 }

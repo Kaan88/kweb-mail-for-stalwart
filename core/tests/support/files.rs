@@ -130,6 +130,14 @@ impl Default for Files {
 }
 
 impl Files {
+    /// Name and size of a file in the user's own space (for the public-link mock).
+    pub fn own_file(&self, id: &str) -> Option<(String, u64)> {
+        let space = self.spaces.get(ACCOUNT_ID)?;
+        let node = space.nodes.iter().find(|n| n.id == id && !n.dir)?;
+        let size = node.blob.as_ref().and_then(|b| self.blobs.get(b)).map_or(0, |(_, c)| c.len() as u64);
+        Some((node.name.clone(), size))
+    }
+
     /// Turns the file storage on and lays out what the shared account shares: a folder `Shared`
     /// (id 1: the user may read, add and change content), in it a folder `ReadOnly` (id 2: read
     /// only) and a file `hello.txt` (id 3).
