@@ -1,0 +1,11 @@
+A native Android client for Stalwart 1.1 and later: mail, calendar, contacts and files in one app. It speaks JMAP only (no IMAP, POP3 or SMTP).
+
+<b>Mail</b>: conversations, folders and labels, search, send with Undo and send later, drafts, filters, signed and encrypted mail (OpenPGP and S/MIME, off until you turn it on).
+
+<b>Notifications that stay true</b>: new mail shows within seconds and goes away when you read, archive or delete it anywhere else. Delivered through a permanent connection to your own server, or optionally through Google push with no relay in between.
+
+<b>Calendar, tasks, contacts and files</b>, shared folders and calendars, and an optional mirror of your calendars into the phone's calendar.
+
+<b>AI assistant (optional, bring your own)</b>: off until you enter a service and agree to it. Mail is only sent to the service you named, for a task you started.
+
+The app only talks to the server you sign in to.

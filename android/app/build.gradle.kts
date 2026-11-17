@@ -85,8 +85,17 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
             val cmd = mutableListOf("cargo", "ndk")
             abis.get().forEach { cmd += listOf("-t", it) }
             cmd += listOf("--platform", minSdk.get().toString(), "-o", out.absolutePath, "build", "-p", "kweb-core")
-            if (release.get()) cmd += "--release"
+            if (release.get()) cmd += listOf("--release", "--locked")
             commandLine(cmd)
+            if (release.get()) {
+                // Same bytes from any checkout path and any user: no build paths in the library, no build id.
+                val cargoHome = System.getenv("CARGO_HOME") ?: File(System.getProperty("user.home"), ".cargo").path
+                environment(
+                    "RUSTFLAGS",
+                    "--remap-path-prefix=${root.absolutePath}=/kweb --remap-path-prefix=$cargoHome=/cargo " +
+                        "-C link-arg=-Wl,--build-id=none",
+                )
+            }
         }
     }
 }
@@ -177,6 +186,14 @@ android {
         versionName = appVersionName
         // Also filters the ABIs of JNA's bundled libjnidispatch.
         ndk { abiFilters += rustAbis }
+        // False in the F-Droid build, which has no updater (src/fdroid/AndroidManifest.xml).
+        buildConfigField("boolean", "UPDATER", "true")
+    }
+
+    // No signing blob in the APK: it is not reproducible and F-Droid does not want it.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
     signingConfigs {
@@ -204,6 +221,14 @@ android {
         }
     }
 
+    buildTypes.create("fdroid") {
+        initWith(buildTypes.getByName("release"))
+        // F-Droid signs it itself (or compares it with the project's signature for a reproducible build).
+        signingConfig = null
+        buildConfigField("boolean", "UPDATER", "false")
+        matchingFallbacks += "release"
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -222,7 +247,7 @@ androidComponents.onVariants { variant ->
         description = "Builds libkweb_core.so for ${rustAbis.joinToString()} with cargo-ndk"
         repoRoot.set(layout.dir(provider { rustRepoRoot }))
         rustSources.from(rustSourceFiles)
-        release.set(variant.buildType == "release")
+        release.set(variant.buildType == "release" || variant.buildType == "fdroid")
         abis.set(rustAbis)
         minSdk.set(minSdkVersion)
         outDir.set(layout.buildDirectory.dir("rust/jniLibs/${variant.name}"))

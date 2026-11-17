@@ -1,0 +1,39 @@
+# Draft of the build recipe for the fdroiddata repository (metadata/ovh.kweb.mail.yml).
+# The text of the store entry comes from fastlane/metadata/android/en-US/ in this repository.
+Categories:
+  - Internet
+License: MIT
+SourceCode: https://github.com/Kaan88/kweb-mail-for-stalwart
+IssueTracker: https://github.com/Kaan88/kweb-mail-for-stalwart/issues
+Changelog: https://github.com/Kaan88/kweb-mail-for-stalwart/blob/HEAD/CHANGELOG.md
+
+AntiFeatures:
+  NonFreeNet:
+    en-US: The optional "Push through Google" mode and the optional AI assistant use services the user chooses.
+
+RepoType: git
+Repo: https://github.com/Kaan88/kweb-mail-for-stalwart.git
+
+Builds:
+  - versionName: 0.2.3
+    versionCode: 6
+    commit: v0.2.3
+    subdir: android/app
+    sudo:
+      - apt-get update
+      - apt-get install -y curl build-essential
+    init: |
+      curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.0 \
+        --target aarch64-linux-android --target x86_64-linux-android
+    gradle:
+      - fdroid
+    prebuild:
+      - export PATH=$HOME/.cargo/bin:$PATH
+      - cargo install cargo-ndk --locked --version 4.1.2
+    ndk: r28c
+    # Applies only to the "fdroid" build type: no updater, no REQUEST_INSTALL_PACKAGES.
+
+AutoUpdateMode: Version v%v
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 0.2.3
+CurrentVersionCode: 6

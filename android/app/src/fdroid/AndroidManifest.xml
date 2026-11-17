@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- F-Droid build: no self-updater. F-Droid's own client delivers updates, so the permission to install
+     packages and the two components that belong to the updater are removed from the merged manifest. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.REQUEST_INSTALL_PACKAGES"
+        tools:node="remove" />
+
+    <application>
+        <activity
+            android:name=".background.UpdateInstallActivity"
+            tools:node="remove" />
+        <receiver
+            android:name=".background.UpdateActionReceiver"
+            tools:node="remove" />
+    </application>
+</manifest>

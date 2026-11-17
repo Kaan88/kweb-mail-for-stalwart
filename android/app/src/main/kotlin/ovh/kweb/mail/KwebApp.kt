@@ -30,7 +30,8 @@ class KwebApp : Application() {
     private fun warmUp() {
         try {
             // The weekly update check is on by default, so it is scheduled here and not only from About (KEEP leaves a running schedule alone).
-            UpdateScheduler.apply(this, UiPrefs(this).updateWeekly)
+            // Not in the F-Droid build: no updater, no request to GitHub.
+            if (BuildConfig.UPDATER) UpdateScheduler.apply(this, UiPrefs(this).updateWeekly)
             // A downloaded update that is no longer newer than the installed version (it was installed) goes.
             ovh.kweb.mail.background.UpdateFiles.sweep(this)
             val accounts = Accounts.load(this)

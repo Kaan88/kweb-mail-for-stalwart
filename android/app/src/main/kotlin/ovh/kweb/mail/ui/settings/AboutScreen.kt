@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.text.format.Formatter
 import androidx.compose.runtime.DisposableEffect
+import ovh.kweb.mail.BuildConfig
 import ovh.kweb.mail.background.UpdateChecker
 import ovh.kweb.mail.background.UpdateDownloader
 import ovh.kweb.mail.background.UpdateFiles
@@ -209,6 +210,8 @@ fun AboutScreen(onBack: () -> Unit) {
                     },
                 )
             }
+            // The F-Droid build has no updater: its store does the updating.
+            if (BuildConfig.UPDATER) {
             val rowsList = buildList {
                 add("check")
                 if (newer && latest.isNotEmpty() && notes.isNotEmpty()) add("notes")
@@ -318,6 +321,7 @@ fun AboutScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+            }
             }
             Group(Modifier.padding(top = 16.dp)) {
                 SettingsRow(
