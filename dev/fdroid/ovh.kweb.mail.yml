@@ -35,7 +35,7 @@ Builds:
     # Not tried on F-Droid's build server. Gradle must find cargo on its PATH: check that the PATH set here
     # reaches the Gradle step, and if it does not, install Rust where the PATH already points.
     build:
-      - curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.97.0
+      - curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
         --target aarch64-linux-android --target x86_64-linux-android
       - export PATH=$HOME/.cargo/bin:$PATH
       - cargo install cargo-ndk --locked --version 4.1.2

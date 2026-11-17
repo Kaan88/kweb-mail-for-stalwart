@@ -1,0 +1,6 @@
+# One Rust version for everyone who builds a release (this PC, CI, F-Droid): the same compiler is the
+# first condition for the same bytes. Raise it on purpose, together with dev/fdroid/ovh.kweb.mail.yml.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+targets = ["aarch64-linux-android", "x86_64-linux-android"]

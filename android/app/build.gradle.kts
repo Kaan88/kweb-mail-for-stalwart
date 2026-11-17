@@ -179,6 +179,8 @@ val keystoreProperties = Properties().also { props ->
 android {
     namespace = "ovh.kweb.mail"
     compileSdk = 36
+    // Pinned for the same bytes everywhere (r28c); the recipe in dev/fdroid names the same one.
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "ovh.kweb.mail"
