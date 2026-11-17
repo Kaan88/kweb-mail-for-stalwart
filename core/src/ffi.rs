@@ -58,9 +58,10 @@ use crate::{
         AiProvider, AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail,
         ContactList, ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace,
         FilterRule, Filters, Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses,
-        MessageBody, MessageHeader, MessageLabels, NewSecret, Notice, PendingSend, Person, Quota, RefusedRecipient,
-        Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount, SharedAction,
-        SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
+        MessageBody, MessageHeader, MessageLabels, NewSecret, Notice, PendingSend, Person, PublicLink,
+        PublicLinkLimits, Quota, RefusedRecipient, Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel,
+        SharedAccount, SharedAction, SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup,
+        Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -1707,6 +1708,33 @@ impl Core {
     /// [`Core::download_blob`] does (a stream to a part file beside it, renamed when complete).
     pub fn file_download(&self, account: Option<String>, blob_id: String, dest_path: String) -> Result<()> {
         self.download_to_path(Some(account.as_deref()), &blob_id, &dest_path)
+    }
+
+    /// What the server allows for public links, or `None` when it has none (official
+    /// Stalwart): then the app offers no public links. Asked each time, not cached.
+    pub fn public_link_limits(&self) -> Result<Option<PublicLinkLimits>> {
+        self.with_connection(|conn| async move { conn.public_link_limits().await })
+    }
+
+    /// The live public links of one of the user's own files, newest first. A file of a
+    /// shared space or a folder is `Error::Invalid`.
+    pub fn public_links(&self, file: FileEntry) -> Result<Vec<PublicLink>> {
+        let file = &file;
+        self.with_connection(|conn| async move { conn.public_links(file).await })
+    }
+
+    /// Makes a public link to one of the user's own files, valid for `expires_in` seconds
+    /// (kept within [`PublicLinkLimits`] by the server). A refusal (too many links, a file
+    /// that changed) is `Error::Invalid` with the server's words.
+    pub fn public_link_create(&self, file: FileEntry, expires_in: u64) -> Result<PublicLink> {
+        let file = &file;
+        self.with_connection(|conn| async move { conn.public_link_create(file, expires_in).await })
+    }
+
+    /// Revokes a public link: it stops working at once.
+    pub fn public_link_revoke(&self, file: FileEntry, link_id: String) -> Result<()> {
+        let (file, link_id) = (&file, link_id.as_str());
+        self.with_connection(|conn| async move { conn.public_link_revoke(file, link_id).await })
     }
 }
 

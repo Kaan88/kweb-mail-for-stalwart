@@ -1375,6 +1375,30 @@ pub enum FileKind {
     Other,
 }
 
+/// A public link to one of the user's own files: anyone with it can download the file
+/// until it expires. Only servers with share links have them (`core/src/jmap/public_links.rs`).
+/// The URL is a secret: show it, copy it or share it on the user's tap, never log it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PublicLink {
+    /// Names the link for [`crate::Core::public_link_revoke`].
+    pub id: String,
+    pub url: String,
+    /// Unix seconds.
+    pub created: i64,
+    /// Unix seconds; the link stops working then.
+    pub expires: i64,
+}
+
+/// What the server allows for public links, in seconds.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PublicLinkLimits {
+    pub default_expires_in: u64,
+    pub min_expires_in: u64,
+    pub max_expires_in: u64,
+    /// Live links per file.
+    pub max_per_file: u32,
+}
+
 /// A file or a folder on the server.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileEntry {

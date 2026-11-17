@@ -113,7 +113,8 @@ fn an_encrypted_send_reaches_the_server_only_as_the_finished_message_and_without
     let raw = String::from_utf8_lossy(&rig.server.raw_of(&held[0].email_id).expect("an imported message")).into_owned();
     assert!(raw.contains("multipart/encrypted"), "{raw}");
     assert!(!raw.contains("Hello Bob"), "no plain text on the server");
-    assert!(!raw.to_ascii_lowercase().contains("bcc"));
+    // No Bcc header. (Not a plain search for "bcc": the base64 ciphertext holds those letters now and then.)
+    assert!(!raw.lines().any(|l| l.to_ascii_lowercase().starts_with("bcc:")), "{raw}");
     assert!(!raw.to_ascii_lowercase().contains("mallory"), "the Bcc is nowhere in the message");
     // Exactly the bytes that were stored with the row.
     let stored = rig.store().draft_raw(&rig.account(), &draft.id).unwrap().expect("stored with the row");

@@ -14,6 +14,7 @@ mod enterprise;
 mod files;
 mod manage;
 mod oauth;
+mod public_links;
 mod pushsub;
 mod shares;
 mod sharing;
@@ -42,6 +43,7 @@ use calendar::Calendar;
 use files::Files;
 use manage::Manage;
 use oauth::Oauth;
+use public_links::PublicLinks;
 use pushsub::PushSubs;
 use shares::OwnShares;
 use sharing::Sharing;
@@ -100,6 +102,8 @@ struct Shared {
     oauth: Mutex<Oauth>,
     /// File storage: the user's own and the spaces other accounts share.
     files: Mutex<Files>,
+    /// The fork's public-link API (off: 404, as official Stalwart).
+    public_links: Mutex<PublicLinks>,
     /// What other users share: mail folders, calendars and address books of `sh1` to `sh3`.
     sharing: Mutex<Sharing>,
     own_shares: Mutex<OwnShares>,
@@ -170,6 +174,7 @@ impl MockServer {
             calendar_refused: AtomicBool::new(false),
             oauth: Mutex::new(Oauth::new()),
             files: Mutex::new(Files::default()),
+            public_links: Mutex::new(PublicLinks::default()),
             sharing: Mutex::new(Sharing::default()),
             own_shares: Mutex::new(OwnShares::default()),
             manage: Mutex::new(Manage::default()),
@@ -197,6 +202,7 @@ impl MockServer {
             .route("/revoke", post(revoke))
             .route("/.well-known/jmap", get(well_known))
             .route("/api/account", get(account_any))
+            .route("/api/sharelink/{action}", post(public_link_call))
             .route("/jmap/session", get(session))
             .route("/jmap", post(jmap))
             .route("/jmap/upload/{account}", post(upload).layer(axum::extract::DefaultBodyLimit::disable()))
@@ -752,6 +758,21 @@ impl MockServer {
     /// Turns on the file storage: the user's own space (empty) and the accounts of
     /// [`SHARED_ACCOUNT`] (shares the folder `Shared`, id 1, with `ReadOnly` 2 and `hello.txt`
     /// 3), [`EMPTY_SHARE_ACCOUNT`] and [`MAIL_ONLY_ACCOUNT`]. Do it before a client connects.
+    /// Serves the fork's public-link API (`support/public_links.rs`); off, it answers 404.
+    pub fn enable_public_links(&self) {
+        self.shared.public_links.lock().unwrap().enabled = true;
+    }
+
+    /// The live public links of a file of the user's own space.
+    pub fn public_link_count(&self, file_id: &str) -> usize {
+        self.shared.public_links.lock().unwrap().count(file_id)
+    }
+
+    /// The bodies of the public-link requests received, by action.
+    pub fn public_link_requests(&self) -> Vec<(String, Value)> {
+        self.shared.public_links.lock().unwrap().requests.clone()
+    }
+
     pub fn enable_files(&self) {
         self.shared.files.lock().unwrap().enable();
         self.shared.redirect_session.store(true, Ordering::SeqCst);
@@ -1411,6 +1432,22 @@ async fn well_known(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Respons
         .header(axum::http::header::LOCATION, "/jmap/session")
         .body(Body::empty())
         .unwrap()
+}
+
+/// `POST /api/sharelink/{action}`: the fork's public-link API.
+async fn public_link_call(
+    State(s): State<Arc<Shared>>,
+    axum::extract::Path(action): axum::extract::Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if let Err(r) = check_bearer(&s, &headers) {
+        return r;
+    }
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let file = body["fileId"].as_str().and_then(|id| s.files.lock().unwrap().own_file(id));
+    let (status, answer) = s.public_links.lock().unwrap().call(&action, &body, file, state::now_secs() as u64);
+    json_response(StatusCode::from_u16(status).unwrap(), answer)
 }
 
 /// `GET /api/account` for whoever asks: the Enterprise mock's key, an admin key of the admin mock, or the

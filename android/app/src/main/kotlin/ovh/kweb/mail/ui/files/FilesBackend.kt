@@ -7,6 +7,8 @@ import uniffi.kweb_core.Core
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileListing
 import uniffi.kweb_core.FileSpace
+import uniffi.kweb_core.PublicLink
+import uniffi.kweb_core.PublicLinkLimits
 
 /** What the Files screens ask of the core. Every call blocks: run it off the main thread. The tests use a fake. */
 interface FilesBackend {
@@ -18,6 +20,13 @@ interface FilesBackend {
     fun rename(account: String?, id: String, name: String)
     fun move(account: String?, id: String, parentId: String?)
     fun delete(account: String?, id: String)
+
+    /** The server's limits for public links; null when it has none. Only the user's own files can have links. */
+    fun publicLinkLimits(): PublicLinkLimits?
+    fun publicLinks(file: FileEntry): List<PublicLink>
+    fun publicLinkCreate(file: FileEntry, expiresIn: ULong): PublicLink
+    fun publicLinkRevoke(file: FileEntry, linkId: String)
+
     /**
      * Downloads to [destPath], reporting progress to [onProgress] (bytes so far, the total when known) on the calling
      * thread, and ending at [stop]. True when the file is complete; false when [stop] ended it (nothing is left).
@@ -35,6 +44,10 @@ class CoreFilesBackend(private val core: () -> Core) : FilesBackend {
     override fun rename(account: String?, id: String, name: String) = core().fileRename(account, id, name)
     override fun move(account: String?, id: String, parentId: String?) = core().fileMove(account, id, parentId)
     override fun delete(account: String?, id: String) = core().fileDelete(account, id)
+    override fun publicLinkLimits() = core().publicLinkLimits()
+    override fun publicLinks(file: FileEntry) = core().publicLinks(file)
+    override fun publicLinkCreate(file: FileEntry, expiresIn: ULong) = core().publicLinkCreate(file, expiresIn)
+    override fun publicLinkRevoke(file: FileEntry, linkId: String) = core().publicLinkRevoke(file, linkId)
     override fun download(account: String?, blobId: String, destPath: String, stop: DownloadStop, onProgress: (Long, Long?) -> Unit) =
         CoreDownloads.file(core(), account, blobId, destPath, stop, onProgress)
 }

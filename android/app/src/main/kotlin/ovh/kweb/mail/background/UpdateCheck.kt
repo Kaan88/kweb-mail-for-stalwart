@@ -74,6 +74,7 @@ object UpdateChecker {
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(tap)
+            .withNotes(context.getString(R.string.update_notice_text, info.latest), info.notes)
             .build()
         try {
             context.getSystemService(NotificationManager::class.java).notify(UpdateRules.NOTIFICATION_TAG, UpdateRules.NOTIFICATION_ID, notification)
