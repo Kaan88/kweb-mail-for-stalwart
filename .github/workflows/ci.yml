@@ -171,6 +171,8 @@ jobs:
 
       - run: pip install fdroidserver
 
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" > /dev/null
+
       - name: Build with fdroid
         run: |
           mkdir -p fd/metadata
@@ -181,6 +183,8 @@ jobs:
           chmod 600 config.yml
           code=$(sed -n 's/^val appVersionCode = //p' ../android/app/build.gradle.kts)
           fdroid build --verbose --test "ovh.kweb.mail:$code"
+          # The tool reports a failed build without failing itself.
+          test -n "$(find . -name '*.apk')"
           find . -name '*.apk' -exec sha256sum {} +
 
       - uses: actions/upload-artifact@v7
