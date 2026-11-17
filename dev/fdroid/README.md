@@ -11,7 +11,7 @@ Done: the pre-built `rustls-platform-verifier` AAR is gone (its source is copied
 ## How it works
 
 - `./gradlew assembleFdroidRelease` (in `android/`) builds the F-Droid variant: the product flavor `fdroid` is the release build without the updater (no `REQUEST_INSTALL_PACKAGES`, no `UpdateInstallActivity`, no `UpdateActionReceiver`, no weekly check, no update rows in About). It is signed with the project's key where the keystore is present and unsigned elsewhere (F-Droid's server). Output: `android/app/build/outputs/apk/fdroid/release/`. There is no debug variant of this flavor; `assembleRelease` builds both flavors.
-- `ovh.kweb.mail.yml` is a draft of the recipe for the fdroiddata repository. The NDK (`r28c`) and cargo-ndk (`4.1.2`) versions in it are placeholders: use the ones the release is really built with.
+- `ovh.kweb.mail.yml` is a draft of the recipe for the fdroiddata repository. The NDK, Rust and cargo-ndk versions in it are the pinned ones (`rust-toolchain.toml`, `ndkVersion`, CI).
 - The store text and changelogs are in `fastlane/metadata/android/en-US/`; add `changelogs/<versionCode>.txt` per release.
 
 ## Reproducible build
