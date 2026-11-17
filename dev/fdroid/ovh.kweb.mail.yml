@@ -11,6 +11,12 @@ AntiFeatures:
   NonFreeNet:
     en-US: The optional "Push through Google" mode and the optional AI assistant use services the user chooses.
 
+# One signature for both stores: F-Droid builds the "fdroid" flavor itself and ships the project's APK below
+# only if the two are identical. The APK is attached to a pre-release of its own (tag vX.Y.Z-fdroid) and not
+# to the normal release: the app's updater takes the first .apk of the latest release and skips pre-releases.
+Binaries: https://github.com/Kaan88/kweb-mail-for-stalwart/releases/download/v%v-fdroid/kweb-mail-fdroid-%v.apk
+AllowedAPKSigningKeys: ae7cf160c0a15299e11d891ce08054ae4fc0d749040c2c77536672eec7b2376a
+
 RepoType: git
 Repo: https://github.com/Kaan88/kweb-mail-for-stalwart.git
 

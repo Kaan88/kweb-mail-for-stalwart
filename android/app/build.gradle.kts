@@ -147,7 +147,9 @@ abstract class UniffiBindingsTask @Inject constructor(private val exec: ExecOper
 
 // ---------------------------------------------------------------------------------------------
 // rustls-platform-verifier: the Kotlin half must have exactly the version of the Rust crate
-// `rustls-platform-verifier-android` in Cargo.lock.
+// `rustls-platform-verifier-android` in Cargo.lock. The Kotlin half is copied into the app
+// (src/main/kotlin/org/rustls/platformverifier, see android/third_party/rustls-platform-verifier/README.md),
+// so the build stops when the crate moves on and the copy did not.
 // ---------------------------------------------------------------------------------------------
 
 val rustlsVerifierVersion: Provider<String> =
@@ -248,6 +250,18 @@ android {
 }
 
 // The F-Droid flavor is only ever released: no fdroidDebug, so assembleDebug builds one APK.
+val vendoredRustlsVerifier = "0.2.0"
+tasks.named("preBuild") {
+    val locked = rustlsVerifierVersion
+    val vendored = vendoredRustlsVerifier
+    doFirst {
+        check(locked.get() == vendored) {
+            "Cargo.lock has rustls-platform-verifier-android ${locked.get()}, the copied Kotlin half is $vendored: " +
+                "see android/third_party/rustls-platform-verifier/README.md"
+        }
+    }
+}
+
 androidComponents.beforeVariants { variant ->
     if (variant.productFlavors.any { it.second == "fdroid" } && variant.buildType == "debug") variant.enable = false
 }
@@ -292,5 +306,4 @@ dependencies {
     testImplementation(libs.junit)
 
     implementation(libs.jna.get().let { "${it.module}:${it.versionConstraint.requiredVersion}@aar" })
-    implementation(rustlsVerifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
 }
