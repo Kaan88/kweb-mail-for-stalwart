@@ -177,7 +177,10 @@ jobs:
         run: |
           mkdir -p fd/metadata
           # This commit in place of the release tag, and no comparison with a published APK.
-          sed -e "s/commit: v.*/commit: $GITHUB_SHA/" -e '/^Binaries:/d' -e '/^AllowedAPKSigningKeys:/d'             dev/fdroid/ovh.kweb.mail.yml > fd/metadata/ovh.kweb.mail.yml
+          # The version comes from the Gradle file, so the recipe here needs no change per release.
+          code=$(grep '^val appVersionCode' android/app/build.gradle.kts | tr -dc '0-9')
+          name=$(grep '^val appVersionName' android/app/build.gradle.kts | cut -d'"' -f2)
+          sed -e "s/commit: v.*/commit: $GITHUB_SHA/" -e '/^Binaries:/d' -e '/^AllowedAPKSigningKeys:/d' -e "s/versionName: .*/versionName: $name/" -e "s/versionCode: .*/versionCode: $code/" -e "s/^CurrentVersion: .*/CurrentVersion: $name/" -e "s/^CurrentVersionCode: .*/CurrentVersionCode: $code/" dev/fdroid/ovh.kweb.mail.yml > fd/metadata/ovh.kweb.mail.yml
           cd fd
           echo "sdk_path: $ANDROID_HOME" > config.yml
           # F-Droid's server brings its own Gradle launcher; here the project's wrapper stands in for it.
@@ -187,7 +190,6 @@ jobs:
           chmod 600 config.yml
           # The tool expects to run inside a git repository that holds the recipe, as fdroiddata is.
           git init -q . && git add metadata && git -c user.name=ci -c user.email=ci@invalid commit -q -m recipe
-          code=$(sed -n 's/^val appVersionCode = //p' ../android/app/build.gradle.kts)
           # Without the runner's own Rust on the PATH: the recipe has to bring it, as on F-Droid's server.
           fd=$(command -v fdroid)
           PATH=$(echo "$PATH" | sed -e 's#[^:]*/[.]cargo/bin:##g') "$fd" build --verbose --test "ovh.kweb.mail:$code"
