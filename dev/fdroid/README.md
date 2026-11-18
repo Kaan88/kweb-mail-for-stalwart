@@ -18,7 +18,7 @@ Do these with the normal release (`dev/README.md`, "Release"), on the same day. 
 
 ## When the recipe on fdroiddata must change
 
-The recipe that counts is `metadata/ovh.kweb.mail.yml` in https://gitlab.com/fdroid/fdroiddata. F-Droid copies the last build entry for each new version, so anything in that entry that no longer fits the source makes the next build fail or differ. Change it with a merge request from the fork `Kaan88/fdroiddata` **before** tagging the release that needs it, and change the copy here (`ovh.kweb.mail.yml`) in the same step so CI tests the same thing:
+The recipe that counts is `metadata/ovh.kweb.mail.yml` in https://gitlab.com/fdroid/fdroiddata. F-Droid copies the last build entry for each new version, so anything in that entry that no longer fits the source makes the next build fail or differ. Change it with a merge request from the fork `Kaan88/fdroiddata` (the owner's GitLab token for that expires on 2027-11-17) **before** tagging the release that needs it, and change the copy here (`ovh.kweb.mail.yml`) in the same step so CI tests the same thing:
 
 - **Rust** (`rust-toolchain.toml`): `--default-toolchain` in the recipe.
 - **The NDK** (`ndkVersion` in `android/app/build.gradle.kts`): `ndk:` in the recipe, by its full version number, and the two `sdkmanager "ndk;..."` lines in `.github/workflows/ci.yml`.
