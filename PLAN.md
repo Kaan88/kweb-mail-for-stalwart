@@ -501,6 +501,25 @@ Not planned: Bulwark's plugin hooks, the Nextcloud and Roundcube region handling
 *Decided without asking.* The sparkle shows a count; thresholds are fixed (2 h, 5 events, 30 min free, 15 min, 5 tasks, 2 days, 14 days); patterns cover English and Turkish; with Home off a mail row with a finding shows a small sparkle. Home sits on top of the mail list in the back stack like Calendar (back from Home goes to the list). One finding per mail: a deadline word with a date or an amount replaces the plain date finding. The cache holds no List-Id or bulk headers, so "from a person" goes by the address only (no-reply, notifications, newsletter and the like are machines); the Occurrence has no notes or free/busy flag, so "no place" looks at the place only and "free" entries are not left out; "Invitation file" is approximated from cues (an attachment and an Invitation:/.ics subject or preview), not from the iCalendar part; "newer than the task" for Mail may finish it is just the last 7 days; encrypted mail is skipped when its preview shows an armored block. The assistant's Add never fires for something already in the calendar (no duplicate check).
 *Checked.* Core: 24 unit tests for the rules and patterns, 4 integration tests against the mock server, 18 for the sparkle runs against the mock service, the whole suite once, clippy. Android: build, lint and unit tests; on the emulator Home (quiet and fired, light and dark), the sheet, Calendar and Tasks boxes, the thread menu, the row mark, the settings screens, and each sparkle action against a scripted stub service (consent, the ask rule, Add, Add both with one Undo, Look in mail, verdict, errors). *Not checked.* A real model (the stub answered; no real tool calling, usage or `stream_options` against a real service), the owner's phone, the status chips, Directions, Respond and Mark done on a screen, the Calendar box and thread menu in dark, the first-use consent for the one-shot actions, a changes-off chat (no Add button), the recurrence id of a repeating event in Edit (the whole event opens).
 
+### M13: the owner's list (owner, 2026-11-23)
+
+Noted only; nothing decided or started. Gmail's rendering of a mail is the reference for the first group.
+
+**Reading a mail.**
+1. **The header row of buttons takes too much height.** The sender check chip ("Verified"), the unsubscribe button, the labels and the other chips there each take room and stack on top of one another, so a lot of the screen goes before the mail starts. The unsubscribe button is the worst. Expected: all of them in much less vertical space.
+2. **Swiping is unreliable when a mail is wider than the screen** and scrolls sideways. Expected: the swipe (between conversations, and the row swipes where they apply) works reliably even then.
+3. **Quoted text stays open in long conversations**, so a chain feels like it scrolls for ever. Expected: quoted text folded in long conversations.
+4. **Tables in mails can run past the edge of the screen.** Expected: tables fitted to the width.
+
+**Notifications.**
+5. **One-time codes.** Detect a TOTP or verification code in a new mail and offer to copy it from the notification.
+
+**Writing a mail.**
+6. **Smart completion as Gmail does it.** After a greeting, offer to complete the recipient's name (this is the "Later (owner, 2026-11-17)" item under M12, now wanted). Also complete sign-offs: when the user starts "Best", "Kind regards" and the like, offer the rest.
+
+**Navigation.**
+7. **Settings easier to reach**, for example an entry in the account selector pop-up.
+
 ## Scope
 
 | Phase | Included |
