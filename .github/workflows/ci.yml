@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # A release tag starts the F-Droid jobs (not the -fdroid pre-release tag, which comes after them).
+    tags: ["v*", "!v*-fdroid"]
   pull_request:
   workflow_dispatch:
 
@@ -15,6 +17,8 @@ concurrency:
 
 jobs:
   core:
+    # The commit of a release tag was already checked on main.
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -97,10 +101,10 @@ jobs:
           name: kweb-mail-release-apk
           path: android/app/build/outputs/apk/*/release/*.apk
 
-  # Run by hand: builds the F-Droid APK twice, in two different folders, and fails if the two differ.
+  # On a release tag, or by hand: builds the F-Droid APK twice, in two different folders, and fails if the two differ.
   # The APK it uploads is what F-Droid's own build has to equal.
   reproducible:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -157,9 +161,9 @@ jobs:
           name: kweb-mail-fdroid-apk
           path: one/android/app/build/outputs/apk/fdroid/release/*.apk
 
-  # Run by hand: F-Droid's own build tool on the recipe in dev/fdroid, at this commit.
+  # On a release tag, or by hand: F-Droid's own build tool on the recipe in dev/fdroid, at this commit.
   fdroid:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -202,3 +206,25 @@ jobs:
         with:
           name: kweb-mail-fdroid-tool-apk
           path: fd/**/*.apk
+
+  # Fails unless F-Droid's tool built exactly the APK the reproducible job built (the one to sign and publish).
+  fdroid-match:
+    needs: [reproducible, fdroid]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: kweb-mail-fdroid-apk
+          path: ours
+      - uses: actions/download-artifact@v7
+        with:
+          name: kweb-mail-fdroid-tool-apk
+          path: tool
+      - name: Compare
+        run: |
+          # The tool's output may hold the Gradle output and its own copy; one of them must be ours byte for byte.
+          a=$(find ours -name '*.apk')
+          test "$(echo "$a" | wc -l)" = 1
+          want=$(sha256sum "$a" | cut -d' ' -f1)
+          find ours tool -name '*.apk' -exec sha256sum {} +
+          find tool -name '*.apk' -exec sha256sum {} + | grep -q "^$want "
