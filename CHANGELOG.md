@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.6
+
+- Reading a mail: a mail laid out for a wider screen (most newsletters) keeps its own layout and is scaled down until it fits, instead of having its tables squeezed; pinch zoom works, only the mail scales, and the zoomed mail moves inside the frame it had when fitted, handing a drag at its edge on to the pager or the page.
+- Mark all as read in a folder (the folder's menu in the drawer, also with its subfolders when they are shown), with Undo; unread mail older than the cached part is marked on the server too.
+- A conversation opens at the first message that was unread.
+- Home and attention: a finding for a mail you sent that asks something and has had no answer for 3 to 14 days, with Open; it needs no assistant and has its own switch.
+- The account menu always opens fully. url 2.5.9 (RUSTSEC-2026-0592).
+
 ## 0.2.5
 
 - Reading a mail: the sender check, Unsubscribe, labels and the encryption mark share one compact row; quoted text folds in long conversations (only a quote with nothing after it, or a long one); mail is fitted to the screen (tables, pictures, long words) and only the mail content zooms; a pinch and a swipe at the edge of a wide mail no longer fight the pager.
