@@ -101,7 +101,10 @@ fn the_switches_and_mail_findings() {
     rig.core.messages(INBOX.into(), 20, 0).unwrap();
     let list = rig.core.attention_findings(AttentionPlace::MailRows, ZONE.into(), now(), true).unwrap();
     // Merve's mail and the seeded "Lunch on Friday?" are found, the shop's no-reply ticket is not.
-    let senders: Vec<String> = list.iter().map(|f| f.names[0].clone()).collect();
+    // Compared sorted: the seeded mail has the real clock and the test's now() is fixed, so their
+    // order (by arrival) depends on the day the test runs.
+    let mut senders: Vec<String> = list.iter().map(|f| f.names[0].clone()).collect();
+    senders.sort();
     assert_eq!(senders, vec!["Maria Keller".to_string(), "Merve".to_string()]);
     assert!(list.iter().all(|f| f.rule == AttentionRule::DateInMail));
     // In the thread: that conversation only.
