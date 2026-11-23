@@ -4,6 +4,7 @@
     python dev/seed_mail.py            # the full sample set
     python dev/seed_mail.py one        # one new plain mail (to watch a notification arrive)
     python dev/seed_mail.py bulk 200   # 200 short mails, for lists and search
+    python dev/seed_mail.py wide       # a 640-pixel newsletter of fixed-width tables (fit and zoom)
 
 See dev/README.md for the server itself.
 """
@@ -115,6 +116,25 @@ def bulk(count):
         yield plain(f"Sender {i % 17} <sender{i % 17}@example.org>", f"Bulk {i:04d}: about the {word}", f"Message number {i} mentions the {word}.\n")
 
 
+def wide():
+    """A newsletter laid out for a 640-pixel desktop window, as most are: nested tables with fixed widths, two columns."""
+    cell = '<td width="300" style="width:300px;padding:10px;background:#f3e8e8;vertical-align:top">' \
+        '<h3 style="margin:0 0 6px">{}</h3><p style="margin:0;font-size:14px">{}</p></td>'
+    text = "A paragraph of copy in a fixed column, written for a desktop reader, long enough to wrap a few times."
+    markup = f"""<html><body style="margin:0;background:#dddddd">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#dddddd"><tr><td align="center">
+<table width="640" cellpadding="0" cellspacing="0" style="width:640px;background:#ffffff">
+<tr><td colspan="2" style="background:#8b1a1a;color:#ffffff;padding:24px;font:bold 28px sans-serif">Wide Weekly, issue 12</td></tr>
+<tr>{cell.format("Left column", text)}{cell.format("Right column", text)}</tr>
+<tr><td colspan="2" style="padding:16px;font:15px sans-serif">
+<table width="608" cellpadding="6" style="border-collapse:collapse;width:608px"><tr>
+<th style="border:1px solid #999">Item</th><th style="border:1px solid #999">Quantity</th><th style="border:1px solid #999">Price</th><th style="border:1px solid #999">Total</th></tr>
+<tr><td style="border:1px solid #999">Widget</td><td style="border:1px solid #999">3</td><td style="border:1px solid #999">9.99</td><td style="border:1px solid #999">29.97</td></tr></table>
+<p>The last line of the mail: <b>END</b>.</p></td></tr>
+</table></td></tr></table></body></html>"""
+    return html("Wide Weekly <wide@example.com>", "Wide Weekly, issue 12 (fixed 640 px)", "Plain part.\n", markup)
+
+
 def credentials():
     """`user:password` of the test user, written by the set-up (see dev/README.md)."""
     path = os.environ.get("KWEB_TEST_CREDS") or os.path.expanduser("~/tools/stalwart-test/etc/tester.txt")
@@ -166,6 +186,8 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
     if mode == "one":
         send([plain("Ada Lovelace <ada@example.org>", f"Test at {time.strftime('%H:%M:%S')}", "A single new mail.\n")])
+    elif mode == "wide":
+        send([wide()])
     elif mode == "bulk":
         send(bulk(int(sys.argv[2]) if len(sys.argv) > 2 else 100))
     else:

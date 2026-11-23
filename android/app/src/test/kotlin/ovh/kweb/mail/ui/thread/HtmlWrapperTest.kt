@@ -25,16 +25,19 @@ class HtmlWrapperTest {
         assertTrue(page.contains("<meta charset=\"utf-8\">"))
     }
 
-    @Test fun wideMailIsMadeToFit() {
+    @Test fun wideMailKeepsItsLayoutAndOnlyLooseThingsAreHeldIn() {
         assertTrue(page.contains("img{max-width:100%;height:auto}"))
-        assertTrue(page.contains("table,div,center,section,article,blockquote,p,pre{max-width:100%}"))
-        assertTrue(page.contains("td,th{overflow-wrap:anywhere;word-break:break-word;white-space:normal!important;min-width:0}"))
-        assertTrue(page.contains("pre{white-space:pre-wrap;overflow-wrap:anywhere}"))
-        assertTrue(page.contains("overflow-wrap:anywhere"))
+        assertTrue(page.contains("pre{white-space:pre-wrap;overflow-wrap:break-word}"))
+        // Tables are scaled with the page, not squeezed: squeezing broke newsletters made of fixed-width tables.
+        assertTrue(!page.contains("table,"))
+        assertTrue(!page.contains("td,th{"))
     }
 
-    @Test fun theViewportFitsTheWindowAndAllowsPinchZoom() {
-        assertTrue(page.contains("content=\"width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes\""))
+    @Test fun theViewportLetsTheViewStartAtTheScaleThatFitsAndAllowsPinchZoom() {
+        assertTrue(page.contains("<meta name=\"viewport\" content=\"width=device-width, maximum-scale=5, user-scalable=yes\">"))
+        // Either would stop overview mode from starting at the scale where a wide mail fits.
+        assertTrue(!page.contains("initial-scale"))
+        assertTrue(!page.contains("minimum-scale"))
     }
 
     @Test fun foldedQuotesHaveTheirStyleAndNeedNoScript() {
@@ -52,7 +55,7 @@ class HtmlWrapperTest {
         assertTrue(wrapped.contains("<p>hi</p>"))
         assertTrue(!wrapped.contains("width=600"))
         assertTrue(!wrapped.contains("content='x'"))
-        assertTrue(wrapped.contains("initial-scale=1"))
+        assertTrue(wrapped.contains(HtmlWrapper.VIEWPORT))
     }
 
     @Test fun metaTagsThatNeverEndAreFast() {

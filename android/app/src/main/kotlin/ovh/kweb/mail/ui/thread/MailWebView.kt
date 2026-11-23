@@ -95,20 +95,27 @@ fun MailWebView(
     }
 
     key(generation) {
-        // A page wider than the screen (or zoomed) is moved sideways here, in Compose, and not by the WebView's own touch handling:
-        // what the page cannot move any further goes on to the parent as leftover, which is how the pager of the thread screen
-        // takes a swipe at the edge of the page, and takes it anywhere on a page that fits. A vertical drag is not touched.
+        // A page wider than the view (or zoomed) is moved here, in Compose, and not by the WebView's own touch handling: what
+        // the page cannot move any further goes on to the parent as leftover, which is how the pager of the thread screen
+        // takes a swipe at the edge of the page (and anywhere on a page that fits), and the thread's column a vertical drag
+        // at the top or bottom of a zoomed mail.
         val panView = remember { arrayOfNulls<PanWebView>(1) }
         val pan = rememberScrollableState { delta -> panView[0]?.pan(-delta)?.let { -it } ?: 0f }
-        // Only a page that is wider than the screen takes part: over a page that fits, the pager gets the finger directly,
-        // with its own fling and snap, and not what a scrollable in between hands on.
+        val panDown = rememberScrollableState { delta -> panView[0]?.panDown(-delta)?.let { -it } ?: 0f }
+        // Only a direction the page can move in takes part: over a page that fits, the pager and the column get the finger
+        // directly, with their own fling and snap, and not what a scrollable in between hands on.
         var wide by remember { mutableStateOf(false) }
+        var tall by remember { mutableStateOf(false) }
         AndroidView(
-            modifier = modifier.fillMaxWidth().scrollable(pan, Orientation.Horizontal, enabled = wide),
+            modifier = modifier
+                .fillMaxWidth()
+                .scrollable(pan, Orientation.Horizontal, enabled = wide)
+                .scrollable(panDown, Orientation.Vertical, enabled = tall),
             factory = { context ->
                 PanWebView(context).apply {
                     panView[0] = this
                     onWide = { wide = it }
+                    onTall = { tall = it }
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
                     settings.javaScriptEnabled = false
                     settings.allowFileAccess = false
@@ -118,14 +125,15 @@ fun MailWebView(
                     @Suppress("DEPRECATION")
                     settings.databaseEnabled = false
                     settings.setSupportMultipleWindows(false)
-                    // Fit and zoom, as Gmail has it. The page is laid out as wide as the window (HtmlWrapper squeezes tables and
-                    // pictures into it, so mail needs no sideways panning), and the user may pinch in on the mail: only this view
-                    // scales, never the app's layout or the pager around it. useWideViewPort makes the view honour the page's
-                    // viewport (width=device-width, initial-scale=1, scale 1 to 5); the on-screen zoom buttons stay off. A page
-                    // that is wider than the window after all, or zoomed in, is panned by [PanWebView] and hands a swipe
-                    // at its edge to the pager.
+                    // Fit and zoom, as Gmail has it. useWideViewPort makes the view honour the page's viewport (as wide as the
+                    // window, see HtmlWrapper); overview mode starts it at the smallest scale, which is the one where the
+                    // mail's own layout fits the window: a newsletter made for 640 pixels is shown whole and smaller, a mail
+                    // that fits already stays at scale 1. The user may pinch in on the mail: only this view scales, never
+                    // the app's layout or the pager around it. The view keeps the height of the fitted mail while it is
+                    // zoomed (see [PanWebView]), so the zoomed mail moves inside that frame, both ways, and hands a drag at
+                    // its edge on to the pager or the column. The on-screen zoom buttons stay off.
                     settings.useWideViewPort = true
-                    settings.loadWithOverviewMode = false
+                    settings.loadWithOverviewMode = true
                     settings.setSupportZoom(true)
                     settings.builtInZoomControls = true
                     settings.displayZoomControls = false
@@ -145,6 +153,7 @@ fun MailWebView(
                 val shown = listOf(html, allowRemote, textColor, flat)
                 if (view.tag != shown) {
                     view.tag = shown
+                    view.newPage()
                     view.loadDataWithBaseURL(null, HtmlWrapper.wrap(html, textColor, imageNote, blockRemote = !allowRemote, flat = flat), "text/html", "utf-8", null)
                 }
             },
@@ -163,9 +172,46 @@ private class PanWebView(context: Context) : WebView(context) {
     /** How far the page can still be moved to the right. */
     private fun maxScrollX(): Int = (computeHorizontalScrollRange() - computeHorizontalScrollExtent()).coerceAtLeast(0)
 
+    /** How far the page can still be moved down (only while zoomed: the view is otherwise as tall as the page). */
+    private fun maxScrollY(): Int = (computeVerticalScrollRange() - computeVerticalScrollExtent()).coerceAtLeast(0)
+
     /** Told (on the main thread) when the page starts or stops being wider than the view. */
     var onWide: (Boolean) -> Unit = {}
     private var wasWide = false
+
+    /** Told (on the main thread) when the page starts or stops being taller than the view. */
+    var onTall: (Boolean) -> Unit = {}
+    private var wasTall = false
+
+    /**
+     * The view is as tall as its page (wrap content), and Chromium lays the page out as tall as the view divided by the
+     * smallest scale. A pinch made the view taller, the page then grew to fill it with empty space, and Chromium scrolled
+     * inside the view where nothing could scroll it back. So while the page is zoomed past the scale it was fitted at,
+     * the view keeps the height it had when fitted and the zoomed page moves inside it ([panDown]).
+     */
+    private var fitScale = Float.MAX_VALUE
+    private var fitHeight = 0
+
+    /** A new document is about to be loaded: its fitted scale and height are not known yet. */
+    fun newPage() {
+        fitScale = Float.MAX_VALUE
+        fitHeight = 0
+    }
+
+    @Suppress("DEPRECATION") // getScale: the only way to read the current zoom without JavaScript.
+    private fun zoomed(): Boolean = scale > fitScale * 1.01f
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        @Suppress("DEPRECATION")
+        val now = scale
+        if (now < fitScale) fitScale = now
+        if (zoomed() && fitHeight > 0) {
+            setMeasuredDimension(measuredWidth, fitHeight)
+        } else {
+            fitHeight = measuredHeight
+        }
+    }
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f
     private var lastX = 0f
@@ -215,6 +261,11 @@ private class PanWebView(context: Context) : WebView(context) {
             // Not during the draw pass: the state change lays out again.
             post { onWide(wide) }
         }
+        val tall = maxScrollY() > 0
+        if (tall != wasTall) {
+            wasTall = tall
+            post { onTall(tall) }
+        }
     }
 
     /** Moves the page by [dx] pixels to the right (negative: left), as far as it goes; returns how far it did. */
@@ -222,6 +273,14 @@ private class PanWebView(context: Context) : WebView(context) {
         val before = scrollX
         val target = (before + dx).roundToInt().coerceIn(0, maxScrollX())
         if (target != before) scrollTo(target, scrollY)
+        return (target - before).toFloat()
+    }
+
+    /** Moves the zoomed page by [dy] pixels down (negative: up), as far as it goes; returns how far it did. */
+    fun panDown(dy: Float): Float {
+        val before = scrollY
+        val target = (before + dy).roundToInt().coerceIn(0, maxScrollY())
+        if (target != before) scrollTo(scrollX, target)
         return (target - before).toFloat()
     }
 }
