@@ -1,0 +1,5 @@
+- Wide mail such as newsletters keeps its own layout and is shrunk to fit the screen; pinch zoom now works, and the zoomed mail moves inside its own frame.
+- Mark all as read, from a folder's menu in the drawer, with Undo.
+- A conversation opens at the first message you have not read.
+- Home and the sparkle: a reminder for a mail you sent that asked something and got no answer in 3 to 14 days (its own switch).
+- The account menu opens fully; a security fix in a library (url).
