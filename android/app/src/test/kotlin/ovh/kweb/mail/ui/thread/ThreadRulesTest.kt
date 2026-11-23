@@ -28,6 +28,30 @@ class ThreadRulesTest {
 
     @Test fun anEmptyThreadHasNothingOpen() = assertEquals(emptySet<String>(), ThreadRules.initiallyExpanded(emptyList(), null))
 
+    @Test fun theFirstUnreadMessageIsWhereTheScreenScrollsTo() =
+        assertEquals("c", ThreadRules.scrollTarget(listOf(msg("a"), msg("b"), msg("c", true), msg("d", true)), null))
+
+    @Test fun aNamedMessageIsScrolledToInsteadOfTheFirstUnread() =
+        assertEquals("d", ThreadRules.scrollTarget(listOf(msg("a"), msg("b", true), msg("c"), msg("d")), "d"))
+
+    @Test fun nothingScrollsWithoutUnreadMailOrForTheFirstMessageOrAThreadOfOne() {
+        assertNull(ThreadRules.scrollTarget(listOf(msg("a"), msg("b")), null))
+        assertNull(ThreadRules.scrollTarget(listOf(msg("a", true), msg("b", true)), null))
+        assertNull(ThreadRules.scrollTarget(listOf(msg("a", true)), null))
+        assertNull(ThreadRules.scrollTarget(emptyList(), null))
+    }
+
+    @Test fun theScrollGoesOnUntilItReachesTheTargetOrTheUserMovesTheScreen() {
+        // First step, and a step after the content grew but the screen could not go all the way.
+        assertEquals(500, ThreadRules.scrollStep(500, 0, null))
+        assertEquals(500, ThreadRules.scrollStep(500, 300, 300))
+        // Reached, or past it.
+        assertNull(ThreadRules.scrollStep(500, 500, 500))
+        assertNull(ThreadRules.scrollStep(500, 520, 300))
+        // The user moved it.
+        assertNull(ThreadRules.scrollStep(500, 120, 300))
+    }
+
     @Test fun aThreadIsGoneOnlyAfterTheServerAnswered() {
         assertFalse(ThreadRules.isGone(loaded = false, refreshed = true, count = 0))
         assertFalse(ThreadRules.isGone(loaded = true, refreshed = false, count = 0))

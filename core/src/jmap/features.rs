@@ -13,6 +13,8 @@ use super::{
 use crate::{Error, Result};
 
 const MESSAGE_GONE: &str = "That message is no longer on the server.";
+/// How many ids one request names when many messages are marked as read.
+const UNREAD_PAGE: usize = 100;
 const URLS_PROPERTY: &str = "header:List-Unsubscribe:asURLs";
 const POST_PROPERTY: &str = "header:List-Unsubscribe-Post:asText";
 
@@ -89,6 +91,45 @@ impl Connection {
         let responses = self.call(&[MAIL_CAPABILITY], &[("Email/query", args)]).await?;
         let ids = response(&responses, "Email/query")?["ids"].as_array().cloned().unwrap_or_default();
         Ok(ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect())
+    }
+
+    /// Ids of the messages of the mailbox that are not marked as read, newest first, at most
+    /// `limit` of them.
+    pub async fn unread_ids(&self, mailbox_id: &str, limit: usize) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        while out.len() < limit {
+            let page = (limit - out.len()).min(UNREAD_PAGE);
+            let args = json!({
+                "accountId": self.account_id(),
+                "filter": { "operator": "AND", "conditions": [
+                    { "inMailbox": mailbox_id }, { "notKeyword": "$seen" } ] },
+                "sort": [{ "property": "receivedAt", "isAscending": false }],
+                "position": out.len(),
+                "limit": page,
+            });
+            let responses = self.call(&[MAIL_CAPABILITY], &[("Email/query", args)]).await?;
+            let ids = response(&responses, "Email/query")?["ids"].as_array().cloned().unwrap_or_default();
+            let got = ids.len();
+            out.extend(ids.iter().filter_map(|id| id.as_str().map(str::to_string)));
+            if got < page {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Marks the messages as read, in requests of at most [`UNREAD_PAGE`]. Returns how many the
+    /// server changed; one it no longer has, or refuses, is left out and the rest go on.
+    pub async fn mark_seen(&self, ids: &[String]) -> Result<usize> {
+        let mut changed = 0;
+        for chunk in ids.chunks(UNREAD_PAGE) {
+            let update: serde_json::Map<String, Value> =
+                chunk.iter().map(|id| (id.clone(), json!({ "keywords/$seen": true }))).collect();
+            let args = json!({ "accountId": self.account_id(), "update": update });
+            let responses = self.call(&[MAIL_CAPABILITY], &[("Email/set", args)]).await?;
+            changed += response(&responses, "Email/set")?["updated"].as_object().map_or(0, |u| u.len());
+        }
+        Ok(changed)
     }
 
     /// Where `query` is found in each of the messages, as the server marks it. In batches of

@@ -230,6 +230,29 @@ impl Store {
         })
     }
 
+    /// The ids of the cached unread messages that are in any of the mailboxes, newest first.
+    pub fn unread_ids_in(&self, account_id: &str, mailbox_ids: &[String]) -> Result<Vec<String>> {
+        self.read(|c| {
+            let mut stmt = c.prepare(
+                "SELECT DISTINCT m.id, m.received_at FROM messages m
+                 JOIN message_mailboxes mm ON mm.account_id = m.account_id AND mm.message_id = m.id
+                 WHERE m.account_id = ?1 AND mm.mailbox_id = ?2 AND m.is_unread = 1
+                 ORDER BY m.received_at DESC, m.id DESC",
+            )?;
+            let mut seen = HashSet::new();
+            let mut out = Vec::new();
+            for mailbox in mailbox_ids {
+                for row in stmt.query_map([account_id, mailbox.as_str()], |r| r.get::<_, String>(0))? {
+                    let id = row?;
+                    if seen.insert(id.clone()) {
+                        out.push(id);
+                    }
+                }
+            }
+            Ok(out)
+        })
+    }
+
     /// Deletes all cached message bodies of the account.
     pub fn delete_bodies(&self, account_id: &str) -> Result<()> {
         self.write(|c| {

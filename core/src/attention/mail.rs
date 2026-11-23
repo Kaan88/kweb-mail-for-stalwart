@@ -1,9 +1,11 @@
 //! The mail rules: a date in mail, deadline words, an invitation file, a mail waiting for an answer.
 //! Mail from a person only (the address is no no-reply or notification sender), never encrypted mail.
 
+use std::collections::HashSet;
+
 use super::{
-    from_a_person, limits::*, patterns, AttentionFamily, AttentionRule, Finding, HomeTile, Input, PhoneAction, Prefill,
-    ServiceAction,
+    address_is_a_person, from_a_person, limits::*, patterns, AttentionFamily, AttentionRule, Finding, HomeTile, Input,
+    PhoneAction, Prefill, ServiceAction,
 };
 use crate::model::MessageHeader;
 
@@ -99,5 +101,51 @@ pub fn rules(input: &Input<'_>, out: &mut Vec<Finding>) {
             f.service = Some(ServiceAction::ReplyIdeas);
             out.push(f);
         }
+    }
+}
+
+/// A mail the user sent 3 to 14 days ago that asks something, to at least one person, that nobody else has written
+/// after in its conversation. Only the newest mail the user sent in a conversation counts (a
+/// follow-up of their own starts the wait again). No encrypted mail; recipients that are the
+/// user's own addresses or machines do not count as people.
+pub fn follow_ups(input: &Input<'_>, out: &mut Vec<Finding>) {
+    let c = &input.clock;
+    let mut sent: Vec<&MessageHeader> =
+        input.sent.iter().filter(|m| input.own_addresses.contains(&m.from_email.to_lowercase())).collect();
+    sent.sort_by(|a, b| (b.received_at, &b.id).cmp(&(a.received_at, &a.id)));
+    let mut threads = HashSet::new();
+    for m in sent {
+        if m.thread_id.is_empty() || !threads.insert(m.thread_id.as_str()) {
+            continue;
+        }
+        let age = c.now - m.received_at;
+        if !(FOLLOW_UP_MIN_DAYS * 86_400..=FOLLOW_UP_MAX_DAYS * 86_400).contains(&age) || is_encrypted(m) {
+            continue;
+        }
+        // Only a mail that waits for an answer: one that asks nothing ("the notes are attached")
+        // is not a missing reply, and a nudge for every mail sent would bury the rest.
+        if !patterns::asks_reader(&format!("{} {}", m.subject, m.preview)) {
+            continue;
+        }
+        let Some(to) =
+            m.to.iter()
+                .find(|a| address_is_a_person(&a.email) && !input.own_addresses.contains(&a.email.to_lowercase()))
+        else {
+            continue;
+        };
+        if input.last_other_in_thread.get(&m.thread_id).is_some_and(|other| *other > m.received_at) {
+            continue;
+        }
+        let mut f = Finding::new(AttentionRule::NoReply, AttentionFamily::Mail, HomeTile::Unread, &m.id);
+        f.names = vec![if to.name.trim().is_empty() { to.email.clone() } else { to.name.clone() }, m.subject.clone()];
+        f.times = vec![m.received_at];
+        f.count = (age / 86_400) as u32;
+        f.at = m.received_at;
+        f.message_ids = vec![m.id.clone()];
+        f.thread_id = Some(m.thread_id.clone());
+        // Opening the conversation needs no assistant. The reply-ideas action is for a mail someone
+        // wrote to the user, not for one the user wrote, so it is not offered here.
+        f.phone = vec![PhoneAction::OpenMail { message_id: m.id.clone(), thread_id: m.thread_id.clone() }];
+        out.push(f);
     }
 }

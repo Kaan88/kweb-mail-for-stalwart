@@ -142,7 +142,7 @@ private fun ruleIcon(rule: AttentionRule): Painter = when (rule) {
     AttentionRule.OPEN_INVITATION, AttentionRule.BUSY_DAY -> painterResource(R.drawable.ic_calendar)
     AttentionRule.OVERDUE, AttentionRule.NO_TIME_TODAY, AttentionRule.TOO_MANY -> rememberVectorPainter(Icons.Filled.CheckCircle)
     AttentionRule.MAIL_MAY_FINISH, AttentionRule.DATE_IN_MAIL, AttentionRule.DEADLINE_WORDS, AttentionRule.INVITATION_FILE -> painterResource(R.drawable.ic_mail)
-    AttentionRule.WAITING_FOR_YOU -> painterResource(R.drawable.ic_reply)
+    AttentionRule.WAITING_FOR_YOU, AttentionRule.NO_REPLY -> painterResource(R.drawable.ic_reply)
 }
 
 /** Does what a phone button does. Nothing here reaches the assistant or sends anything. */

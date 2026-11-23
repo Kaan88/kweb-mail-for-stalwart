@@ -50,6 +50,8 @@ mod folders;
 mod labels;
 #[path = "suite/manage.rs"]
 mod manage;
+#[path = "suite/mark_all_read.rs"]
+mod mark_all_read;
 #[path = "suite/mock_server.rs"]
 mod mock_server;
 #[path = "suite/public_links.rs"]

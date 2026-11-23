@@ -64,6 +64,9 @@ pub struct AttentionSettings {
     pub tasks: bool,
     #[serde(default = "yes")]
     pub mail: bool,
+    /// With the mail rules on: a mail the user sent 3 to 14 days ago that nobody answered.
+    #[serde(default = "yes")]
+    pub follow_up: bool,
     #[serde(default)]
     pub mail_scope: MailScope,
     /// Show the dialog that names what will be sent before a run that sends mail to the service.
@@ -86,6 +89,7 @@ impl Default for AttentionSettings {
             calendar: true,
             tasks: true,
             mail: true,
+            follow_up: true,
             mail_scope: MailScope::Inbox,
             ask_each_run: true,
             show_cost: true,

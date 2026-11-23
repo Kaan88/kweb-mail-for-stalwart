@@ -47,13 +47,17 @@ pub mod limits {
     pub const CALENDAR_DAYS: i64 = 7;
     /// Mail rules look this many days back.
     pub const MAIL_DAYS: i64 = 7;
+    /// A sent mail with no answer is flagged from this many days...
+    pub const FOLLOW_UP_MIN_DAYS: i64 = 3;
+    /// ...until this many (older ones are left alone).
+    pub const FOLLOW_UP_MAX_DAYS: i64 = 14;
     /// "Open mails" looks this many days back.
     pub const OPEN_MAILS_DAYS: i64 = 30;
     /// A mail shorter than this (bytes, as the cache has it) can be waiting for an answer.
     pub const SHORT_MAIL_BYTES: u64 = 6000;
 }
 
-/// One of the 13 rules.
+/// One of the 14 rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum AttentionRule {
     Overlap,
@@ -69,6 +73,8 @@ pub enum AttentionRule {
     DeadlineWords,
     InvitationFile,
     WaitingForYou,
+    /// A mail the user sent that nobody has answered.
+    NoReply,
 }
 
 /// The settings switch a rule belongs to.
@@ -189,6 +195,8 @@ pub enum ServiceAction {
 /// - MailMayFinish: names = [task title, mail subject], times = [mail received].
 /// - DateInMail / DeadlineWords: names = [sender, subject], times = [the date found].
 /// - InvitationFile / WaitingForYou: names = [sender, subject], times = [received].
+/// - NoReply: names = [the first person it went to, subject], times = [sent], count = days since,
+///   message_ids = [the sent mail].
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Finding {
     /// Stable: the same data gives the same id; a swipe is remembered under it.
@@ -252,6 +260,7 @@ fn rule_code(rule: AttentionRule) -> &'static str {
         AttentionRule::DeadlineWords => "dw",
         AttentionRule::InvitationFile => "if",
         AttentionRule::WaitingForYou => "wy",
+        AttentionRule::NoReply => "nr",
     }
 }
 
@@ -311,6 +320,10 @@ pub struct Input<'a> {
     pub own_addresses: &'a HashSet<String>,
     /// For a thread id: the newest message the user wrote in it (Unix seconds).
     pub my_last_in_thread: &'a HashMap<String, i64>,
+    /// Mails the user sent in the last 14 days (the Sent folder, never Spam or Trash).
+    pub sent: &'a [MessageHeader],
+    /// For a thread id: the newest message in it that is not from the user (Unix seconds).
+    pub last_other_in_thread: &'a HashMap<String, i64>,
     pub settings: &'a AttentionSettings,
 }
 
@@ -325,6 +338,9 @@ pub fn evaluate(input: &Input<'_>) -> Vec<Finding> {
     }
     if input.settings.mail {
         mail::rules(input, &mut out);
+        if input.settings.follow_up {
+            mail::follow_ups(input, &mut out);
+        }
     }
     out.sort_by(|a, b| (a.at, &a.id).cmp(&(b.at, &b.id)));
     out
@@ -333,7 +349,12 @@ pub fn evaluate(input: &Input<'_>) -> Vec<Finding> {
 /// A person, not a machine: an address that is not a no-reply or notification sender. The cache
 /// holds no List-Id or bulk headers, so this goes by the address only.
 pub fn from_a_person(m: &MessageHeader) -> bool {
-    let email = m.from_email.to_lowercase();
+    address_is_a_person(&m.from_email)
+}
+
+/// [`from_a_person`] for an address alone (a recipient).
+pub fn address_is_a_person(address: &str) -> bool {
+    let email = address.to_lowercase();
     let local = email.split('@').next().unwrap_or("");
     const MACHINE: [&str; 14] = [
         "noreply",

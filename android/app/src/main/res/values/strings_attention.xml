@@ -102,6 +102,11 @@
         <item quantity="one">“%2$s” · %1$d day ago</item>
         <item quantity="other">“%2$s” · %1$d days ago</item>
     </plurals>
+    <plurals name="att_no_reply">
+        <item quantity="one">No reply from %2$s for %1$d day</item>
+        <item quantity="other">No reply from %2$s for %1$d days</item>
+    </plurals>
+    <string name="att_no_reply_meta">“%1$s”, sent %2$s</string>
     <string name="att_more_names">%1$s and more</string>
     <string name="att_today">Today</string>
     <string name="att_tomorrow">Tomorrow</string>
@@ -171,6 +176,8 @@
     <string name="att_settings_tasks_detail">Overdue, unscheduled, too many, a mail that may finish one. On the phone, costs nothing.</string>
     <string name="att_settings_mail">Mail</string>
     <string name="att_settings_mail_detail">Dates, deadlines, invitation files, questions waiting for you. On the phone, costs nothing.</string>
+    <string name="att_settings_follow_up">Sent mail with no reply</string>
+    <string name="att_settings_follow_up_detail">Mail you sent 3 to 14 days ago that nobody has answered. On the phone, costs nothing.</string>
     <string name="att_settings_folders">Unread count covers</string>
     <string name="att_settings_folders_inbox">Inbox only</string>
     <string name="att_settings_folders_done">Done</string>

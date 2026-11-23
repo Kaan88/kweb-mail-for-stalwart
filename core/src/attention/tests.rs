@@ -59,6 +59,8 @@ struct World {
     entries: Vec<Occurrence>,
     mail: Vec<MessageHeader>,
     mine: HashMap<String, i64>,
+    sent: Vec<MessageHeader>,
+    others: HashMap<String, i64>,
     settings: AttentionSettings,
 }
 
@@ -74,6 +76,8 @@ impl World {
             first_names: &names,
             own_addresses: &own,
             my_last_in_thread: &self.mine,
+            sent: &self.sent,
+            last_other_in_thread: &self.others,
             settings: &self.settings,
         })
     }
@@ -352,4 +356,110 @@ fn ids_are_stable_and_follow_the_data() {
     let moved = world(vec![event("a", "A", at(19, 14, 0), 45, "x"), event("b", "B", at(19, 15, 0), 30, "y")]);
     assert!(moved.run().is_empty());
     let _ = NaiveDate::from_ymd_opt(2026, 11, 17);
+}
+
+/// A mail the user sent to `to`, `days` days ago, in the conversation `thread`.
+fn sent_mail(id: &str, thread: &str, to: &str, days: i64) -> MessageHeader {
+    MessageHeader {
+        thread_id: thread.into(),
+        mailbox_ids: vec!["sent".into()],
+        to: vec![crate::model::Address { name: "Ayse Yilmaz".into(), email: to.into() }],
+        is_unread: false,
+        ..mail(id, "kaan@example.org", "Menu choices", "Which one would you like?", now() - days * 86_400)
+    }
+}
+
+fn follow_up_world(sent: Vec<MessageHeader>) -> World {
+    World { sent, ..world(vec![]) }
+}
+
+#[test]
+fn a_sent_mail_nobody_answered_is_a_follow_up() {
+    let w = follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 5)]);
+    let f = w.one(AttentionRule::NoReply);
+    assert_eq!(f.family, AttentionFamily::Mail);
+    assert_eq!(f.names, vec!["Ayse Yilmaz".to_string(), "Menu choices".to_string()]);
+    assert_eq!(f.count, 5);
+    assert_eq!(f.thread_id.as_deref(), Some("th"));
+    // Opening the conversation works without an assistant: there is no service action.
+    assert_eq!(f.service, None);
+    assert_eq!(f.phone, vec![PhoneAction::OpenMail { message_id: "s".into(), thread_id: "th".into() }]);
+    // The id follows the mail, so a swipe is remembered under it.
+    assert_eq!(f.id, w.one(AttentionRule::NoReply).id);
+}
+
+#[test]
+fn a_sent_mail_that_asks_nothing_is_not_a_follow_up() {
+    let mut m = sent_mail("s", "th", "ayse@example.com", 5);
+    m.preview = "Here are the options, the notes are attached.".into();
+    assert!(!follow_up_world(vec![m]).rules().contains(&AttentionRule::NoReply));
+}
+
+#[test]
+fn a_reply_from_anyone_else_after_it_ends_the_wait() {
+    let mut w = follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 5)]);
+    // An answer from before the sent mail does not count; one after it does.
+    w.others.insert("th".into(), now() - 6 * 86_400);
+    assert!(w.rules().contains(&AttentionRule::NoReply));
+    w.others.insert("th".into(), now() - 4 * 86_400);
+    assert!(!w.rules().contains(&AttentionRule::NoReply));
+}
+
+#[test]
+fn a_follow_up_waits_three_days_and_ends_after_fourteen() {
+    assert!(!follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 2)])
+        .rules()
+        .contains(&AttentionRule::NoReply));
+    assert!(follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 3)])
+        .rules()
+        .contains(&AttentionRule::NoReply));
+    assert!(follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 14)])
+        .rules()
+        .contains(&AttentionRule::NoReply));
+    assert!(!follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 15)])
+        .rules()
+        .contains(&AttentionRule::NoReply));
+}
+
+#[test]
+fn machines_the_users_own_address_and_encrypted_mail_are_not_waited_for() {
+    for to in ["no-reply@example.com", "notifications@example.com", "newsletter@example.com", "kaan@example.org"] {
+        assert!(!follow_up_world(vec![sent_mail("s", "th", to, 5)]).rules().contains(&AttentionRule::NoReply), "{to}");
+    }
+    let mut secret = sent_mail("s", "th", "ayse@example.com", 5);
+    secret.preview = "-----BEGIN PGP MESSAGE-----".into();
+    assert!(!follow_up_world(vec![secret]).rules().contains(&AttentionRule::NoReply));
+    // Someone else's mail in the Sent list (not from the user's address) is not the user's.
+    let mut other = sent_mail("s", "th", "ayse@example.com", 5);
+    other.from_email = "bob@example.com".into();
+    assert!(!follow_up_world(vec![other]).rules().contains(&AttentionRule::NoReply));
+}
+
+#[test]
+fn only_the_newest_mail_of_a_conversation_counts() {
+    // A follow-up of the user's own, two days ago: the wait starts again, so no finding yet.
+    let w = follow_up_world(vec![
+        sent_mail("old", "th", "ayse@example.com", 8),
+        sent_mail("new", "th", "ayse@example.com", 2),
+    ]);
+    assert!(!w.rules().contains(&AttentionRule::NoReply));
+    // Both old enough: one finding, for the newest.
+    let w = follow_up_world(vec![
+        sent_mail("old", "th", "ayse@example.com", 8),
+        sent_mail("new", "th", "ayse@example.com", 4),
+    ]);
+    let all: Vec<_> = w.run().into_iter().filter(|f| f.rule == AttentionRule::NoReply).collect();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].message_ids, vec!["new".to_string()]);
+}
+
+#[test]
+fn the_follow_up_has_its_own_switch_and_follows_the_mail_switch() {
+    let mut w = follow_up_world(vec![sent_mail("s", "th", "ayse@example.com", 5)]);
+    assert!(AttentionSettings::default().follow_up);
+    w.settings.follow_up = false;
+    assert!(!w.rules().contains(&AttentionRule::NoReply));
+    w.settings.follow_up = true;
+    w.settings.mail = false;
+    assert!(!w.rules().contains(&AttentionRule::NoReply));
 }

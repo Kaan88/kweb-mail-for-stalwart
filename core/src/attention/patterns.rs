@@ -326,6 +326,29 @@ pub fn asks_user(text: &str, first_names: &[String]) -> bool {
     false
 }
 
+/// A mail the user sent that waits for an answer: a question mark, or a request to the reader
+/// ("can you", "could you", "let me know" and the Turkish ones). A bare "please" is not enough:
+/// "please find attached" asks nothing.
+pub fn asks_reader(text: &str) -> bool {
+    if text.contains('?') {
+        return true;
+    }
+    const ASKS: [&str; 10] = [
+        "can you",
+        "could you",
+        "would you",
+        "will you",
+        "let me know",
+        "please confirm",
+        "please reply",
+        "haber ver",
+        "yapar mısın",
+        "yapabilir misin",
+    ];
+    let low = text.to_lowercase();
+    ASKS.iter().any(|a| low.contains(a))
+}
+
 const STOP: [&str; 42] = [
     "with",
     "from",
@@ -492,6 +515,11 @@ mod tests {
         assert!(asks_user("Kaan lütfen gönder", &names));
         assert!(!asks_user("Thanks, please see attached", &names));
         assert!(!asks_user("The notes are attached.", &names));
+        assert!(asks_reader("Could you send me the quote by Friday"));
+        assert!(asks_reader("Toplantı saati uygun mu?"));
+        assert!(asks_reader("Let me know when it is done"));
+        assert!(!asks_reader("Please find the notes attached."));
+        assert!(!asks_reader("probe"));
     }
 
     #[test]

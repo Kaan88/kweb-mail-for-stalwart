@@ -360,6 +360,10 @@ fun MailListScreen(
                     scope.launch { drawerState.close() }
                     vm.setSubfolders(folder.id, with)
                 },
+                onMarkAllRead = { folder, with ->
+                    scope.launch { drawerState.close() }
+                    vm.markAllRead(folder.id, with)
+                },
                 onFolderMenu = { folder, item ->
                     when (item) {
                         FolderMenuItem.NOTIFY_ON -> {
@@ -754,6 +758,7 @@ private fun DrawerContent(
     allFolders: List<Mailbox>,
     onFolder: (String) -> Unit,
     onSubfolders: (Mailbox, Boolean) -> Unit,
+    onMarkAllRead: (Mailbox, Boolean) -> Unit,
     onFolderMenu: (Mailbox, FolderMenuItem) -> Unit,
     onManageFolders: () -> Unit,
     labels: List<Label>,
@@ -785,7 +790,8 @@ private fun DrawerContent(
                 var menuOpen by remember { mutableStateOf(false) }
                 val shareable = ShareRules.mailboxShareable(folder.role)
                 val subfolders = SubfolderRules.offered(allFolders, folder.id)
-                val hasMenu = shareable || subfolders || FolderRules.menu(folder, withBell = true).isNotEmpty()
+                val markAll = MarkAllRules.offered(allFolders, folder.id, folder.id in withSubfolders)
+                val hasMenu = shareable || subfolders || markAll || FolderRules.menu(folder, withBell = true).isNotEmpty()
                 val shareName = folderName(folder)
                 Box {
                     NavigationDrawerItem(
@@ -823,8 +829,15 @@ private fun DrawerContent(
                             withBell = true,
                             expanded = menuOpen,
                             onDismiss = { menuOpen = false },
-                            extra = if (shareable || subfolders) {
+                            extra = if (shareable || subfolders || markAll) {
                                 {
+                                    if (markAll) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.list_mark_all_read)) },
+                                            leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                                            onClick = { menuOpen = false; onMarkAllRead(folder, folder.id in withSubfolders) },
+                                        )
+                                    }
                                     if (subfolders) {
                                         // A lasting choice per folder: checked, the list of this folder holds its subfolders' mail every time it opens.
                                         val combined = folder.id in withSubfolders

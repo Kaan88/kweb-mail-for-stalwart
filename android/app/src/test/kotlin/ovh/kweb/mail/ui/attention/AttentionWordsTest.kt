@@ -76,6 +76,12 @@ class AttentionWordsTest {
         assertEquals("p${R.plurals.att_waiting_meta}:1:Menu", AttentionWords.meta(fresh, clock, t))
     }
 
+    @Test fun aSentMailWithNoReplySaysWhoAndHowManyDaysAndQuotesTheSubject() {
+        val finding = f(AttentionRule.NO_REPLY, AttentionFamily.MAIL, HomeTile.UNREAD, names = listOf("Ayse", "Menu"), times = listOf(now - 5 * 86_400), count = 5)
+        assertEquals("p${R.plurals.att_no_reply}:5:Ayse", AttentionWords.title(finding, clock, t))
+        assertEquals("s${R.string.att_no_reply_meta}:Menu|" + AttentionWords.time(now - 5 * 86_400, clock), AttentionWords.meta(finding, clock, t))
+    }
+
     @Test fun timesAreTheClockTodayAndTheWeekdayLater() {
         val today = AttentionWords.time(now + 3600, clock)
         val tomorrow = AttentionWords.time(now + 86_400, clock)

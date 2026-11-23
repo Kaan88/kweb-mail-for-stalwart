@@ -21,6 +21,30 @@ object ThreadRules {
     }
 
     /**
+     * The message the screen scrolls to when the thread is first opened, to stand at the top: the one the route names
+     * when the thread has it, else the first message that is unread now (before opening marks anything read). Null
+     * when nothing needs scrolling: no unread message, a thread of one, or the target is the first message anyway.
+     * [messages] are oldest first.
+     */
+    fun scrollTarget(messages: List<MessageHeader>, focusId: String?): String? {
+        if (messages.size < 2) return null
+        val target = messages.firstOrNull { it.id == focusId } ?: messages.firstOrNull { it.isUnread }
+        return target?.takeIf { it.id != messages.first().id }?.id
+    }
+
+    /**
+     * One step of the scroll to [target] (a pixel offset of the content): where to scroll now, or null when it is done.
+     * It is done when the screen is at or past [target], or when it is not where this scroll left it ([lastSet], null
+     * before the first step): the content may still grow (the thread's mail loads) and each step goes as far as the
+     * content allows, but a screen the user moved is theirs.
+     */
+    fun scrollStep(target: Int, value: Int, lastSet: Int?): Int? {
+        if (value >= target) return null
+        if (lastSet != null && value != lastSet) return null
+        return target
+    }
+
+    /**
      * The thread has nothing left to show: the cache was read, the server was asked (and
      * answered) and no message is there. Before that, "no messages" only means "not here yet".
      */

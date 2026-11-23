@@ -131,11 +131,13 @@ fun HomeAttentionScreen(onBack: () -> Unit, onOpenAssistant: () -> Unit, vm: Att
 
             SectionTitle(stringResource(R.string.att_settings_attention))
             Group {
-                SwitchSettingsRow(Groups.shape(0, 4), stringResource(R.string.att_settings_cal), stringResource(R.string.att_settings_cal_detail), s.calendar) { change(s.copy(calendar = it)) }
-                SwitchSettingsRow(Groups.shape(1, 4), stringResource(R.string.att_settings_tasks), stringResource(R.string.att_settings_tasks_detail), s.tasks) { change(s.copy(tasks = it)) }
-                SwitchSettingsRow(Groups.shape(2, 4), stringResource(R.string.att_settings_mail), stringResource(R.string.att_settings_mail_detail), s.mail) { change(s.copy(mail = it)) }
+                SwitchSettingsRow(Groups.shape(0, 5), stringResource(R.string.att_settings_cal), stringResource(R.string.att_settings_cal_detail), s.calendar) { change(s.copy(calendar = it)) }
+                SwitchSettingsRow(Groups.shape(1, 5), stringResource(R.string.att_settings_tasks), stringResource(R.string.att_settings_tasks_detail), s.tasks) { change(s.copy(tasks = it)) }
+                SwitchSettingsRow(Groups.shape(2, 5), stringResource(R.string.att_settings_mail), stringResource(R.string.att_settings_mail_detail), s.mail) { change(s.copy(mail = it)) }
+                // Its own switch, under the mail rules: it only has an effect while those are on.
+                SwitchSettingsRow(Groups.shape(3, 5), stringResource(R.string.att_settings_follow_up), stringResource(R.string.att_settings_follow_up_detail), s.followUp) { change(s.copy(followUp = it)) }
                 SettingsRow(
-                    Groups.shape(3, 4),
+                    Groups.shape(4, 5),
                     stringResource(R.string.att_settings_scope),
                     stringResource(if (s.mailScope == MailScope.INBOX) R.string.att_settings_scope_inbox else R.string.att_settings_scope_notified),
                     onClick = { asking = true },

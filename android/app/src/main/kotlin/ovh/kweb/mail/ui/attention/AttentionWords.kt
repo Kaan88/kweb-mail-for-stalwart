@@ -98,6 +98,7 @@ object AttentionWords {
         AttentionRule.DEADLINE_WORDS -> t.string(R.string.att_deadline, name(f, 0))
         AttentionRule.INVITATION_FILE -> t.string(R.string.att_invitation_file, name(f, 0))
         AttentionRule.WAITING_FOR_YOU -> t.string(R.string.att_waiting, name(f, 0))
+        AttentionRule.NO_REPLY -> t.plural(R.plurals.att_no_reply, f.count.toInt().coerceAtLeast(1), name(f, 0))
     }
 
     /** The second line, or null when there is none. */
@@ -117,6 +118,7 @@ object AttentionWords {
         }
         AttentionRule.MAIL_MAY_FINISH, AttentionRule.DATE_IN_MAIL, AttentionRule.DEADLINE_WORDS, AttentionRule.INVITATION_FILE ->
             t.string(R.string.att_quoted_meta, name(f, 1), at(f, 0, c))
+        AttentionRule.NO_REPLY -> t.string(R.string.att_no_reply_meta, name(f, 1), at(f, 0, c))
         AttentionRule.WAITING_FOR_YOU -> {
             val days = ((c.nowSeconds - (f.times.firstOrNull() ?: c.nowSeconds)) / 86_400).toInt().coerceAtLeast(1)
             t.plural(R.plurals.att_waiting_meta, days, name(f, 1))

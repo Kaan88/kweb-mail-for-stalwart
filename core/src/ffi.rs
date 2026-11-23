@@ -394,6 +394,37 @@ impl Core {
         result
     }
 
+    /// Marks every unread message of the mailboxes (a folder, or a folder with the folders in it)
+    /// as read. The cached ones go through the action path, so they work offline and the
+    /// notifications go; their ids are returned, so that the caller can offer Undo
+    /// (`MarkUnread` on exactly those). When the server can be reached the unread mail the cache
+    /// does not hold (older than its window) is marked there too, at most `MARK_ALL_SERVER_CAP`
+    /// messages a folder: best effort, not undone, and a failure there is not an error.
+    pub fn mark_all_read(&self, mailbox_ids: Vec<String>) -> Result<Vec<String>> {
+        check_mailbox_set(&mailbox_ids)?;
+        let account_id = self.account_id()?;
+        let cached = self.store.unread_ids_in(&account_id, &mailbox_ids)?;
+        let actions: Vec<Action> = cached.iter().map(|id| Action::MarkRead { message_id: id.clone() }).collect();
+        let result = actions::submit_all(&self.store, &account_id, &actions);
+        self.poke();
+        result?;
+        let (store, account) = (&self.store, &account_id);
+        let mailboxes = &mailbox_ids;
+        let _ = self.with_connection_within(Some(Duration::from_secs(30)), |conn| async move {
+            let mut rest = Vec::new();
+            for mailbox in mailboxes {
+                for id in conn.unread_ids(mailbox, MARK_ALL_SERVER_CAP).await? {
+                    // A cached message is the cache's and the queue's business.
+                    if store.get_message(account, &id)?.is_none() && !rest.contains(&id) {
+                        rest.push(id);
+                    }
+                }
+            }
+            conn.mark_seen(&rest).await
+        });
+        Ok(cached)
+    }
+
     /// One cached message header, e.g. to find the thread of a tapped notification.
     pub fn message(&self, message_id: String) -> Result<Option<MessageHeader>> {
         self.store.get_message(&self.account_id()?, &message_id)
@@ -1133,6 +1164,9 @@ fn check_mailbox_set(ids: &[String]) -> Result<()> {
     }
     Ok(())
 }
+
+/// The most unread messages one folder has marked on the server beyond the cache.
+const MARK_ALL_SERVER_CAP: usize = 5000;
 
 /// The most folders one combined list may span.
 const MAX_MAILBOX_SET: usize = 500;

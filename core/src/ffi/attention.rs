@@ -142,6 +142,30 @@ impl Core {
             }
         }
 
+        // Mail the user sent that may be waiting for an answer: the Sent folder (never Spam or Trash), and
+        // the newest message from anyone else in each of those conversations, as far as the cache holds it.
+        let mut sent: Vec<MessageHeader> = Vec::new();
+        let mut others: HashMap<String, i64> = HashMap::new();
+        if settings.mail && settings.follow_up {
+            sent = collect(
+                boxes.iter().filter(|b| b.role.as_deref() == Some("sent")).map(|b| b.id.as_str()).collect(),
+                attention::limits::FOLLOW_UP_MAX_DAYS,
+            )?;
+            sent.retain(|m| own.contains(&m.from_email.to_lowercase()));
+            for thread in sent.iter().map(|m| m.thread_id.clone()).filter(|t| !t.is_empty()).collect::<HashSet<_>>() {
+                let newest = self
+                    .store
+                    .thread_messages(&account_id, &thread)?
+                    .iter()
+                    .filter(|m| !own.contains(&m.from_email.to_lowercase()))
+                    .map(|m| m.received_at)
+                    .max();
+                if let Some(at) = newest {
+                    others.insert(thread, at);
+                }
+            }
+        }
+
         let input = attention::Input {
             clock: Clock { now, zone },
             entries: &entries,
@@ -150,6 +174,8 @@ impl Core {
             first_names: &first_names,
             own_addresses: &own,
             my_last_in_thread: &mine,
+            sent: &sent,
+            last_other_in_thread: &others,
             settings: &settings,
         };
         let dismissed = load_dismissed(&self.store, &account_id)?;

@@ -131,3 +131,46 @@ fn a_service_action_needs_a_set_up_assistant() {
     // with no assistant set up the finding is not shown at all.
     assert!(rig.rules(AttentionPlace::Calendar).is_empty());
 }
+
+#[test]
+fn a_sent_mail_nobody_answered_is_found_in_the_cache_and_goes_with_a_reply_or_a_swipe() {
+    use crate::support::SENT_ID;
+    let rig = Rig::new();
+    rig.core.check_once(Shade::Unknown).unwrap();
+    let me = rig.core.identities().unwrap()[0].email.clone();
+    let sent =
+        rig.server.deliver_in_at(SENT_ID, "Me", &me, "Menu choices", "Which one would you like?", now() - 5 * 86_400);
+    rig.server.set_recipients(&sent, &[("Ayse Yilmaz", "ayse@example.test")], &[]);
+    rig.core.check_once(Shade::Unknown).unwrap();
+
+    // No assistant is set up, and the finding is still there with its plain Open action.
+    let found = rig.core.attention_findings(AttentionPlace::Home, ZONE.into(), now(), false).unwrap();
+    let f = found.iter().find(|f| f.rule == AttentionRule::NoReply).expect("a follow-up finding");
+    assert_eq!(f.names[0], "Ayse Yilmaz");
+    assert_eq!(f.count, 5);
+    assert!(f.service.is_none() && f.phone.len() == 1);
+    let thread = f.thread_id.clone().unwrap();
+    assert_eq!(rig.rules(AttentionPlace::Thread { thread_id: thread.clone() }), vec![AttentionRule::NoReply]);
+
+    // A swipe stays away; the reset brings it back.
+    rig.core.attention_dismiss(f.id.clone(), now()).unwrap();
+    assert!(!rig.rules(AttentionPlace::Home).contains(&AttentionRule::NoReply));
+    rig.core.attention_reset_dismissed().unwrap();
+    assert!(rig.rules(AttentionPlace::Home).contains(&AttentionRule::NoReply));
+
+    // The switch.
+    let mut s = rig.core.attention_settings().unwrap();
+    assert!(s.follow_up);
+    s.follow_up = false;
+    rig.core.attention_set_settings(s.clone()).unwrap();
+    assert!(!rig.rules(AttentionPlace::Home).contains(&AttentionRule::NoReply));
+    s.follow_up = true;
+    rig.core.attention_set_settings(s).unwrap();
+
+    // An answer in the same conversation, later, ends it.
+    let reply =
+        rig.server.deliver_at("Ayse Yilmaz", "ayse@example.test", "Re: Menu choices", "Thanks.", now() - 3 * 86_400);
+    rig.server.set_thread(&reply, &thread);
+    rig.core.check_once(Shade::Unknown).unwrap();
+    assert!(!rig.rules(AttentionPlace::Home).contains(&AttentionRule::NoReply));
+}

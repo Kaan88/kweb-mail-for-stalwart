@@ -56,6 +56,8 @@ data class ThreadState(
     /** Oldest first. */
     val messages: List<MessageHeader> = emptyList(),
     val expanded: Set<String> = emptySet(),
+    /** The message to scroll to when the thread was first opened (see [ThreadRules.scrollTarget]); fixed by the first read. */
+    val scrollToId: String? = null,
     val bodies: Map<String, BodyState> = emptyMap(),
     /** Messages whose remote content the user allowed. Not remembered beyond this screen. */
     val remoteAllowed: Set<String> = emptySet(),
@@ -421,6 +423,7 @@ class ThreadViewModel(app: Application, private val acct: AccountSession, privat
                 old.copy(
                     messages = messages,
                     expanded = expanded,
+                    scrollToId = if (old.messages.isEmpty()) ThreadRules.scrollTarget(messages, route.messageId) else old.scrollToId,
                     mailboxes = mailboxes,
                     myAddress = me?.takeIf { '@' in it },
                     loaded = true,

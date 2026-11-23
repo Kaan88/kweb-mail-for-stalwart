@@ -460,6 +460,31 @@ class MailListViewModel(app: Application, private val session: AccountSession) :
         }
     }
 
+    /**
+     * "Mark all as read" for a folder from the drawer's menu (and its subfolders when that choice is on). The core marks
+     * the cached unread mail through the queue and the rest on the server when it can; the ids it changed are what Undo
+     * puts back. Nothing cached to undo (only older mail on the server) says so without an Undo.
+     */
+    fun markAllRead(folderId: String, withSubfolders: Boolean) {
+        viewModelScope.launch {
+            try {
+                val ids = MarkAllRules.scope(stateFlow.value.mailboxes, folderId, withSubfolders)
+                val changed = withContext(Dispatchers.IO) { session.core.markAllRead(ids) }
+                if (changed.isNotEmpty() && session.core.status() !is ConnectionStatus.Live) CheckScheduler.checkSoon(getApplication())
+                reload()
+                eventChannel.send(
+                    if (changed.isEmpty()) ListEvent.Message(R.string.list_marked_all_read)
+                    else ListEvent.UndoActions(R.string.list_marked_all_read, MailActions.markUnread(changed)),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "marking all read failed", e)
+                eventChannel.send(ListEvent.Message(R.string.list_action_failed))
+            }
+        }
+    }
+
     /** The bell of a folder from the drawer's menu. The list reads again when the core has it. */
     /** "Show with subfolders" for a folder, kept in the core; the folder is opened the way it was just set. */
     fun setSubfolders(mailboxId: String, on: Boolean) {

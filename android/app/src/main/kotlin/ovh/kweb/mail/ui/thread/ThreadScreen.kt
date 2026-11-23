@@ -52,6 +52,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -526,7 +528,25 @@ fun ThreadScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        // On the first open the first message that was unread then stands at the top. Once per screen: a thread
+        // returned to (back stack, pager) has its own scroll position, which is kept as it was.
+        val scrollState = rememberScrollState()
+        var scrollDone by rememberSaveable { mutableStateOf(false) }
+        var targetY by remember { mutableStateOf<Int?>(null) }
+        var lastSet by remember { mutableStateOf<Int?>(null) }
+        val maxScroll = scrollState.maxValue
+        LaunchedEffect(targetY, maxScroll) {
+            val y = targetY ?: return@LaunchedEffect
+            if (scrollDone) return@LaunchedEffect
+            val to = ThreadRules.scrollStep(y, scrollState.value, lastSet)
+            if (to == null) {
+                scrollDone = true
+            } else {
+                scrollState.scrollTo(to)
+                lastSet = scrollState.value
+            }
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState)) {
             Text(
                 state.subject.ifEmpty { stringResource(R.string.list_no_subject) },
                 modifier = Modifier
@@ -542,6 +562,13 @@ fun ThreadScreen(
                     CircularProgressIndicator()
                 }
                 else -> state.messages.forEachIndexed { index, header ->
+                    Box(
+                        if (header.id == state.scrollToId && !scrollDone) {
+                            Modifier.onGloballyPositioned { if (lastSet == null) targetY = it.positionInParent().y.toInt() }
+                        } else {
+                            Modifier
+                        },
+                    ) {
                     MessageCard(
                         header = header,
                         shape = Groups.shape(index, state.messages.size),
@@ -618,6 +645,7 @@ fun ThreadScreen(
                             },
                         ),
                     )
+                    }
                 }
             }
             // Room under the last card for the floating bar.
