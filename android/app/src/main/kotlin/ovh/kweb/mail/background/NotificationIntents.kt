@@ -107,6 +107,19 @@ internal object NotificationIntents {
         return PendingIntent.getBroadcast(context, androidId, intent, FLAGS)
     }
 
+    /**
+     * The Copy code button: a broadcast to [ActionReceiver] (not exported, named by component) that carries the
+     * code as an extra of its own and nowhere else. Account and message are in the data URI like every button.
+     */
+    fun copyCode(context: Context, record: AccountRecord, androidId: Int, messageId: String, code: String): PendingIntent {
+        val intent = receiverIntent(context, ActionReceiver.ACTION_COPY_CODE, uri(record, ActionReceiver.ACTION_COPY_CODE, messageId))
+            .putExtra(Notifier.EXTRA_ACCOUNT, record.id)
+            .putExtra(ActionReceiver.EXTRA_MESSAGE_ID, messageId)
+            .putExtra(ActionReceiver.EXTRA_ANDROID_ID, androidId)
+            .putExtra(ActionReceiver.EXTRA_CODE, code)
+        return PendingIntent.getBroadcast(context, androidId, intent, FLAGS)
+    }
+
     /** A broadcast to [ActionReceiver] that carries a whole reminder (snooze button and the alarm). */
     fun forReminder(context: Context, record: AccountRecord, action: String, notificationId: Int, reminder: Reminder): PendingIntent {
         val intent = receiverIntent(context, action, uri(record, action, "${reminder.eventId}/${reminder.alertId}"))

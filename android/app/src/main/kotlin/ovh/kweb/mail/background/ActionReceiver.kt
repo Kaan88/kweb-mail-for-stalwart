@@ -3,11 +3,19 @@ package ovh.kweb.mail.background
 import android.app.AlarmManager
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.PersistableBundle
 import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import kotlin.concurrent.thread
+import ovh.kweb.mail.R
 import ovh.kweb.mail.accounts.AccountRecord
 import ovh.kweb.mail.accounts.Accounts
 import uniffi.kweb_core.Action
@@ -46,6 +54,7 @@ class ActionReceiver : BroadcastReceiver() {
             ACTION_DELETE -> actOnMessage(context, record, intent) { core, id -> NotificationActionRules.deleteAction(id, core.mailboxes()) }
             ACTION_MARK_READ -> actOnMessage(context, record, intent) { _, id -> Action.MarkRead(id) }
             ACTION_SWIPED -> intent.getStringExtra(EXTRA_MESSAGE_ID)?.let { Accounts.session(record.id)?.core?.notificationSwiped(it) }
+            ACTION_COPY_CODE -> copyCode(context, intent)
             ACTION_SNOOZE -> ReminderExtras.read(intent)?.let { snooze(context, record, it) }
             ACTION_REMINDER_DUE -> ReminderExtras.read(intent)?.let { showSnoozed(context, record, it) }
         }
@@ -79,6 +88,22 @@ class ActionReceiver : BroadcastReceiver() {
     }
 
     /**
+     * Puts the code of a notification's Copy code button on the clipboard, marked sensitive so that the system keeps it
+     * out of its clipboard preview. Android 13 and later show their own confirmation; before that a short Toast says it
+     * is done. The notification stays. The code is never logged.
+     */
+    private fun copyCode(context: Context, intent: Intent) {
+        val code = intent.getStringExtra(EXTRA_CODE)?.takeIf { it.isNotEmpty() && it.length <= OneTimeCodeRules.MAX_LENGTH } ?: return
+        val clipboard = context.getSystemService(ClipboardManager::class.java) ?: return
+        val clip = ClipData.newPlainText(context.getString(R.string.action_copy_code), code)
+        clip.description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        clipboard.setPrimaryClip(clip)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            Handler(Looper.getMainLooper()).post { Toast.makeText(context, R.string.copy_code_done, Toast.LENGTH_SHORT).show() }
+        }
+    }
+
+    /**
      * Removes the reminder and shows it again in [SNOOZE_MILLIS]. The alarm is inexact and allowed
      * while idle, so no exact-alarm permission is needed; it can be a few minutes late. It does not
      * survive a restart of the phone.
@@ -101,6 +126,8 @@ class ActionReceiver : BroadcastReceiver() {
         const val ACTION_DELETE = "ovh.kweb.mail.action.DELETE"
         const val ACTION_MARK_READ = "ovh.kweb.mail.action.MARK_READ"
         const val ACTION_SWIPED = "ovh.kweb.mail.action.SWIPED"
+        const val ACTION_COPY_CODE = "ovh.kweb.mail.action.COPY_CODE"
+        const val EXTRA_CODE = "ovh.kweb.mail.extra.ACTION_CODE"
         const val ACTION_SNOOZE = "ovh.kweb.mail.action.SNOOZE"
         const val ACTION_REMINDER_DUE = "ovh.kweb.mail.action.REMINDER_DUE"
         const val EXTRA_MESSAGE_ID = "ovh.kweb.mail.extra.ACTION_MESSAGE_ID"

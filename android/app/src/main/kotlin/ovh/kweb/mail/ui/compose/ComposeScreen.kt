@@ -75,10 +75,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
@@ -150,6 +153,24 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
     val resources = LocalResources.current
     val prefs = remember { UiPrefs(context) }
     var askingLanguage by rememberSaveable { mutableStateOf(false) }
+
+    // Smart completion: a name after a greeting, the rest of a sign-off. Worked out here from the field's text and
+    // selection, on the device only, and shown as one chip above the keyboard while the body has the focus.
+    val completionOn = remember { prefs.smartCompletion }
+    var bodyFocused by remember { mutableStateOf(false) }
+    val senderName = s.identities.firstOrNull { it.id == s.identityId }?.name.orEmpty()
+    val completion = if (completionOn && bodyFocused && s.ready && !s.sending) {
+        CompletionRules.suggest(bodyField.text, bodyField.selection.start, bodyField.selection.end, s.to, senderName)
+    } else {
+        null
+    }
+    fun applyCompletion() {
+        val suggestion = completion ?: return
+        if (vm.state.sending || bodyField.text != vm.state.body) return
+        val (text, cursor) = CompletionRules.apply(bodyField.text, suggestion)
+        vm.setBody(text)
+        bodyField = TextFieldValue(text, TextRange(cursor))
+    }
     LifecycleResumeEffect(assistant) {
         assistant.refreshSettings()
         onPauseOrDispose { }
@@ -243,7 +264,20 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = { StatusLine(s) },
+        bottomBar = {
+            Column(Modifier.background(MaterialTheme.colorScheme.background)) {
+                if (completion != null) {
+                    SuggestionChip(
+                        onClick = ::applyCompletion,
+                        label = { Text(completion.label) },
+                        modifier = Modifier.padding(horizontal = 16.dp).semantics {
+                            contentDescription = resources.getString(R.string.completion_chip_description, completion.label)
+                        },
+                    )
+                }
+                StatusLine(s)
+            }
+        },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         when (s.phase) {
@@ -261,7 +295,7 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
             }
             Phase.Ready -> Column(Modifier.padding(padding).fillMaxSize()) {
                 Notices(s, vm)
-                Form(s, vm, toFocus, bodyField) { value ->
+                Form(s, vm, toFocus, bodyField, onBodyFocus = { bodyFocused = it }) { value ->
                     // A body that is being sent is not edited; the field then keeps what the state has (the selection may move).
                     if (vm.state.sending && value.text != vm.state.body) return@Form
                     bodyField = value
@@ -440,7 +474,14 @@ private fun Bar(text: String, action: Pair<String, () -> Unit>?) {
 }
 
 @Composable
-private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester, body: TextFieldValue, onBody: (TextFieldValue) -> Unit) {
+private fun Form(
+    s: ComposeState,
+    vm: ComposeViewModel,
+    toFocus: FocusRequester,
+    body: TextFieldValue,
+    onBodyFocus: (Boolean) -> Unit,
+    onBody: (TextFieldValue) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val subjectFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
@@ -507,7 +548,7 @@ private fun Form(s: ComposeState, vm: ComposeViewModel, toFocus: FocusRequester,
         BasicTextField(
             value = body,
             onValueChange = onBody,
-            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 320.dp).focusRequester(bodyFocus).padding(horizontal = 20.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 320.dp).focusRequester(bodyFocus).onFocusChanged { onBodyFocus(it.isFocused) }.padding(horizontal = 20.dp, vertical = 14.dp),
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
             cursorBrush = SolidColor(colors.primary),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),

@@ -150,6 +150,8 @@ fun MessageCard(
     refused: List<uniffi.kweb_core.RefusedRecipient> = emptyList(),
     /** What the server found out about the sender; null while not known or for mail that is not checked. */
     senderCheck: uniffi.kweb_core.SenderCheck? = null,
+    /** How many messages the thread has: in a long conversation the quoted text of a message is folded (QuoteFolding). */
+    messageCount: Int = 1,
 ) {
     val sender = Sender.label(header.fromName, header.fromEmail) ?: stringResource(R.string.list_unknown_sender)
     val initial = Sender.initial(header.fromName, header.fromEmail)
@@ -198,7 +200,7 @@ fun MessageCard(
                 // remote content stays off for it when the core says so, whatever the user allowed.
                 val view = (crypto as? CryptoUi.Ready)?.view
                 val shown = if (body is BodyState.Loaded && view != null) BodyState.Loaded(CryptoRules.displayBody(body.body, view)) else body
-                BodyView(header, shown, CryptoRules.remoteAllowed(remoteAllowed, view), busyBlobId, download, actions, account, flatNow, CryptoRules.remoteOffered(view))
+                BodyView(header, shown, CryptoRules.remoteAllowed(remoteAllowed, view), busyBlobId, download, actions, account, flatNow, CryptoRules.remoteOffered(view), messageCount)
                 view?.content?.attachments?.filter { !it.isInline }?.takeIf { it.isNotEmpty() }?.let { files ->
                     ovh.kweb.mail.ui.crypto.CryptoFiles(files, flatNow, onOpenCryptoFile)
                 }
@@ -233,7 +235,7 @@ private fun ExpandedHeader(
     val time = remember(header.receivedAt, yesterday) {
         RowTime.format(header.receivedAt, System.currentTimeMillis(), ZoneId.systemDefault(), Locale.getDefault(), yesterday)
     }
-    Column(Modifier.fillMaxWidth().clickable(onClick = actions.onToggle).padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp)) {
+    Column(Modifier.fillMaxWidth().clickable(onClick = actions.onToggle).padding(start = 12.dp, top = 12.dp, bottom = 8.dp, end = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Avatar(initial, size = 36.dp, strong = true)
             Column(Modifier.weight(1f)) {
@@ -260,21 +262,29 @@ private fun ExpandedHeader(
             Text(time, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             if (actions.showMenu) MessageMenu(actions) else Spacer(Modifier.width(12.dp))
         }
-        // Under the sender line, level with its text (past the avatar).
+        // Under the sender line, level with its text (past the avatar): the sender check, the signature status, the labels and
+        // Unsubscribe share one compact row, which wraps only when the window is too narrow for it.
+        val showSender = senderCheck != null && ovh.kweb.mail.ui.sender.SenderRules.shows(senderCheck)
         MessageChips(
             labelNames = labelNames,
             unsubscribe = unsubscribe,
             onLabels = actions.onLabels,
             onUnsubscribe = actions.onUnsubscribe,
-            modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp),
+            modifier = Modifier.padding(start = 48.dp, top = 4.dp, end = 8.dp),
+            leading = if (showSender || crypto != null) {
+                {
+                    if (showSender && senderCheck != null) {
+                        ovh.kweb.mail.ui.sender.SenderChip(senderCheck, onClick = actions.onSenderChip, compact = true)
+                    }
+                    if (crypto != null) CryptoChip(crypto, onClick = actions.onCryptoChip, compact = true)
+                }
+            } else {
+                null
+            },
         )
-        if (senderCheck != null && ovh.kweb.mail.ui.sender.SenderRules.shows(senderCheck)) {
-            ovh.kweb.mail.ui.sender.SenderChip(senderCheck, onClick = actions.onSenderChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
-            if (ovh.kweb.mail.ui.sender.SenderRules.warns(senderCheck)) {
-                ovh.kweb.mail.ui.sender.SenderWarning(senderCheck, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
-            }
+        if (showSender && senderCheck != null && ovh.kweb.mail.ui.sender.SenderRules.warns(senderCheck)) {
+            ovh.kweb.mail.ui.sender.SenderWarning(senderCheck, modifier = Modifier.padding(start = 48.dp, top = 4.dp, end = 8.dp))
         }
-        if (crypto != null) CryptoChip(crypto, onClick = actions.onCryptoChip, modifier = Modifier.padding(start = 48.dp, top = 6.dp, end = 8.dp))
         if (refused.isNotEmpty()) {
             // The message went to the others; the server would not take these (its reply is in the details).
             Text(
@@ -413,6 +423,7 @@ private fun BodyView(
     account: String?,
     flat: Boolean,
     remoteOffered: Boolean = true,
+    messageCount: Int = 1,
 ) {
     when (state) {
         null, BodyState.Loading -> Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -424,7 +435,7 @@ private fun BodyView(
             Text(stringResource(R.string.thread_body_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = actions.onRetryBody) { Text(stringResource(R.string.retry)) }
         }
-        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, download, actions, account, flat, remoteOffered)
+        is BodyState.Loaded -> LoadedBody(header, state.body, remoteAllowed, busyBlobId, download, actions, account, flat, remoteOffered, messageCount)
     }
 }
 
@@ -439,8 +450,10 @@ private fun LoadedBody(
     account: String?,
     flat: Boolean,
     remoteOffered: Boolean = true,
+    messageCount: Int = 1,
 ) {
     val html = body.html
+    val foldAll = QuoteFolding.foldAll(messageCount)
     val size = ovh.kweb.mail.ui.UiPrefs(LocalContext.current).textSize
     if (html != null) {
         var blocked by remember(header.id) { mutableStateOf(false) }
@@ -491,8 +504,11 @@ private fun LoadedBody(
         val context = LocalContext.current
         val session = LocalAccountSession.current
         val inline = remember(body, account, session) { inlineLookup(context.applicationContext, session, body, account) }
+        // Quoted text is wrapped in <details> (no script needed); the mail's own text is kept as it is.
+        val quoteLabel = stringResource(R.string.thread_quote_label)
+        val folded = remember(html, quoteLabel, foldAll) { QuoteFolding.foldHtml(html, quoteLabel, foldAll) }
         MailWebView(
-            html = html,
+            html = folded,
             allowRemote = remoteAllowed,
             inline = inline,
             onBlocked = { blocked = true },
@@ -504,10 +520,12 @@ private fun LoadedBody(
         )
     } else {
         // On the same light inset as HTML mail, so both kinds of message look alike.
+        val text = body.text.orEmpty().trimEnd()
+        val parts = remember(text, foldAll) { QuoteFolding.splitText(text, foldAll) }
+        val textStyle = MaterialTheme.typography.bodyMedium.let { it.copy(fontSize = it.fontSize * size.factor, lineHeight = it.lineHeight * size.factor) }
         SelectionContainer {
-            Text(
-                body.text.orEmpty().trimEnd(),
-                modifier = if (flat) {
+            Column(
+                if (flat) {
                     Modifier.fillMaxWidth().padding(vertical = 12.dp)
                 } else {
                     Modifier
@@ -516,8 +534,26 @@ private fun LoadedBody(
                         .background(MaterialTheme.colorScheme.background)
                         .padding(horizontal = 14.dp, vertical = 12.dp)
                 },
-                style = MaterialTheme.typography.bodyMedium.let { it.copy(fontSize = it.fontSize * size.factor, lineHeight = it.lineHeight * size.factor) },
-            )
+            ) {
+                parts.forEachIndexed { index, part ->
+                    if (!part.quoted) {
+                        Text(part.text, style = textStyle)
+                    } else {
+                        var open by remember(header.id, index) { mutableStateOf(false) }
+                        Text(
+                            "… " + stringResource(R.string.thread_quote_label),
+                            modifier = Modifier
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { open = !open }
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        if (open) Text(part.text, style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
         }
     }
     if (body.isTruncated) {

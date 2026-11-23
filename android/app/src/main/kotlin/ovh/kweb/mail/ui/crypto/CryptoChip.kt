@@ -116,7 +116,7 @@ private fun noteRes(n: CryptoNote): Int = when (n) {
 
 /** The status of one message in one line, under the sender. A tap opens the explanation. */
 @Composable
-fun CryptoChip(ui: CryptoUi, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun CryptoChip(ui: CryptoUi, onClick: () -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val tone = (ui as? CryptoUi.Ready)?.let { CryptoRules.tone(it.view) }
     val (container, content) = when (tone) {
@@ -130,7 +130,7 @@ fun CryptoChip(ui: CryptoUi, onClick: () -> Unit, modifier: Modifier = Modifier)
             .clip(RoundedCornerShape(50))
             .background(container)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = if (compact) 2.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -143,7 +143,7 @@ fun CryptoChip(ui: CryptoUi, onClick: () -> Unit, modifier: Modifier = Modifier)
             CryptoUi.Failed -> stringResource(R.string.crypto_chip_failed)
             is CryptoUi.Ready -> chipText(ui.view)
         }
-        Text(text, color = content, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(text, color = content, style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

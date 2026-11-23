@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.home
 
+import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.MessageHeader
 import uniffi.kweb_core.Occurrence
 
@@ -24,6 +25,42 @@ object HomeRules {
             tomorrow = open.count { it.startsAt in tomorrowStart until afterTomorrow },
         )
     }
+
+    /** Roles the Home view never covers (and the picker never lists): the notification rule is not touched by this. */
+    private val EXCLUDED_ROLES = setOf("junk", "trash")
+
+    /** The folders the picker lists: the account's own, without Spam and Trash, in the server's order. */
+    fun pickable(all: List<Mailbox>): List<Mailbox> = all.filter { it.role !in EXCLUDED_ROLES }.sortedBy { it.sortOrder }
+
+    /**
+     * The folders the unread tile covers. [chosen] empty (the default) is the Inbox alone. Otherwise the chosen folders that
+     * still exist and are listable; when none of them does (all deleted), the Inbox again.
+     */
+    fun covered(all: List<Mailbox>, chosen: Set<String>): List<Mailbox> {
+        val inbox = all.filter { it.role == "inbox" }
+        if (chosen.isEmpty()) return inbox
+        val picked = pickable(all).filter { it.id in chosen }
+        return picked.ifEmpty { inbox }
+    }
+
+    /** "Parent / Child" for a folder that sits inside another. */
+    fun path(box: Mailbox, all: List<Mailbox>): String {
+        val names = ArrayList<String>()
+        var at: Mailbox? = box
+        var guard = 0
+        while (at != null && guard++ < 16) {
+            names.add(0, at.name)
+            val parent = at.parentId
+            at = if (parent == null) null else all.firstOrNull { it.id == parent }
+        }
+        return names.joinToString(" / ")
+    }
+
+    /** The unread count over [boxes]. */
+    fun unreadIn(boxes: List<Mailbox>): Int = boxes.sumOf { it.unreadEmails.toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    /** Messages from several folders as one list, each message once (it can sit in more than one folder). */
+    fun merge(lists: List<List<MessageHeader>>): List<MessageHeader> = lists.flatten().distinctBy { it.id }
 
     /** The newest unread mails of the Inbox, at most [n], by who they are from. */
     fun newestUnread(inbox: List<MessageHeader>, n: Int = 3): List<MessageHeader> = inbox.filter { it.isUnread }.sortedByDescending { it.receivedAt }.take(n)

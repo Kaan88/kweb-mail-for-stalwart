@@ -3,6 +3,7 @@
     <!-- The account switcher, the "Send from" sheet and everything that names an account. Names are shown only with more than one account. -->
     <string name="accounts_title">Accounts</string>
     <string name="accounts_add">Add account</string>
+    <string name="accounts_settings">Settings</string>
     <string name="accounts_current">Shown now</string>
     <string name="accounts_sign_in_needed">Sign-in needed</string>
     <string name="accounts_open_switcher">Switch account</string>

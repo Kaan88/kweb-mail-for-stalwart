@@ -1,6 +1,8 @@
 package ovh.kweb.mail.ui.thread
 
 import android.os.Build
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.content.Context
 import android.webkit.WebResourceRequest
@@ -29,6 +31,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import java.io.InputStream
 import ovh.kweb.mail.R
@@ -115,6 +118,17 @@ fun MailWebView(
                     @Suppress("DEPRECATION")
                     settings.databaseEnabled = false
                     settings.setSupportMultipleWindows(false)
+                    // Fit and zoom, as Gmail has it. The page is laid out as wide as the window (HtmlWrapper squeezes tables and
+                    // pictures into it, so mail needs no sideways panning), and the user may pinch in on the mail: only this view
+                    // scales, never the app's layout or the pager around it. useWideViewPort makes the view honour the page's
+                    // viewport (width=device-width, initial-scale=1, scale 1 to 5); the on-screen zoom buttons stay off. A page
+                    // that is wider than the window after all, or zoomed in, is panned by [PanWebView] and hands a swipe
+                    // at its edge to the pager.
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = false
+                    settings.setSupportZoom(true)
+                    settings.builtInZoomControls = true
+                    settings.displayZoomControls = false
                     // Safe Browsing is left at its default, which is on.
                     isVerticalScrollBarEnabled = false
                     overScrollMode = android.view.View.OVER_SCROLL_NEVER
@@ -152,6 +166,46 @@ private class PanWebView(context: Context) : WebView(context) {
     /** Told (on the main thread) when the page starts or stops being wider than the view. */
     var onWide: (Boolean) -> Unit = {}
     private var wasWide = false
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var lastX = 0f
+    private var pinched = false
+    private var downY = 0f
+
+    /**
+     * While the page moves sideways the WebView asks its parents to leave the gesture alone, and that is what makes a swipe
+     * between conversations unreliable on a wide or zoomed mail: once the finger starts on the page, the pager never gets it.
+     * A one-finger sideways drag towards a side the page cannot move to any further takes that request back, so the pager
+     * (and the row swipes) get the gesture at the edge, and on a page that fits, at once.
+     */
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val handled = super.onTouchEvent(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                lastX = event.x
+                pinched = false
+            }
+            // A pinch is the page's: the lists and the pager around it must not take it, however the fingers move. Until the
+            // next finger goes down the gesture is never handed on at an edge (the finger left is not the one that was followed).
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                pinched = true
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            MotionEvent.ACTION_MOVE -> if (event.pointerCount == 1 && !pinched) {
+                // The direction is that of the last step, so a drag that turned round is judged by where it goes now.
+                val step = event.x - lastX
+                lastX = event.x
+                if (abs(event.x - downX) > slop && abs(event.x - downX) > abs(event.y - downY) && step != 0f &&
+                    !canScrollHorizontally(if (step > 0) -1 else 1)
+                ) {
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+        }
+        return handled
+    }
 
     override fun onDraw(canvas: android.graphics.Canvas) {
         super.onDraw(canvas)

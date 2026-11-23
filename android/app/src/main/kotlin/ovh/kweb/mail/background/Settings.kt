@@ -93,6 +93,14 @@ class Settings(private val values: KeyValues) {
         get() = PreviewChoice.parse(values.getString(PREVIEW))
         set(value) = write { putString(PREVIEW, value.key) }
 
+    /**
+     * "Copy code": a mail notification whose mail holds a verification code gets a button that copies it
+     * ([OneTimeCodeRules]). On unless the user switched it off.
+     */
+    var copyCodeEnabled: Boolean
+        get() = values.getBoolean(COPY_CODE, true)
+        set(value) = write { putBoolean(COPY_CODE, value) }
+
     /** The device calendar is on: this account's own calendars are mirrored into the phone's calendar (see `devcal`). */
     var deviceCalendar: Boolean
         get() = values.getBoolean(DEVICE_CALENDAR, false)
@@ -222,6 +230,7 @@ class Settings(private val values: KeyValues) {
         private const val REMOVE_ELSEWHERE = "remove_when_read_elsewhere"
         private const val NOTIFICATION_ACTIONS = "notification_actions"
         private const val PREVIEW = "notification_preview"
+        private const val COPY_CODE = "notification_copy_code"
         private const val ADMIN_KEY = "admin_key_accepted"
         private const val ADMIN_DASHBOARD = "admin_may_dashboard"
         private const val DEVICE_CALENDAR = "device_calendar"

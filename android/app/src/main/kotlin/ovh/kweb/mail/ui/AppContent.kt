@@ -120,7 +120,7 @@ fun AppContent(app: AppViewModel = viewModel()) {
             } else {
                 key(current.record.id) {
                     val owner = remember(current.record.id) { AccountStoreOwner(application, current, app.accountStore) }
-                    val ui = remember(rows) { AccountsUi(rows, app::selectAccount) { app.open(Route.AddAccount) } }
+                    val ui = remember(rows) { AccountsUi(rows, app::selectAccount, { app.open(Route.AddAccount) }, { app.open(Route.Settings) }) }
                     CompositionLocalProvider(
                         LocalAccountSession provides current,
                         LocalViewModelStoreOwner provides owner,
@@ -182,10 +182,10 @@ private fun SignedInContent(app: AppViewModel, snackbar: SnackbarHostState) {
                 AccountSheet(
                     title = stringResource(R.string.accounts_send_from),
                     onDismiss = app::cancelShare,
-                    ui = AccountsUi(accounts.rows, app::shareFrom) {
+                    ui = AccountsUi(accounts.rows, app::shareFrom, onAdd = {
                         app.cancelShare()
                         app.open(Route.AddAccount)
-                    },
+                    }),
                 )
             }
             val homeOn by HomeSetting.enabled.collectAsStateWithLifecycle()

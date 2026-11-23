@@ -43,6 +43,7 @@ fun ActionsScreen(onBack: () -> Unit) {
     var confirm by remember { mutableStateOf(prefs.confirmDelete) }
     var undo by remember { mutableStateOf(prefs.undoSeconds) }
     var replyAll by remember { mutableStateOf(prefs.replyAllDefault) }
+    var completion by remember { mutableStateOf(prefs.smartCompletion) }
     var asking by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
@@ -84,17 +85,24 @@ fun ActionsScreen(onBack: () -> Unit) {
             SectionTitle(stringResource(R.string.actions_sending))
             Group {
                 SettingsRow(
-                    Groups.shape(0, 2),
+                    Groups.shape(0, 3),
                     stringResource(R.string.actions_undo_time),
                     stringResource(R.string.actions_undo_seconds, undo),
                     onClick = { asking = "undo" },
                 )
                 SettingsRow(
-                    Groups.shape(1, 2),
+                    Groups.shape(1, 3),
                     stringResource(R.string.actions_reply_all),
                     stringResource(if (replyAll) R.string.actions_reply_all_on else R.string.actions_reply_all_off),
                     trailing = { KwebSwitch(checked = replyAll, onCheckedChange = { replyAll = it; prefs.replyAllDefault = it }) },
                     onClick = { replyAll = !replyAll; prefs.replyAllDefault = replyAll },
+                )
+                SettingsRow(
+                    Groups.shape(2, 3),
+                    stringResource(R.string.completion_setting),
+                    stringResource(if (completion) R.string.completion_setting_on else R.string.completion_setting_off),
+                    trailing = { KwebSwitch(checked = completion, onCheckedChange = { completion = it; prefs.smartCompletion = it }) },
+                    onClick = { completion = !completion; prefs.smartCompletion = completion },
                 )
             }
 

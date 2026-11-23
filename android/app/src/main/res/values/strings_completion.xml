@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Writing: suggestions after a greeting and for a sign-off -->
+    <string name="completion_setting">Suggest names and sign-offs</string>
+    <string name="completion_setting_on">After a greeting, offer the recipient\'s first name; for a sign-off, offer the rest. Nothing leaves the phone.</string>
+    <string name="completion_setting_off">No suggestions while writing</string>
+    <string name="completion_chip_description">Insert suggestion: %1$s</string>
+</resources>

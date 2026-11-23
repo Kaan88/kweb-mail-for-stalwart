@@ -26,13 +26,46 @@ class HtmlWrapperTest {
     }
 
     @Test fun wideMailIsMadeToFit() {
-        assertTrue(page.contains("img,table{max-width:100%;height:auto}"))
+        assertTrue(page.contains("img{max-width:100%;height:auto}"))
+        assertTrue(page.contains("table,div,center,section,article,blockquote,p,pre{max-width:100%}"))
+        assertTrue(page.contains("td,th{overflow-wrap:anywhere;word-break:break-word;white-space:normal!important;min-width:0}"))
+        assertTrue(page.contains("pre{white-space:pre-wrap;overflow-wrap:anywhere}"))
         assertTrue(page.contains("overflow-wrap:anywhere"))
+    }
+
+    @Test fun theViewportFitsTheWindowAndAllowsPinchZoom() {
+        assertTrue(page.contains("content=\"width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes\""))
+    }
+
+    @Test fun foldedQuotesHaveTheirStyleAndNeedNoScript() {
+        assertTrue(page.contains("details.kq>summary"))
+        assertTrue(!page.contains("<script"))
     }
 
     @Test fun aMailWithItsOwnDocumentIsStillAfterThePolicy() {
         val wrapped = HtmlWrapper.wrap("<html><head><meta http-equiv=\"refresh\" content=\"0;url=http://x\"></head><body>hi</body></html>")
         assertTrue(wrapped.indexOf("Content-Security-Policy") < wrapped.indexOf("refresh"))
+    }
+
+    @Test fun theMailsOwnViewportTagIsRemoved() {
+        val wrapped = HtmlWrapper.wrap("<meta name=\"viewport\" content=\"width=600, user-scalable=no\"><p>hi</p><META NAME='Viewport' content='x'>")
+        assertTrue(wrapped.contains("<p>hi</p>"))
+        assertTrue(!wrapped.contains("width=600"))
+        assertTrue(!wrapped.contains("content='x'"))
+        assertTrue(wrapped.contains("initial-scale=1"))
+    }
+
+    @Test fun metaTagsThatNeverEndAreFast() {
+        val t = System.nanoTime()
+        HtmlWrapper.wrap("<p>x</p>" + "<meta ".repeat(150_000))
+        assertTrue((System.nanoTime() - t) / 1_000_000 < 10_000)
+    }
+
+    @Test fun repeatedViewportNamesInOneTagAreFast() {
+        val t = System.nanoTime()
+        HtmlWrapper.wrap("<meta " + "name=viewport ".repeat(70_000))
+        HtmlWrapper.wrap("<meta " + "name=viewport ".repeat(70_000) + ">")
+        assertTrue((System.nanoTime() - t) / 1_000_000 < 10_000)
     }
 
     @Test fun turnsDnsPrefetchOffBeforeTheMail() {

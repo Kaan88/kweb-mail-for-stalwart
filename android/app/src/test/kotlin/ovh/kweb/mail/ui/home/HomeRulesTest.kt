@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.MessageHeader
 import uniffi.kweb_core.Occurrence
 
@@ -14,6 +15,31 @@ class HomeRulesTest {
 
     private fun mail(id: String, at: Long, unread: Boolean = true, flagged: Boolean = false, from: String = "", email: String = "a@x.org") =
         MessageHeader(id, "t$id", listOf("inbox"), from, email, emptyList(), "s$id", "p", at, unread, flagged, false, 100uL)
+
+    private fun box(id: String, role: String? = null, parent: String? = null, order: UInt = 0u, unread: UInt = 0u) =
+        Mailbox(id, id, role, parent, order, 0u, unread, false)
+
+    @Test fun theUnreadViewCoversTheInboxByDefaultAndTheChosenFoldersOtherwise() {
+        val all = listOf(box("i", "inbox", order = 1u, unread = 3u), box("w", null, order = 2u, unread = 4u), box("s", "junk", order = 3u, unread = 9u))
+        assertEquals(listOf("i"), HomeRules.covered(all, emptySet()).map { it.id })
+        assertEquals(listOf("i", "w"), HomeRules.covered(all, setOf("w", "i")).map { it.id })
+        assertEquals(7, HomeRules.unreadIn(HomeRules.covered(all, setOf("w", "i"))))
+        // Spam and Trash are never covered, and a choice of deleted folders falls back to the Inbox.
+        assertEquals(listOf("i"), HomeRules.covered(all, setOf("s")).map { it.id })
+        assertEquals(listOf("i"), HomeRules.covered(all, setOf("gone")).map { it.id })
+        assertEquals(listOf("i", "w"), HomeRules.pickable(all).map { it.id })
+    }
+
+    @Test fun aFolderInsideAnotherIsNamedWithItsParent() {
+        val all = listOf(box("a"), box("b", parent = "a"))
+        assertEquals("a / b", HomeRules.path(all[1], all))
+        assertEquals("a", HomeRules.path(all[0], all))
+    }
+
+    @Test fun aMessageInTwoFoldersIsListedOnce() {
+        val m = mail("1", 10)
+        assertEquals(listOf("1", "2"), HomeRules.merge(listOf(listOf(m), listOf(m, mail("2", 5)))).map { it.id })
+    }
 
     @Test fun theNextEventsSkipTasksAllDayEndedAndDeclined() {
         val entries = listOf(

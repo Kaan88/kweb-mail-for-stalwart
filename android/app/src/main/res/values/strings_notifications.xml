@@ -37,4 +37,8 @@
     <string name="notifications_channel_failed">This phone has no settings screen for that</string>
     <string name="notifications_sound_for">Sound and vibration for %1$s</string>
     <string name="notifications_mail_default">new mail</string>
+    <string name="action_copy_code">Copy code</string>
+    <string name="copy_code_done">Code copied</string>
+    <string name="notifications_copy_code">Copy verification codes</string>
+    <string name="notifications_copy_code_detail">Adds a Copy code button to a notification whose mail has a one-time code. The code is found on the phone</string>
 </resources>

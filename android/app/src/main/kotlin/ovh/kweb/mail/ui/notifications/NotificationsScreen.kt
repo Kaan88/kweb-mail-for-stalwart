@@ -105,7 +105,7 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenBut
             Title(stringResource(R.string.notifications_mail))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 SwitchRow(
-                    Groups.shape(0, 5),
+                    Groups.shape(0, 6),
                     stringResource(R.string.delivery_show_mail),
                     null,
                     state.mailEnabled,
@@ -114,17 +114,24 @@ fun NotificationsScreen(onBack: () -> Unit, onOpenFolders: () -> Unit, onOpenBut
                     onSound = { openChannel(ChannelKind.Mail) },
                 )
                 SwitchRow(
-                    Groups.shape(1, 5),
+                    Groups.shape(1, 6),
                     stringResource(R.string.delivery_remove_elsewhere),
                     stringResource(R.string.notifications_remove_detail),
                     state.removeWhenReadElsewhere,
                     vm::setRemoveWhenReadElsewhere,
                 )
-                LinkRow(Groups.shape(2, 5), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
+                LinkRow(Groups.shape(2, 6), stringResource(R.string.notifications_preview), stringResource(previewName(state.preview))) {
                     choosingPreview = true
                 }
-                LinkRow(Groups.shape(3, 5), stringResource(R.string.notif_buttons_title), buttonsLine(state.buttons), onOpenButtons)
-                LinkRow(Groups.shape(4, 5), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
+                LinkRow(Groups.shape(3, 6), stringResource(R.string.notif_buttons_title), buttonsLine(state.buttons), onOpenButtons)
+                SwitchRow(
+                    Groups.shape(4, 6),
+                    stringResource(R.string.notifications_copy_code),
+                    stringResource(R.string.notifications_copy_code_detail),
+                    state.copyCode,
+                    vm::setCopyCode,
+                )
+                LinkRow(Groups.shape(5, 6), stringResource(R.string.notifications_folders), stringResource(R.string.notifications_folders_detail), onOpenFolders)
             }
 
             Title(stringResource(R.string.notifications_addresses))

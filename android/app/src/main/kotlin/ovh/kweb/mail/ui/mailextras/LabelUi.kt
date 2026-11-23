@@ -14,8 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -33,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import ovh.kweb.mail.R
@@ -73,36 +72,58 @@ fun MessageChips(
     onLabels: (() -> Unit)?,
     onUnsubscribe: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Marks that go first in the same row (the sender check, the signature status); null for none. */
+    leading: (@Composable () -> Unit)? = null,
 ) {
-    if (labelNames.isEmpty() && unsubscribe == null) return
-    FlowRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    if (labelNames.isEmpty() && unsubscribe == null && leading == null) return
+    // One compact row (it wraps only when the window is too narrow for it): [leading] (the sender and status marks), the
+    // labels, then Unsubscribe as plain text. No chip is taller than a line of small text.
+    FlowRow(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
+    ) {
+        leading?.invoke()
         labelNames.forEach { name ->
-            AssistChip(
-                onClick = { onLabels?.invoke() },
-                enabled = onLabels != null,
-                label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                shape = RoundedCornerShape(10.dp),
+            Text(
+                name,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .clickable(enabled = onLabels != null) { onLabels?.invoke() }
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 // As in the list rows: filled secondary container, no outline.
-                colors = AssistChipDefaults.assistChipColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    disabledContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    disabledLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-                border = null,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         when (unsubscribe) {
             null -> Unit
-            is UnsubEntry.Available -> AssistChip(
-                onClick = onUnsubscribe,
-                label = { Text(stringResource(R.string.unsub_chip)) },
-                shape = RoundedCornerShape(10.dp),
-            )
-            UnsubEntry.Working -> AssistChip(onClick = {}, enabled = false, label = { Text(stringResource(R.string.unsub_working)) }, shape = RoundedCornerShape(10.dp))
-            UnsubEntry.Requested -> AssistChip(onClick = {}, enabled = false, label = { Text(stringResource(R.string.unsub_requested)) }, shape = RoundedCornerShape(10.dp))
+            is UnsubEntry.Available -> TextAction(stringResource(R.string.unsub_chip), onUnsubscribe)
+            UnsubEntry.Working -> TextAction(stringResource(R.string.unsub_working), null)
+            UnsubEntry.Requested -> TextAction(stringResource(R.string.unsub_requested), null)
         }
     }
+}
+
+/** Unsubscribe as a small text-style action (primary colour, no fill), or the quiet note that it is under way. */
+@Composable
+private fun TextAction(text: String, onClick: (() -> Unit)?) {
+    Text(
+        text,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        color = if (onClick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /** "Unsubscribe from [list]?" with what will happen, in words. */

@@ -572,7 +572,7 @@ pub struct AiSettings {
 }
 
 /// The longest the assistant instructions are (in characters).
-pub const AI_INSTRUCTIONS_MAX: usize = 2000;
+pub const AI_INSTRUCTIONS_MAX: usize = 8000;
 
 /// What the chat may do about changes. There is no "automatic": every change waits for a tap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]

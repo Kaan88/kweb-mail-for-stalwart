@@ -199,7 +199,7 @@ object AssistantRules {
     }
 
     /** The longest "Your instructions" may be (the core refuses more). */
-    const val INSTRUCTIONS_MAX = 2000
+    const val INSTRUCTIONS_MAX = 8000
 
     /** What the settings screen edits. The key is not part of it: it is typed, sent on Save and forgotten. */
     data class Form(

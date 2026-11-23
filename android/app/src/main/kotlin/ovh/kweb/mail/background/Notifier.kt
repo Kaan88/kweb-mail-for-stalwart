@@ -56,15 +56,20 @@ class Notifier(context: Context) {
         val tag = NotificationKeys.tag(record)
         val label = labelOf(record)
         if (allowed.post.isNotEmpty()) Channels.ensureAccount(context, record, label)
-        allowed.cancel.forEach { manager.cancel(tag, it.androidId) }
+        allowed.cancel.forEach {
+            manager.cancel(tag, it.androidId)
+            forgetCode(record, it.androidId)
+        }
         val settings = Settings.of(context, record)
         val actions = settings.notificationActions
         val preview = settings.previewChoice
+        val copyCode = settings.copyCodeEnabled
         allowed.post.forEach {
             // The channel of the address the mail came to is made when first needed.
             it.address?.let { address -> Channels.ensureAddress(context, record, label, address, it.quiet) }
             val channel = ChannelRules.forMail(record, it.quiet, it.address)
-            manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen), actions, channel, preview))
+            val code = codeFor(record, it, copyCode, preferRemembered = false)
+            manager.notify(tag, it.androidId, mailNotification(record, it, label, isSilent(it, onScreen), actions, channel, preview, code))
         }
         updateSummary(record, idsAfter(onScreen, allowed).size)
     }
@@ -88,6 +93,7 @@ class Notifier(context: Context) {
         // The id comes from an intent the exported activity received: it must not reach the app's own entries.
         if (androidId < NotificationKeys.FIRST_MAIL_ID) return@synchronized
         manager.cancel(NotificationKeys.tag(record), androidId)
+        forgetCode(record, androidId)
         updateSummary(record, (activeMailIds(record).toSet() - androidId).size)
     }
 
@@ -272,11 +278,13 @@ class Notifier(context: Context) {
             quiet = false,
             address = null,
         )
-        // A refresh keeps the channel the mail was posted in.
+        // A refresh keeps the channel the mail was posted in. Its text may be shortened by the preview choice, so the
+        // code found when the mail arrived is the one kept (in memory only; after a restart the shown text is searched).
+        val code = codeFor(record, again, settings.copyCodeEnabled, preferRemembered = true)
         manager.notify(
             entry.tag,
             entry.id,
-            mailNotification(record, again, labelOf(record), true, actions, entry.notification.channelId, settings.previewChoice),
+            mailNotification(record, again, labelOf(record), true, actions, entry.notification.channelId, settings.previewChoice, code),
         )
         return true
     }
@@ -289,6 +297,7 @@ class Notifier(context: Context) {
         actions: List<MailAction>,
         channelId: String,
         preview: PreviewChoice,
+        code: String?,
     ): Notification {
         val texts = PreviewRules.shown(preview, n.from, n.subject, n.preview, context.getString(R.string.notification_new_mail))
         val builder = NotificationCompat.Builder(context, channelId)
@@ -317,7 +326,13 @@ class Notifier(context: Context) {
                     putString(EXTRA_SHOWN_ACTIONS, NotificationActionRules.encode(actions))
                 },
             )
-        for (action in NotificationActionRules.clean(actions)) {
+        // Copy code goes first and may push the user's last button out when three are chosen (OneTimeCodeRules.plan).
+        // The code is only in this button's intent, never in the notification's text.
+        val buttons = OneTimeCodeRules.plan(actions, code != null)
+        if (buttons.copy && code != null) {
+            builder.addAction(NotificationCompat.Action.Builder(0, context.getString(R.string.action_copy_code), NotificationIntents.copyCode(context, record, n.androidId, n.messageId, code)).setAuthenticationRequired(true).build())
+        }
+        for (action in buttons.actions) {
             when (action) {
                 MailAction.Archive -> builder.addAction(0, context.getString(R.string.action_archive), forMessage(record, ActionReceiver.ACTION_ARCHIVE, n))
                 MailAction.Delete -> builder.addAction(0, context.getString(R.string.action_delete), forMessage(record, ActionReceiver.ACTION_DELETE, n))
@@ -339,6 +354,26 @@ class Notifier(context: Context) {
             builder.setPublicVersion(publicVersion)
         }
         return builder.build()
+    }
+
+    /**
+     * The code to offer on [n]'s notification, or null (switched off, or none in the mail). The text searched is what
+     * the core handed over (subject and cached first lines), whatever the preview choice shows. The last code found
+     * for a notification is kept in memory (never stored, never logged) because a refresh only has the shown text.
+     */
+    private fun codeFor(record: AccountRecord, n: MailNotification, enabled: Boolean, preferRemembered: Boolean): String? {
+        if (!enabled) return null
+        val key = NotificationKeys.tag(record) + "/" + n.androidId
+        synchronized(codes) {
+            if (preferRemembered) codes[key]?.let { return it }
+            val found = OneTimeCodeRules.find(n.subject, n.preview)
+            if (found != null) codes[key] = found
+            return found ?: codes[key]
+        }
+    }
+
+    private fun forgetCode(record: AccountRecord, androidId: Int) {
+        synchronized(codes) { codes.remove(NotificationKeys.tag(record) + "/" + androidId) }
     }
 
     private fun forMessage(record: AccountRecord, action: String, n: MailNotification) =
@@ -394,6 +429,11 @@ class Notifier(context: Context) {
     companion object {
         /** When a reminder notification was last posted, by tag and id (see [ReminderRules.isRepeat]). */
         private val recentReminders = HashMap<String, Long>()
+
+        /** The code found for a mail notification, by tag and id; in memory only, the newest 64 (see [codeFor]). */
+        private val codes = object : LinkedHashMap<String, String>() {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 64
+        }
 
         /** Extra of the intent that opens the app from a mail notification: the JMAP message id (String). */
         const val EXTRA_MESSAGE_ID = "ovh.kweb.mail.extra.MESSAGE_ID"

@@ -171,6 +171,9 @@
     <string name="att_settings_tasks_detail">Overdue, unscheduled, too many, a mail that may finish one. On the phone, costs nothing.</string>
     <string name="att_settings_mail">Mail</string>
     <string name="att_settings_mail_detail">Dates, deadlines, invitation files, questions waiting for you. On the phone, costs nothing.</string>
+    <string name="att_settings_folders">Unread count covers</string>
+    <string name="att_settings_folders_inbox">Inbox only</string>
+    <string name="att_settings_folders_done">Done</string>
     <string name="att_settings_scope">Which mail</string>
     <string name="att_settings_scope_inbox">Inbox only</string>
     <string name="att_settings_scope_notified">Inbox and notified folders</string>

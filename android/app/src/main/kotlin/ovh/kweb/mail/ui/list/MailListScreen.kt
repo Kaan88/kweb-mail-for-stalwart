@@ -947,6 +947,7 @@ private fun DrawerAccountHeader(username: String, onChosen: () -> Unit) {
                 rows = ui.rows,
                 onSwitch = { onChosen(); ui.onSwitch(it) },
                 onAdd = { onChosen(); ui.onAdd() },
+                onSettings = ui.onSettings?.let { s -> { onChosen(); s() } },
             ),
         )
     }

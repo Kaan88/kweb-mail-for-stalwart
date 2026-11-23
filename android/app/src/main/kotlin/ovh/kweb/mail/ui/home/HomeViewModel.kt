@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.accounts.AccountSession
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.SessionState
+import ovh.kweb.mail.ui.UiPrefs
 import uniffi.kweb_core.ConnectionStatus
 import uniffi.kweb_core.FileEntry
 import uniffi.kweb_core.FileKind
@@ -100,9 +101,14 @@ class HomeViewModel(app: Application, private val session: AccountSession) : And
         val core = session.core
         val today = LocalDate.now(zone)
         fun start(d: LocalDate) = d.atStartOfDay(zone).toEpochSecond()
-        val inboxBox = core.mailboxes().firstOrNull { it.role == "inbox" }
+        val boxes = core.mailboxes()
+        val inboxBox = boxes.firstOrNull { it.role == "inbox" }
         val inbox = inboxBox?.let { core.messages(it.id, 300u, 0u) }.orEmpty()
         val flagged = HomeRules.flagged(inbox)
+        // The unread tile covers the folders the user chose for this account (the Inbox alone by default).
+        val covered = HomeRules.covered(boxes, UiPrefs(getApplication()).homeFolders(session.record.id))
+        val unreadMail = if (covered.size == 1 && covered[0].id == inboxBox?.id) inbox
+        else HomeRules.merge(covered.map { box -> core.messages(box.id, 300u, 0u) })
         // The agenda call asks the server and falls back to the cache, as the Calendar tab does.
         val agenda = runCatching { core.agenda(start(today.minusDays(60)), start(today.plusDays(8)), zone.id).entries }.getOrDefault(emptyList())
         val (next, then) = HomeRules.nextEvents(agenda, now)
@@ -114,8 +120,8 @@ class HomeViewModel(app: Application, private val session: AccountSession) : And
         return HomeState(
             loaded = true,
             at = now,
-            unread = inboxBox?.unreadEmails?.toInt() ?: 0,
-            newest = HomeRules.newestUnread(inbox),
+            unread = HomeRules.unreadIn(covered),
+            newest = HomeRules.newestUnread(unreadMail),
             next = next,
             then = then,
             tasksToday = tasks.today,

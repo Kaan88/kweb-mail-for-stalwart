@@ -10,6 +10,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -45,6 +48,8 @@ class AccountsUi(
     val rows: List<AccountRow>,
     val onSwitch: (accountId: String) -> Unit,
     val onAdd: () -> Unit,
+    /** Opens Settings; null where the sheet has nothing to do with them (the share's "send from" choice). */
+    val onSettings: (() -> Unit)? = null,
 )
 
 val LocalAccountsUi = compositionLocalOf { AccountsUi(emptyList(), {}, {}) }
@@ -133,6 +138,25 @@ private fun AddRow(shape: Shape, onClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun SettingsRow(onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(Groups.shape(0, 1))
+            .background(colors.surfaceContainerLow)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 56.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Icon(Icons.Filled.Settings, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(40.dp).padding(8.dp))
+        Text(stringResource(R.string.accounts_settings), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+    }
+}
+
 /** The sheet the avatar opens: the accounts, to switch between them or to add one. [title] is the headline. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -151,6 +175,13 @@ fun AccountSheet(title: String, onDismiss: () -> Unit, ui: AccountsUi = LocalAcc
                     onDismiss()
                 },
             )
+            ui.onSettings?.let { openSettings ->
+                Spacer(Modifier.height(8.dp))
+                SettingsRow {
+                    openSettings()
+                    onDismiss()
+                }
+            }
         }
     }
 }

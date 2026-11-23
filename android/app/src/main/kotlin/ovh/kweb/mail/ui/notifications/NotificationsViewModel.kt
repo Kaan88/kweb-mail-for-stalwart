@@ -38,6 +38,8 @@ data class NotificationsState(
     val noticesEnabled: Boolean = true,
     val removeWhenReadElsewhere: Boolean = true,
     val preview: PreviewChoice = PreviewChoice.Full,
+    /** A "Copy code" button is added to mail that holds a verification code. */
+    val copyCode: Boolean = true,
     /** The buttons of this account's mail notifications, in order (chosen on their own screen). */
     val buttons: List<ovh.kweb.mail.background.MailAction> = emptyList(),
     val addresses: List<AddressChoice>? = null,
@@ -62,6 +64,7 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
             noticesEnabled = noticesOn,
             removeWhenReadElsewhere = s.removeWhenReadElsewhere,
             preview = s.previewChoice,
+            copyCode = s.copyCodeEnabled,
             buttons = s.notificationActions,
             addresses = list,
         )
@@ -118,6 +121,10 @@ class NotificationsViewModel(app: Application, private val session: AccountSessi
 
     fun setRemoveWhenReadElsewhere(value: Boolean) {
         settings.removeWhenReadElsewhere = value
+    }
+
+    fun setCopyCode(value: Boolean) {
+        settings.copyCodeEnabled = value
     }
 
     fun setPreview(value: PreviewChoice) {

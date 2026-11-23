@@ -31,9 +31,9 @@ import ovh.kweb.mail.R
 import uniffi.kweb_core.MethodResult
 import uniffi.kweb_core.SenderCheck
 
-/** The small mark under the sender line: verified, not verified or failed. A tap opens the explanation. */
+/** The small mark under the sender line: verified, not verified or failed. A tap opens the explanation. [compact]: the height of a line of small text, for the thread header's row of marks. */
 @Composable
-fun SenderChip(check: SenderCheck, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun SenderChip(check: SenderCheck, onClick: () -> Unit, modifier: Modifier = Modifier, compact: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val tone = SenderRules.tone(check)
     val (container, content) = when (tone) {
@@ -51,15 +51,15 @@ fun SenderChip(check: SenderCheck, onClick: () -> Unit, modifier: Modifier = Mod
             .clip(RoundedCornerShape(50))
             .background(container)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 2.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = content)
+        Icon(icon, contentDescription = null, modifier = Modifier.size(if (compact) 14.dp else 16.dp), tint = content)
         Text(
             stringResource(SenderRules.chipText(check)),
             color = content,
-            style = MaterialTheme.typography.labelLarge,
+            style = if (compact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

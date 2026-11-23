@@ -82,6 +82,11 @@ class UiPrefs(context: Context) {
         get() = prefs.getBoolean(REPLY_ALL, false)
         set(value) = prefs.edit { putBoolean(REPLY_ALL, value) }
 
+    /** While writing, offer the recipient's name after a greeting and the rest of a sign-off (on by default; on the device only). */
+    var smartCompletion: Boolean
+        get() = prefs.getBoolean(SMART_COMPLETION, true)
+        set(value) = prefs.edit { putBoolean(SMART_COMPLETION, value) }
+
     /** The weekly check for a newer release is on (on by default from 0.2.0). */
     var updateWeekly: Boolean
         get() = prefs.getBoolean(UPDATE_WEEKLY, true)
@@ -135,6 +140,13 @@ class UiPrefs(context: Context) {
         get() = prefs.getString(UPDATE_NOTES, "").orEmpty()
         set(value) = prefs.edit { putString(UPDATE_NOTES, value) }
 
+    /** The folders the Home unread tile covers for one account (mailbox ids); empty: the Inbox alone. */
+    fun homeFolders(accountId: String): Set<String> = prefs.getStringSet(HOME_FOLDERS + accountId, null)?.toSet().orEmpty()
+
+    fun setHomeFolders(accountId: String, ids: Set<String>) = prefs.edit {
+        if (ids.isEmpty()) remove(HOME_FOLDERS + accountId) else putStringSet(HOME_FOLDERS + accountId, ids.toSet())
+    }
+
     /** Puts the swipes, the delete question, the Undo time and the reply choice back as they were. */
     fun resetActions() = prefs.edit {
         remove(SWIPE_RIGHT)
@@ -145,11 +157,13 @@ class UiPrefs(context: Context) {
     }
 
     private companion object {
+        const val HOME_FOLDERS = "home_folders_"
         const val SWIPE_RIGHT = "actions_swipe_right"
         const val SWIPE_LEFT = "actions_swipe_left"
         const val CONFIRM_DELETE = "actions_confirm_delete"
         const val UNDO_SECONDS = "actions_undo_seconds"
         const val REPLY_ALL = "actions_reply_all"
+        const val SMART_COMPLETION = "compose_smart_completion"
         const val UPDATE_WEEKLY = "update_weekly"
         const val UPDATE_CHECKED = "update_last_checked"
         const val UPDATE_LATEST = "update_latest"

@@ -1949,7 +1949,7 @@ fn the_users_instructions_come_after_the_apps_prompt_and_a_request_without_them_
 
     // Too long is refused, without quoting the text; nothing changes.
     let mut long = rig.core.ai_settings().unwrap();
-    long.instructions = "x".repeat(2001);
+    long.instructions = "x".repeat(kweb_core::model::AI_INSTRUCTIONS_MAX + 1);
     let message = invalid(rig.core.set_ai_settings(long, None).map(|_| String::new()));
     assert!(!message.contains("xxxx"));
     assert_eq!(rig.core.ai_settings().unwrap().instructions, "Always answer in German.\nKeep it short.");

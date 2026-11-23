@@ -503,7 +503,7 @@ Not planned: Bulwark's plugin hooks, the Nextcloud and Roundcube region handling
 
 ### M13: the owner's list (owner, 2026-11-23)
 
-Noted only; nothing decided or started. Gmail's rendering of a mail is the reference for the first group.
+Items 1 to 10 are built (2026-11-23; Kotlin unit tests and the debug build pass, an Opus review was done and its fixes applied; nothing opened on an emulator or phone yet). What was decided: header marks share one compact row; mail fit and zoom are set by the app (the mail's own viewport tag is removed, no overview mode); quotes fold into `<details>` without scripts (all quotes when the thread has 3+ messages, else only long ones); "Copy code" is the first notification button, needs an unlocked phone, and the code lives only in the intent and the clipboard; completion is local and has a switch in Swipes and actions; the Home unread count adds each chosen folder's unread number (a mail in two chosen folders counts twice); `home_folders_<account>` in UiPrefs is not removed with the account. To check on a screen first: pinch and double-tap zoom inside the thread, the edge handoff of the swipe on a wide mail, opening a folded quote, tables with narrow columns. Gmail's rendering of a mail is the reference for the first group.
 
 **Reading a mail.**
 1. **The header row of buttons takes too much height.** The sender check chip ("Verified"), the unsubscribe button, the labels and the other chips there each take room and stack on top of one another, so a lot of the screen goes before the mail starts. The unsubscribe button is the worst. Expected: all of them in much less vertical space.
@@ -519,6 +519,11 @@ Noted only; nothing decided or started. Gmail's rendering of a mail is the refer
 
 **Navigation.**
 7. **Settings easier to reach**, for example an entry in the account selector pop-up.
+
+**Added from the owner's notes (mdedit `apps/kweb-mail.md`, 2026-11-23).**
+8. **Pages fit the window; only the content zooms.** As Gmail does: the app's layout stays fitted to the window and pinch-zoom applies to the mail content only, not the whole page. (Belongs with items 2 and 4.)
+9. **Home: the unread view is configurable.** The Home tab's unread-in-inbox view shows only the Inbox (`HomeViewModel`); let the user choose which folders it covers.
+10. **Raise the assistant's "Your instructions" limit.** It was 2000 characters, now 8000 (`AI_INSTRUCTIONS_MAX` in `core/src/model.rs`, `INSTRUCTIONS_MAX` in `AssistantRules.kt`; the core test checks the constant plus one). Raise both together.
 
 ## Scope
 

@@ -547,6 +547,7 @@ fun ThreadScreen(
                         shape = Groups.shape(index, state.messages.size),
                         expanded = header.id in state.expanded,
                         flat = state.messages.size == 1,
+                        messageCount = state.messages.size,
                         body = state.bodies[header.id],
                         remoteAllowed = header.id in state.remoteAllowed,
                         myAddress = state.myAddress,

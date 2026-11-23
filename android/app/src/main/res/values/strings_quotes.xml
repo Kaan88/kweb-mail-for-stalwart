@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Folded quoted text in a message -->
+    <string name="thread_quote_label">Quoted text</string>
+</resources>
