@@ -1,0 +1,4 @@
+- Reading: the sender check, unsubscribe and labels share one compact row; quoted text folds in long conversations; mail fits the screen and only the mail zooms.
+- A "Copy code" button on notifications for verification codes (needs an unlocked phone).
+- Suggestions for the recipient's name after a greeting and for sign-offs while writing.
+- Settings in the account menu; choose which folders the Home unread count covers; the assistant's instructions can be longer.
