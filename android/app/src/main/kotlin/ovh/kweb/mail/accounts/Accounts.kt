@@ -381,6 +381,7 @@ object Accounts {
         val notifier = Notifier(app)
         // First: a pass or a registration of this account that is still running must not show or write anything more.
         Settings.forget(record)
+        ovh.kweb.mail.ui.UiPrefs(app).forgetAccount(record.id)
         requireStore().remove(record.id) { notifier.cancelAccount(it) }
         synchronized(sessionLock) {
             sessions.remove(record.id)

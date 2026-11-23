@@ -2,6 +2,7 @@ package ovh.kweb.mail.ui.mailextras
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -91,8 +92,8 @@ fun MessageChips(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(MaterialTheme.colorScheme.secondaryContainer)
-                    .clickable(enabled = onLabels != null) { onLabels?.invoke() }
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                    .clickable(enabled = onLabels != null, role = Role.Button) { onLabels?.invoke() }
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 // As in the list rows: filled secondary container, no outline.
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
                 style = MaterialTheme.typography.labelMedium,
@@ -116,8 +117,8 @@ private fun TextAction(text: String, onClick: (() -> Unit)?) {
         text,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            .clickable(enabled = onClick != null, role = Role.Button) { onClick?.invoke() }
+            .padding(horizontal = 6.dp, vertical = 5.dp),
         color = if (onClick != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.Medium,

@@ -266,14 +266,19 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Column(Modifier.background(MaterialTheme.colorScheme.background)) {
-                if (completion != null) {
-                    SuggestionChip(
-                        onClick = ::applyCompletion,
-                        label = { Text(completion.label) },
-                        modifier = Modifier.padding(horizontal = 16.dp).semantics {
-                            contentDescription = resources.getString(R.string.completion_chip_description, completion.label)
-                        },
-                    )
+                // A slot of fixed height while the body has focus, so the chip coming and going does not move the text.
+                if (completionOn && bodyFocused && s.ready) {
+                    Box(Modifier.height(48.dp).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
+                        if (completion != null) {
+                            SuggestionChip(
+                                onClick = ::applyCompletion,
+                                label = { Text(completion.label) },
+                                modifier = Modifier.semantics {
+                                    contentDescription = resources.getString(R.string.completion_chip_description, completion.label)
+                                },
+                            )
+                        }
+                    }
                 }
                 StatusLine(s)
             }

@@ -30,6 +30,17 @@ class HomeRulesTest {
         assertEquals(listOf("i", "w"), HomeRules.pickable(all).map { it.id })
     }
 
+    @Test fun aMailInTwoChosenFoldersIsCountedOnce() {
+        val boxes = listOf(box("a", unread = 2u), box("b", unread = 2u))
+        val lists = listOf(listOf(mail("1", 1), mail("2", 2)), listOf(mail("2", 2), mail("3", 3)))
+        val merged = HomeRules.merge(lists)
+        assertEquals(3, HomeRules.unreadCount(boxes, lists, merged))
+        assertEquals(2, HomeRules.unreadCount(boxes.take(1), lists.take(1), lists[0]))
+        // A big folder: the cache holds only part of it, so the server's number stays, less only the duplicates seen.
+        val big = listOf(box("a", unread = 2u), box("b", unread = 400u))
+        assertEquals(401, HomeRules.unreadCount(big, lists, merged))
+    }
+
     @Test fun aFolderInsideAnotherIsNamedWithItsParent() {
         val all = listOf(box("a"), box("b", parent = "a"))
         assertEquals("a / b", HomeRules.path(all[1], all))

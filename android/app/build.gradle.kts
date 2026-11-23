@@ -175,8 +175,8 @@ val rustlsVerifierVersion: Provider<String> =
 // Version: the one place. versionCode goes up by one per release; versionName is the release name.
 // ---------------------------------------------------------------------------------------------
 
-val appVersionCode = 7
-val appVersionName = "0.2.4"
+val appVersionCode = 8
+val appVersionName = "0.2.5"
 
 // Release signing: the key lives outside the repository (see dev/README.md, "Release").
 val keystorePropertiesFile: File? =

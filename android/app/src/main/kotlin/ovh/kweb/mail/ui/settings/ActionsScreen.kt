@@ -118,6 +118,7 @@ fun ActionsScreen(onBack: () -> Unit) {
                         confirm = prefs.confirmDelete
                         undo = prefs.undoSeconds
                         replyAll = prefs.replyAllDefault
+                        completion = prefs.smartCompletion
                     },
                 )
             }

@@ -143,6 +143,9 @@ class UiPrefs(context: Context) {
     /** The folders the Home unread tile covers for one account (mailbox ids); empty: the Inbox alone. */
     fun homeFolders(accountId: String): Set<String> = prefs.getStringSet(HOME_FOLDERS + accountId, null)?.toSet().orEmpty()
 
+    /** Drops what is kept here for an account that was removed. */
+    fun forgetAccount(accountId: String) = prefs.edit { remove(HOME_FOLDERS + accountId) }
+
     fun setHomeFolders(accountId: String, ids: Set<String>) = prefs.edit {
         if (ids.isEmpty()) remove(HOME_FOLDERS + accountId) else putStringSet(HOME_FOLDERS + accountId, ids.toSet())
     }
@@ -154,6 +157,7 @@ class UiPrefs(context: Context) {
         remove(CONFIRM_DELETE)
         remove(UNDO_SECONDS)
         remove(REPLY_ALL)
+        remove(SMART_COMPLETION)
     }
 
     private companion object {

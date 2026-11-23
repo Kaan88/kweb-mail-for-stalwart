@@ -117,6 +117,7 @@ class Notifier(context: Context) {
             emptyList()
         }
         mine.forEach { manager.cancel(it.tag, it.id) }
+        synchronized(codes) { codes.keys.removeAll { it.startsWith(NotificationKeys.tag(record) + "/") } }
         Channels.forget(context, record)
     }
 
@@ -372,7 +373,8 @@ class Notifier(context: Context) {
         }
     }
 
-    private fun forgetCode(record: AccountRecord, androidId: Int) {
+    /** Forgets the code kept for one notification (swiped away, cancelled). */
+    fun forgetCode(record: AccountRecord, androidId: Int) {
         synchronized(codes) { codes.remove(NotificationKeys.tag(record) + "/" + androidId) }
     }
 

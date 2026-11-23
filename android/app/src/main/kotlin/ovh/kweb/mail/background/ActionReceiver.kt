@@ -53,7 +53,10 @@ class ActionReceiver : BroadcastReceiver() {
             // core's Delete would then delete it for good ([NotificationActionRules.deleteAction]).
             ACTION_DELETE -> actOnMessage(context, record, intent) { core, id -> NotificationActionRules.deleteAction(id, core.mailboxes()) }
             ACTION_MARK_READ -> actOnMessage(context, record, intent) { _, id -> Action.MarkRead(id) }
-            ACTION_SWIPED -> intent.getStringExtra(EXTRA_MESSAGE_ID)?.let { Accounts.session(record.id)?.core?.notificationSwiped(it) }
+            ACTION_SWIPED -> {
+                Notifier(context).forgetCode(record, intent.getIntExtra(EXTRA_ANDROID_ID, 0))
+                intent.getStringExtra(EXTRA_MESSAGE_ID)?.let { Accounts.session(record.id)?.core?.notificationSwiped(it) }
+            }
             ACTION_COPY_CODE -> copyCode(context, intent)
             ACTION_SNOOZE -> ReminderExtras.read(intent)?.let { snooze(context, record, it) }
             ACTION_REMINDER_DUE -> ReminderExtras.read(intent)?.let { showSnoozed(context, record, it) }

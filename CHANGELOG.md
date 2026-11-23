@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5
+
+- Reading a mail: the sender check, Unsubscribe, labels and the encryption mark share one compact row; quoted text folds in long conversations (only a quote with nothing after it, or a long one); mail is fitted to the screen (tables, pictures, long words) and only the mail content zooms; a pinch and a swipe at the edge of a wide mail no longer fight the pager.
+- Notifications: a Copy code button for verification codes, first among the buttons, on an unlocked phone only; it can be switched off in Notifications.
+- Writing: the recipient's name after a greeting and the rest of a sign-off are offered as a suggestion (switch in Swipes and actions).
+- Settings is in the account menu; the Home unread count can cover chosen folders; the assistant's "Your instructions" can be 8000 characters.
+
 ## 0.2.4
 
 - The app no longer contains a pre-built library: the part that checks server certificates is built from source (copied from rustls-platform-verifier, unchanged).

@@ -107,8 +107,8 @@ class HomeViewModel(app: Application, private val session: AccountSession) : And
         val flagged = HomeRules.flagged(inbox)
         // The unread tile covers the folders the user chose for this account (the Inbox alone by default).
         val covered = HomeRules.covered(boxes, UiPrefs(getApplication()).homeFolders(session.record.id))
-        val unreadMail = if (covered.size == 1 && covered[0].id == inboxBox?.id) inbox
-        else HomeRules.merge(covered.map { box -> core.messages(box.id, 300u, 0u) })
+        val lists = if (covered.size == 1 && covered[0].id == inboxBox?.id) listOf(inbox) else covered.map { box -> core.messages(box.id, 300u, 0u) }
+        val unreadMail = if (lists.size == 1) lists[0] else HomeRules.merge(lists)
         // The agenda call asks the server and falls back to the cache, as the Calendar tab does.
         val agenda = runCatching { core.agenda(start(today.minusDays(60)), start(today.plusDays(8)), zone.id).entries }.getOrDefault(emptyList())
         val (next, then) = HomeRules.nextEvents(agenda, now)
@@ -120,7 +120,7 @@ class HomeViewModel(app: Application, private val session: AccountSession) : And
         return HomeState(
             loaded = true,
             at = now,
-            unread = HomeRules.unreadIn(covered),
+            unread = HomeRules.unreadCount(covered, lists, unreadMail),
             newest = HomeRules.newestUnread(unreadMail),
             next = next,
             then = then,

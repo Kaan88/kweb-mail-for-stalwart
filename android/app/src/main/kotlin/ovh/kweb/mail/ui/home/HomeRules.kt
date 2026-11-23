@@ -59,6 +59,15 @@ object HomeRules {
     /** The unread count over [boxes]. */
     fun unreadIn(boxes: List<Mailbox>): Int = boxes.sumOf { it.unreadEmails.toLong() }.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
+    /**
+     * The unread count over [boxes]: the folders' own numbers (the server's, for the whole folder; the cache holds only the newest
+     * part of a big one), less the mails seen in more than one of the chosen folders, so those count once. Never below zero.
+     */
+    fun unreadCount(boxes: List<Mailbox>, lists: List<List<MessageHeader>>, merged: List<MessageHeader>): Int {
+        val seenTwice = lists.sumOf { l -> l.count { it.isUnread } } - merged.count { it.isUnread }
+        return (unreadIn(boxes) - seenTwice.coerceAtLeast(0)).coerceAtLeast(0)
+    }
+
     /** Messages from several folders as one list, each message once (it can sit in more than one folder). */
     fun merge(lists: List<List<MessageHeader>>): List<MessageHeader> = lists.flatten().distinctBy { it.id }
 
