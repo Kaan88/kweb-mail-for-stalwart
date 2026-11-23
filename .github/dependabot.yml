@@ -66,6 +66,9 @@ updates:
       # Lifecycle 2.11 and later need compileSdk 37; the app stays on 36 for now (CLAUDE.md).
       - dependency-name: "androidx.lifecycle:*"
         versions: [">= 2.11.0"]
+      # The Compose BOM 2026.11.01 (Compose 1.13, material3 1.5) needs compileSdk 37 too (PR 12's android job).
+      - dependency-name: "androidx.compose:compose-bom"
+        versions: [">= 2026.11.01"]
       # JNA is the runtime UniFFI's Kotlin bindings expect; move it with UniFFI.
       - dependency-name: "net.java.dev.jna:jna"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
