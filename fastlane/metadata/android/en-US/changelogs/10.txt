@@ -1,0 +1,6 @@
+- Draft a reply with the assistant from the compose window, put above the quote with Undo.
+- Translate lists every language by its own name, with search and recent choices.
+- PDF attachments open in the app, with pinch zoom.
+- Server administration: domains, background tasks, reports and the cluster.
+- Push through Google offers to switch on your other accounts too.
+- Icons in every menu; long forwarded mail is no longer folded; fixes from a review.

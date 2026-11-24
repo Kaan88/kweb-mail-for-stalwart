@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.7
+
+- Writing: "Draft a reply" in the assistant menu of a reply or forward, with an optional hint; "Put in reply" puts it above the quote, with Undo. Translate lists every language by its own name, with search and the recent ones first.
+- Reading: PDF attachments open in the app (pinch zoom, "Open with"); a drag that starts inside a zoomed mail stops at its edge, only one that starts at the edge changes conversation; a long forwarded message is no longer folded for its length.
+- Server administration: domains (with DKIM keys and a guarded delete), background tasks, reports and the cluster.
+- Push through Google: after switching it on for one account, the app offers to switch it on for the other accounts that still keep the permanent connection (one of them keeps the status-bar entry).
+- Icons in every context menu.
+- Fixes from a review of everything since 0.2.4: Mark all as read no longer marks unseen new mail on the server; opening at the first unread stops following after 3 s; very tall PDF pages no longer crash; task delete and retry are guarded in the core; a race in the download service.
+
 ## 0.2.6
 
 - Reading a mail: a mail laid out for a wider screen (most newsletters) keeps its own layout and is scaled down until it fits, instead of having its tables squeezed; pinch zoom works, only the mail scales, and the zoomed mail moves inside the frame it had when fitted, handing a drag at its edge on to the pager or the page.
