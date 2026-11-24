@@ -174,6 +174,21 @@ Usage:
   kweb admin deleted          deleted items the server still keeps (own account)
   kweb admin alerts           the server's alerts
   kweb admin tenants          the tenants with their disk use
+  kweb admin domains          the server's domains
+  kweb admin domain <id>      one domain: the DNS records to publish and its DKIM keys
+  kweb admin domain-add <name>
+                              add a domain
+  kweb admin domain-on <id>   take mail for a domain (domain-off: stop taking it)
+  kweb admin domain-delete <id>
+                              delete a domain that no account uses
+  kweb admin reports [dmarc|tls|arf]
+                              the reports other servers sent, newest first
+  kweb admin report <kind> <id>
+                              one report in full (report-delete <kind> <id> deletes it)
+  kweb admin tasks [waiting|retrying|stalled|failed]
+                              the server's background tasks, the one due first at the top
+  kweb admin task-retry <id>  have the server run a task now (task-delete <id> deletes it)
+  kweb admin cluster          the cluster's nodes
   kweb sign-out               revoke the grant and wipe the cache
   kweb help                   this text
 
@@ -192,6 +207,7 @@ pub const MAX_AGENDA_DAYS: u32 = 365;
 pub enum Command {
     Help,
     AdminEnterprise(crate::enterprise::Enterprise),
+    AdminMore(crate::admin_more::More),
     SignIn { server_url: String },
     Status,
     Inbox { count: u32 },
@@ -407,6 +423,7 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     };
     match name.as_str() {
         "help" | "--help" | "-h" => no_args(rest, Command::Help),
+        "admin" if crate::admin_more::owns(rest) => crate::admin_more::parse(rest).map(Command::AdminMore),
         "admin" if crate::enterprise::owns(rest) => crate::enterprise::parse(rest).map(Command::AdminEnterprise),
         "status" => no_args(rest, Command::Status),
         "mailboxes" => no_args(rest, Command::Mailboxes),

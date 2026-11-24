@@ -2,6 +2,7 @@
 //! desktop. It is synchronous on purpose: every `Core` call blocks and owns its own runtime.
 
 mod admin;
+mod admin_more;
 mod ai;
 mod args;
 mod commands;

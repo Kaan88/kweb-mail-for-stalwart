@@ -1,6 +1,5 @@
 package ovh.kweb.mail.ui.shared
 
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -9,17 +8,23 @@ import android.util.Log
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -54,11 +60,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,6 +67,8 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.Route
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
+import ovh.kweb.mail.ui.files.FileRules
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.thread.BlobFiles
 import ovh.kweb.mail.ui.thread.BodyState
@@ -146,7 +149,7 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: 
                 val file = fetch(attachment)
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
                 val intent = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, attachment.mimeType.ifBlank { "application/octet-stream" })
+                    .setDataAndType(uri, FileRules.viewType(attachment.mimeType, attachment.name))
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 try {
                     context.startActivity(intent)
@@ -245,11 +248,13 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: 
                                         text = {
                                             Text(stringResource(if (shared.header.isUnread) R.string.action_mark_read else R.string.action_mark_unread))
                                         },
+                                        leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                                         enabled = idle,
                                         onClick = { menuOpen = false; c.act(SharedRules.toggleRead(shared.header)) },
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(if (shared.header.isFlagged) R.string.action_unstar else R.string.action_star)) },
+                                        leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null) },
                                         enabled = idle,
                                         onClick = { menuOpen = false; c.act(SharedRules.toggleFlag(shared.header)) },
                                     )
@@ -257,6 +262,7 @@ fun SharedMessageScreen(route: Route.SharedMail, onBack: () -> Unit, onCompose: 
                                 if (canMove) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_move)) },
+                                        leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
                                         enabled = idle,
                                         onClick = { menuOpen = false; moving = true },
                                     )

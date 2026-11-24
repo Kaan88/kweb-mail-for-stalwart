@@ -6,7 +6,15 @@ import uniffi.kweb_core.BlockedAddress
 import uniffi.kweb_core.Core
 import uniffi.kweb_core.LogLine
 import uniffi.kweb_core.Maintenance
+import uniffi.kweb_core.ClusterNode
+import uniffi.kweb_core.DomainDetail
+import uniffi.kweb_core.DomainRow
 import uniffi.kweb_core.QueuePage
+import uniffi.kweb_core.ReportDetail
+import uniffi.kweb_core.ReportKind
+import uniffi.kweb_core.ReportPage
+import uniffi.kweb_core.TaskPage
+import uniffi.kweb_core.TaskState
 import uniffi.kweb_core.AdminKeyOwner
 import uniffi.kweb_core.QueuedMessage
 import uniffi.kweb_core.ServerAccount
@@ -39,6 +47,19 @@ interface AdminBackend {
     fun unblock(id: String)
     fun logs(text: String, limit: UInt): List<LogLine>
     fun maintenance(what: Maintenance)
+
+    fun domainRows(): List<DomainRow>
+    fun domain(id: String): DomainDetail
+    fun domainAdd(name: String): DomainRow
+    fun domainSetEnabled(id: String, enabled: Boolean)
+    fun domainDelete(id: String)
+    fun reports(kind: ReportKind, offset: UInt, limit: UInt): ReportPage
+    fun report(kind: ReportKind, id: String): ReportDetail
+    fun reportDelete(kind: ReportKind, id: String)
+    fun tasks(state: TaskState?, offset: UInt, limit: UInt): TaskPage
+    fun taskRetry(id: String)
+    fun taskDelete(id: String)
+    fun cluster(): List<ClusterNode>
 }
 
 /** The backend of one account's core. [core] is asked at each call so that a core that was replaced is the one used. */
@@ -65,4 +86,16 @@ class CoreAdminBackend(private val core: () -> Core) : AdminBackend {
     override fun unblock(id: String) = core().adminUnblock(id)
     override fun logs(text: String, limit: UInt) = core().adminLogs(text, limit)
     override fun maintenance(what: Maintenance) = core().adminMaintenance(what)
+    override fun domainRows() = core().adminDomainRows()
+    override fun domain(id: String) = core().adminDomain(id)
+    override fun domainAdd(name: String) = core().adminDomainAdd(name)
+    override fun domainSetEnabled(id: String, enabled: Boolean) = core().adminDomainSetEnabled(id, enabled)
+    override fun domainDelete(id: String) = core().adminDomainDelete(id)
+    override fun reports(kind: ReportKind, offset: UInt, limit: UInt) = core().adminReports(kind, offset, limit)
+    override fun report(kind: ReportKind, id: String) = core().adminReport(kind, id)
+    override fun reportDelete(kind: ReportKind, id: String) = core().adminReportDelete(kind, id)
+    override fun tasks(state: TaskState?, offset: UInt, limit: UInt) = core().adminTasks(state, offset, limit)
+    override fun taskRetry(id: String) = core().adminTaskRetry(id)
+    override fun taskDelete(id: String) = core().adminTaskDelete(id)
+    override fun cluster() = core().adminCluster()
 }

@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -130,7 +131,7 @@ private fun DomainPicker(state: NewAccountState, c: NewAccountController) {
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for (domain in state.domains) {
-                DropdownMenuItem(text = { Text(domain.name) }, onClick = { open = false; c.pickDomain(domain.id) })
+                DropdownMenuItem(text = { Text(domain.name) }, leadingIcon = { Icon(painterResource(R.drawable.ic_admin_domain), contentDescription = null) }, onClick = { open = false; c.pickDomain(domain.id) })
             }
         }
     }

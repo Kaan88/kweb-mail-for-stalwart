@@ -125,11 +125,22 @@ object FileRules {
      * when the creator gave none) the one the extension suggests, as the icon does. Still plain binary when unknown.
      */
     fun viewType(mediaType: String, name: String): String {
+        // Parameters (`; name=...`) go: a viewer matches the bare type, and some refuse a type with them.
         val type = mediaType.substringBefore(';').trim().lowercase()
-        if (type.isNotEmpty() && type != "application/octet-stream") return mediaType
         val extension = name.substringAfterLast('.', "").lowercase()
-        return extensionTypes[extension] ?: "application/octet-stream"
+        val byExtension = extensionTypes[extension]
+        if (type.isNotEmpty() && type !in genericTypes && !(byExtension != null && type in aliases)) return type
+        return byExtension ?: "application/octet-stream"
     }
+
+    /** Types senders put on any file: they say nothing about it, so the extension decides. */
+    private val genericTypes = setOf(
+        "application/octet-stream", "binary/octet-stream", "application/binary", "application/unknown",
+        "application/x-download", "application/download", "application/force-download", "application/x-unknown",
+    )
+
+    /** Old or private names of a type the extension names properly (`application/x-pdf`, `image/jpg`, ...). */
+    private val aliases = setOf("application/x-pdf", "application/acrobat", "applications/vnd.pdf", "text/pdf", "image/jpg", "image/pjpeg")
 
     /** Where the extension starts in [name] (a leading dot is part of the name, not an extension); the length when there is none. */
     private fun extensionStart(name: String): Int {

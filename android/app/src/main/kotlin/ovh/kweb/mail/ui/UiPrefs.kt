@@ -27,10 +27,10 @@ class UiPrefs(context: Context) {
         get() = prefs.getBoolean(PURE_BLACK, false)
         set(value) = prefs.edit { putBoolean(PURE_BLACK, value) }
 
-    /** The language last asked for in the assistant's Translate; null until used. */
-    var translateLanguage: String?
-        get() = prefs.getString(TRANSLATE, null)
-        set(value) = prefs.edit { putString(TRANSLATE, value) }
+    /** The languages last asked for in the assistant's Translate, newest first (an older install kept only one). */
+    var translateRecent: List<String>
+        get() = prefs.getString(TRANSLATE, null).orEmpty().split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        set(value) = prefs.edit { putString(TRANSLATE, value.joinToString("\n")) }
 
     /** Conversation view: the list groups mail by conversation (true, today's way) or shows one row per message. */
     var conversationView: Boolean

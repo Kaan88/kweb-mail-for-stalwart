@@ -38,6 +38,9 @@ object ThreadRules {
      * before the first step): the content may still grow (the thread's mail loads) and each step goes as far as the
      * content allows, but a screen the user moved is theirs.
      */
+    /** How long the first scroll follows the content as it loads, in milliseconds. */
+    const val SCROLL_FOLLOW_MS = 3_000L
+
     fun scrollStep(target: Int, value: Int, lastSet: Int?): Int? {
         if (value >= target) return null
         if (lastSet != null && value != lastSet) return null

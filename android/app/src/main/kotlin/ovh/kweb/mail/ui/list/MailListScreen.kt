@@ -1,7 +1,7 @@
 package ovh.kweb.mail.ui.list
 
-import android.util.Log
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,8 +12,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -39,12 +37,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -79,15 +81,15 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -113,39 +115,37 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import ovh.kweb.mail.background.Background
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
-import ovh.kweb.mail.ui.admin.AdminEntry
-import ovh.kweb.mail.ui.admin.AdminEntryRules
-import ovh.kweb.mail.ui.assistant.chat.ChatRules
 import ovh.kweb.mail.R
-import ovh.kweb.mail.ui.attention.AttentionRules
-import ovh.kweb.mail.ui.attention.AttentionViewModel
-import ovh.kweb.mail.ui.attention.HomeSetting
+import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.ActionRules
+import ovh.kweb.mail.ui.UiPrefs
 import ovh.kweb.mail.ui.accounts.AccountList
 import ovh.kweb.mail.ui.accounts.AccountRows
 import ovh.kweb.mail.ui.accounts.AccountSheet
 import ovh.kweb.mail.ui.accounts.AccountsUi
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import ovh.kweb.mail.ui.accounts.LocalAccountsUi
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import ovh.kweb.mail.ui.ActionRules
-import ovh.kweb.mail.ui.UiPrefs
+import ovh.kweb.mail.ui.admin.AdminEntry
+import ovh.kweb.mail.ui.admin.AdminEntryRules
+import ovh.kweb.mail.ui.assistant.chat.ChatRules
+import ovh.kweb.mail.ui.attention.AttentionRules
+import ovh.kweb.mail.ui.attention.AttentionViewModel
+import ovh.kweb.mail.ui.attention.HomeSetting
 import ovh.kweb.mail.ui.delivery.NotificationFix
 import ovh.kweb.mail.ui.folders.FolderAction
 import ovh.kweb.mail.ui.folders.FolderMenu
-import ovh.kweb.mail.ui.folders.FolderRules
 import ovh.kweb.mail.ui.folders.FolderMenuItem
+import ovh.kweb.mail.ui.folders.FolderRules
 import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.folders.longPressMenu
 import ovh.kweb.mail.ui.mailextras.DeleteLabelDialog
 import ovh.kweb.mail.ui.mailextras.LabelRules
 import ovh.kweb.mail.ui.sharing.LocalOpenShare
 import ovh.kweb.mail.ui.sharing.ShareRules
-import uniffi.kweb_core.Label
-import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.DraftKind
+import uniffi.kweb_core.Label
 import uniffi.kweb_core.ListFilter
+import uniffi.kweb_core.Mailbox
 import uniffi.kweb_core.ShareKind
 import uniffi.kweb_core.ThreadRow
 
@@ -834,7 +834,7 @@ private fun DrawerContent(
                                     if (markAll) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.list_mark_all_read)) },
-                                            leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                                            leadingIcon = { Icon(painterResource(R.drawable.ic_mail), contentDescription = null) },
                                             onClick = { menuOpen = false; onMarkAllRead(folder, folder.id in withSubfolders) },
                                         )
                                     }
@@ -848,7 +848,7 @@ private fun DrawerContent(
                                             } else {
                                                 null
                                             },
-                                            leadingIcon = { Icon(painterResource(R.drawable.ic_folder), contentDescription = null) },
+                                            leadingIcon = { Icon(painterResource(R.drawable.ic_account_tree), contentDescription = null) },
                                             onClick = { menuOpen = false; onSubfolders(folder, !combined) },
                                         )
                                     }

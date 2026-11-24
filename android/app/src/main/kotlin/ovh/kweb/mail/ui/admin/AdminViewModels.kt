@@ -83,6 +83,40 @@ class AdminNewAccountViewModel(app: Application, session: AccountSession) : Andr
     override fun onCleared() = form.clear()
 }
 
+class AdminDomainsViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val domains = DomainsController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
+class AdminDomainViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
+    var controller: DomainController? = null
+        private set
+
+    fun forDomain(id: String): DomainController =
+        controller ?: DomainController(viewModelScope, Dispatchers.IO, backend, id).also { controller = it }
+}
+
+class AdminReportsViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val reports = ReportsController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
+class AdminReportViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    private val backend = backendOf(session)
+    var controller: ReportController? = null
+        private set
+
+    fun forReport(kind: uniffi.kweb_core.ReportKind, id: String): ReportController =
+        controller ?: ReportController(viewModelScope, Dispatchers.IO, backend, kind, id).also { controller = it }
+}
+
+class AdminTasksViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val tasks = TasksController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
+class AdminClusterViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val cluster = ClusterController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
 class AdminBlockedViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
     val blocked = BlockedController(viewModelScope, Dispatchers.IO, backendOf(session))
 }

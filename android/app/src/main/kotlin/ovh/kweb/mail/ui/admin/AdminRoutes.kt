@@ -5,7 +5,7 @@ import androidx.compose.runtime.Composable
 /** The screens of the admin area. A route of the app ([ovh.kweb.mail.ui.Route.Admin]) holds one of these. */
 sealed interface AdminScreen {
     /** The screen holds what the user typed (a new account, a password or limit in a dialog): it is treated as a form. */
-    val holdsInput: Boolean get() = this is NewAccount || this is Account
+    val holdsInput: Boolean get() = this is NewAccount || this is Account || this is Domains || this is Domain
     /** The start: the figures, or the access screen's content while no key is kept. */
     data object Home : AdminScreen
 
@@ -21,6 +21,18 @@ sealed interface AdminScreen {
     data class Account(val id: String) : AdminScreen
 
     data object NewAccount : AdminScreen
+
+    data object Domains : AdminScreen
+
+    data class Domain(val id: String) : AdminScreen
+
+    data object Reports : AdminScreen
+
+    data class Report(val kind: uniffi.kweb_core.ReportKind, val id: String) : AdminScreen
+
+    data object Tasks : AdminScreen
+
+    data object Cluster : AdminScreen
 
     data object Blocked : AdminScreen
 
@@ -51,6 +63,12 @@ fun AdminRoutes(
         AdminScreen.Accounts -> AccountsScreen(onBack = onBack, onOpen = onOpen)
         is AdminScreen.Account -> AccountScreen(screen.id, onBack = onBack)
         AdminScreen.NewAccount -> NewAccountScreen(onBack = onBack)
+        AdminScreen.Domains -> DomainsScreen(onBack = onBack, onOpen = onOpen)
+        is AdminScreen.Domain -> DomainScreen(screen.id, onBack = onBack)
+        AdminScreen.Reports -> ReportsScreen(onBack = onBack, onOpen = onOpen)
+        is AdminScreen.Report -> ReportScreen(screen.kind, screen.id, onBack = onBack)
+        AdminScreen.Tasks -> TasksScreen(onBack = onBack)
+        AdminScreen.Cluster -> ClusterScreen(onBack = onBack)
         AdminScreen.Blocked -> BlockedScreen(onBack = onBack)
         AdminScreen.Logs -> LogsScreen(onBack = onBack)
         AdminScreen.Maintenance -> MaintenanceScreen(onBack = onBack)

@@ -3,15 +3,21 @@ package ovh.kweb.mail.ui.admin
 import java.util.Locale
 import uniffi.kweb_core.AdminAccess
 import uniffi.kweb_core.LogLine
+import uniffi.kweb_core.ReportKind
 import uniffi.kweb_core.ServerAccount
 import uniffi.kweb_core.ServerAccountKind
+import uniffi.kweb_core.TaskState
 
 /** The areas of the admin home. The last five are the Enterprise areas (screens another part of the app builds). */
 enum class AdminArea(val enterprise: Boolean) {
     Queue(false),
     Accounts(false),
+    Domains(false),
+    Reports(false),
     Blocked(false),
     Logs(false),
+    Tasks(false),
+    Cluster(false),
     Maintenance(false),
     Dashboard(true),
     History(true),
@@ -27,7 +33,7 @@ const val QUEUE_GONE = "that message is no longer in the queue"
 enum class AccessKind { Locked, Refused, Open }
 
 /** What a key may do, as the rows of "What this key may do". */
-enum class MayKind { Queue, Accounts, Blocked, Logs, Maintenance, Enterprise }
+enum class MayKind { Queue, QueueControl, Accounts, Domains, Reports, Blocked, Logs, Tasks, Cluster, Maintenance, Enterprise }
 
 data class MayRow(val kind: MayKind, val allowed: Boolean)
 
@@ -110,9 +116,14 @@ object AdminRules {
     /** The rows of "What this key may do". */
     fun mayRows(access: AdminAccess): List<MayRow> = listOf(
         MayRow(MayKind.Queue, access.mayQueue),
+        MayRow(MayKind.QueueControl, access.mayQueueControl),
         MayRow(MayKind.Accounts, access.mayAccounts),
+        MayRow(MayKind.Domains, access.mayDomains),
+        MayRow(MayKind.Reports, reportKinds(access).isNotEmpty()),
         MayRow(MayKind.Blocked, access.mayBlocked),
         MayRow(MayKind.Logs, access.mayLogs),
+        MayRow(MayKind.Tasks, access.mayTasks),
+        MayRow(MayKind.Cluster, access.mayCluster),
         MayRow(MayKind.Maintenance, access.mayMaintenance),
         MayRow(MayKind.Enterprise, enterpriseAreas(access).isNotEmpty()),
     )
@@ -120,8 +131,12 @@ object AdminRules {
     private fun may(access: AdminAccess, area: AdminArea): Boolean = when (area) {
         AdminArea.Queue -> access.mayQueue
         AdminArea.Accounts -> access.mayAccounts
+        AdminArea.Domains -> access.mayDomains
+        AdminArea.Reports -> reportKinds(access).isNotEmpty()
         AdminArea.Blocked -> access.mayBlocked
         AdminArea.Logs -> access.mayLogs
+        AdminArea.Tasks -> access.mayTasks
+        AdminArea.Cluster -> access.mayCluster
         AdminArea.Maintenance -> access.mayMaintenance
         AdminArea.Dashboard -> access.mayDashboard
         AdminArea.History -> access.mayHistory
@@ -146,6 +161,31 @@ object AdminRules {
             else -> HomeAreas(upper, enterprise, lowerDimmed = true)
         }
     }
+
+    // ---- domains, reports, tasks ----
+
+    /** The kinds of received report the key may read, in the order the chips show them. */
+    fun reportKinds(access: AdminAccess): List<ReportKind> = buildList {
+        if (access.mayDmarcReports) add(ReportKind.DMARC)
+        if (access.mayTlsReports) add(ReportKind.TLS)
+        if (access.mayArfReports) add(ReportKind.ARF)
+    }
+
+    /** A domain name as the core takes it (it checks again): letters, digits, hyphens and dots, labels of 1 to 63 that do not start or end with a hyphen. */
+    fun domainNameValid(name: String): Boolean {
+        val n = name.trim().trimEnd('.')
+        if (n.isEmpty() || n.length > 253) return false
+        return n.split('.').all { label ->
+            label.length in 1..63 && !label.startsWith('-') && !label.endsWith('-') &&
+                label.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '-' }
+        }
+    }
+
+    /** A task in a state that needs someone to look: it is shown with the error colour. */
+    fun taskNeedsLook(state: TaskState): Boolean = state == TaskState.FAILED || state == TaskState.STALLED
+
+    /** The states the task list can be narrowed to, in the order of the chips (null: all). */
+    val taskFilters: List<TaskState?> = listOf(null, TaskState.FAILED, TaskState.STALLED, TaskState.RETRYING, TaskState.WAITING)
 
     // ---- accounts ----
 

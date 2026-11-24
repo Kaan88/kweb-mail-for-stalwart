@@ -1,5 +1,6 @@
 package ovh.kweb.mail.ui.account
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,11 +10,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -193,9 +196,9 @@ private fun MaskedRow(shape: androidx.compose.ui.graphics.Shape, address: Masked
                         Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.masked_menu))
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.masked_copy)) }, onClick = { menu = false; copy(address.email) })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.masked_change_note)) }, onClick = { menu = false; c.askNote(address) })
-                        DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, onClick = { menu = false; c.askDelete(address) })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.masked_copy)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_copy), contentDescription = null) }, onClick = { menu = false; copy(address.email) })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.masked_change_note)) }, leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) }, onClick = { menu = false; c.askNote(address) })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) }, onClick = { menu = false; c.askDelete(address) })
                     }
                 }
             }

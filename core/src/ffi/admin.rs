@@ -36,6 +36,23 @@ pub struct AdminAccess {
     pub may_recovery: bool,
     pub may_alerts: bool,
     pub may_tenants: bool,
+    /// Domains, received reports, tasks and cluster nodes: the open-edition areas added later (each true when the
+    /// key may list and read the objects). The three report kinds are separate permissions.
+    #[uniffi(default = false)]
+    pub may_domains: bool,
+    #[uniffi(default = false)]
+    pub may_dmarc_reports: bool,
+    #[uniffi(default = false)]
+    pub may_tls_reports: bool,
+    #[uniffi(default = false)]
+    pub may_arf_reports: bool,
+    #[uniffi(default = false)]
+    pub may_tasks: bool,
+    #[uniffi(default = false)]
+    pub may_cluster: bool,
+    /// Pausing or resuming the mail queue (the action permissions; the queue screen offers the menu items by it).
+    #[uniffi(default = false)]
+    pub may_queue_control: bool,
     /// The account the key belongs to when that is not the signed-in one (everything admin is done as it); else empty.
     #[uniffi(default = "")]
     pub acting_as: String,
@@ -170,6 +187,13 @@ fn no_access() -> AdminAccess {
         may_recovery: false,
         may_alerts: false,
         may_tenants: false,
+        may_domains: false,
+        may_dmarc_reports: false,
+        may_tls_reports: false,
+        may_arf_reports: false,
+        may_tasks: false,
+        may_cluster: false,
+        may_queue_control: false,
         acting_as: String::new(),
     }
 }
@@ -177,7 +201,7 @@ fn no_access() -> AdminAccess {
 impl Core {
     /// Runs `f` with the stored admin key. A key the server turns down mid-way is
     /// `Error::Invalid` saying so, as at the connection.
-    fn admin_run<T, F, Fut>(&self, f: F) -> Result<T>
+    pub(super) fn admin_run<T, F, Fut>(&self, f: F) -> Result<T>
     where
         F: FnOnce(Connection) -> Fut,
         Fut: Future<Output = Result<T>>,

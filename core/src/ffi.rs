@@ -6,6 +6,7 @@
 
 mod admin;
 mod admin_link;
+mod admin_more;
 mod ai_chat;
 mod attention;
 mod catchup;
@@ -23,6 +24,10 @@ mod sparkle;
 pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
     ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
+};
+pub use admin_more::{
+    ClusterNode, DkimKey, DomainDetail, DomainRow, ReportDetail, ReportFact, ReportGroup, ReportKind, ReportPage,
+    ReportRow, TaskPage, TaskRow, TaskState,
 };
 pub use ai_chat::{ai_parse_findings, ai_parse_ideas, AiChatListener};
 pub use download::{DownloadCancel, DownloadListener};
@@ -397,9 +402,11 @@ impl Core {
     /// Marks every unread message of the mailboxes (a folder, or a folder with the folders in it)
     /// as read. The cached ones go through the action path, so they work offline and the
     /// notifications go; their ids are returned, so that the caller can offer Undo
-    /// (`MarkUnread` on exactly those). When the server can be reached the unread mail the cache
-    /// does not hold (older than its window) is marked there too, at most `MARK_ALL_SERVER_CAP`
-    /// messages a folder: best effort, not undone, and a failure there is not an error.
+    /// (`MarkUnread` on exactly those). When the server can be reached the unread mail older than
+    /// the folder's cache window is marked there too, at most `MARK_ALL_SERVER_CAP` messages a
+    /// folder: best effort, not undone, and a failure there is not an error. Mail newer than the
+    /// window that the cache does not hold yet arrived after the last pass: the user has not seen
+    /// it, so it is left unread (it comes in with the next pass, notification and all).
     pub fn mark_all_read(&self, mailbox_ids: Vec<String>) -> Result<Vec<String>> {
         check_mailbox_set(&mailbox_ids)?;
         let account_id = self.account_id()?;
@@ -413,7 +420,10 @@ impl Core {
         let _ = self.with_connection_within(Some(Duration::from_secs(30)), |conn| async move {
             let mut rest = Vec::new();
             for mailbox in mailboxes {
-                for id in conn.unread_ids(mailbox, MARK_ALL_SERVER_CAP).await? {
+                // No window: the cache holds the whole folder, so there is nothing older to mark.
+                let Some(oldest) = store.get_window(account, mailbox)? else { continue };
+                let before = crate::compose::rules::iso_utc(oldest);
+                for id in conn.unread_ids_before(mailbox, &before, MARK_ALL_SERVER_CAP).await? {
                     // A cached message is the cache's and the queue's business.
                     if store.get_message(account, &id)?.is_none() && !rest.contains(&id) {
                         rest.push(id);

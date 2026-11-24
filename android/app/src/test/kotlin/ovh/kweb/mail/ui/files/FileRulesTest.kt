@@ -222,6 +222,13 @@ class FileRulesTest {
         assertEquals("application/pdf", FileRules.viewType("", "report.pdf"))
         assertEquals("application/octet-stream", FileRules.viewType("application/octet-stream", "thing.unknownext"))
         assertEquals("text/plain", FileRules.viewType("text/plain", "report.pdf"))
+        // What senders put on a PDF: parameters, other spellings of binary, old names.
+        assertEquals("application/pdf", FileRules.viewType("application/pdf; name=\"report.pdf\"", "report.pdf"))
+        assertEquals("application/pdf", FileRules.viewType("Application/PDF", "scan"))
+        assertEquals("application/pdf", FileRules.viewType("binary/octet-stream", "report.pdf"))
+        assertEquals("application/pdf", FileRules.viewType("application/force-download", "report.pdf"))
+        assertEquals("application/pdf", FileRules.viewType("application/x-pdf", "report.pdf"))
+        assertEquals("application/x-pdf", FileRules.viewType("application/x-pdf", "report"))
     }
 
     @Test fun theServerNameKeepsWhatTheServerTakes() {

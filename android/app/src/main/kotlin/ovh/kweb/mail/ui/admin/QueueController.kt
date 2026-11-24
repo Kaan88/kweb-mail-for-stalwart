@@ -25,14 +25,16 @@ data class QueueState(
     val paused: Boolean = false,
     val dialog: QueueDialog? = null,
     val busy: Boolean = false,
+    /** The key may pause and resume the queue (true until the access says otherwise; the server checks again). */
+    val mayControl: Boolean = true,
     val error: UiMessage? = null,
     val info: UiMessage? = null,
 )
 
 /** The mail queue: the list in pages, Retry and Cancel on each message, Pause and Resume for all. */
 class QueueController(
-    scope: CoroutineScope,
-    io: CoroutineDispatcher,
+    private val scope: CoroutineScope,
+    private val io: CoroutineDispatcher,
     private val backend: AdminBackend,
 ) {
     private val gate = ActionGate(scope, io)
@@ -43,7 +45,19 @@ class QueueController(
     }
     val state: StateFlow<QueueState> get() = stateFlow
 
-    fun refresh() = list.refresh()
+    fun refresh() {
+        list.refresh()
+        scope.launch {
+            val may = try {
+                withContext(io) { backend.access().mayQueueControl }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                stateFlow.value.mayControl
+            }
+            stateFlow.update { it.copy(mayControl = may) }
+        }
+    }
 
     fun retry(id: String) {
         gate.run({ backend.queueRetry(id) }, ::started, { fail(it, R.string.admin_retry_failed) }) {

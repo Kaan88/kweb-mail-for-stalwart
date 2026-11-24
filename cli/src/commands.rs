@@ -26,6 +26,7 @@ pub fn run(core: &Arc<Core>, command: Command) -> Result<(), String> {
     match command {
         Command::Help => Ok(()), // handled before the core is opened
         Command::AdminEnterprise(what) => crate::enterprise::run(core, what),
+        Command::AdminMore(what) => crate::admin_more::run(core, what),
         Command::SignIn { server_url } => sign_in(core, server_url),
         Command::Status => status(core),
         Command::Inbox { count } => inbox(core, count),

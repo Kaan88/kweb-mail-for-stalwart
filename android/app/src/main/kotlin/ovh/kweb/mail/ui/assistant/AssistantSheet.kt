@@ -154,11 +154,19 @@ private fun Body(session: AssistSession, vm: AssistantViewModel, onReplace: ((St
             // No idea could be read out of the answer: it is shown as it came, to read or copy.
             Kind.IDEAS -> if (ideas.isEmpty()) CopyOrClose(session.text, vm) else Buttons(main = stringResource(R.string.assistant_close) to vm::close, mainTonal = true)
             Kind.EXTRACT -> Buttons(main = stringResource(R.string.assistant_close) to vm::close, mainTonal = true)
-            Kind.DRAFT -> Buttons(
-                secondary = stringResource(R.string.assistant_close) to vm::close,
-                main = stringResource(R.string.assistant_use_as_reply) to vm::useAsReply,
-                mainEnabled = !session.busy,
-            )
+            // Opened from the reply being written: the draft goes into that reply. Opened from a mail: a new reply.
+            Kind.DRAFT -> if (onReplace != null && session.rewrite != null) {
+                Buttons(
+                    secondary = stringResource(R.string.cancel) to vm::close,
+                    main = stringResource(R.string.assistant_put_in_reply) to { onReplace(session.text) },
+                )
+            } else {
+                Buttons(
+                    secondary = stringResource(R.string.assistant_close) to vm::close,
+                    main = stringResource(R.string.assistant_use_as_reply) to vm::useAsReply,
+                    mainEnabled = !session.busy,
+                )
+            }
             Kind.REWRITE -> Buttons(
                 secondary = stringResource(R.string.cancel) to vm::close,
                 main = stringResource(R.string.assistant_replace) to { onReplace?.invoke(session.text) },

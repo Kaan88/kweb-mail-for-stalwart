@@ -37,6 +37,7 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.accounts.AccountPaths
 import ovh.kweb.mail.accounts.AccountSession
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.files.FileRules
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.thread.FileNames
 import ovh.kweb.mail.ui.thread.SizeFormat
@@ -137,7 +138,7 @@ object CryptoTemp {
                 session.core.cryptoSaveAttachment(messageId, file.index.toUInt(), target.absolutePath)
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", target)
                 Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, file.mimeType.ifBlank { "application/octet-stream" })
+                    .setDataAndType(uri, FileRules.viewType(file.mimeType, file.name))
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (e: Exception) {
                 // The class only: a message of the core may name the file.

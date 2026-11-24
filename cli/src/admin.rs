@@ -140,6 +140,12 @@ fn access_text(a: &AdminAccess) -> String {
         (a.may_recovery, "recovery"),
         (a.may_alerts, "alerts"),
         (a.may_tenants, "tenants"),
+        (a.may_domains, "domains"),
+        (a.may_dmarc_reports, "dmarc reports"),
+        (a.may_tls_reports, "tls reports"),
+        (a.may_arf_reports, "arf reports"),
+        (a.may_tasks, "tasks"),
+        (a.may_cluster, "cluster"),
     ];
     let open: Vec<&str> = areas.iter().filter(|(on, _)| *on).map(|(_, name)| *name).collect();
     format!("Admin key stored ({} edition). Opens: {}.", clean(&a.edition), open.join(", "))

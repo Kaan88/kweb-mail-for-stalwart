@@ -107,8 +107,10 @@
 
     <!-- Translate dialog -->
     <string name="assistant_translate_title">Translate to</string>
-    <string name="assistant_translate_language">Language</string>
-    <string name="assistant_translate_go">Translate</string>
+    <string name="assistant_translate_search">Search languages</string>
+    <string name="assistant_translate_into">Translate into “%1$s”</string>
+    <string name="assistant_translate_recent">Recent</string>
+    <string name="assistant_translate_all">All languages</string>
 
     <!-- Consent -->
     <string name="assistant_consent_title">Send to %1$s?</string>
@@ -151,7 +153,9 @@
     <!-- In the message being written -->
     <string name="assistant_nothing_to_change">There is no text of yours to change yet.</string>
     <string name="assistant_replaced">Text replaced</string>
+    <string name="assistant_reply_added">Reply added</string>
     <string name="assistant_undo">Undo</string>
     <string name="assistant_replace_failed">The text has changed since. Nothing was replaced.</string>
     <string name="assistant_undo_failed">The text has changed since, so it could not be undone.</string>
+    <string name="assistant_put_in_reply">Put in reply</string>
 </resources>

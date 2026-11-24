@@ -17,8 +17,14 @@ struct Rig {
 impl Rig {
     /// Signed in and synced once.
     fn new() -> Rig {
+        Rig::with(|_| ())
+    }
+
+    /// Like `new`, with `before` run on the server before the first sync.
+    fn with(before: impl FnOnce(&MockServer)) -> Rig {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
         let server = rt.block_on(MockServer::start());
+        before(&server);
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("cache.db").to_string_lossy().into_owned();
         let core = Core::new(db_path, Arc::new(MemorySecrets::default())).unwrap();
@@ -66,14 +72,38 @@ fn the_ids_given_back_undo_it_and_other_folders_are_left_alone() {
 }
 
 #[test]
-fn unread_mail_the_cache_does_not_hold_is_marked_on_the_server() {
+fn unread_mail_older_than_the_window_is_marked_on_the_server() {
+    // 105 old unread mails in Junk: the first pass caches the newest 100 and sets a window.
+    const LONG_AGO: i64 = 1_700_000_000;
+    let mut old = Vec::new();
+    let rig = Rig::with(|server| {
+        for i in 0..105 {
+            let id = server.deliver_at("Sam", "sam@example.test", &format!("junk {i}"), "spam", LONG_AGO + i);
+            server.move_to(&id, "junk");
+            old.push(id);
+        }
+    });
+    let outside: Vec<&String> = old.iter().filter(|id| rig.core.message((*id).clone()).unwrap().is_none()).collect();
+    assert_eq!(outside.len(), 5, "the oldest five are outside the window");
+    let changed = rig.core.mark_all_read(vec![JUNK_ID.to_string()]).unwrap();
+    assert_eq!(changed.len(), 100);
+    for id in outside {
+        assert!(!changed.contains(id));
+        assert!(rig.server.is_read(id), "{id} is older than the window");
+    }
+}
+
+#[test]
+fn mail_that_arrived_after_the_last_pass_stays_unread() {
     let rig = Rig::new();
-    // Arrived and not synced: only the server knows it.
-    let outside = rig.server.deliver("Anna", "anna@example.org", "Not in the cache", "hello");
-    assert!(rig.core.message(outside.clone()).unwrap().is_none());
+    // Arrived and not synced: the user has not seen it, so it is not the cache's to mark.
+    let new = rig.server.deliver("Anna", "anna@example.org", "Not in the cache", "hello");
+    assert!(rig.core.message(new.clone()).unwrap().is_none());
     let changed = rig.core.mark_all_read(vec![INBOX_ID.to_string()]).unwrap();
-    assert!(!changed.contains(&outside));
-    assert!(rig.server.is_read(&outside));
+    assert!(!changed.contains(&new));
+    assert!(!rig.server.is_read(&new));
+    rig.sync();
+    assert!(rig.core.message(new).unwrap().unwrap().is_unread);
 }
 
 #[test]

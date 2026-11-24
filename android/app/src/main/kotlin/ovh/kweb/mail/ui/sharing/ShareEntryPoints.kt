@@ -1,17 +1,20 @@
 package ovh.kweb.mail.ui.sharing
 
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -30,9 +33,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.UiMessage
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import ovh.kweb.mail.ui.shared.SharedRules
 import uniffi.kweb_core.ShareKind
 
@@ -102,7 +103,7 @@ fun rememberLongPress(enabled: Boolean): LongPress {
 fun FolderLongPressMenu(press: LongPress, shareable: Boolean, onShare: () -> Unit, extra: @Composable (close: () -> Unit) -> Unit = {}) {
     DropdownMenu(expanded = press.menuOpen, onDismissRequest = press::dismiss) {
         if (shareable) {
-            DropdownMenuItem(text = { Text(stringResource(R.string.share_menu)) }, onClick = { press.dismiss(); onShare() })
+            DropdownMenuItem(text = { Text(stringResource(R.string.share_menu)) }, leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) }, onClick = { press.dismiss(); onShare() })
         }
         extra(press::dismiss)
     }
@@ -127,6 +128,7 @@ fun SharePickerButton(kind: PickKind, modifier: Modifier = Modifier) {
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
                 text = { Text(stringResource(if (kind == PickKind.CALENDAR) R.string.share_calendar_menu else R.string.share_book_menu)) },
+                leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
                 onClick = { menu = false; picking = true },
             )
         }

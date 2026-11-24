@@ -26,8 +26,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
@@ -106,9 +111,21 @@ fun MailWebView(
         // directly, with their own fling and snap, and not what a scrollable in between hands on.
         var wide by remember { mutableStateOf(false) }
         var tall by remember { mutableStateOf(false) }
+        // A drag that moved the page stops at its edge: what is left of it does not reach the pager. Only a drag that starts
+        // at the edge (towards it) goes on to the next or previous conversation (owner, 2026-11-24).
+        val edge = remember {
+            object : NestedScrollConnection {
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+                    if (available.x == 0f || panView[0]?.mayHandOver(available.x) != false) Offset.Zero else Offset(available.x, 0f)
+
+                override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+                    if (available.x == 0f || panView[0]?.mayHandOver(available.x) != false) Velocity.Zero else Velocity(available.x, 0f)
+            }
+        }
         AndroidView(
             modifier = modifier
                 .fillMaxWidth()
+                .nestedScroll(edge)
                 .scrollable(pan, Orientation.Horizontal, enabled = wide)
                 .scrollable(panDown, Orientation.Vertical, enabled = tall),
             factory = { context ->
@@ -218,6 +235,16 @@ private class PanWebView(context: Context) : WebView(context) {
     private var pinched = false
     private var downY = 0f
 
+    /** Whether the page could not move further left / right when the finger went down (see [mayHandOver]). */
+    private var edgeLeftAtStart = true
+    private var edgeRightAtStart = true
+
+    /**
+     * Whether what is left of a sideways drag of the finger by [fingerDx] (positive: to the right) may go on to the pager:
+     * only when the page was already at that edge when the finger went down. A drag that moved the page stops at its edge.
+     */
+    fun mayHandOver(fingerDx: Float): Boolean = if (fingerDx > 0) edgeLeftAtStart else edgeRightAtStart
+
     /**
      * While the page moves sideways the WebView asks its parents to leave the gesture alone, and that is what makes a swipe
      * between conversations unreliable on a wide or zoomed mail: once the finger starts on the page, the pager never gets it.
@@ -232,6 +259,8 @@ private class PanWebView(context: Context) : WebView(context) {
                 downY = event.y
                 lastX = event.x
                 pinched = false
+                edgeLeftAtStart = !canScrollHorizontally(-1)
+                edgeRightAtStart = !canScrollHorizontally(1)
             }
             // A pinch is the page's: the lists and the pager around it must not take it, however the fingers move. Until the
             // next finger goes down the gesture is never handed on at an edge (the finger left is not the one that was followed).
@@ -244,7 +273,7 @@ private class PanWebView(context: Context) : WebView(context) {
                 val step = event.x - lastX
                 lastX = event.x
                 if (abs(event.x - downX) > slop && abs(event.x - downX) > abs(event.y - downY) && step != 0f &&
-                    !canScrollHorizontally(if (step > 0) -1 else 1)
+                    !canScrollHorizontally(if (step > 0) -1 else 1) && mayHandOver(step)
                 ) {
                     parent?.requestDisallowInterceptTouchEvent(false)
                 }

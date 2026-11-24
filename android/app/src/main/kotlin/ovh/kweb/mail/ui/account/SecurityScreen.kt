@@ -1,16 +1,18 @@
 package ovh.kweb.mail.ui.account
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
@@ -215,7 +217,7 @@ private fun CredentialGroup(
                             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.security_menu, credential.description.ifBlank { stringResource(R.string.security_no_note) }))
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, onClick = { menu = false; c.askDeleteCredential(kind, credential) })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) }, onClick = { menu = false; c.askDeleteCredential(kind, credential) })
                         }
                     }
                 },
@@ -243,8 +245,8 @@ private fun PasskeyRow(shape: Shape, key: Passkey, locale: Locale, c: SecurityCo
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.security_menu, key.name)) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.security_rename)) }, onClick = { menu = false; c.askRenamePasskey(key) })
-                    DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, onClick = { menu = false; c.askDeletePasskey(key) })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.security_rename)) }, leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) }, onClick = { menu = false; c.askRenamePasskey(key) })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.account_delete)) }, leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) }, onClick = { menu = false; c.askDeletePasskey(key) })
                 }
             }
         },

@@ -50,6 +50,12 @@ object TransferHub {
     private val lock = Any()
     private val running = LinkedHashSet<Entry>()
     private var lastPost = 0L
+
+    /**
+     * The service was asked to start and has not yet called startForeground. Android 12+ ends the app when such a
+     * service is stopped before it gets there, so [end] leaves it alone then and the service stops itself.
+     */
+    private var starting = false
     private val count = MutableStateFlow(0)
 
     /** How many downloads run now. */
@@ -86,10 +92,12 @@ object TransferHub {
         val last = synchronized(lock) {
             running.remove(entry)
             count.value = running.size
+            // Decided and done under the lock that [start] holds while it asks for the service, so a new download cannot
+            // ask for it between this check and the stop.
+            if (running.isEmpty() && !starting) context.stopService(Intent(context, DownloadService::class.java))
             running.isEmpty()
         }
         if (last) {
-            context.stopService(Intent(context, DownloadService::class.java))
             context.getSystemService(NotificationManager::class.java).cancel(ID_PROGRESS)
             if (complete && !AppVisibility.visible) announceDone(context)
         } else {
@@ -98,17 +106,27 @@ object TransferHub {
     }
 
     /** The user pressed Cancel in the notification: every running download is stopped (each ends itself). */
+    /** The service is in the foreground now: true when it is still wanted, false when the last download already ended. */
+    internal fun reachedForeground(): Boolean = synchronized(lock) {
+        starting = false
+        running.isNotEmpty()
+    }
+
     fun cancelAll() {
         val all = synchronized(lock) { running.toList() }
         all.forEach { it.stop.stop() }
     }
 
     private fun start(context: Context) {
-        try {
-            ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java))
-        } catch (e: Exception) {
-            // The download goes on without the service; it only does not survive leaving the app.
-            Log.w(Background.TAG, "the download service could not be started: ${e.javaClass.simpleName}")
+        synchronized(lock) {
+            starting = true
+            try {
+                ContextCompat.startForegroundService(context, Intent(context, DownloadService::class.java))
+            } catch (e: Exception) {
+                // The download goes on without the service; it only does not survive leaving the app.
+                Log.w(Background.TAG, "the download service could not be started: ${e.javaClass.simpleName}")
+                starting = false
+            }
         }
     }
 
@@ -211,11 +229,12 @@ class DownloadService : Service() {
             startForeground(TransferHub.ID_PROGRESS, TransferHub.notification(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } catch (e: Exception) {
             Log.w(Background.TAG, "the download service could not go to the foreground: ${e.javaClass.simpleName}")
+            TransferHub.reachedForeground()
             stopSelf()
             return START_NOT_STICKY
         }
         // The last download may have ended before this ran: the service has nothing to keep alive then.
-        if (TransferHub.active.value == 0) {
+        if (!TransferHub.reachedForeground()) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

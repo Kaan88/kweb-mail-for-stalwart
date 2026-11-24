@@ -208,6 +208,66 @@ class FakeAdminBackend : AdminBackend {
     }
 
     override fun maintenance(what: Maintenance) = check("maintenance:$what")
+
+    // ---- domains, reports, tasks, cluster ----
+    var domainRowList: List<uniffi.kweb_core.DomainRow> = emptyList()
+    var taskList: List<uniffi.kweb_core.TaskRow> = emptyList()
+    var nodes: List<uniffi.kweb_core.ClusterNode> = emptyList()
+
+    override fun domainRows(): List<uniffi.kweb_core.DomainRow> {
+        check("domainRows")
+        return domainRowList
+    }
+
+    override fun domain(id: String): uniffi.kweb_core.DomainDetail {
+        check("domain:$id")
+        val row = domainRowList.first { it.id == id }
+        return uniffi.kweb_core.DomainDetail(row.id, row.name, row.enabled, row.aliases, "", true, true, emptyList())
+    }
+
+    override fun domainAdd(name: String): uniffi.kweb_core.DomainRow {
+        check("domainAdd:$name")
+        val row = uniffi.kweb_core.DomainRow("n${domainRowList.size}", name, true, emptyList())
+        domainRowList = domainRowList + row
+        return row
+    }
+
+    override fun domainSetEnabled(id: String, enabled: Boolean) = check("domainEnabled:$id:$enabled")
+
+    override fun domainDelete(id: String) {
+        check("domainDelete:$id")
+        domainRowList = domainRowList.filter { it.id != id }
+    }
+
+    override fun reports(kind: uniffi.kweb_core.ReportKind, offset: UInt, limit: UInt): uniffi.kweb_core.ReportPage {
+        check("reports:$kind:$offset:$limit")
+        return uniffi.kweb_core.ReportPage(emptyList(), 0u)
+    }
+
+    override fun report(kind: uniffi.kweb_core.ReportKind, id: String): uniffi.kweb_core.ReportDetail {
+        check("report:$kind:$id")
+        return uniffi.kweb_core.ReportDetail(id, kind, "", emptyList(), "", null, null, null, null, emptyList(), emptyList())
+    }
+
+    override fun reportDelete(kind: uniffi.kweb_core.ReportKind, id: String) = check("reportDelete:$kind:$id")
+
+    override fun tasks(state: uniffi.kweb_core.TaskState?, offset: UInt, limit: UInt): uniffi.kweb_core.TaskPage {
+        check("tasks:$state:$offset:$limit")
+        val all = taskList.filter { state == null || it.state == state }
+        return uniffi.kweb_core.TaskPage(all.drop(offset.toInt()).take(limit.toInt()), all.size.toUInt())
+    }
+
+    override fun taskRetry(id: String) = check("taskRetry:$id")
+
+    override fun taskDelete(id: String) {
+        check("taskDelete:$id")
+        taskList = taskList.filter { it.id != id }
+    }
+
+    override fun cluster(): List<uniffi.kweb_core.ClusterNode> {
+        check("cluster")
+        return nodes
+    }
 }
 
 /** The scope and the dispatcher the controller tests share. */

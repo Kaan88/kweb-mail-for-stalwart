@@ -15,6 +15,10 @@
 //! - Nothing here is cached.
 
 mod accounts;
+mod cluster;
+mod domains;
+mod reports;
+mod tasks;
 
 use std::collections::HashSet;
 
@@ -84,6 +88,14 @@ impl AdminInfo {
             may_recovery: reads(&["sysArchivedItemQuery", "sysArchivedItemGet"]),
             may_alerts: reads(&["sysAlertGet"]),
             may_tenants: reads(&["sysTenantGet"]),
+            may_domains: self.has_all(&["sysDomainQuery", "sysDomainGet"]),
+            may_dmarc_reports: self.has_all(&["sysDmarcExternalReportQuery", "sysDmarcExternalReportGet"]),
+            may_tls_reports: self.has_all(&["sysTlsExternalReportQuery", "sysTlsExternalReportGet"]),
+            may_arf_reports: self.has_all(&["sysArfExternalReportQuery", "sysArfExternalReportGet"]),
+            may_tasks: self.has_all(&["sysTaskQuery", "sysTaskGet"]),
+            may_cluster: self.has_all(&["sysClusterNodeQuery", "sysClusterNodeGet"]),
+            may_queue_control: self.has("sysActionCreate")
+                && (self.has("actionPauseMtaQueue") || self.has("actionResumeMtaQueue")),
             acting_as: String::new(),
         }
     }
@@ -101,6 +113,12 @@ impl AdminInfo {
             || a.may_recovery
             || a.may_alerts
             || a.may_tenants
+            || a.may_domains
+            || a.may_dmarc_reports
+            || a.may_tls_reports
+            || a.may_arf_reports
+            || a.may_tasks
+            || a.may_cluster
     }
 }
 

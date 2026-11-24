@@ -8,7 +8,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.kweb_core.LogLine
+import uniffi.kweb_core.ReportKind
 import uniffi.kweb_core.ServerAccountKind
+import uniffi.kweb_core.TaskState
 
 class AdminRulesTest {
     @Test fun aKeyIsShownWithItsFirstEightCharactersAndDots() {
@@ -196,5 +198,42 @@ class AdminRulesTest {
         val sameDay = AdminFormat.whenText(now - 600, now, zone, Locale.ENGLISH)
         val otherDay = AdminFormat.whenText(now - 3 * 86_400, now, zone, Locale.ENGLISH)
         assertTrue(otherDay.length > sameDay.length)
+    }
+
+    @Test fun theReportKindsFollowTheKeyInTheOrderOfTheChips() {
+        assertEquals(emptyList<ReportKind>(), AdminRules.reportKinds(access()))
+        val a = access().copy(mayArfReports = true, mayDmarcReports = true)
+        assertEquals(listOf(ReportKind.DMARC, ReportKind.ARF), AdminRules.reportKinds(a))
+    }
+
+    @Test fun aDomainNameIsCheckedLikeTheCoreDoes() {
+        assertTrue(AdminRules.domainNameValid("example.org"))
+        assertTrue(AdminRules.domainNameValid(" Mail-1.Example.org. "))
+        assertFalse(AdminRules.domainNameValid(""))
+        assertFalse(AdminRules.domainNameValid("-a.org"))
+        assertFalse(AdminRules.domainNameValid("a..org"))
+        assertFalse(AdminRules.domainNameValid("a b.org"))
+        assertFalse(AdminRules.domainNameValid("a_b.org"))
+        assertFalse(AdminRules.domainNameValid("x".repeat(64) + ".org"))
+    }
+
+    @Test fun onlyFailedAndStalledTasksAskForALook() {
+        assertTrue(AdminRules.taskNeedsLook(TaskState.FAILED))
+        assertTrue(AdminRules.taskNeedsLook(TaskState.STALLED))
+        assertFalse(AdminRules.taskNeedsLook(TaskState.WAITING))
+        assertFalse(AdminRules.taskNeedsLook(TaskState.RETRYING))
+        assertEquals(null, AdminRules.taskFilters.first())
+    }
+
+    @Test fun theNewAreasAppearOnlyWhenTheKeyMayOpenThem() {
+        assertFalse(AdminRules.homeAreas(access()).upper.contains(AdminArea.Domains))
+        val a = access().copy(mayDomains = true, mayTlsReports = true, mayTasks = true, mayCluster = true)
+        val upper = AdminRules.homeAreas(a).upper
+        assertTrue(upper.containsAll(listOf(AdminArea.Domains, AdminArea.Reports, AdminArea.Tasks, AdminArea.Cluster)))
+        val rows = AdminRules.mayRows(a.copy(mayQueueControl = true)).associate { it.kind to it.allowed }
+        assertTrue(rows.getValue(MayKind.Domains))
+        assertTrue(rows.getValue(MayKind.Reports))
+        assertTrue(rows.getValue(MayKind.QueueControl))
+        assertFalse(AdminRules.mayRows(access()).first { it.kind == MayKind.Cluster }.allowed)
     }
 }

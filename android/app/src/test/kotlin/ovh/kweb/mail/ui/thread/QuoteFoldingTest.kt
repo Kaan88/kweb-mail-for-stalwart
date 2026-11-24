@@ -74,6 +74,18 @@ class QuoteFoldingTest {
         assertTrue(QuoteFolding.foldHtml(html, label, foldAll = false).contains("<details"))
     }
 
+    @Test fun aLongForwardStaysOpenInAShortConversation() {
+        val gmail = "<p>FYI</p><div class=\"gmail_quote\"><div class=\"gmail_attr\">---------- Forwarded message ---------<br></div>" +
+            "x".repeat(QuoteFolding.LONG_HTML_QUOTE) + "</div>"
+        assertEquals(gmail, QuoteFolding.foldHtml(gmail, label, foldAll = false))
+        val apple = "<p>FYI</p><div>Begin forwarded message:</div><blockquote>" + "x".repeat(QuoteFolding.LONG_HTML_QUOTE) + "</blockquote>"
+        assertEquals(apple, QuoteFolding.foldHtml(apple, label, foldAll = false))
+        // A long reply quote is still folded.
+        val reply = "<p>Thanks</p><div class=\"gmail_quote\"><div class=\"gmail_attr\">On Mon, Ann wrote:<br></div>" +
+            "x".repeat(QuoteFolding.LONG_HTML_QUOTE) + "</div>"
+        assertTrue(QuoteFolding.foldHtml(reply, label, foldAll = false).contains("<details"))
+    }
+
     @Test fun aMessageThatIsOnlyAQuoteIsLeftOpen() {
         val html = "<html><head><style>p{}</style></head><body><blockquote>all of it</blockquote>&nbsp;</body></html>"
         assertEquals(html, QuoteFolding.foldHtml(html, label, foldAll = true))

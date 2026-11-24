@@ -93,16 +93,17 @@ impl Connection {
         Ok(ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect())
     }
 
-    /// Ids of the messages of the mailbox that are not marked as read, newest first, at most
-    /// `limit` of them.
-    pub async fn unread_ids(&self, mailbox_id: &str, limit: usize) -> Result<Vec<String>> {
+    /// Ids of the messages of the mailbox that are not marked as read and were received before
+    /// `before` (a UTC date), newest first, at most `limit` of them. Paging by position is safe
+    /// while the queue marks cached mail: that mail is newer than `before` and not in the set.
+    pub async fn unread_ids_before(&self, mailbox_id: &str, before: &str, limit: usize) -> Result<Vec<String>> {
         let mut out = Vec::new();
         while out.len() < limit {
             let page = (limit - out.len()).min(UNREAD_PAGE);
             let args = json!({
                 "accountId": self.account_id(),
                 "filter": { "operator": "AND", "conditions": [
-                    { "inMailbox": mailbox_id }, { "notKeyword": "$seen" } ] },
+                    { "inMailbox": mailbox_id }, { "notKeyword": "$seen" }, { "before": before } ] },
                 "sort": [{ "property": "receivedAt", "isAscending": false }],
                 "position": out.len(),
                 "limit": page,

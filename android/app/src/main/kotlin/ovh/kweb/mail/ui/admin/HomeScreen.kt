@@ -42,7 +42,7 @@ import uniffi.kweb_core.AdminSummary
 private fun iconOf(area: AdminArea): ImageVector? = when (area) {
     AdminArea.Queue -> Icons.AutoMirrored.Filled.Send
     AdminArea.Accounts -> Icons.Filled.Person
-    AdminArea.Blocked -> null
+    AdminArea.Domains, AdminArea.Reports, AdminArea.Tasks, AdminArea.Cluster, AdminArea.Blocked -> null
     AdminArea.Logs -> Icons.AutoMirrored.Filled.List
     AdminArea.Maintenance -> Icons.Filled.Build
     AdminArea.Dashboard -> Icons.Filled.Home
@@ -52,9 +52,22 @@ private fun iconOf(area: AdminArea): ImageVector? = when (area) {
     AdminArea.Tenants -> Icons.Filled.AccountBox
 }
 
+/** The app's own drawable of an area that has no icon in the core set. */
+private fun drawableOf(area: AdminArea): Int = when (area) {
+    AdminArea.Domains -> R.drawable.ic_admin_domain
+    AdminArea.Reports -> R.drawable.ic_admin_report
+    AdminArea.Tasks -> R.drawable.ic_admin_task
+    AdminArea.Cluster -> R.drawable.ic_admin_cluster
+    else -> R.drawable.ic_block
+}
+
 private fun screenOf(area: AdminArea): AdminScreen = when (area) {
     AdminArea.Queue -> AdminScreen.Queue
     AdminArea.Accounts -> AdminScreen.Accounts
+    AdminArea.Domains -> AdminScreen.Domains
+    AdminArea.Reports -> AdminScreen.Reports
+    AdminArea.Tasks -> AdminScreen.Tasks
+    AdminArea.Cluster -> AdminScreen.Cluster
     AdminArea.Blocked -> AdminScreen.Blocked
     AdminArea.Logs -> AdminScreen.Logs
     AdminArea.Maintenance -> AdminScreen.Maintenance
@@ -147,7 +160,7 @@ private fun AreaRow(shape: androidx.compose.ui.graphics.Shape, area: AdminArea, 
             if (vector != null) {
                 Icon(vector, contentDescription = null, tint = colors.onSurfaceVariant)
             } else {
-                Icon(painterResource(R.drawable.ic_block), contentDescription = null, tint = colors.onSurfaceVariant)
+                Icon(painterResource(drawableOf(area)), contentDescription = null, tint = colors.onSurfaceVariant)
             }
         },
         trailing = {

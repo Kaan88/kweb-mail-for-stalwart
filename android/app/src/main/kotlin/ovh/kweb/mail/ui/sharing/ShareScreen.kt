@@ -1,6 +1,5 @@
 package ovh.kweb.mail.ui.sharing
 
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,8 +25,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -36,6 +33,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +58,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.Route
 import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import ovh.kweb.mail.ui.list.Avatar
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.shared.CollectSharedEvents
@@ -191,6 +191,7 @@ private fun ShareRow(shape: androidx.compose.ui.graphics.Shape, share: Share, en
                 }
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.share_stop), color = colors.error) },
+                    leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null, tint = colors.error) },
                     onClick = { open = false; onStop() },
                 )
             }

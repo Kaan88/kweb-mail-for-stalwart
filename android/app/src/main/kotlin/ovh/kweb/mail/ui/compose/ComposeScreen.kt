@@ -1,6 +1,5 @@
 package ovh.kweb.mail.ui.compose
 
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.app.Application
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -28,6 +27,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,25 +41,24 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalResources
-import androidx.lifecycle.compose.LifecycleResumeEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -76,8 +76,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.material3.SuggestionChip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -86,14 +87,16 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -102,13 +105,17 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
+import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiPrefs
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import ovh.kweb.mail.ui.assistant.AssistantRules
 import ovh.kweb.mail.ui.assistant.AssistantSheet
 import ovh.kweb.mail.ui.assistant.AssistantViewModel
 import ovh.kweb.mail.ui.assistant.DraftText
 import ovh.kweb.mail.ui.assistant.RewriteTarget
+import ovh.kweb.mail.ui.assistant.Span
+import ovh.kweb.mail.ui.crypto.PassphraseDialog
 import ovh.kweb.mail.ui.sending.SendLaterMenu
 import ovh.kweb.mail.ui.thread.FileNames
 import ovh.kweb.mail.ui.thread.SizeFormat
@@ -116,7 +123,6 @@ import ovh.kweb.mail.ui.thread.ThreadRules
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.AiTask
 import uniffi.kweb_core.RewriteStyle
-import ovh.kweb.mail.ui.crypto.PassphraseDialog
 
 /**
  * Writing a message: the draft with [draftId] from the core. [onLeave] goes back, [onSent] goes
@@ -189,6 +195,17 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
         assistant.open(owner, AssistantRules.Kind.REWRITE, AiTask.Rewrite(text, style), RewriteTarget(span, text))
     }
 
+    /**
+     * "Draft a reply": the assistant writes a reply to the mail this one answers; the sheet asks for an optional
+     * hint first. The draft takes the place of the user's own text (or goes above the quote when there is none).
+     */
+    fun draftReply(messageId: String) {
+        val body = vm.state.body
+        val span = DraftText.target(body, 0, 0)
+        val target = if (span == null) RewriteTarget(Span(0, 0), "") else RewriteTarget(span, body.substring(span.start, span.end))
+        assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(messageId, ""), target)
+    }
+
     /** "Replace" in the sheet: swaps exactly the part that was sent, and offers one Undo. */
     fun replaceWith(answer: String) {
         val target = assistantState.session?.takeIf { it.owner == owner }?.rewrite
@@ -198,7 +215,14 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
             scope.launch { snackbar.showSnackbar(resources.getString(R.string.assistant_replace_failed)) }
             return
         }
-        val done = target?.let { DraftText.apply(before, it.span, it.original, answer) }
+        val inserted = target?.original?.isEmpty() == true && answer.isNotBlank()
+        val done = target?.let {
+            if (inserted) {
+                DraftText.withAnswer(before, answer).let { body -> DraftText.Replaced(body, answer.trim().length) }
+            } else {
+                DraftText.apply(before, it.span, it.original, answer)
+            }
+        }
         if (done == null) {
             scope.launch { snackbar.showSnackbar(resources.getString(R.string.assistant_replace_failed)) }
             return
@@ -207,7 +231,7 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
         bodyField = TextFieldValue(done.body, TextRange(done.cursor))
         scope.launch {
             val result = snackbar.showSnackbar(
-                resources.getString(R.string.assistant_replaced),
+                resources.getString(if (inserted) R.string.assistant_reply_added else R.string.assistant_replaced),
                 actionLabel = resources.getString(R.string.assistant_undo),
                 duration = SnackbarDuration.Long,
             )
@@ -260,6 +284,9 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
                 onSendLater = vm::scheduleSend,
                 canAssist = s.ready && !s.sending && AssistantRules.Kind.REWRITE in offered,
                 onAssist = ::rewrite,
+                onDraftReply = s.sourceMessageId
+                    ?.takeIf { s.ready && !s.sending && s.kind == ComposeRules.Kind.Reply && AssistantRules.Kind.DRAFT in offered }
+                    ?.let { id -> { draftReply(id) } },
                 onAskLanguage = { askingLanguage = true },
             )
         },
@@ -341,10 +368,10 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
     }
     if (askingLanguage) {
         TranslateDialog(
-            initial = prefs.translateLanguage.orEmpty(),
+            recent = prefs.translateRecent,
             onConfirm = { language ->
                 askingLanguage = false
-                prefs.translateLanguage = language
+                prefs.translateRecent = TranslateRules.remember(prefs.translateRecent, language)
                 rewrite(RewriteStyle.Translate(language))
             },
             onDismiss = { askingLanguage = false },
@@ -352,28 +379,66 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
     }
 }
 
-/** Asks which language to translate into; the last answer is the starting point. */
+/** Asks which language to translate into: the recent ones first, then the list, narrowed by what is typed. */
 @Composable
-private fun TranslateDialog(initial: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
-    var language by rememberSaveable { mutableStateOf(initial) }
+private fun TranslateDialog(recent: List<String>, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val shown = TranslateRules.filter(query)
+    val recentShown = if (query.isBlank()) recent else emptyList()
+    val typed = TranslateRules.typed(query)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.assistant_translate_title)) },
         text = {
-            OutlinedTextField(
-                value = language,
-                onValueChange = { language = it },
-                label = { Text(stringResource(R.string.assistant_translate_language)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(language.trim()) }, enabled = language.isNotBlank()) {
-                Text(stringResource(R.string.assistant_translate_go))
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(stringResource(R.string.assistant_translate_search)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
+                    // Done with nothing typed only closes the keyboard: it must not pick the list's first language and send the text.
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (query.isNotBlank()) (shown.firstOrNull()?.name ?: typed)?.let(onConfirm) else defaultKeyboardAction(ImeAction.Done)
+                    }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp).padding(top = 8.dp)) {
+                    if (recentShown.isNotEmpty()) {
+                        item { LanguageHeader(stringResource(R.string.assistant_translate_recent)) }
+                        items(recentShown) { name -> LanguageRow(name, null) { onConfirm(name) } }
+                        item { LanguageHeader(stringResource(R.string.assistant_translate_all)) }
+                    }
+                    items(shown) { language -> LanguageRow(language.name, language.native) { onConfirm(language.name) } }
+                    // What was typed comes last: a matching language is more likely meant than the free text.
+                    if (typed != null) {
+                        item { LanguageRow(stringResource(R.string.assistant_translate_into, typed), null) { onConfirm(typed) } }
+                    }
+                }
             }
         },
+        confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun LanguageHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun LanguageRow(name: String, native: String?, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text(name) },
+        supportingContent = native?.let { { Text(it) } },
+        colors = ListItemDefaults.colors(containerColor = AlertDialogDefaults.containerColor),
+        modifier = Modifier.clickable(onClick = onClick),
     )
 }
 
@@ -389,6 +454,7 @@ private fun TopBar(
     canAssist: Boolean,
     onAssist: (RewriteStyle) -> Unit,
     onAskLanguage: () -> Unit,
+    onDraftReply: (() -> Unit)?,
 ) {
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.background).statusBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -406,7 +472,7 @@ private fun TopBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (canAssist) AssistMenu(onAssist, onAskLanguage)
+        if (canAssist || onDraftReply != null) AssistMenu(canAssist, onAssist, onAskLanguage, onDraftReply)
         IconButton(onClick = onAttach, enabled = canAttach) {
             Icon(painterResource(R.drawable.ic_attachment), contentDescription = stringResource(R.string.compose_attach))
         }
@@ -426,7 +492,7 @@ private fun TopBar(
 
 /** The Assist button and its menu: how the text of the message is to be changed. */
 @Composable
-private fun AssistMenu(onStyle: (RewriteStyle) -> Unit, onTranslate: () -> Unit) {
+private fun AssistMenu(canRewrite: Boolean, onStyle: (RewriteStyle) -> Unit, onTranslate: () -> Unit, onDraftReply: (() -> Unit)?) {
     var open by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { open = true }) {
@@ -437,12 +503,17 @@ private fun AssistMenu(onStyle: (RewriteStyle) -> Unit, onTranslate: () -> Unit)
                 open = false
                 action()
             }
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_improve)) }, onClick = { choose { onStyle(RewriteStyle.Improve) } })
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_shorter)) }, onClick = { choose { onStyle(RewriteStyle.Shorter) } })
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_formal)) }, onClick = { choose { onStyle(RewriteStyle.Formal) } })
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_friendly)) }, onClick = { choose { onStyle(RewriteStyle.Friendly) } })
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_fix_spelling)) }, onClick = { choose { onStyle(RewriteStyle.FixSpelling) } })
-            DropdownMenuItem(text = { Text(stringResource(R.string.assistant_translate)) }, onClick = { choose(onTranslate) })
+            if (onDraftReply != null) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_draft_reply)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_reply), contentDescription = null) }, onClick = { choose(onDraftReply) })
+            }
+            if (canRewrite) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_improve)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose { onStyle(RewriteStyle.Improve) } })
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_shorter)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose { onStyle(RewriteStyle.Shorter) } })
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_formal)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose { onStyle(RewriteStyle.Formal) } })
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_friendly)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose { onStyle(RewriteStyle.Friendly) } })
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_fix_spelling)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose { onStyle(RewriteStyle.FixSpelling) } })
+                DropdownMenuItem(text = { Text(stringResource(R.string.assistant_translate)) }, leadingIcon = { Icon(painterResource(R.drawable.ic_assistant), contentDescription = null) }, onClick = { choose(onTranslate) })
+            }
         }
     }
 }

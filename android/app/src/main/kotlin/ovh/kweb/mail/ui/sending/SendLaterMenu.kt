@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import java.time.Instant
@@ -89,6 +90,7 @@ fun SendLaterMenu(enabled: Boolean, onChoose: (Long) -> Unit) {
                             )
                         }
                     },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_schedule), contentDescription = null) },
                     onClick = {
                         open = false
                         onChoose(choice.at)
@@ -107,6 +109,7 @@ fun SendLaterMenu(enabled: Boolean, onChoose: (Long) -> Unit) {
                         )
                     }
                 },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_calendar), contentDescription = null) },
                 onClick = {
                     open = false
                     pickedDay = SendLaterRules.defaultPick(Instant.now(), zone).first.toEpochDay()

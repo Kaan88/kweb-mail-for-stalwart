@@ -47,6 +47,8 @@ enum class Phase { Loading, Ready, Missing, Failed }
 data class ComposeState(
     val phase: Phase = Phase.Loading,
     val kind: ComposeRules.Kind = ComposeRules.Kind.New,
+    /** The mail a reply or forward was made from, for "Draft a reply". */
+    val sourceMessageId: String? = null,
     val identities: List<Identity> = emptyList(),
     val identityId: String = "",
     val to: List<Address> = emptyList(),
@@ -237,6 +239,7 @@ class ComposeViewModel(app: Application, private val acct: AccountSession, priva
             state = ComposeState(
                 phase = Phase.Ready,
                 kind = ComposeRules.kind(draft),
+                sourceMessageId = draft.sourceMessageId,
                 identities = identities,
                 identityId = draft.identityId,
                 to = to,

@@ -65,6 +65,10 @@ internal fun areaTitle(area: AdminArea): String = stringResource(
     when (area) {
         AdminArea.Queue -> R.string.admin_area_queue
         AdminArea.Accounts -> R.string.admin_area_accounts
+        AdminArea.Domains -> R.string.admin_area_domains
+        AdminArea.Reports -> R.string.admin_area_reports
+        AdminArea.Tasks -> R.string.admin_area_tasks
+        AdminArea.Cluster -> R.string.admin_area_cluster
         AdminArea.Blocked -> R.string.admin_area_blocked
         AdminArea.Logs -> R.string.admin_area_logs
         AdminArea.Maintenance -> R.string.admin_area_maintenance
@@ -88,9 +92,14 @@ internal fun editionName(edition: String): String = when (edition) {
 internal fun mayTitle(kind: MayKind): String = stringResource(
     when (kind) {
         MayKind.Queue -> R.string.admin_may_queue
+        MayKind.QueueControl -> R.string.admin_may_queue_control
         MayKind.Accounts -> R.string.admin_may_accounts
+        MayKind.Domains -> R.string.admin_may_domains
+        MayKind.Reports -> R.string.admin_may_reports
         MayKind.Blocked -> R.string.admin_may_blocked
         MayKind.Logs -> R.string.admin_may_logs
+        MayKind.Tasks -> R.string.admin_may_tasks
+        MayKind.Cluster -> R.string.admin_may_cluster
         MayKind.Maintenance -> R.string.admin_may_maintenance
         MayKind.Enterprise -> R.string.admin_may_enterprise
     },
@@ -103,9 +112,14 @@ internal fun mayDetail(kind: MayKind, allowed: Boolean): String = stringResource
     } else {
         when (kind) {
             MayKind.Queue -> R.string.admin_may_queue_detail
+            MayKind.QueueControl -> R.string.admin_may_queue_control_detail
             MayKind.Accounts -> R.string.admin_may_accounts_detail
+            MayKind.Domains -> R.string.admin_may_domains_detail
+            MayKind.Reports -> R.string.admin_may_reports_detail
             MayKind.Blocked -> R.string.admin_may_blocked_detail
             MayKind.Logs -> R.string.admin_may_logs_detail
+            MayKind.Tasks -> R.string.admin_may_tasks_detail
+            MayKind.Cluster -> R.string.admin_may_cluster_detail
             MayKind.Maintenance -> R.string.admin_may_maintenance_detail
             MayKind.Enterprise -> R.string.admin_may_enterprise_detail
         }

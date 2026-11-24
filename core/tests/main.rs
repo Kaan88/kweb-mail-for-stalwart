@@ -8,6 +8,8 @@ mod support;
 mod actions;
 #[path = "suite/admin.rs"]
 mod admin;
+#[path = "suite/admin_more.rs"]
+mod admin_more;
 #[path = "suite/assistant.rs"]
 mod assistant;
 #[path = "suite/assistant_chat.rs"]

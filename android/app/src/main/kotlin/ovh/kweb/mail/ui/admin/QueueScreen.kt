@@ -14,6 +14,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -65,17 +67,27 @@ fun QueueScreen(onBack: () -> Unit, onOpen: (AdminScreen) -> Unit, vm: AdminQueu
         title = stringResource(R.string.admin_area_queue),
         onBack = onBack,
         actions = {
-            if (!state.paused) TextButton(onClick = c::askPause, enabled = !state.busy) { Text(stringResource(R.string.admin_pause)) }
+            if (!state.paused && state.mayControl) TextButton(onClick = c::askPause, enabled = !state.busy) { Text(stringResource(R.string.admin_pause)) }
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options)) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.admin_resume_menu)) }, onClick = { menu = false; c.resume() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.admin_refresh)) }, onClick = { menu = false; c.refresh() })
+                if (state.mayControl) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.admin_resume_menu)) },
+                        leadingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                        onClick = { menu = false; c.resume() },
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.admin_refresh)) },
+                    leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                    onClick = { menu = false; c.refresh() },
+                )
             }
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             Notices(state.error ?: list.error, state.info, { c.dismissError(); c.list.dismissError() }, c::dismissInfo)
-            if (state.paused) PausedBar(onResume = c::resume, enabled = !state.busy)
+            if (state.paused) PausedBar(onResume = c::resume, enabled = !state.busy && state.mayControl)
             when (list.phase) {
                 ListPhase.LOADING -> LoadingBox()
                 ListPhase.FAILED -> FailureBox(stringResource(R.string.admin_queue_load_failed), onRetry = { c.list.reload(quiet = false) })

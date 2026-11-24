@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Admin: domains, reports, tasks, cluster, queue control -->
+    <string name="admin_area_domains">Domains</string>
+    <string name="admin_area_reports">Received reports</string>
+    <string name="admin_area_tasks">Background tasks</string>
+    <string name="admin_area_cluster">Cluster</string>
+
+    <string name="admin_may_queue_control">Pause the mail queue</string>
+    <string name="admin_may_queue_control_detail">pause, resume</string>
+    <string name="admin_may_domains">Domains</string>
+    <string name="admin_may_domains_detail">look, add, delete</string>
+    <string name="admin_may_reports">Received reports</string>
+    <string name="admin_may_reports_detail">look, delete</string>
+    <string name="admin_may_tasks">Background tasks</string>
+    <string name="admin_may_tasks_detail">look, retry, delete</string>
+    <string name="admin_may_cluster">Cluster</string>
+    <string name="admin_may_cluster_detail">look</string>
+
+    <string name="admin_copy">Copy</string>
+    <string name="admin_copied">Copied.</string>
+
+    <string name="admin_domains_load_failed">The domains could not be read.</string>
+    <string name="admin_domains_none">The server has no domains.</string>
+    <string name="admin_domain_add">Add domain</string>
+    <string name="admin_domain_add_text">Only the name is needed. The DNS records to publish are shown on the next screen.</string>
+    <string name="admin_domain_add_confirm">Add</string>
+    <string name="admin_domain_name">Domain name</string>
+    <string name="admin_domain_name_bad">Letters, digits, hyphens and dots only.</string>
+    <string name="admin_domain_add_failed">The domain could not be added.</string>
+    <string name="admin_domain_added">Domain added.</string>
+    <string name="admin_domain_aliases">Also: %1$s</string>
+    <string name="admin_domain_off">Off</string>
+    <string name="admin_domain_takes_mail">Takes mail</string>
+    <string name="admin_domain_takes_mail_on">The domain receives and sends mail.</string>
+    <string name="admin_domain_takes_mail_off">The domain is switched off.</string>
+    <string name="admin_domain_other_names">Other names</string>
+    <string name="admin_domain_dns">DNS records</string>
+    <string name="admin_domain_dns_note">Publish these at the domain\'s DNS provider.</string>
+    <string name="admin_domain_dns_none">The server gave no records for this domain.</string>
+    <string name="admin_domain_dkim">DKIM keys</string>
+    <string name="admin_domain_dkim_not_allowed">This key may not read the DKIM keys.</string>
+    <string name="admin_domain_dkim_none_auto">No key yet. The server makes them by itself.</string>
+    <string name="admin_domain_dkim_none_manual">No key for this domain.</string>
+    <string name="admin_domain_dkim_auto">The server changes these keys by itself.</string>
+    <string name="admin_domain_dkim_manual">These keys are changed by hand.</string>
+    <string name="admin_dkim_next">next change %1$s</string>
+    <string name="admin_dkim_stage_active">active</string>
+    <string name="admin_dkim_stage_pending">waiting for DNS</string>
+    <string name="admin_dkim_stage_retiring">being replaced</string>
+    <string name="admin_dkim_stage_retired">retired</string>
+    <string name="admin_domain_disable">Switch off</string>
+    <string name="admin_domain_disable_title">Switch off %1$s?</string>
+    <string name="admin_domain_disable_text">The domain stops taking mail until it is switched on again.</string>
+    <string name="admin_domain_on_done">Domain switched on.</string>
+    <string name="admin_domain_off_done">Domain switched off.</string>
+    <string name="admin_domain_change_failed">The domain could not be changed.</string>
+    <string name="admin_domain_delete">Delete domain</string>
+    <string name="admin_domain_delete_title">Delete %1$s?</string>
+    <string name="admin_domain_delete_text">This cannot be undone. A domain that accounts still use is not deleted. Its DKIM keys go with it.</string>
+    <string name="admin_domain_delete_failed">The domain could not be deleted.</string>
+
+    <string name="admin_reports_load_failed">The reports could not be read.</string>
+    <string name="admin_reports_none">No reports of this kind.</string>
+    <string name="admin_report_dmarc">DMARC</string>
+    <string name="admin_report_tls">TLS</string>
+    <string name="admin_report_arf">Abuse (ARF)</string>
+    <string name="admin_report_failed_pill">Failures</string>
+    <string name="admin_report_counts">%1$d passed, %2$d failed</string>
+    <string name="admin_report_from">From</string>
+    <string name="admin_report_to">To</string>
+    <string name="admin_report_received">Received</string>
+    <string name="admin_report_period">Period</string>
+    <string name="admin_report_delete_title">Delete this report?</string>
+    <string name="admin_report_delete_text">It is removed from the server. This cannot be undone.</string>
+    <string name="admin_report_delete_failed">The report could not be deleted.</string>
+
+    <string name="admin_tasks_load_failed">The tasks could not be read.</string>
+    <string name="admin_tasks_none">No tasks.</string>
+    <string name="admin_task_all">All</string>
+    <string name="admin_task_waiting">Waiting</string>
+    <string name="admin_task_retrying">Retrying</string>
+    <string name="admin_task_stalled">Stalled</string>
+    <string name="admin_task_failed">Failed</string>
+    <string name="admin_task_due">due %1$s</string>
+    <string name="admin_task_attempts">%1$d tries</string>
+    <string name="admin_task_menu">Task actions</string>
+    <string name="admin_task_retry">Retry now</string>
+    <string name="admin_task_retry_failed">The task could not be retried.</string>
+    <string name="admin_task_retry_done">The task will run again now.</string>
+    <string name="admin_task_delete_title">Delete this task?</string>
+    <string name="admin_task_delete_text">%1$s will not run. This cannot be undone.</string>
+    <string name="admin_task_delete_failed">The task could not be deleted.</string>
+    <string name="admin_task_delete_done">Task deleted.</string>
+
+    <string name="admin_cluster_load_failed">The cluster could not be read.</string>
+    <string name="admin_cluster_none">This server is not part of a cluster.</string>
+    <string name="admin_cluster_node">Node %1$d</string>
+    <string name="admin_cluster_renewed">renewed %1$s</string>
+</resources>

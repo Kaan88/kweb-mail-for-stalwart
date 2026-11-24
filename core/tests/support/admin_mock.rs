@@ -19,6 +19,8 @@
 //! One thing the real server is not asked here: the delivery history and the Enterprise
 //! objects (another mock part).
 
+mod more;
+
 use std::collections::{BTreeMap, HashSet};
 
 use axum::body::Bytes;
@@ -94,13 +96,39 @@ pub struct Admin {
     external: HashSet<String>,
     /// The licence's number of accounts, when it has a limit.
     account_limit: Option<usize>,
+    /// The second part (see `more.rs`).
+    domains: Vec<Value>,
+    dkim: Vec<Value>,
+    dmarc: Vec<Value>,
+    tls: Vec<Value>,
+    arf: Vec<Value>,
+    tasks: Vec<Value>,
+    cluster: Vec<Value>,
+    busy_tasks: Vec<String>,
+    /// Other objects that point at a domain: (domain id, object kind).
+    domain_links: Vec<(String, String)>,
 }
 
 fn all_permissions() -> HashSet<String> {
     let mut all = HashSet::new();
-    for object in
-        ["QueuedMessage", "Account", "BlockedIp", "Log", "Domain", "Metric", "Trace", "ArchivedItem", "Alert", "Tenant"]
-    {
+    for object in [
+        "QueuedMessage",
+        "Account",
+        "BlockedIp",
+        "Log",
+        "Domain",
+        "Metric",
+        "Trace",
+        "ArchivedItem",
+        "Alert",
+        "Tenant",
+        "DkimSignature",
+        "DmarcExternalReport",
+        "TlsExternalReport",
+        "ArfExternalReport",
+        "Task",
+        "ClusterNode",
+    ] {
         for op in ["Query", "Get", "Create", "Update", "Destroy"] {
             all.insert(format!("sys{object}{op}"));
         }
@@ -149,6 +177,15 @@ impl Default for Admin {
             rules: PasswordRules { min: Some(8), ..PasswordRules::default() },
             external: HashSet::new(),
             account_limit: None,
+            domains: more::start_domains(),
+            dkim: Vec::new(),
+            dmarc: Vec::new(),
+            tls: Vec::new(),
+            arf: Vec::new(),
+            tasks: Vec::new(),
+            cluster: more::start_cluster(),
+            busy_tasks: Vec::new(),
+            domain_links: Vec::new(),
         }
     }
 }
@@ -212,14 +249,6 @@ impl Admin {
         format!("{prefix}{}", self.next_id)
     }
 
-    fn domain_name(id: &str) -> Option<&'static str> {
-        match id {
-            DOMAIN_ID => Some("example.test"),
-            OTHER_DOMAIN_ID => Some("other.test"),
-            _ => None,
-        }
-    }
-
     /// The permissions a method needs.
     fn needed(name: &str, args: &Value) -> Vec<String> {
         let Some((object, method)) = name.strip_prefix("x:").and_then(|n| n.split_once('/')) else { return Vec::new() };
@@ -262,14 +291,16 @@ impl Admin {
             "x:Account/query" => self.account_query(args)?,
             "x:Account/get" => self.account_get(args),
             "x:Account/set" => self.account_set(args),
-            "x:Domain/get" => self.domain_get(args),
             "x:BlockedIp/query" => self.simple_query(&self.blocked.clone(), args),
             "x:BlockedIp/get" => Self::simple_get(&self.blocked, args),
             "x:BlockedIp/set" => Self::simple_destroy(&mut self.blocked, args),
             "x:Log/query" => self.log_query(args)?,
             "x:Log/get" => Self::simple_get(&self.log, args),
             "x:Action/set" => self.action_set(args),
-            _ => return Err(("unknownMethod", name.to_string())),
+            _ => match self.more(name, args) {
+                Some(answer) => answer?,
+                None => return Err(("unknownMethod", name.to_string())),
+            },
         };
         answer["accountId"] = json!(account);
         Ok(answer)
@@ -327,6 +358,9 @@ impl Admin {
             }
         }
         let mut items: Vec<&Value> = self.accounts.iter().collect();
+        if let Some(domain) = filter["domainId"].as_str() {
+            items.retain(|a| a["domainId"] == domain);
+        }
         if let Some(text) = filter["text"].as_str() {
             // Whole words of the name and the description, without regard to case.
             let words = |v: &Value| {
@@ -434,7 +468,7 @@ impl Admin {
                 json!({ "type": "invalidPatch", "description": "Invalid email local part", "properties": ["name"] }),
             );
         }
-        let Some(domain_name) = Self::domain_name(domain) else {
+        let Some(domain_name) = self.domain_name(domain) else {
             return Err(json!({ "type": "invalidForeignKey", "objectId": { "object": "Domain", "id": domain } }));
         };
         if let Some(limit) = self.account_limit.filter(|l| self.accounts.len() >= *l) {
@@ -462,12 +496,6 @@ impl Admin {
         account["createdAt"] = json!(rfc3339(now_secs()));
         self.accounts.push(account);
         Ok(id)
-    }
-
-    fn domain_get(&self, args: &Value) -> Value {
-        let domains = [(DOMAIN_ID, "example.test"), (OTHER_DOMAIN_ID, "other.test")];
-        let wanted = ids_of(args, domains.iter().map(|(id, _)| id.to_string()));
-        json!({ "list": domains.iter().filter(|(id, _)| wanted.iter().any(|w| w == id)).map(|(id, name)| json!({ "id": id, "name": name })).collect::<Vec<_>>(), "notFound": [] })
     }
 
     // ---- logs and the rest ----
@@ -626,11 +654,23 @@ pub(super) fn jmap(s: &Shared, headers: &HeaderMap, body: &Bytes) -> Option<Resp
         return Some((StatusCode::BAD_REQUEST, "not JSON").into_response());
     };
     let mut responses = Vec::new();
+    let mut prior: Vec<(String, Value, String)> = Vec::new();
     let mut admin = s.admin.lock().unwrap();
     for call in req["methodCalls"].as_array().into_iter().flatten() {
-        let (name, args, id) = (str_of_call(&call[0]), &call[1], str_of_call(&call[2]));
-        match admin.handle(&key, name, args) {
-            Ok(answer) => responses.push(json!([name, answer, id])),
+        let (name, id) = (str_of_call(&call[0]), str_of_call(&call[2]));
+        // A `#name` argument points at an earlier answer of the same request, as on the real server.
+        let args = match super::state::resolve_refs(&call[1], &prior) {
+            Ok(args) => args,
+            Err(e) => {
+                responses.push(json!(["error", { "type": e.kind, "description": e.description }, id]));
+                continue;
+            }
+        };
+        match admin.handle(&key, name, &args) {
+            Ok(answer) => {
+                prior.push((name.to_string(), answer.clone(), id.to_string()));
+                responses.push(json!([name, answer, id]))
+            }
             Err((kind, description)) => {
                 responses.push(json!(["error", { "type": kind, "description": description }, id]))
             }

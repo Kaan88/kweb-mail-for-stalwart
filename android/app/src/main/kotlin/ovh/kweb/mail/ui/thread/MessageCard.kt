@@ -1,7 +1,5 @@
 package ovh.kweb.mail.ui.thread
 
-import ovh.kweb.mail.accounts.AccountSession
-import ovh.kweb.mail.ui.accounts.LocalAccountSession
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +28,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -55,23 +55,23 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.ui.platform.LocalResources
-import ovh.kweb.mail.ui.transfer.DownloadProgress
-import ovh.kweb.mail.ui.transfer.DownloadRules
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountSession
 import ovh.kweb.mail.background.Background
+import ovh.kweb.mail.ui.accounts.LocalAccountSession
+import ovh.kweb.mail.ui.crypto.CryptoChip
+import ovh.kweb.mail.ui.crypto.CryptoRules
+import ovh.kweb.mail.ui.crypto.CryptoUi
 import ovh.kweb.mail.ui.list.Avatar
 import ovh.kweb.mail.ui.list.Groups
 import ovh.kweb.mail.ui.list.Preview
 import ovh.kweb.mail.ui.list.RowTime
 import ovh.kweb.mail.ui.list.Sender
 import ovh.kweb.mail.ui.list.rowTimeText
-import ovh.kweb.mail.ui.crypto.CryptoChip
-import ovh.kweb.mail.ui.crypto.CryptoRules
-import ovh.kweb.mail.ui.crypto.CryptoUi
 import ovh.kweb.mail.ui.mailextras.MessageChips
 import ovh.kweb.mail.ui.mailextras.UnsubEntry
+import ovh.kweb.mail.ui.transfer.DownloadProgress
+import ovh.kweb.mail.ui.transfer.DownloadRules
 import uniffi.kweb_core.Address
 import uniffi.kweb_core.Attachment
 import uniffi.kweb_core.MessageBody
@@ -490,10 +490,12 @@ private fun LoadedBody(
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.reading_show_once)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_file_image), contentDescription = null) },
                                 onClick = { menu = false; actions.onAllowRemote() },
                             )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.reading_show_always_sender)) },
+                                leadingIcon = { Icon(painterResource(R.drawable.ic_person), contentDescription = null) },
                                 onClick = { menu = false; always() },
                             )
                         }

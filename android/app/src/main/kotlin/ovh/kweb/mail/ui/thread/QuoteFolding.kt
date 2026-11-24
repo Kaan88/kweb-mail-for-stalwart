@@ -77,6 +77,26 @@ object QuoteFolding {
         return true
     }
 
+    // What mail programs write at the start of a forwarded message ("---------- Forwarded message ---------", Apple Mail's
+    // "Begin forwarded message:", and the same in German, French, Spanish, Italian and Turkish).
+    private val forwardMark = Regex(
+        "forwarded message|weitergeleitete nachricht|message transféré|mensaje reenviado|messaggio inoltrato|iletilen ileti",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** How far before a quote and into it a forward's mark is looked for (characters of HTML). */
+    private const val FORWARD_LOOK = 400
+
+    /**
+     * True when the quote at [r] is a forwarded message: the mark is in its first characters or just before it. A forward is
+     * what the mail is about, so its length does not fold it (only a long conversation's trailing-quote rule does).
+     */
+    private fun isForward(html: String, r: IntRange): Boolean {
+        val from = (r.first - FORWARD_LOOK).coerceAtLeast(0)
+        val to = (r.first + FORWARD_LOOK).coerceAtMost(r.last + 1)
+        return forwardMark.containsMatchIn(html.substring(from, to))
+    }
+
     /** True for the start tag of something that is a quote: a `blockquote`, or a `div` of Gmail's or Yahoo's quote. */
     private fun isQuote(tag: String, name: String): Boolean = name.equals("blockquote", ignoreCase = true) || quoteClass(tag)
 
@@ -150,7 +170,7 @@ object QuoteFolding {
         if (lastText < 0 && !nothingToRead(html.substring(0, segEnd))) lastText = segEnd
         // Nothing to read outside the quotes: leave the message open.
         if (lastText < 0) return html
-        val ranges = all.filter { (foldAll && it.first >= lastText) || it.last + 1 - it.first >= LONG_HTML_QUOTE }
+        val ranges = all.filter { (foldAll && it.first >= lastText) || (it.last + 1 - it.first >= LONG_HTML_QUOTE && !isForward(html, it)) }
         if (ranges.isEmpty()) return html
         val summary = "<summary>\u2026 " + label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") + "</summary>"
         return buildString {

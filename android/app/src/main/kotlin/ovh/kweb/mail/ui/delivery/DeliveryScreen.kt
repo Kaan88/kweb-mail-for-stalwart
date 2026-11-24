@@ -1,7 +1,5 @@
 package ovh.kweb.mail.ui.delivery
 
-import ovh.kweb.mail.ui.accounts.AccountRows
-import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ActivityNotFoundException
@@ -31,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
@@ -65,14 +64,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.toUpperCase
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
@@ -88,12 +88,13 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 import kotlinx.coroutines.delay
-import androidx.compose.ui.text.toUpperCase
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.CheckRecord
 import ovh.kweb.mail.background.DeliveryMode
 import ovh.kweb.mail.background.ModeRules
 import ovh.kweb.mail.ui.UiPrefs
+import ovh.kweb.mail.ui.accounts.AccountRows
+import ovh.kweb.mail.ui.accounts.LocalAccountsUi
 import uniffi.kweb_core.ConnectionStatus
 
 /** One row of the screen. [hint] and [onClick] are set only when there is something to do. */
@@ -151,6 +152,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(if (AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) R.string.accounts_remove else R.string.sign_out)) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
                             enabled = !state.signingOut,
                             onClick = { menuOpen = false; vm.askSignOut() },
                         )

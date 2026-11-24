@@ -3,8 +3,13 @@ package ovh.kweb.mail.ui.folders
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -12,6 +17,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventTimeoutCancellationException
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
@@ -34,7 +40,20 @@ fun FolderMenu(folder: Mailbox, withBell: Boolean, expanded: Boolean, onDismiss:
                 FolderMenuItem.NEW_INSIDE -> R.string.folders_new_inside
                 FolderMenuItem.DELETE -> R.string.folders_delete
             }
-            DropdownMenuItem(text = { Text(stringResource(text)) }, onClick = { onDismiss(); onPick(item) })
+            DropdownMenuItem(
+                text = { Text(stringResource(text)) },
+                leadingIcon = {
+                    when (item) {
+                        FolderMenuItem.NOTIFY_ON -> Icon(painterResource(R.drawable.ic_bell_sound), contentDescription = null)
+                        FolderMenuItem.NOTIFY_OFF -> Icon(painterResource(R.drawable.ic_bell_off), contentDescription = null)
+                        FolderMenuItem.RENAME -> Icon(Icons.Filled.Edit, contentDescription = null)
+                        FolderMenuItem.MOVE -> Icon(painterResource(R.drawable.ic_folder), contentDescription = null)
+                        FolderMenuItem.NEW_INSIDE -> Icon(Icons.Filled.Add, contentDescription = null)
+                        FolderMenuItem.DELETE -> Icon(Icons.Filled.Delete, contentDescription = null)
+                    }
+                },
+                onClick = { onDismiss(); onPick(item) },
+            )
         }
         extra?.invoke()
     }

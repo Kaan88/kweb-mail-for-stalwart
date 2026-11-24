@@ -30,6 +30,7 @@ import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.saveable.rememberSaveable
+import ovh.kweb.mail.ui.files.FileRules
 import ovh.kweb.mail.ui.folders.SpamRules
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -45,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -227,6 +229,7 @@ fun ThreadScreen(
     val sparkClock = rememberWordClock(found.at.takeIf { it > 0 } ?: (System.currentTimeMillis() / 1000))
     val sparkTexts = remember(resources) { ResourceTexts(resources) }
     var sparkOpen by remember { mutableStateOf(false) }
+    var pdfShown by remember { mutableStateOf<PdfShown?>(null) }
 
     // The AI assistant: one task at a time for the app; this screen shows only the session that is its own.
     val assistant: AssistantViewModel = viewModel()
@@ -285,21 +288,26 @@ fun ThreadScreen(
         ) { done, total -> vm.transfer.report(run, done, total) }
     }
 
+    /** Hands [file] to another app as [type]. */
+    fun openExternally(file: File, type: String) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, type).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            say(R.string.thread_no_app_for_file)
+        }
+    }
+
     fun openAttachment(attachment: Attachment) {
         // A tap while a download is under way (this file or another) starts nothing.
         val run = vm.transfer.begin(attachment.blobId, DownloadRules.expected(attachment.size.toLong())) ?: return
         scope.launch {
             try {
                 val file = fetch(attachment, run) ?: return@launch
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                val intent = Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, attachment.mimeType.ifBlank { "application/octet-stream" })
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                try {
-                    context.startActivity(intent)
-                } catch (e: ActivityNotFoundException) {
-                    say(R.string.thread_no_app_for_file)
-                }
+                val type = FileRules.viewType(attachment.mimeType, attachment.name)
+                // A PDF is shown in the app: it needs no other app, and Open with is one tap away there.
+                if (type == PDF) pdfShown = PdfShown(file, attachment.name, type) else openExternally(file, type)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -534,10 +542,19 @@ fun ThreadScreen(
         var scrollDone by rememberSaveable { mutableStateOf(false) }
         var targetY by remember { mutableStateOf<Int?>(null) }
         var lastSet by remember { mutableStateOf<Int?>(null) }
+        // The retries follow the content while it loads, then stop: a card opened later, or a short thread whose
+        // target can never reach the top, must not pull the screen back (kept across rotation).
+        var scrollStarted by rememberSaveable { mutableLongStateOf(0L) }
         val maxScroll = scrollState.maxValue
         LaunchedEffect(targetY, maxScroll) {
             val y = targetY ?: return@LaunchedEffect
             if (scrollDone) return@LaunchedEffect
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (scrollStarted == 0L) scrollStarted = now
+            if (now - scrollStarted > ThreadRules.SCROLL_FOLLOW_MS) {
+                scrollDone = true
+                return@LaunchedEffect
+            }
             val to = ThreadRules.scrollStep(y, scrollState.value, lastSet)
             if (to == null) {
                 scrollDone = true
@@ -664,6 +681,9 @@ fun ThreadScreen(
 
     assistantState.session?.takeIf { it.owner == owner }?.let { AssistantSheet(it, assistant) }
     if (active) ovh.kweb.mail.ui.attention.SparkleDialog(sparkle) { it in sparkIds }
+    pdfShown?.let { shown ->
+        PdfViewerDialog(shown.file, shown.name, onOpenWith = { pdfShown = null; openExternally(shown.file, shown.type) }, onDismiss = { pdfShown = null })
+    }
     if (moving) {
         MoveDialog(
             folders = folders,
@@ -808,3 +828,8 @@ private fun CenteredNote(text: String) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
+
+/** A PDF attachment shown in the app. */
+private data class PdfShown(val file: File, val name: String, val type: String)
+
+private const val PDF = "application/pdf"
