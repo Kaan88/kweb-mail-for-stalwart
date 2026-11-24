@@ -85,3 +85,15 @@ object SignOutRules {
         return Unsent(pending.size, drafts.count { it.serverId == null && it.id !in held })
     }
 }
+
+/** After push through Google was switched on for one account: the other accounts that still keep the connection. */
+object OtherAccounts {
+    data class Other(val id: String, val label: String, val mode: DeliveryMode)
+
+    /**
+     * The accounts to offer the same switch for: every account but [currentId] that is in connection mode. While one of
+     * them stays there the always-on entry stays, which is what switching on was meant to end.
+     */
+    fun toOffer(currentId: String, accounts: List<Other>): List<Other> =
+        accounts.filter { it.id != currentId && it.mode == DeliveryMode.Connection }
+}

@@ -14,6 +14,8 @@ import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
+import ovh.kweb.mail.accounts.AccountLabels
 import ovh.kweb.mail.accounts.Accounts
 import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.background.DeliveryMode
@@ -42,6 +45,7 @@ import ovh.kweb.mail.background.CheckScheduler
 import ovh.kweb.mail.background.Notifier
 import ovh.kweb.mail.background.Settings
 import ovh.kweb.mail.background.StartFailure
+import ovh.kweb.mail.background.SwitchOutcome
 import ovh.kweb.mail.ui.SessionState
 import uniffi.kweb_core.ConnectionStatus
 
@@ -135,6 +139,48 @@ class DeliveryViewModel(app: Application, private val session: AccountSession) :
         viewModelScope.launch {
             val result = if (turningOn) googleMode.turnOn() else googleMode.turnOff()
             PushTexts.result(result)?.let { messageChannel.send(it) }
+            if (result == GoogleModeResult.SwitchedOn) offerOthers()
+        }
+    }
+
+    /** Set while the question "the other accounts too?" is open: the accounts that still keep the connection. */
+    val othersPrompt: StateFlow<List<OtherAccounts.Other>?> get() = othersPromptFlow
+
+    private val othersPromptFlow = MutableStateFlow<List<OtherAccounts.Other>?>(null)
+
+    /** After a switch on: asks about the accounts that still keep the connection (and with it the always-on entry). */
+    private suspend fun offerOthers() {
+        val others = withContext(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val records = Accounts.load(app)
+            val labels = AccountLabels.of(records, Accounts.names.value)
+            records.map { OtherAccounts.Other(it.id, labels.getValue(it.id), Settings.of(app, it).deliveryMode) }
+        }
+        val offer = OtherAccounts.toOffer(session.record.id, others)
+        if (offer.isNotEmpty()) othersPromptFlow.value = offer
+    }
+
+    fun dismissOthers() {
+        othersPromptFlow.value = null
+    }
+
+    /**
+     * The user said yes for the other accounts: each is switched on by the same sequence as this one, side by side
+     * (each under its own account's lock, on the push scope, so leaving the screen does not stop them). One snackbar
+     * says how it went; an account that could not switch keeps the connection and its own Delivery check says why.
+     */
+    fun confirmOthers() {
+        val others = othersPromptFlow.value ?: return
+        othersPromptFlow.value = null
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val outcomes = others.map { other ->
+                async(Dispatchers.IO) {
+                    val target = Accounts.session(other.id) ?: return@async false
+                    GooglePush.switchOn(app, target) is SwitchOutcome.Done
+                }
+            }.awaitAll()
+            messageChannel.send(if (outcomes.all { it }) R.string.push_done_on_others else R.string.push_failed_others)
         }
     }
 

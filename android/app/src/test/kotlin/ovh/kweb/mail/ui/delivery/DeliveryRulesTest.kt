@@ -82,4 +82,15 @@ class DeliveryRulesTest {
         assertFalse(NotificationFix.shouldAskOnArrival(33, true, false))
         assertFalse(NotificationFix.shouldAskOnArrival(32, false, false))
     }
+
+    @Test fun theOtherAccountsOnTheConnectionAreOffered() {
+        val accounts = listOf(
+            OtherAccounts.Other("a", "mail@example.org", DeliveryMode.Google),
+            OtherAccounts.Other("b", "admin@example.org", DeliveryMode.Connection),
+            OtherAccounts.Other("c", "work@example.org", DeliveryMode.Google),
+        )
+        // The account just switched on is never offered, nor one already on push through Google.
+        assertEquals(listOf("b"), OtherAccounts.toOffer("a", accounts).map { it.id })
+        assertEquals(emptyList<String>(), OtherAccounts.toOffer("b", accounts).map { it.id })
+    }
 }

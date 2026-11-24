@@ -161,6 +161,21 @@ fun GoogleModeDialog(turningOn: Boolean, onConfirm: () -> Unit, onDismiss: () ->
 }
 
 /**
+ * After push through Google was switched on: the other accounts that still keep the connection, and with it the
+ * always-on entry, named, with the offer to switch them on too.
+ */
+@Composable
+fun GoogleOthersDialog(labels: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.push_others_title)) },
+        text = { Text(stringResource(R.string.push_others_text, labels.joinToString(", "))) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text(stringResource(R.string.push_others_confirm)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.push_others_not_now)) } },
+    )
+}
+
+/**
  * The mode of the Delivery check as one switch: on is push through Google, off is the permanent connection. The
  * switch asks first (the dialog carries the warning), so a tap only opens the question. Under it: why the account
  * went back to the connection (if it did) and, while the mode is on, the notes.

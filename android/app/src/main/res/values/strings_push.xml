@@ -21,6 +21,12 @@
     <string name="push_off_confirm">Switch off</string>
 
     <string name="push_done_on">Push through Google is on for this account.</string>
+    <string name="push_others_title">Your other accounts too?</string>
+    <string name="push_others_text">%1$s still keep a permanent connection, so the entry in the status bar stays. Use push through Google for them too?</string>
+    <string name="push_others_confirm">Switch on for them</string>
+    <string name="push_others_not_now">Not now</string>
+    <string name="push_done_on_others">Push through Google is on for every account.</string>
+    <string name="push_failed_others">Push through Google could not be switched on for every account. The Delivery check of each says why.</string>
     <string name="push_done_off">The permanent connection is back.</string>
     <string name="push_failed_no_play_services">Google Play services did not answer, so this phone cannot use push through Google. Nothing was changed.</string>
     <string name="push_failed_no_server_key">Your server has no key for push through Google. Nothing was changed.</string>

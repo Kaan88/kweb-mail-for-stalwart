@@ -121,6 +121,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     val snackbar = remember { SnackbarHostState() }
     val signOutPrompt by vm.signOutPrompt.collectAsStateWithLifecycle()
     val googlePrompt by vm.googlePrompt.collectAsStateWithLifecycle()
+    val othersPrompt by vm.othersPrompt.collectAsStateWithLifecycle()
     var menuOpen by remember { mutableStateOf(false) }
 
     // The user comes back from the system settings: read the permission and battery state again.
@@ -196,6 +197,7 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
     }
 
     googlePrompt?.let { GoogleModeDialog(it, onConfirm = vm::confirmGoogleMode, onDismiss = vm::dismissGoogleMode) }
+    othersPrompt?.let { GoogleOthersDialog(it.map { other -> other.label }, onConfirm = vm::confirmOthers, onDismiss = vm::dismissOthers) }
     signOutPrompt?.let { SignOutDialog(it, onConfirm = vm::signOut, onDismiss = vm::dismissSignOutPrompt, several = AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) }
 }
 
