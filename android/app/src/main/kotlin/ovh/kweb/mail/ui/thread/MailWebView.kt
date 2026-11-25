@@ -57,7 +57,7 @@ private class PageRules(
 )
 
 /**
- * The HTML of a mail, shown with everything locked down: no JavaScript, no file or content
+ * The HTML of a mail, shown with everything locked down: no script of the mail runs (only the app's [FitScript]), no file or content
  * access, no storage. Every request the page makes goes through [UrlPolicy]: `cid:` pictures
  * come from [inline], remote content only when [allowRemote], everything else gets an empty
  * answer. The view never navigates; a tapped link is handed to [openLink].
@@ -145,7 +145,11 @@ fun MailWebView(
                     onWide = { wide = it }
                     onTall = { tall = it }
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                    settings.javaScriptEnabled = false
+                    // On only for the app's own fitting script (FitScript, run by evaluateJavascript): the page's content
+                    // security policy (script-src 'none') still blocks every script, handler and javascript: link of the
+                    // mail, and there is no JavaScript interface.
+                    settings.javaScriptEnabled = true
+                    settings.javaScriptCanOpenWindowsAutomatically = false
                     settings.allowFileAccess = false
                     settings.allowContentAccess = false
                     settings.setGeolocationEnabled(false)
@@ -287,11 +291,22 @@ private class PanWebView(context: Context) : WebView(context) {
     /** The page finished loading: once it has been drawn it is measured (while it is to be) or shown. */
     fun pageFinished() {
         val now = reveal.finished()
-        postVisualStateCallback(0, object : WebView.VisualStateCallback() {
-            override fun onComplete(requestId: Long) {
-                reveal.drawn(now) { reportFit() }
-            }
-        })
+        // The wide parts are fitted first ([FitScript]), so the page is measured and shown as it will stay. Only on the
+        // app's own document (loaded from data with no base, so about:blank): the view never navigates, and anything
+        // else is not fitted.
+        val js = if (url == null || url == "about:blank") FitScript.JS else "0"
+        evaluateJavascript(js) {
+            postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) {
+                    // The scale the page was first fitted at was that of the page before the script made it narrower
+                    // (smaller): it would count as zoomed and keep the height of that first fit, cutting the mail off.
+                    fitScale = Float.MAX_VALUE
+                    fitHeight = 0
+                    requestLayout()
+                    reveal.drawn(now) { reportFit() }
+                }
+            })
+        }
     }
 
     /**

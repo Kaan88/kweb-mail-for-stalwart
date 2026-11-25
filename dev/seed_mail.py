@@ -183,6 +183,58 @@ def table():
     return html("Coordinator <coord@example.com>", "New task (table of short cells)", text + "\n", markup)
 
 
+def widetable():
+    """The owner's example of 2026-11-25: running text, a data table of eight columns of unbreakable cells, many times
+    wider than a phone, a signature table and an Outlook quote. Only the table may come out small."""
+    span = "<span style='font-size:10.0pt;font-family:\"Arial\",sans-serif'>{}</span>"
+    para = "<p class=MsoNormal style='margin:0'>" + span + "</p>"
+    head = "<td nowrap style='border:solid #999 1.0pt;background:#FCE4D6;padding:0 5.4pt'><b>{}</b></td>"
+    cell = "<td nowrap style='border:solid #999 1.0pt;padding:0 5.4pt'>{}</td>"
+    cols = ["Job ID", "Project Name", "EP NO", "Runtime", "Language", "Task", "Template ETA", "Deadline"]
+    rows = [["1000167", "Sample Show: Season 1: \"Episode 3\"", "3", "25 mins", "TUR", "Create Timed Text Translation",
+             "27th Nov 12 PM UTC", "28th Nov 5 PM UTC"],
+            ["1000168", "Sample Show: Season 1: \"Episode 4\"", "4", "23 mins", "TUR", "Create Timed Text Translation",
+             "27th Nov 12 PM UTC", "29th Nov 5 PM UTC"]]
+    grid = ("<table class=MsoNormalTable border=0 cellspacing=0 cellpadding=0 width=1200 style='width:900pt;"
+            "border-collapse:collapse'><tr>" + "".join(head.format(h) for h in cols) + "</tr>"
+            + "".join("<tr>" + "".join(cell.format(c) for c in r) + "</tr>" for r in rows) + "</table>")
+    goal = ("<b>The goal is not to fix every issue in the file, but to focus on major and critical issues, particularly "
+            "those that could significantly impact viewer understanding or experience. On-time delivery should take "
+            "precedence over extensive polishing.</b>")
+    sig = ("<table border=0 cellspacing=0 cellpadding=0 width=600 style='width:450pt'><tr>"
+           "<td width=100 style='width:75pt'><div style='width:60px;height:60px;border-radius:30px;"
+           "border:3px solid #c00'></div></td><td width=500 style='width:375pt'>"
+           + para.format("<b>Thanks and Regards</b>") + para.format("SAMPLE COORDINATOR")
+           + para.format("Localization Coordinator - Subtitling") + "</td></tr></table>")
+    mark = '<span style="background:yellow">Instructions:</span>'
+    quote = ("<div style='border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0'>"
+             + para.format("<b>From:</b> Tester &lt;tester@kweb.test&gt;<br><b>Sent:</b> 24 November 2026 12:33 PM"
+                           "<br><b>Subject:</b> Re: Prebooking for a sample title") + "</div>"
+             + para.format("I can take up however many you assign."))
+    markup = (f"<html><body><div class=WordSection1>{para.format('Hello Tester,')}{para.format('&nbsp;')}"
+              f"{para.format('Please note the below episodes are assigned to you.')}{para.format('&nbsp;')}"
+              f"{para.format('Kindly proceed and deliver by the below dates.')}{para.format('&nbsp;')}{grid}"
+              f"{para.format('&nbsp;')}{para.format(mark)}"
+              f"{para.format('&nbsp;')}{para.format(goal)}{para.format('&nbsp;')}{sig}{quote}"
+              f"<blockquote>{para.format('An older message, quoted, with its own wide table:')}{grid}</blockquote>"
+              f"</div></body></html>")
+    return html("Sample Coordinator <coord@example.com>", "Assignment (very wide table)", "Plain part.\n", markup)
+
+
+def scripts():
+    """A mail that tries to run script in every common way. Shown in the app, it must read exactly as written: any
+    red background, changed text or 'RAN' means a script ran."""
+    markup = ("<html><head><meta http-equiv=\"refresh\" content=\"1;url=https://example.com/moved\"></head>"
+              "<body><p id=t>Nothing ran.</p>"
+              "<script>document.getElementById('t').textContent='SCRIPT RAN';document.body.style.background='red'</script>"
+              "<img src=x onerror=\"document.getElementById('t').textContent='ONERROR RAN'\">"
+              "<svg onload=\"document.body.style.background='red'\"></svg>"
+              "<p><a href=\"javascript:document.body.innerHTML='LINK RAN'\">Tap this link</a></p>"
+              "<iframe srcdoc=\"<script>parent.document.body.style.background='red'</script>\"></iframe>"
+              "</body></html>")
+    return html("Script Check <script@example.com>", "Script check (nothing may run)", "Plain part.\n", markup)
+
+
 def credentials():
     """`user:password` of the test user, written by the set-up (see dev/README.md)."""
     path = os.environ.get("KWEB_TEST_CREDS") or os.path.expanduser("~/tools/stalwart-test/etc/tester.txt")
@@ -240,6 +292,10 @@ if __name__ == "__main__":
         send([signature()])
     elif mode == "table":
         send([table()])
+    elif mode == "widetable":
+        send([widetable()])
+    elif mode == "scripts":
+        send([scripts()])
     elif mode == "bulk":
         send(bulk(int(sys.argv[2]) if len(sys.argv) > 2 else 100))
     else:
