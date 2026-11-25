@@ -53,6 +53,14 @@ pub struct AdminAccess {
     /// Pausing or resuming the mail queue (the action permissions; the queue screen offers the menu items by it).
     #[uniffi(default = false)]
     pub may_queue_control: bool,
+    /// The simple actions this key may start (the right to start actions and the action's own permission).
+    #[uniffi(default = [])]
+    pub allowed_actions: Vec<Maintenance>,
+    /// The DMARC check and the spam check of the Actions screen.
+    #[uniffi(default = false)]
+    pub may_dmarc_check: bool,
+    #[uniffi(default = false)]
+    pub may_spam_check: bool,
     /// The account the key belongs to when that is not the signed-in one (everything admin is done as it); else empty.
     #[uniffi(default = "")]
     pub acting_as: String,
@@ -169,6 +177,11 @@ pub enum Maintenance {
     ReloadCertificates,
     PauseQueue,
     ResumeQueue,
+    ReloadLookupStores,
+    ReloadBlockedIps,
+    UpdateApps,
+    InvalidateCaches,
+    InvalidateNegativeCaches,
 }
 
 /// What an account without an admin key has.
@@ -194,6 +207,9 @@ fn no_access() -> AdminAccess {
         may_tasks: false,
         may_cluster: false,
         may_queue_control: false,
+        allowed_actions: Vec::new(),
+        may_dmarc_check: false,
+        may_spam_check: false,
         acting_as: String::new(),
     }
 }
@@ -413,7 +429,8 @@ impl Core {
         self.admin_run(move |conn| async move { conn.log_lines(&text, limit as usize).await })
     }
 
-    /// Starts a maintenance action. The host asks first.
+    /// Starts a simple action and drops what it says. The host asks first. The queue screen uses this for
+    /// Pause and Resume; the Actions screen uses [`Core::admin_action`].
     pub fn admin_maintenance(&self, what: Maintenance) -> Result<()> {
         self.admin_run(move |conn| async move { conn.run_maintenance(what).await })
     }

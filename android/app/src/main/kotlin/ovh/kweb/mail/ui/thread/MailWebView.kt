@@ -179,8 +179,15 @@ fun MailWebView(
                 view.settings.blockNetworkLoads = !allowRemote
                 // A page laid out at the window's width is measured once it is drawn; one that came out wider is laid out
                 // again at its own width (see FitRules), and its text is made larger by as much as the page is scaled down.
+                // The second layout is measured too: one whose tables grew with the text gets a third (FitRules.refit).
                 view.onFit = { content, window ->
-                    val next = if (fit == null) FitRules.fit(content, window) else null
+                    val current = fit
+                    // A mail with no table has nothing the third layout could change: no third load for it.
+                    val next = when {
+                        current == null -> FitRules.fit(content, window)
+                        !html.contains("<table", ignoreCase = true) -> null
+                        else -> FitRules.refit(current, content)
+                    }
                     if (next != null) fit = next
                     next != null
                 }
@@ -190,13 +197,21 @@ fun MailWebView(
                 view.interactive = ready
                 view.importantForAccessibility =
                     if (ready) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-                val shown = listOf(html, allowRemote, textColor, flat, wide?.width, windowWidth, textZoom)
+                val shown = listOf(html, allowRemote, textColor, flat, wide?.width, wide?.tablesBack, windowWidth, textZoom)
                 if (view.tag != shown) {
                     view.tag = shown
-                    view.newPage(measure = wide == null)
+                    view.newPage(measure = wide == null || !wide.tablesBack)
                     view.loadDataWithBaseURL(
                         null,
-                        HtmlWrapper.wrap(html, textColor, imageNote, blockRemote = !allowRemote, flat = flat, layoutWidth = wide?.width),
+                        HtmlWrapper.wrap(
+                            html,
+                            textColor,
+                            imageNote,
+                            blockRemote = !allowRemote,
+                            flat = flat,
+                            layoutWidth = wide?.width,
+                            tableZoom = FitRules.tableZoom(wide),
+                        ),
                         "text/html",
                         "utf-8",
                         null,

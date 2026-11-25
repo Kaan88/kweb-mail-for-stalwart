@@ -125,6 +125,14 @@ class AdminLogsViewModel(app: Application, session: AccountSession) : AndroidVie
     val logs = LogsController(viewModelScope, Dispatchers.IO, backendOf(session))
 }
 
-class AdminMaintenanceViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
-    val maintenance = MaintenanceController(viewModelScope, Dispatchers.IO, backendOf(session))
+class AdminActionsViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val actions = ActionsController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
+class AdminDmarcCheckViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val check = DmarcCheckController(viewModelScope, Dispatchers.IO, backendOf(session))
+}
+
+class AdminSpamCheckViewModel(app: Application, session: AccountSession) : AndroidViewModel(app) {
+    val check = SpamCheckController(viewModelScope, Dispatchers.IO, backendOf(session))
 }

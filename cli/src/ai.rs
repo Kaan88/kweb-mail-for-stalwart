@@ -123,6 +123,8 @@ fn run_id() -> String {
 fn effort_name(e: AiEffort) -> &'static str {
     match e {
         AiEffort::Default => "default",
+        AiEffort::Off => "none",
+        AiEffort::Minimal => "minimal",
         AiEffort::Low => "low",
         AiEffort::Medium => "medium",
         AiEffort::High => "high",

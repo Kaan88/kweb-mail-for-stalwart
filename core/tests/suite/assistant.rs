@@ -787,7 +787,7 @@ fn http_statuses_become_plain_messages_and_never_repeat_the_key() {
         for (status, expected) in [
             (401, "the service refused the key"),
             (403, "the service refused the key"),
-            (404, "the service does not know this model or address"),
+            (404, "the service has nothing at this address; check the address of the service"),
             (429, "the service is busy or the quota is used up"),
             (500, "the service has a problem (status 500); try again later"),
             (503, "the service has a problem (status 503); try again later"),
@@ -1090,6 +1090,11 @@ fn each_service_keeps_its_own_address_model_effort_key_and_consent() {
         effort: AiEffort::High,
         ..rig.settings(AiProvider::Anthropic)
     };
+    // Each service's own list names the level for its model, so each effort is kept and shown.
+    rig.ai.set_models(listed_levels(&["low"]));
+    rig.core.ai_models(openai.clone(), Some(KEY.into())).unwrap();
+    elsewhere.set_models(Models::Pages(vec![vec![spec("claude-x", "X", &["high"]), spec("claude-y", "Y", &["high"])]]));
+    rig.core.ai_models(anthropic.clone(), Some(OTHER_KEY.into())).unwrap();
     let a = rig.save_agreed(openai.clone(), Some(KEY.into()));
     let b = rig.save_agreed(anthropic.clone(), Some(OTHER_KEY.into()));
     assert_eq!((a.provider, b.provider), (AiProvider::OpenAiCompatible, AiProvider::Anthropic));
@@ -1221,9 +1226,23 @@ fn stage_one_data_is_migrated_on_first_use() {
 
 // ---- effort and the whole-document answer -----------------------------------------------------
 
+/// An OpenRouter-style list: `test-model` with these levels, and `plain` with none.
+fn listed_levels(levels: &[&str]) -> Models {
+    Models::Raw(serde_json::json!({"data": [
+        {"id": "test-model", "name": "Test model", "reasoning": {"supported_efforts": levels}},
+        {"id": "plain", "reasoning": null},
+    ]}))
+}
+
+const ALL_ANTHROPIC: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
 #[test]
-fn effort_reaches_the_anthropic_body_and_never_the_openai_one() {
+fn effort_goes_in_each_protocols_own_field_once_the_service_listed_it() {
     let rig = Rig::new();
+    // Anthropic: `output_config.effort`, after the service's list named the level for the model.
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set_models(Models::Pages(vec![vec![spec("test-model", "Test", &ALL_ANTHROPIC)]]));
+    rig.core.ai_models(asked(&rig, AiProvider::Anthropic), None).unwrap();
     for (effort, word) in [
         (AiEffort::Low, Some("low")),
         (AiEffort::Medium, Some("medium")),
@@ -1232,23 +1251,89 @@ fn effort_reaches_the_anthropic_body_and_never_the_openai_one() {
         (AiEffort::Max, Some("max")),
         (AiEffort::Default, None),
     ] {
-        rig.save_agreed(AiSettings { effort, ..rig.settings(AiProvider::Anthropic) }, Some(KEY.into()));
+        let saved = rig.save_agreed(AiSettings { effort, ..rig.settings(AiProvider::Anthropic) }, None);
+        assert_eq!(saved.effort, effort);
         rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
         let seen = rig.ai.last();
         assert_eq!(seen.body["output_config"]["effort"].as_str(), word, "{effort:?}");
         assert_eq!(seen.body.get("output_config").is_some(), word.is_some());
+        assert!(seen.body.get("reasoning_effort").is_none() && seen.body.get("reasoning").is_none());
         assert_eq!(seen.body["max_tokens"], 32000);
         assert_eq!(seen.version.as_deref(), Some("2026-10-21"));
-        // The other service, with the same effort, is never sent it.
+    }
+    // OpenAI-compatible: `reasoning_effort`, the levels again from the service's own list.
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set_models(listed_levels(&["none", "minimal", "low", "medium", "high", "xhigh"]));
+    rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    for (effort, word) in [
+        (AiEffort::Off, Some("none")),
+        (AiEffort::Minimal, Some("minimal")),
+        (AiEffort::Low, Some("low")),
+        (AiEffort::High, Some("high")),
+        (AiEffort::XHigh, Some("xhigh")),
+        (AiEffort::Max, None),
+        (AiEffort::Default, None),
+    ] {
         rig.save_agreed(AiSettings { effort, ..rig.settings(AiProvider::OpenAiCompatible) }, None);
         rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
-        assert!(rig.ai.last().body.get("output_config").is_none(), "{effort:?}");
+        let seen = rig.ai.last();
+        assert_eq!(seen.path, "/v1/chat/completions");
+        assert_eq!(seen.body["reasoning_effort"].as_str(), word, "{effort:?}");
+        assert_eq!(seen.body.get("reasoning_effort").is_some(), word.is_some(), "{effort:?}");
+        assert!(seen.body.get("output_config").is_none());
     }
     // The effort is stored per service.
-    assert_eq!(rig.core.ai_service(AiProvider::Anthropic).unwrap().effort, AiEffort::Default);
+    rig.save_agreed(AiSettings { effort: AiEffort::High, ..rig.settings(AiProvider::OpenAiCompatible) }, None);
     rig.save_agreed(AiSettings { effort: AiEffort::Max, ..rig.settings(AiProvider::Anthropic) }, None);
-    assert_eq!(rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap().effort, AiEffort::Default);
+    assert_eq!(rig.core.ai_service(AiProvider::OpenAiCompatible).unwrap().effort, AiEffort::High);
     assert_eq!(rig.reopen().ai_settings().unwrap().effort, AiEffort::Max);
+}
+
+#[test]
+fn no_effort_is_sent_where_the_service_did_not_name_it() {
+    let rig = Rig::new();
+    for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+        // Never listed: a level the user (or an older version) stored is kept and not sent.
+        let saved = rig.save_agreed(AiSettings { effort: AiEffort::High, ..rig.settings(provider) }, Some(KEY.into()));
+        assert_eq!(saved.effort, AiEffort::Default, "{provider:?}: shown as what is sent");
+        rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+        let body = rig.ai.last().body;
+        for field in ["output_config", "reasoning_effort", "reasoning"] {
+            assert!(body.get(field).is_none(), "{provider:?} sent {field} unasked");
+        }
+    }
+    // A list in which the model names no level, or another model names it, or another address.
+    rig.ai.set_models(listed_levels(&["high"]));
+    let plain =
+        AiSettings { model: "plain".into(), effort: AiEffort::High, ..rig.settings(AiProvider::OpenAiCompatible) };
+    rig.save_agreed(plain.clone(), None);
+    rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    assert_eq!(rig.core.ai_settings().unwrap().effort, AiEffort::Default);
+    rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+    assert!(rig.ai.last().body.get("reasoning_effort").is_none());
+    // The same level on the model that lists it: shown and sent, with nothing else changed.
+    let named = AiSettings { model: "test-model".into(), ..plain };
+    rig.save_agreed(named.clone(), None);
+    assert_eq!(rig.core.ai_settings().unwrap().effort, AiEffort::High);
+    rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+    assert_eq!(rig.ai.last().body["reasoning_effort"], "high");
+    // The service now lists nothing for it: nothing is sent again.
+    rig.ai.set_models(listed_levels(&[]));
+    rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+    assert!(rig.ai.last().body.get("reasoning_effort").is_none());
+    // Levels from the list of another address do not count here.
+    let elsewhere = rig.rt.block_on(MockAi::start());
+    elsewhere.set_models(listed_levels(&["high"]));
+    let there = AiSettings { base_url: elsewhere.base_url(), ..rig.settings(AiProvider::OpenAiCompatible) };
+    rig.core.ai_models(there, None).unwrap();
+    rig.run(rewrite("x", RewriteStyle::Improve)).0.unwrap();
+    assert!(rig.ai.last().body.get("reasoning_effort").is_none());
+    assert_eq!(rig.core.ai_settings().unwrap().effort, AiEffort::Default);
+    // Back at the first address, whose list named the level: it is sent once more.
+    rig.ai.set_models(listed_levels(&["high"]));
+    rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    assert_eq!(rig.core.ai_settings().unwrap(), AiSettings { has_key: true, ..named });
 }
 
 #[test]
@@ -1336,6 +1421,76 @@ fn a_stored_key_is_not_sent_to_another_host_by_the_model_list() {
 }
 
 #[test]
+fn a_404_says_whether_the_model_or_the_address_is_wrong_and_never_repeats_the_body() {
+    let rig = Rig::new();
+    for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+        rig.configure(provider);
+        for (body, expected) in [
+            (
+                r#"{"type":"error","error":{"type":"not_found_error","message":"model: test-model"}}"#,
+                provider::UNKNOWN_MODEL,
+            ),
+            (
+                r#"{"error":{"message":"The model `test-model` does not exist","code":"model_not_found"}}"#,
+                provider::UNKNOWN_MODEL,
+            ),
+            ("This model is only supported in v1/responses and not in v1/chat/completions.", provider::NOT_CHAT),
+            (r#"{"error":{"message":"No endpoints found that support tool use","code":404}}"#, provider::NO_ROUTE),
+            ("<html><body>Not Found</body></html>", provider::NOT_HERE),
+        ] {
+            rig.ai.set(Script::StatusBody(404, body.into()));
+            let (result, heard) = rig.run(rewrite("x", RewriteStyle::Improve));
+            let text = format!("{result:?}");
+            assert!(!text.contains(KEY) && !text.contains("test-model") && !text.contains("v1/"), "{text}");
+            assert_eq!(temporary(result), expected, "{provider:?} {body}");
+            assert!(heard.pieces().is_empty());
+        }
+    }
+    // The list of models: a page that is not there is the address.
+    rig.configure(AiProvider::OpenAiCompatible);
+    rig.ai.set_models(Models::Status(404));
+    let error = rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None);
+    assert_eq!(temporary_models(error), provider::NOT_HERE);
+}
+
+#[test]
+fn the_list_leaves_out_what_cannot_chat_and_names_what_the_service_names() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    // OpenRouter's shape: a batch-only twin per model, and the levels per model.
+    rig.ai.set_models(Models::Raw(serde_json::json!({"data": [
+        {"id": "anthropic/claude-opus-5.5", "name": "Anthropic: Claude Opus 5.5",
+         "endpoints": ["/api/v1/chat/completions", "/api/v1/completions", "/api/v1/messages", "/api/v1/responses"],
+         "reasoning": {"mandatory": true, "supported_efforts": ["max", "xhigh", "high", "medium", "low"]}},
+        {"id": "anthropic/claude-opus-5.5:batch", "name": "Anthropic: Claude Opus 5.5 (batch)",
+         "endpoints": ["/api/v1/batches"], "reasoning": {"supported_efforts": ["high"]}},
+        {"id": "text-embedding-3-large", "name": "Embedding"},
+        {"id": "mistral-ocr-latest", "capabilities": {"completion_chat": false}},
+    ]})));
+    let list = rig.core.ai_models(asked(&rig, AiProvider::OpenAiCompatible), None).unwrap();
+    assert_eq!(ids(&list), ["anthropic/claude-opus-5.5"]);
+    assert_eq!(list.models[0].name, "Anthropic: Claude Opus 5.5");
+    assert_eq!(
+        list.models[0].efforts,
+        [AiEffort::Low, AiEffort::Medium, AiEffort::High, AiEffort::XHigh, AiEffort::Max]
+    );
+    // Anthropic: deprecated models are closed to new users, so they are not offered.
+    rig.configure(AiProvider::Anthropic);
+    rig.ai.set_models(Models::Raw(serde_json::json!({"data": [
+        {"type": "model", "id": "claude-new", "display_name": "New", "lifecycle": "active",
+         "capabilities": {"effort": {"supported": true, "low": {"supported": true}, "medium": {"supported": true},
+            "high": {"supported": true}, "xhigh": null, "max": {"supported": true}}}},
+        {"type": "model", "id": "claude-old", "display_name": "Old", "lifecycle": "deprecated", "capabilities": null},
+        {"type": "model", "id": "claude-older", "display_name": "Older", "capabilities": null},
+    ], "has_more": false, "first_id": "claude-new", "last_id": "claude-older"})));
+    let list = rig.core.ai_models(asked(&rig, AiProvider::Anthropic), None).unwrap();
+    assert!(list.from_service);
+    assert_eq!(ids(&list), ["claude-new", "claude-older"]);
+    assert_eq!(list.models[0].efforts, [AiEffort::Low, AiEffort::Medium, AiEffort::High, AiEffort::Max]);
+    assert!(list.models[1].efforts.is_empty());
+}
+
+#[test]
 fn an_openai_service_that_cannot_be_asked_is_an_error_never_a_made_up_list() {
     let rig = Rig::new();
     rig.configure(AiProvider::OpenAiCompatible);
@@ -1343,7 +1498,7 @@ fn an_openai_service_that_cannot_be_asked_is_an_error_never_a_made_up_list() {
     for (script, expected) in [
         (Models::Status(401), "the service refused the key"),
         (Models::Status(403), "the service refused the key"),
-        (Models::Status(404), "the service does not know this model or address"),
+        (Models::Status(404), "the service has nothing at this address; check the address of the service"),
         (Models::Status(429), "the service is busy or the quota is used up"),
         (Models::Status(503), "the service has a problem (status 503); try again later"),
         (Models::Garbage, "the service gave an answer that could not be read"),
@@ -1443,7 +1598,7 @@ fn anthropic_without_a_key_or_with_a_service_in_trouble_gets_the_built_in_list()
     assert!(!list.from_service);
     assert_eq!(ids(&list), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]);
     assert_eq!(list.models[0].name, "Claude Opus 5.5");
-    assert!(list.models.iter().all(|m| m.efforts.len() == 5));
+    assert!(list.models.iter().all(|m| m.efforts.is_empty()), "the service did not say, so no levels");
     assert_eq!(rig.ai.requests(), 0);
     let blank = rig.core.ai_models(s.clone(), Some("  ".into())).unwrap();
     assert!(!blank.from_service && rig.ai.requests() == 0);

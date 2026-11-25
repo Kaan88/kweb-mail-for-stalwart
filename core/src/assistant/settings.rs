@@ -1,11 +1,13 @@
 //! What the user may set for the assistant, and what a change does to the consent. Pure: the
 //! storage (the account's key/value table, and the secret store for the key) is in `mod.rs`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::{
-    model::{AiActionMode, AiEffort, AiProvider, AiSettings, AI_INSTRUCTIONS_MAX},
+    model::{AiActionMode, AiEffort, AiModelList, AiProvider, AiSettings, AI_INSTRUCTIONS_MAX},
     Error, Result,
 };
 
@@ -41,6 +43,45 @@ pub struct Profile {
     /// The chat found that this address and model take no tools. Kept only while both stay the same,
     /// and cleared when a later chat turn used tools.
     pub tools_unsupported: bool,
+    /// The effort levels the service listed, from the last list of models it gave. `effort` is
+    /// sent only when these say the model at this address takes it.
+    pub levels: Levels,
+}
+
+/// The most models whose levels are kept.
+const MAX_LEVELS: usize = 2000;
+
+/// The effort levels a service named for its models, kept from the last list it gave for one
+/// address. Nothing else of the list is kept, and only models that named a level are in here.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Levels {
+    /// The address the list came from, as it was asked (trimmed, no trailing slash).
+    pub base_url: String,
+    /// Model id to its levels, lowest first, without `Default`.
+    pub models: BTreeMap<String, Vec<AiEffort>>,
+}
+
+impl Levels {
+    /// The levels of `list`, which `base_url` gave.
+    pub fn of(base_url: &str, list: &AiModelList) -> Levels {
+        let models = list
+            .models
+            .iter()
+            .filter(|m| !m.efforts.is_empty())
+            .take(MAX_LEVELS)
+            .map(|m| (m.id.clone(), m.efforts.iter().copied().filter(|e| *e != AiEffort::Default).collect()))
+            .collect();
+        Levels { base_url: base_url.trim().trim_end_matches('/').to_string(), models }
+    }
+
+    /// Whether `effort` may be sent to `model` at `base_url`: `Default` always (it is not sent),
+    /// anything else only when the service listed it for exactly that address and model.
+    pub fn allows(&self, base_url: &str, model: &str, effort: AiEffort) -> bool {
+        effort == AiEffort::Default
+            || (self.base_url == base_url.trim().trim_end_matches('/')
+                && self.models.get(model.trim()).is_some_and(|levels| levels.contains(&effort)))
+    }
 }
 
 /// What is stored under [`SETTINGS_KEY`]: the shared switches, the service in use, and a
@@ -109,12 +150,14 @@ impl Stored {
             (AiProvider::Anthropic, true) => ANTHROPIC_URL.to_string(),
             _ => p.base_url.clone(),
         };
+        // A level the service never named for this address and model is not sent, so it is not shown.
+        let effort = if p.levels.allows(&base_url, &p.model, p.effort) { p.effort } else { AiEffort::Default };
         AiSettings {
             enabled: self.enabled,
             provider,
             base_url,
             model: p.model.clone(),
-            effort: p.effort,
+            effort,
             has_key: false,
             consented: p.consented,
             allow_summaries: self.allow_summaries,
@@ -156,6 +199,7 @@ pub fn parse(json: &str) -> Option<(Stored, Option<AiProvider>)> {
         consented: old.consented,
         chat_consented: false,
         tools_unsupported: false,
+        levels: Levels::default(),
     };
     Some((stored, Some(old.provider)))
 }
@@ -448,6 +492,7 @@ mod tests {
                 consented: true,
                 chat_consented: false,
                 tools_unsupported: false,
+                levels: Levels::default(),
             },
             anthropic: Profile { base_url: "https://a.example/v1".into(), model: "m".into(), ..Profile::default() },
             ..Stored::default()
@@ -474,6 +519,10 @@ mod tests {
                 consented: true,
                 chat_consented: true,
                 tools_unsupported: false,
+                levels: Levels {
+                    base_url: "https://a.example/v1".into(),
+                    models: [("m".to_string(), vec![AiEffort::Low, AiEffort::Max])].into(),
+                },
             },
             ..Stored::default()
         };
@@ -493,6 +542,50 @@ mod tests {
         let d = defaults();
         assert!(!d.allow_ideas && !d.allow_extract && !d.allow_explain && !d.allow_chat && !d.chat_consented);
         assert_eq!(d.actions, AiActionMode::AskFirst);
+    }
+
+    #[test]
+    fn an_effort_is_shown_and_sent_only_where_the_service_listed_it() {
+        use crate::model::AiModel;
+        let model =
+            |id: &str, efforts: &[AiEffort]| AiModel { id: id.into(), name: id.into(), efforts: efforts.to_vec() };
+        let list = AiModelList {
+            models: vec![model("a", &[AiEffort::Low, AiEffort::High]), model("plain", &[])],
+            from_service: true,
+        };
+        let levels = Levels::of("https://r.example/v1/ ", &list);
+        assert_eq!(levels.base_url, "https://r.example/v1");
+        assert_eq!(levels.models.keys().collect::<Vec<_>>(), ["a"], "a model without levels is not kept");
+        assert!(levels.allows("https://r.example/v1", "a", AiEffort::High));
+        assert!(levels.allows("https://r.example/v1/", " a ", AiEffort::Low));
+        assert!(!levels.allows("https://r.example/v1", "a", AiEffort::Max), "not listed for the model");
+        assert!(!levels.allows("https://r.example/v1", "plain", AiEffort::Low), "the service named none");
+        assert!(!levels.allows("https://r.example/v1", "typed", AiEffort::Low), "never listed");
+        assert!(!levels.allows("https://other.example/v1", "a", AiEffort::High), "another address");
+        assert!(levels.allows("https://other.example/v1", "x", AiEffort::Default));
+        assert!(!Levels::default().allows("https://r.example/v1", "a", AiEffort::High));
+
+        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
+            let mut stored = Stored::default();
+            *stored.profile_mut(provider) = Profile {
+                base_url: "https://r.example/v1".into(),
+                model: "a".into(),
+                effort: AiEffort::High,
+                levels: levels.clone(),
+                ..Profile::default()
+            };
+            assert_eq!(stored.view(provider).effort, AiEffort::High);
+            stored.profile_mut(provider).effort = AiEffort::Max;
+            assert_eq!(stored.view(provider).effort, AiEffort::Default);
+            stored.profile_mut(provider).effort = AiEffort::High;
+            stored.profile_mut(provider).model = "plain".into();
+            assert_eq!(stored.view(provider).effort, AiEffort::Default);
+            // The level itself is kept: back on a model that lists it, it shows again.
+            stored.profile_mut(provider).model = "a".into();
+            assert_eq!(stored.view(provider).effort, AiEffort::High);
+            stored.profile_mut(provider).levels = Levels::default();
+            assert_eq!(stored.view(provider).effort, AiEffort::Default);
+        }
     }
 
     #[test]

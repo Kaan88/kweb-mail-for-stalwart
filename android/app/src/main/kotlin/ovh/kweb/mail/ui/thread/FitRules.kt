@@ -27,8 +27,27 @@ object FitRules {
      */
     fun layoutWidth(contentWidth: Float, windowWidth: Float): Int? = fit(contentWidth, windowWidth)?.width
 
-    /** The second layout: [width] in CSS pixels, and [shrink], how many times wider than the window it is. */
-    data class Fit(val width: Int, val shrink: Float)
+    /**
+     * The second layout: [width] in CSS pixels, and [shrink], how many times wider than the window it is. [tablesBack]: the
+     * third layout, where tables are drawn at their first size again ([refit]).
+     */
+    data class Fit(val width: Int, val shrink: Float, val tablesBack: Boolean = false)
+
+    /** The second layout may come out this much wider than it was laid out at before it is laid out a third time. */
+    const val REFIT_TOLERANCE = 1.05f
+
+    /**
+     * After the second layout. The text zoom also widens what is as wide as its text (a table of short cells with no
+     * width of its own, owner's example 2026-11-25): the page then came out wider than [Fit.width], was scaled down again,
+     * and the running text wrapped at about two thirds of the window. Such a page is laid out a third time with every
+     * outer table zoomed back by the text zoom factor ([tableZoom]): the tables have their first size, which fitted the
+     * width, and the text around them keeps its larger size, as in Gmail. Null when nothing is to change.
+     */
+    fun refit(fit: Fit, contentWidth: Float): Fit? =
+        if (fit.tablesBack || contentWidth <= fit.width * REFIT_TOLERANCE) null else fit.copy(tablesBack = true)
+
+    /** The CSS zoom for outer tables in [fit]'s layout, or null when tables are left as they are. */
+    fun tableZoom(fit: Fit?): Float? = if (fit == null || !fit.tablesBack) null else 1f / minOf(fit.shrink, MAX_ZOOM_FACTOR)
 
     /** As [layoutWidth], with the shrink factor. */
     fun fit(contentWidth: Float, windowWidth: Float): Fit? {

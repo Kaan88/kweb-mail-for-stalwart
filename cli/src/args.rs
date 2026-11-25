@@ -138,8 +138,9 @@ Usage:
                               set up that service and use it; provider is openai or anthropic,
                               each keeps its own address, model, key and consent. The key is
                               read from $KWEB_AI_KEY. Without --yes it only says what you agree
-                              to. Effort (default, low, medium, high, xhigh, max) is sent to
-                              Anthropic only; left out, the stored one is kept. The switches
+                              to. Effort (default, none, minimal, low, medium, high, xhigh,
+                              max) is sent only where `kweb ai models` showed that level for
+                              the model; left out, the stored one is kept. The switches
                               (reply ideas, finding to-dos and dates, explaining, the chat, and
                               whether the chat may suggest changes) keep what is stored when
                               left out; all are off until switched on
@@ -950,12 +951,14 @@ fn provider_named(name: &str) -> Result<AiProvider, String> {
 fn effort_named(name: &str) -> Result<AiEffort, String> {
     match name.to_ascii_lowercase().as_str() {
         "default" => Ok(AiEffort::Default),
+        "none" => Ok(AiEffort::Off),
+        "minimal" => Ok(AiEffort::Minimal),
         "low" => Ok(AiEffort::Low),
         "medium" => Ok(AiEffort::Medium),
         "high" => Ok(AiEffort::High),
         "xhigh" => Ok(AiEffort::XHigh),
         "max" => Ok(AiEffort::Max),
-        other => Err(format!("the effort is default, low, medium, high, xhigh or max, not '{other}'")),
+        other => Err(format!("the effort is default, none, minimal, low, medium, high, xhigh or max, not '{other}'")),
     }
 }
 

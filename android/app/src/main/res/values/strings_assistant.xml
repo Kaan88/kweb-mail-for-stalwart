@@ -25,8 +25,10 @@
     <string name="assistant_models_failed">The models could not be loaded.</string>
     <string name="assistant_switch_failed">The settings of that service could not be read.</string>
     <string name="assistant_effort">Effort</string>
-    <string name="assistant_effort_detail">How much thinking the model may spend. Default sends nothing.</string>
+    <string name="assistant_effort_detail">How much thinking the model may spend. Only the levels the service lists for this model are offered. Default sends nothing.</string>
     <string name="assistant_effort_default">Default</string>
+    <string name="assistant_effort_off">Off</string>
+    <string name="assistant_effort_minimal">Minimal</string>
     <string name="assistant_effort_low">Low</string>
     <string name="assistant_effort_medium">Medium</string>
     <string name="assistant_effort_high">High</string>

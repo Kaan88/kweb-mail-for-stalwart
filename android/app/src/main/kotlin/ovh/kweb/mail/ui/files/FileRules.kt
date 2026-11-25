@@ -172,8 +172,13 @@ object FileRules {
     }
 
     /** The folders the move dialog lists: the folders of the listing, but never the item being moved. */
-    fun moveChoices(entries: List<FileEntry>, moving: FileEntry): List<FileEntry> =
-        entries.filter { it.kind == FileKind.FOLDER && it.id != moving.id }
+    fun moveChoices(entries: List<FileEntry>, moving: FileEntry): List<FileEntry> = moveChoices(entries, listOf(moving))
+
+    /** As above for several entries moved together: none of them is offered as a place to go. */
+    fun moveChoices(entries: List<FileEntry>, moving: List<FileEntry>): List<FileEntry> {
+        val ids = moving.mapTo(HashSet()) { it.id }
+        return entries.filter { it.kind == FileKind.FOLDER && it.id !in ids }
+    }
 
     /**
      * Whether "Move here" is on for the folder the dialog shows ([trail] is the way down to it, empty at the top):
@@ -182,6 +187,32 @@ object FileRules {
      */
     fun canMoveHere(moving: FileEntry, trail: List<FileEntry>, mayAdd: Boolean): Boolean =
         mayAdd && trail.none { it.id == moving.id } && trail.lastOrNull()?.id != moving.parentId
+
+    /** As above for several entries: into no folder of them, and not where any of them already is. */
+    fun canMoveHere(moving: List<FileEntry>, trail: List<FileEntry>, mayAdd: Boolean): Boolean =
+        moving.isNotEmpty() && moving.all { canMoveHere(it, trail, mayAdd) }
+
+    /** The chosen entries can be moved together: every one may be moved and is a file or a folder. */
+    fun canMoveAll(chosen: List<FileEntry>): Boolean = chosen.isNotEmpty() && chosen.all { it.kind != FileKind.OTHER && it.mayRename }
+
+    /** The chosen entries can be deleted together: every one may be deleted. */
+    fun canDeleteAll(chosen: List<FileEntry>): Boolean = chosen.isNotEmpty() && chosen.all { it.mayDelete }
+
+    /**
+     * [entries] without those whose folder is chosen too (search can show both): the folder takes them along, and moving
+     * them as well would take them out of it.
+     */
+    fun withoutChildren(entries: List<FileEntry>): List<FileEntry> {
+        val ids = entries.mapTo(HashSet()) { it.id }
+        return entries.filter { it.parentId == null || it.parentId !in ids }
+    }
+
+    /** What stays chosen when the list shows [shown] now: entries that went away are dropped. */
+    fun prune(selected: Set<String>, shown: List<FileEntry>?): Set<String> {
+        if (selected.isEmpty()) return selected
+        val live = shown.orEmpty().mapTo(HashSet()) { it.id }
+        return selected.filterTo(LinkedHashSet()) { it in live }
+    }
 
     /** A public link can be made for [entry]: the server has the feature, and it is a file in the user's own space. */
     fun publicLinkAllowed(entry: FileEntry, supported: Boolean): Boolean =

@@ -1,9 +1,12 @@
 package ovh.kweb.mail.ui.admin
 
+import uniffi.kweb_core.ActionOutcome
 import uniffi.kweb_core.AdminAccess
 import uniffi.kweb_core.AdminSummary
 import uniffi.kweb_core.BlockedAddress
 import uniffi.kweb_core.Core
+import uniffi.kweb_core.DmarcCheck
+import uniffi.kweb_core.DmarcCheckResult
 import uniffi.kweb_core.LogLine
 import uniffi.kweb_core.Maintenance
 import uniffi.kweb_core.ClusterNode
@@ -20,6 +23,8 @@ import uniffi.kweb_core.QueuedMessage
 import uniffi.kweb_core.ServerAccount
 import uniffi.kweb_core.ServerAccountPage
 import uniffi.kweb_core.ServerDomain
+import uniffi.kweb_core.SpamCheck
+import uniffi.kweb_core.SpamCheckResult
 
 /** What the admin screens ask of the core. Every call blocks: run it off the main thread. The tests use a fake. */
 interface AdminBackend {
@@ -47,6 +52,11 @@ interface AdminBackend {
     fun unblock(id: String)
     fun logs(text: String, limit: UInt): List<LogLine>
     fun maintenance(what: Maintenance)
+
+    /** A simple action with what the server said (the Actions screen). */
+    fun action(what: Maintenance): ActionOutcome
+    fun dmarcCheck(check: DmarcCheck): DmarcCheckResult
+    fun spamCheck(check: SpamCheck): SpamCheckResult
 
     fun domainRows(): List<DomainRow>
     fun domain(id: String): DomainDetail
@@ -86,6 +96,9 @@ class CoreAdminBackend(private val core: () -> Core) : AdminBackend {
     override fun unblock(id: String) = core().adminUnblock(id)
     override fun logs(text: String, limit: UInt) = core().adminLogs(text, limit)
     override fun maintenance(what: Maintenance) = core().adminMaintenance(what)
+    override fun action(what: Maintenance) = core().adminAction(what)
+    override fun dmarcCheck(check: DmarcCheck) = core().adminDmarcCheck(check)
+    override fun spamCheck(check: SpamCheck) = core().adminSpamCheck(check)
     override fun domainRows() = core().adminDomainRows()
     override fun domain(id: String) = core().adminDomain(id)
     override fun domainAdd(name: String) = core().adminDomainAdd(name)

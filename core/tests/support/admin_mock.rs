@@ -38,7 +38,19 @@ pub const OTHER_DOMAIN_ID: &str = "d2";
 /// Another user and a group with that user in it.
 pub const BOB_ID: &str = "u2";
 pub const GROUP_ID: &str = "g1";
-const ACTIONS: [&str; 4] = ["ReloadSettings", "ReloadTlsCertificates", "PauseMtaQueue", "ResumeMtaQueue"];
+const ACTIONS: [&str; 11] = [
+    "ReloadSettings",
+    "ReloadTlsCertificates",
+    "ReloadLookupStores",
+    "ReloadBlockedIps",
+    "UpdateApps",
+    "TroubleshootDmarc",
+    "ClassifySpam",
+    "InvalidateCaches",
+    "InvalidateNegativeCaches",
+    "PauseMtaQueue",
+    "ResumeMtaQueue",
+];
 
 /// What a key may do. `None` is every permission the mock knows, as the real administrator has.
 #[derive(Clone)]
@@ -91,6 +103,8 @@ pub struct Admin {
     calls: Vec<String>,
     /// The actions that were started, in order.
     pub actions: Vec<String>,
+    /// The whole object of each action that was started (what the app sent), in order.
+    pub action_bodies: Vec<Value>,
     pub rules: PasswordRules,
     /// Accounts whose credentials live in an outside directory (LDAP, OIDC).
     external: HashSet<String>,
@@ -174,6 +188,7 @@ impl Default for Admin {
             next_id: 100,
             calls: Vec::new(),
             actions: Vec::new(),
+            action_bodies: Vec::new(),
             rules: PasswordRules { min: Some(8), ..PasswordRules::default() },
             external: HashSet::new(),
             account_limit: None,
@@ -558,8 +573,32 @@ impl Admin {
             let kind = str_of(new, "@type");
             if ACTIONS.contains(&kind) {
                 self.actions.push(kind.to_string());
+                self.action_bodies.push(new.clone());
                 let id = self.id("act");
-                out["created"][client_id] = json!({ "id": id });
+                // What the server answers in `created`, as read on Stalwart 1.1.0 (2026-11-25).
+                let mut created = match kind {
+                    "ReloadSettings" => json!({ "warnings": { "Licence key is not valid": true } }),
+                    "TroubleshootDmarc" => json!({
+                        "spfEhloDomain": "mail.example.org", "spfEhloResult": { "@type": "None" },
+                        "spfMailFromDomain": "example.org", "spfMailFromResult": { "details": null, "@type": "Fail" },
+                        "ipRevResult": { "details": "DNS record not found", "@type": "PermError" }, "ipRevPtr": {},
+                        "dkimResults": {}, "dkimPass": false, "dkim2Result": { "@type": "None" }, "dkim2Pass": false,
+                        "arcResult": { "@type": "None" }, "dmarcResult": { "details": "Policy not aligned", "@type": "Fail" },
+                        "dmarcPass": false, "dmarcPolicy": "reject", "elapsed": 2,
+                    }),
+                    "ClassifySpam" => json!({
+                        "score": 7.5, "result": "spam",
+                        "tags": {
+                            "MISSING_DATE": { "score": 1.0, "disposition": "score" },
+                            "SPF_FAIL": { "score": 3.5, "disposition": "score" },
+                            "X_HDR_FROM": { "score": 0.0, "disposition": "reject" },
+                            "FROM_EQ_ENV_FROM": { "score": 0.0, "disposition": "score" },
+                        },
+                    }),
+                    _ => json!({}),
+                };
+                created["id"] = json!(id);
+                out["created"][client_id] = created;
             } else {
                 out["notCreated"][client_id] = json!({ "type": "invalidProperties", "description": "Invalid action" });
             }
@@ -854,6 +893,11 @@ impl MockServer {
     /// The management methods called so far, in order ("x:Account/set").
     pub fn admin_calls(&self) -> Vec<String> {
         self.with_admin(|a| a.calls.clone())
+    }
+
+    /// The objects of the actions started so far, as the app sent them.
+    pub fn admin_action_bodies(&self) -> Vec<Value> {
+        self.with_admin(|a| a.action_bodies.clone())
     }
 
     /// The actions started so far, in order ("PauseMtaQueue").

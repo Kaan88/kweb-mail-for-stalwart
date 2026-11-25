@@ -252,7 +252,8 @@ private fun Form(
             )
         }
 
-        val showEffort = EffortRules.isShown(form.provider)
+        val offeredEfforts = EffortRules.offered(form.model, state.modelList, form.effort)
+        val showEffort = EffortRules.isShown(offeredEfforts)
         val hosted = form.provider == AiProvider.OPEN_AI_COMPATIBLE
         // "Other address" stays chosen while the user types, even if what is typed is a named service's address.
         var pickedOther by rememberSaveable { mutableStateOf(false) }
@@ -272,7 +273,7 @@ private fun Form(
                 FieldRow(Groups.shape(at++, count), stringResource(R.string.assistant_address), form.baseUrl, { v -> vm.edit { it.copy(baseUrl = v) } }, KeyboardType.Uri, ready)
             }
             ModelRow(Groups.shape(at++, count), form.model, ready, { v -> vm.edit { it.copy(model = v) } }, vm::chooseModel)
-            if (showEffort) EffortRow(Groups.shape(at++, count), state, form, ready) { e -> vm.edit { it.copy(effort = e) } }
+            if (showEffort) EffortRow(Groups.shape(at++, count), offeredEfforts, form, ready) { e -> vm.edit { it.copy(effort = e) } }
             KeyRow(Groups.shape(count - 1, count), state, form, vm, ready)
         }
 
@@ -513,6 +514,8 @@ private fun ModelRow(shape: Shape, value: String, enabled: Boolean, onValue: (St
 private fun effortLabel(effort: AiEffort): String = stringResource(
     when (effort) {
         AiEffort.DEFAULT -> R.string.assistant_effort_default
+        AiEffort.OFF -> R.string.assistant_effort_off
+        AiEffort.MINIMAL -> R.string.assistant_effort_minimal
         AiEffort.LOW -> R.string.assistant_effort_low
         AiEffort.MEDIUM -> R.string.assistant_effort_medium
         AiEffort.HIGH -> R.string.assistant_effort_high
@@ -521,11 +524,10 @@ private fun effortLabel(effort: AiEffort): String = stringResource(
     },
 )
 
-/** The effort (Anthropic only): a row that opens a choice of the levels the model offers. */
+/** The effort: a row that opens a choice of the levels the service listed for the model ([offered]). */
 @Composable
-private fun EffortRow(shape: Shape, state: AssistantSettingsState, form: AssistantRules.Form, enabled: Boolean, onPick: (AiEffort) -> Unit) {
+private fun EffortRow(shape: Shape, offered: List<AiEffort>, form: AssistantRules.Form, enabled: Boolean, onPick: (AiEffort) -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
-    val offered = EffortRules.offered(form.provider, form.model, state.modelList)
     RowFrame(shape, Modifier.clickable(enabled = enabled, role = Role.Button) { open = true }) {
         Column(Modifier.weight(1f)) {
             Text(stringResource(R.string.assistant_effort), style = MaterialTheme.typography.bodyLarge)

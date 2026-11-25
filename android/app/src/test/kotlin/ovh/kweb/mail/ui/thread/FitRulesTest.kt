@@ -2,6 +2,7 @@ package ovh.kweb.mail.ui.thread
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FitRulesTest {
@@ -48,5 +49,28 @@ class FitRulesTest {
         assertEquals(300, FitRules.textZoom(150, fit))
         // Just under the cap the whole factor is used.
         assertEquals(199, FitRules.textZoom(100, FitRules.Fit(718, 1.99f)))
+    }
+
+    @Test fun aSecondLayoutWhoseTablesGrewWithTheTextGetsAThird() {
+        // The owner's mail: a table of short cells, 520 px wide in a 385 px window; with the text 1.35 times larger it
+        // grew to about 700 px and the page was scaled down again.
+        val second = FitRules.fit(520f, 385f)!!
+        assertNull(FitRules.tableZoom(second))
+        val third = FitRules.refit(second, 702f)!!
+        assertTrue(third.tablesBack)
+        assertEquals(second.width, third.width)
+        assertEquals(1f / second.shrink, FitRules.tableZoom(third)!!, 0.0001f)
+        // Never a fourth.
+        assertNull(FitRules.refit(third, 900f))
+    }
+
+    @Test fun aSecondLayoutThatFitsIsKept() {
+        val second = FitRules.fit(550f, 411f)!!
+        assertNull(FitRules.refit(second, 550f))
+        assertNull(FitRules.refit(second, 570f))
+    }
+
+    @Test fun theTableZoomFollowsTheCappedTextZoom() {
+        assertEquals(0.5f, FitRules.tableZoom(FitRules.Fit(1080, 3f, tablesBack = true))!!, 0.0001f)
     }
 }

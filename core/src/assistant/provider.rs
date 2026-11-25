@@ -61,7 +61,8 @@ pub struct Endpoint {
     pub provider: AiProvider,
     pub base_url: String,
     pub model: String,
-    /// Sent to Anthropic only, and only when it is not `Default`.
+    /// Sent only when it is not `Default`; the settings make it `Default` unless the service
+    /// listed the level for this address and model (see `settings::Levels`).
     pub effort: AiEffort,
     pub key: Option<String>,
 }
@@ -92,14 +93,25 @@ pub fn request_parts(ep: &Endpoint, system: &str, user: &str) -> Parts {
         AiProvider::OpenAiCompatible => Parts {
             url: format!("{}/chat/completions", ep.base_url),
             headers: ep.key.iter().map(|k| ("authorization", format!("Bearer {k}"))).collect(),
-            body: json!({
-                "model": ep.model,
-                "stream": true,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            }),
+            body: {
+                let mut body = json!({
+                    "model": ep.model,
+                    "stream": true,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                });
+                if let Some(level) = openai_effort_name(ep.effort) {
+                    if is_openrouter(&ep.base_url) {
+                        // OpenRouter documents its own field and maps it for each provider behind it.
+                        body["reasoning"] = json!({"effort": level});
+                    } else {
+                        body["reasoning_effort"] = json!(level);
+                    }
+                }
+                body
+            },
         },
         AiProvider::Anthropic => Parts {
             url: format!("{}/messages", ep.base_url),
@@ -126,16 +138,56 @@ pub fn request_parts(ep: &Endpoint, system: &str, user: &str) -> Parts {
     }
 }
 
-/// The word the Messages API uses for an effort; `None` for `Default`, which is not sent.
+/// The word the Messages API uses for an effort; `None` for `Default`, which is not sent, and for
+/// the levels the Messages API does not have.
 pub fn effort_name(effort: AiEffort) -> Option<&'static str> {
     match effort {
-        AiEffort::Default => None,
+        AiEffort::Default | AiEffort::Off | AiEffort::Minimal => None,
         AiEffort::Low => Some("low"),
         AiEffort::Medium => Some("medium"),
         AiEffort::High => Some("high"),
         AiEffort::XHigh => Some("xhigh"),
         AiEffort::Max => Some("max"),
     }
+}
+
+/// The word of the OpenAI protocol (`reasoning_effort`, OpenRouter's `reasoning.effort`); `None`
+/// for `Default`, which is not sent.
+pub fn openai_effort_name(effort: AiEffort) -> Option<&'static str> {
+    match effort {
+        AiEffort::Default => None,
+        AiEffort::Off => Some("none"),
+        AiEffort::Minimal => Some("minimal"),
+        other => effort_name(other),
+    }
+}
+
+/// The level a service names with `word`, in either protocol; `None` for a word the app does not know.
+pub fn effort_named(word: &str) -> Option<AiEffort> {
+    Some(match word {
+        "none" => AiEffort::Off,
+        "minimal" => AiEffort::Minimal,
+        "low" => AiEffort::Low,
+        "medium" => AiEffort::Medium,
+        "high" => AiEffort::High,
+        "xhigh" => AiEffort::XHigh,
+        "max" => AiEffort::Max,
+        _ => return None,
+    })
+}
+
+/// Whether `base_url` is OpenRouter's, which takes the effort as `reasoning.effort`.
+pub fn is_openrouter(base_url: &str) -> bool {
+    host_is(base_url, "openrouter.ai")
+}
+
+/// Whether the host of `base_url` is `name` or one of its subdomains.
+pub fn host_is(base_url: &str, name: &str) -> bool {
+    let host = url::Url::parse(base_url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    host.is_some_and(|host| {
+        let host = host.trim_end_matches('.');
+        host == name || host.strip_suffix(name).is_some_and(|rest| rest.ends_with('.'))
+    })
 }
 
 /// A header value that never shows up in a log (the key goes through here).
@@ -290,14 +342,58 @@ fn stream_error() -> Error {
     Error::temporary("the service reported an error while answering")
 }
 
-/// What to tell the user about an HTTP status. The body of the answer is never read.
+/// What to tell the user about an HTTP status, without its body (see [`refusal`] for a 404).
 pub fn status_error(status: u16) -> Error {
     match status {
         401 | 403 => Error::temporary("the service refused the key"),
-        404 => Error::temporary("the service does not know this model or address"),
+        404 => Error::temporary(NOT_HERE),
         429 => Error::temporary("the service is busy or the quota is used up"),
         500..=599 => Error::temporary(format!("the service has a problem (status {status}); try again later")),
         _ => Error::temporary(format!("the service did not accept the request (status {status})")),
+    }
+}
+
+/// A 404 whose body says nothing more: most likely the address is wrong.
+pub const NOT_HERE: &str = "the service has nothing at this address; check the address of the service";
+/// A 404 about the model: the service has no such model, or not for this key.
+pub const UNKNOWN_MODEL: &str = "the service does not know this model, or this key may not use it";
+/// A 404 that says the model works only through another interface than chat (OpenAI's Responses
+/// API, an embedding or speech model).
+pub const NOT_CHAT: &str = "this model does not take chat requests; pick another model";
+/// A 404 from a router (OpenRouter) that has the model but no provider for this request.
+pub const NO_ROUTE: &str = "the service has no provider that can answer this request with this model \
+     (for example one that takes tools, or one your account's privacy settings allow)";
+
+/// What to tell the user about a refused request. For a 404 the body is looked at for one fact
+/// only, which kind of thing was not there, and that becomes one of the fixed sentences above:
+/// nothing of the body itself is kept, shown or logged. Any other status is [`status_error`].
+pub fn refusal(status: u16, body: &[u8]) -> Error {
+    if status != 404 {
+        return status_error(status);
+    }
+    let body = body.to_ascii_lowercase();
+    let has = |word: &str| body.windows(word.len()).any(|w| w == word.as_bytes());
+    let text = if has("not a chat model") || has("v1/responses") || has("only supported in") {
+        NOT_CHAT
+    } else if has("no endpoints found") || has("no allowed providers") {
+        NO_ROUTE
+    } else if has("model") {
+        UNKNOWN_MODEL
+    } else {
+        NOT_HERE
+    };
+    Error::temporary(text)
+}
+
+/// [`refusal`] for `response`; its body is read (at most [`REFUSAL_BODY`]) only for a 404.
+pub async fn refused(response: reqwest::Response, idle: Duration) -> Error {
+    let status = response.status().as_u16();
+    if status != 404 {
+        return status_error(status);
+    }
+    match read_capped(response, REFUSAL_BODY, idle).await {
+        Ok(body) => refusal(status, &body),
+        Err(_) => status_error(status),
     }
 }
 
@@ -400,7 +496,7 @@ pub async fn complete_with_usage(
         Ok(Ok(response)) => response,
     };
     if !response.status().is_success() {
-        return Err(status_error(response.status().as_u16()));
+        return Err(refused(response, timeouts.idle).await);
     }
 
     let mut reader = Reader {
@@ -482,7 +578,7 @@ const MAX_ARGS_CHARS: usize = 20_000;
 /// More content blocks than this in one turn is not an answer we understand.
 const MAX_BLOCKS: usize = 64;
 /// The most that is read of a refused request's answer, to see whether it is about the tools.
-const REFUSAL_BODY: usize = 64 * 1024;
+pub const REFUSAL_BODY: usize = 64 * 1024;
 
 /// Whether the body of a refused request names tools: "tool", "tools", "tool_choice" or "function(s)"
 /// (what OpenAI-compatible servers and Ollama say). Only this one fact is taken from it.
@@ -1059,12 +1155,12 @@ pub async fn converse_with_usage(
             // fact to report. Any other status is that status.
             return Err(match response.status().as_u16() {
                 400 => Error::ToolsUnsupported,
-                other => status_error(other),
+                _ => self::refused(response, timeouts.idle).await,
             });
         }
         refused = ToolsRefused::Yes;
     } else if !response.status().is_success() {
-        return Err(status_error(status));
+        return Err(self::refused(response, timeouts.idle).await);
     }
 
     let mut reader = ChatReader::new(ep.provider, on_text);
@@ -1166,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn effort_goes_into_the_anthropic_body_only() {
+    fn effort_goes_into_each_protocol_in_its_own_field() {
         for (effort, word) in [
             (AiEffort::Low, "low"),
             (AiEffort::Medium, "medium"),
@@ -1175,12 +1271,50 @@ mod tests {
             (AiEffort::Max, "max"),
         ] {
             let anthropic = Endpoint { effort, ..ep(AiProvider::Anthropic, Some("k")) };
-            assert_eq!(request_parts(&anthropic, "s", "u").body["output_config"], json!({"effort": word}));
+            let body = request_parts(&anthropic, "s", "u").body;
+            assert_eq!(body["output_config"], json!({"effort": word}));
+            assert!(body.get("reasoning_effort").is_none() && body.get("reasoning").is_none());
             let openai = Endpoint { effort, ..ep(AiProvider::OpenAiCompatible, None) };
-            assert!(request_parts(&openai, "s", "u").body.get("output_config").is_none());
+            let body = request_parts(&openai, "s", "u").body;
+            assert_eq!(body["reasoning_effort"], json!(word));
+            assert!(body.get("output_config").is_none() && body.get("reasoning").is_none());
+            let router = Endpoint { base_url: "https://openrouter.ai/api/v1".into(), ..openai };
+            let body = request_parts(&router, "s", "u").body;
+            assert_eq!(body["reasoning"], json!({"effort": word}));
+            assert!(body.get("reasoning_effort").is_none());
         }
-        let default = request_parts(&ep(AiProvider::Anthropic, Some("k")), "s", "u");
-        assert!(default.body.get("output_config").is_none());
+        for provider in [AiProvider::Anthropic, AiProvider::OpenAiCompatible] {
+            let body = request_parts(&ep(provider, Some("k")), "s", "u").body;
+            for field in ["output_config", "reasoning_effort", "reasoning"] {
+                assert!(body.get(field).is_none(), "{field} sent for Default");
+            }
+        }
+        // The levels only OpenAI-style services have never reach the Messages API.
+        for (effort, word) in [(AiEffort::Off, "none"), (AiEffort::Minimal, "minimal")] {
+            let anthropic = Endpoint { effort, ..ep(AiProvider::Anthropic, Some("k")) };
+            assert!(request_parts(&anthropic, "s", "u").body.get("output_config").is_none());
+            let openai = Endpoint { effort, ..ep(AiProvider::OpenAiCompatible, None) };
+            assert_eq!(request_parts(&openai, "s", "u").body["reasoning_effort"], json!(word));
+        }
+    }
+
+    #[test]
+    fn effort_words_go_both_ways() {
+        for word in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
+            let effort = effort_named(word).unwrap();
+            assert_eq!(openai_effort_name(effort), Some(word));
+        }
+        assert_eq!(effort_named("default"), None);
+        assert_eq!(effort_named("HIGH"), None);
+    }
+
+    #[test]
+    fn openrouter_is_known_by_its_host_only() {
+        assert!(is_openrouter("https://openrouter.ai/api/v1"));
+        assert!(is_openrouter("https://eu.openrouter.ai/api/v1"));
+        assert!(!is_openrouter("https://notopenrouter.ai/api/v1"));
+        assert!(!is_openrouter("https://openrouter.ai.example.com/v1"));
+        assert!(!is_openrouter("https://example.com/openrouter.ai"));
     }
 
     #[test]
@@ -1276,11 +1410,48 @@ mod tests {
         let msg = |s| status_error(s).to_string();
         assert_eq!(msg(401), "the service refused the key");
         assert_eq!(msg(403), "the service refused the key");
-        assert_eq!(msg(404), "the service does not know this model or address");
+        assert_eq!(msg(404), NOT_HERE);
         assert_eq!(msg(429), "the service is busy or the quota is used up");
         assert!(msg(503).contains("status 503"));
         assert!(msg(400).contains("status 400"));
         assert!((401..=599).all(|s| matches!(status_error(s), Error::Temporary { .. })));
+    }
+
+    #[test]
+    fn a_404_says_which_thing_was_not_there_and_nothing_of_the_body() {
+        let msg = |body: &str| refusal(404, body.as_bytes()).to_string();
+        // Anthropic, OpenAI, Gemini: the model.
+        assert_eq!(
+            msg(r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-x sk-SECRET"}}"#),
+            UNKNOWN_MODEL
+        );
+        assert_eq!(
+            msg(r#"{"error":{"message":"The model `gpt-x` does not exist","code":"model_not_found"}}"#),
+            UNKNOWN_MODEL
+        );
+        assert_eq!(
+            msg(r#"{"error":{"code":404,"message":"models/x is not found for API version v1beta"}}"#),
+            UNKNOWN_MODEL
+        );
+        // OpenAI: a model of another interface.
+        assert_eq!(msg("This model is only supported in v1/responses and not in v1/chat/completions."), NOT_CHAT);
+        assert_eq!(
+            msg("This is not a chat model and thus not supported in the v1/chat/completions endpoint."),
+            NOT_CHAT
+        );
+        // OpenRouter: the model is there, but no provider for this request.
+        assert_eq!(msg(r#"{"error":{"message":"No endpoints found that support tool use.","code":404}}"#), NO_ROUTE);
+        assert_eq!(
+            msg(r#"{"error":{"message":"No allowed providers are available for the selected model."}}"#),
+            NO_ROUTE
+        );
+        // A wrong path: a page, or nothing.
+        assert_eq!(msg("<html>Not Found</html>"), NOT_HERE);
+        assert_eq!(msg(""), NOT_HERE);
+        assert!(!msg("model sk-SECRET").contains("SECRET"));
+        // Any other status ignores the body.
+        assert_eq!(refusal(400, b"model not found").to_string(), status_error(400).to_string());
+        assert_eq!(refusal(401, b"no endpoints found").to_string(), "the service refused the key");
     }
 
     // ---- a conversation with tools --------------------------------------------------------

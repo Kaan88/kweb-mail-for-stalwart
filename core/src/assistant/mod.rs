@@ -36,13 +36,13 @@ use std::{
 use tokio::sync::Notify;
 
 use crate::{
-    model::{AiProvider, AiSettings, AiTask},
+    model::{AiModelList, AiProvider, AiSettings, AiTask},
     secrets::SecretStore,
     store::Store,
     Error, Result,
 };
 use provider::Endpoint;
-use settings::{key_name, Profile, Stored, KEY_NAMES, LEGACY_KEY_NAME, SETTINGS_KEY};
+use settings::{key_name, Levels, Profile, Stored, KEY_NAMES, LEGACY_KEY_NAME, SETTINGS_KEY};
 
 /// The settings as stored, with the service in use and its `has_key` read from the secret
 /// store. A stored value that cannot be read is the same as nothing stored: the assistant is
@@ -138,6 +138,8 @@ pub fn save(
         // Only a chat finds this out; it holds for this address and model and no other.
         tools_unsupported: before.tools_unsupported
             && (before.base_url.as_str(), before.model.as_str()) == (base_url.as_str(), model.as_str()),
+        // What the service listed; it says for which address, so a new one simply finds nothing.
+        levels: before.levels,
     };
     let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
     match key {
@@ -147,6 +149,37 @@ pub fn save(
     }
     store.kv_set(account_id, SETTINGS_KEY, &json)?;
     load(store, secrets, account_id)
+}
+
+/// Keeps the effort levels of `list`, which the service `provider` at `base_url` just gave, so that
+/// an effort is sent only where the service named it. A built-in list (the service was not asked
+/// or could not answer) changes nothing. Local; nothing else of the list is kept.
+pub fn remember_levels(
+    store: &Store,
+    secrets: &dyn SecretStore,
+    account_id: &str,
+    provider: AiProvider,
+    base_url: &str,
+    list: &AiModelList,
+) -> Result<()> {
+    if !list.from_service {
+        return Ok(());
+    }
+    let mut stored = read(store, secrets, account_id)?;
+    let levels = Levels::of(base_url, list);
+    // A list for an address typed but not saved must not replace the saved address's levels: the
+    // saved service would stop getting its effort. Saving reads the list again for the new address.
+    let saved = stored.profile(provider).base_url.trim().trim_end_matches('/');
+    if !saved.is_empty() && saved != levels.base_url {
+        return Ok(());
+    }
+    let before = &stored.profile(provider).levels;
+    if *before == levels || (before.models.is_empty() && levels.models.is_empty()) {
+        return Ok(());
+    }
+    stored.profile_mut(provider).levels = levels;
+    let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
+    store.kv_set(account_id, SETTINGS_KEY, &json)
 }
 
 /// Puts the account's assistant settings back to how it is before the user has done anything
@@ -453,6 +486,50 @@ mod tests {
         save(store, secrets, "a", s, None).unwrap()
     }
 
+    fn listed(model: &str, efforts: &[AiEffort], from_service: bool) -> AiModelList {
+        let models = vec![crate::model::AiModel { id: model.into(), name: model.into(), efforts: efforts.to_vec() }];
+        AiModelList { models, from_service }
+    }
+
+    #[test]
+    fn levels_from_the_service_survive_saves_and_go_with_a_reset() {
+        let (store, secrets) = rig();
+        let high = AiSettings { effort: AiEffort::High, ..other() };
+        assert_eq!(agreed(&store, &secrets, high.clone(), None).effort, AiEffort::Default);
+        // A built-in list is no word of the service.
+        let p = AiProvider::OpenAiCompatible;
+        remember_levels(&store, &secrets, "a", p, &high.base_url, &listed("o", &[AiEffort::High], false)).unwrap();
+        assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::Default);
+        // The service's own list: the stored level is shown and sent from now on, its consent untouched.
+        remember_levels(&store, &secrets, "a", p, &high.base_url, &listed("o", &[AiEffort::High], true)).unwrap();
+        let now = load(&store, &secrets, "a").unwrap();
+        assert!(now.effort == AiEffort::High && now.consented);
+        assert_eq!(endpoint(&now, &secrets).unwrap().effort, AiEffort::High);
+        // A save keeps the levels; the other service has none of them.
+        assert_eq!(save(&store, &secrets, "a", high.clone(), None).unwrap().effort, AiEffort::High);
+        let anthropic = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
+        assert_eq!(anthropic.effort, AiEffort::Default);
+        // A list for an address typed but not saved neither counts nor replaces the saved address's levels.
+        remember_levels(&store, &secrets, "a", p, "https://elsewhere.example/v1", &listed("o", &[], true)).unwrap();
+        assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::High);
+        let moved = AiSettings { base_url: "https://elsewhere.example/v1".into(), ..high.clone() };
+        assert_eq!(save(&store, &secrets, "a", moved, None).unwrap().effort, AiEffort::Default);
+        remember_levels(
+            &store,
+            &secrets,
+            "a",
+            p,
+            "https://elsewhere.example/v1",
+            &listed("o", &[AiEffort::High], true),
+        )
+        .unwrap();
+        assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::High);
+        save(&store, &secrets, "a", high.clone(), None).unwrap();
+        reset(&store, &secrets, "a").unwrap();
+        save(&store, &secrets, "a", high, None).unwrap();
+        assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::Default);
+    }
+
     #[test]
     fn nothing_stored_is_off_and_not_agreed() {
         let (store, secrets) = rig();
@@ -507,7 +584,8 @@ mod tests {
         let before = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
         // Saving the other service changes nothing of the first.
         let second = agreed(&store, &secrets, other(), Some("sk-o".into()));
-        assert!(second.consented && second.has_key && second.effort == AiEffort::High);
+        // The service never listed a level for this model, so none is shown (or sent).
+        assert!(second.consented && second.has_key && second.effort == AiEffort::Default);
         assert_eq!(load(&store, &secrets, "a").unwrap().provider, AiProvider::OpenAiCompatible);
         let after = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
         assert_eq!(after, AiSettings { provider: AiProvider::Anthropic, ..before.clone() });

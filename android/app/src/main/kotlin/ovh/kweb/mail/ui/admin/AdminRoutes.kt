@@ -5,7 +5,7 @@ import androidx.compose.runtime.Composable
 /** The screens of the admin area. A route of the app ([ovh.kweb.mail.ui.Route.Admin]) holds one of these. */
 sealed interface AdminScreen {
     /** The screen holds what the user typed (a new account, a password or limit in a dialog): it is treated as a form. */
-    val holdsInput: Boolean get() = this is NewAccount || this is Account || this is Domains || this is Domain
+    val holdsInput: Boolean get() = this is NewAccount || this is Account || this is Domains || this is Domain || this is DmarcCheck || this is SpamCheck
     /** The start: the figures, or the access screen's content while no key is kept. */
     data object Home : AdminScreen
 
@@ -38,7 +38,12 @@ sealed interface AdminScreen {
 
     data object Logs : AdminScreen
 
+    /** The Actions screen (the area is still called Maintenance inside the code). */
     data object Maintenance : AdminScreen
+
+    data object DmarcCheck : AdminScreen
+
+    data object SpamCheck : AdminScreen
 
     /** An Enterprise area: its screen is in ui/enterprise; [EnterpriseArea] shows it. */
     data class Enterprise(val area: AdminArea) : AdminScreen
@@ -71,7 +76,9 @@ fun AdminRoutes(
         AdminScreen.Cluster -> ClusterScreen(onBack = onBack)
         AdminScreen.Blocked -> BlockedScreen(onBack = onBack)
         AdminScreen.Logs -> LogsScreen(onBack = onBack)
-        AdminScreen.Maintenance -> MaintenanceScreen(onBack = onBack)
+        AdminScreen.Maintenance -> ActionsScreen(onBack = onBack, onOpen = onOpen)
+        AdminScreen.DmarcCheck -> DmarcCheckScreen(onBack = onBack)
+        AdminScreen.SpamCheck -> SpamCheckScreen(onBack = onBack)
         is AdminScreen.Enterprise -> EnterpriseArea(screen.area, onBack = onBack, onOpenPage = onOpenEnterprise)
     }
 }

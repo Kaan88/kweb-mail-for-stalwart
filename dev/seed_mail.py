@@ -6,6 +6,7 @@
     python dev/seed_mail.py bulk 200   # 200 short mails, for lists and search
     python dev/seed_mail.py wide       # a 640-pixel newsletter of fixed-width tables (fit and zoom)
     python dev/seed_mail.py signature  # an Outlook reply: running text and a 550-pixel signature table (text size)
+    python dev/seed_mail.py table      # running text and a table of short cells with no width of its own (third layout)
 
 See dev/README.md for the server itself.
 """
@@ -160,6 +161,28 @@ def signature():
     return html("Jane Example <jane@example.com>", "RE: Figures (550 px signature)", long + "\n", markup)
 
 
+def table():
+    """A request with a data table of short, unbreakable cells and no width of its own, as in the owner's example
+    (2026-11-25): with the text made larger the table grew too, and the running text wrapped at two thirds of the window."""
+    span = "<span style='font-size:11.0pt;font-family:\"Calibri\",sans-serif'>{}</span>"
+    para = "<p class=MsoNormal style='margin:0'>" + span + "</p>"
+    head = "<td nowrap style='border:solid #999 1.0pt;background:#D9E1F2;padding:0 3pt'><b>{}</b></td>"
+    cell = "<td nowrap style='border:solid #999 1.0pt;padding:0 3pt'>{}</td>"
+    grid = ("<table class=MsoNormalTable border=0 cellspacing=0 cellpadding=0 style='border-collapse:collapse'><tr>"
+            + "".join(head.format(h) for h in ["Job ID", "Client", "Project Name", "Runtime", "Due date"])
+            + "</tr><tr>"
+            + "".join(cell.format(c) for c in ["1000001", "Example Films", "Sample_Feature_EX_FT_01", "120min",
+                                               "30-Nov, 6PM UTC"])
+            + "</tr></table>")
+    text = ("We have received the title below for a review task. Please check the details and let us know "
+            "if you are available to take on the file.")
+    markup = (f"<html><body><div class=WordSection1 style='background:white'>{para.format('Hello Tester,')}"
+              f"{para.format('&nbsp;')}{para.format(text)}{para.format('&nbsp;')}{grid}{para.format('&nbsp;')}"
+              f"{para.format('Please follow the guidelines at https://example.com/guide/2032 for this one.')}"
+              f"{para.format('&nbsp;')}{para.format('Looking forward to hearing from you.')}</div></body></html>")
+    return html("Coordinator <coord@example.com>", "New task (table of short cells)", text + "\n", markup)
+
+
 def credentials():
     """`user:password` of the test user, written by the set-up (see dev/README.md)."""
     path = os.environ.get("KWEB_TEST_CREDS") or os.path.expanduser("~/tools/stalwart-test/etc/tester.txt")
@@ -215,6 +238,8 @@ if __name__ == "__main__":
         send([wide()])
     elif mode == "signature":
         send([signature()])
+    elif mode == "table":
+        send([table()])
     elif mode == "bulk":
         send(bulk(int(sys.argv[2]) if len(sys.argv) > 2 else 100))
     else:

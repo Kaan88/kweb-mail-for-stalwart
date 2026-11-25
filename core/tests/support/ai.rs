@@ -38,6 +38,8 @@ pub enum Script {
     Answer(Vec<String>),
     /// An error status; the body echoes the credentials it was sent.
     Status(u16),
+    /// An error status with this body, followed by the credentials it was sent.
+    StatusBody(u16, String),
     /// A redirect to this address.
     Redirect(String),
     /// The pieces, then silence for ever: the connection stays open.
@@ -74,6 +76,8 @@ pub enum Models {
     Status(u16),
     /// A redirect to this address.
     Redirect(String),
+    /// This JSON document as it is (any service's shape).
+    Raw(Value),
     /// A 200 that is not JSON.
     Garbage,
     /// A JSON document longer than any list should be.
@@ -350,6 +354,7 @@ async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> R
             .header(header::LOCATION, to)
             .body(Body::empty())
             .unwrap(),
+        Models::Raw(value) => json(value),
         Models::Garbage => (StatusCode::OK, "this is not json").into_response(),
         Models::Huge => {
             (StatusCode::OK, format!("{{\"data\":[],\"pad\":\"{}\"}}", "x".repeat(2_200_000))).into_response()
@@ -371,6 +376,9 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool, usage:
         Script::Status(code) => {
             let body = json!({"error": {"message": format!("Incorrect API key provided: {echoed}")}});
             return (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response();
+        }
+        Script::StatusBody(code, text) => {
+            return (StatusCode::from_u16(code).unwrap(), format!("{text} {echoed}")).into_response();
         }
         Script::Redirect(to) => {
             return Response::builder()

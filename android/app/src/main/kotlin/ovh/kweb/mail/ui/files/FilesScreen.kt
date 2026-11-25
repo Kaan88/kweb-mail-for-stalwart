@@ -7,6 +7,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -18,6 +27,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +41,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -47,6 +58,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -71,7 +83,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -89,9 +105,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.ZoneId
 import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
-import ovh.kweb.mail.ui.AtPress
-import ovh.kweb.mail.ui.notePress
-import ovh.kweb.mail.ui.rememberPressPoint
 import ovh.kweb.mail.ui.account.rememberCopier
 import ovh.kweb.mail.ui.accounts.AccountAvatarButton
 import ovh.kweb.mail.ui.contacts.SearchPill
@@ -209,16 +222,22 @@ fun FilesScreen(bottomBar: @Composable () -> Unit, appSnackbar: SnackbarHostStat
     // Back closes the search, then goes up a folder; at the top it is the app's.
     BackHandler(enabled = state.query != null) { c.closeSearch() }
     BackHandler(enabled = state.query == null && state.canGoUp) { c.up() }
+    // Registered last, so it is asked first: Back lets go of the chosen entries before anything else.
+    BackHandler(enabled = state.selecting) { c.clearSelection() }
 
     val zone = remember { ZoneId.systemDefault() }
     val menuAdd = remember { mutableStateOf(false) }
 
     Scaffold(
-        topBar = { FilesTopBar(state, c) },
+        topBar = {
+            Crossfade(targetState = state.selecting, animationSpec = tween(150), label = "files top bar") { choosing ->
+                if (choosing) FilesSelectionBar(state, c) else FilesTopBar(state, c)
+            }
+        },
         bottomBar = bottomBar,
         snackbarHost = { SnackbarHost(appSnackbar) },
         floatingActionButton = {
-            if (state.mayAdd) {
+            if (state.mayAdd && !state.selecting) {
                 Box {
                     ovh.kweb.mail.ui.list.KwebFab(Icons.Filled.Add, stringResource(R.string.files_add), onClick = { menuAdd.value = true })
                     DropdownMenu(expanded = menuAdd.value, onDismissRequest = { menuAdd.value = false }) {
@@ -403,7 +422,7 @@ private fun Body(
                     results.isEmpty() -> item(key = "none") { Centered { Hint(stringResource(R.string.files_search_none)) } }
                     else -> itemsIndexed(results, key = { _, e -> "r/${e.id}" }) { index, entry ->
                         val where = entry.parentId?.let { state.folderNames[it] }?.let { resources.getString(R.string.files_in_folder, it) }
-                        EntryRow(entry, index, results.size, subtitle = listOfNotNull(FileRules.subtitle(entry, zone, locale, sizeUnits).ifEmpty { null }, where).joinToString(" · "), state.publicLinkLimits != null, onAction)
+                        EntryRow(entry, index, results.size, subtitle = listOfNotNull(FileRules.subtitle(entry, zone, locale, sizeUnits).ifEmpty { null }, where).joinToString(" · "), state.publicLinkLimits != null, onAction, state.selecting, entry.id in state.selection, c::toggleSelected)
                     }
                 }
             }
@@ -443,7 +462,7 @@ private fun Body(
                             listing == null -> item(key = "loading") { Centered { CircularProgressIndicator() } }
                             listing.entries.isEmpty() -> item(key = "empty") { Centered { Hint(stringResource(R.string.files_empty)) } }
                             else -> itemsIndexed(listing.entries, key = { _, e -> e.id }) { index, entry ->
-                                EntryRow(entry, index, listing.entries.size, subtitle = FileRules.subtitle(entry, zone, locale, sizeUnits), state.publicLinkLimits != null, onAction)
+                                EntryRow(entry, index, listing.entries.size, subtitle = FileRules.subtitle(entry, zone, locale, sizeUnits), state.publicLinkLimits != null, onAction, state.selecting, entry.id in state.selection, c::toggleSelected)
                             }
                         }
                     }
@@ -514,21 +533,58 @@ private fun GroupRow(
     shared: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     endPadding: androidx.compose.ui.unit.Dp = 16.dp,
+    /** A row that can be chosen: a tap on its picture chooses it, and a chosen one shows a check mark there. */
+    onIconClick: (() -> Unit)? = null,
+    selected: Boolean = false,
     trailing: @Composable () -> Unit = {},
 ) {
+    val colors = MaterialTheme.colorScheme
+    val container by animateColorAsState(if (selected) colors.secondaryContainer else colors.surfaceContainerLow, tween(150), label = "file row")
     Row(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .padding(top = if (index == 0) 0.dp else 3.dp)
             .clip(Groups.shape(index, count))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .background(container)
+            .then(if (onIconClick != null) Modifier.semantics { this.selected = selected } else Modifier)
             .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
             .padding(start = 16.dp, end = endPadding, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        FileIconBadge(icon, shared = shared)
+        if (onIconClick == null) {
+            FileIconBadge(icon, shared = shared)
+        } else {
+            Box(
+                Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(
+                        onClickLabel = stringResource(if (selected) R.string.selection_deselect else R.string.selection_select),
+                        onClick = onIconClick,
+                        onLongClick = onLongClick,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                AnimatedContent(
+                    targetState = selected,
+                    transitionSpec = {
+                        (fadeIn(tween(160)) + scaleIn(tween(160), initialScale = 0.6f)) togetherWith
+                            (fadeOut(tween(90)) + scaleOut(tween(90), targetScale = 0.6f))
+                    },
+                    label = "file icon",
+                ) { chosen ->
+                    if (chosen) {
+                        Box(Modifier.size(44.dp).clip(CircleShape).background(colors.primary), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onPrimary, modifier = Modifier.size(24.dp))
+                        }
+                    } else {
+                        FileIconBadge(icon, shared = shared)
+                    }
+                }
+            }
+        }
         Column(Modifier.weight(1f).padding(vertical = 2.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (subtitle.isNotEmpty()) {
@@ -547,15 +603,23 @@ private fun GroupRow(
 
 /** One file or folder, with its menu (the three dots, or a long press) for what its rights allow. */
 @Composable
-private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String, publicLinks: Boolean, onAction: (FileEntry, RowAction) -> Unit) {
+private fun EntryRow(
+    entry: FileEntry,
+    index: Int,
+    count: Int,
+    subtitle: String,
+    publicLinks: Boolean,
+    onAction: (FileEntry, RowAction) -> Unit,
+    selecting: Boolean,
+    selected: Boolean,
+    onToggle: (FileEntry) -> Unit,
+) {
     val actions = remember(entry, publicLinks) { FileRules.rowActions(entry, publicLinks) }
     // "Share" for a folder of the user's own space; the entries of a shared space are not the user's to share.
     val openShare = LocalOpenShare.current
     val shareable = ShareRules.fileFolderShareable(entry)
     var menu by remember { mutableStateOf(false) }
-    // Opened by a long press the menu hangs at the finger; opened by the dots, from the dots.
-    var atFinger by remember { mutableStateOf(false) }
-    val press = rememberPressPoint()
+    val haptic = LocalHapticFeedback.current
     val labels = mapOf(
         RowAction.Open to R.string.files_open,
         RowAction.Save to R.string.files_save,
@@ -587,28 +651,92 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
             )
         }
     }
-    Box(Modifier.notePress(press)) {
+    Box {
         GroupRow(
             index = index,
             count = count,
-            onClick = { onAction(entry, RowAction.Open) },
+            // As in the mail list: a long press or a tap on the picture starts choosing, and while entries are chosen a tap
+            // anywhere on a row chooses or lets go of it. The row's menu stays on its dots.
+            onClick = { if (selecting) onToggle(entry) else onAction(entry, RowAction.Open) },
             icon = FileRules.iconFor(entry.kind, entry.mediaType, entry.name),
             title = entry.name,
             subtitle = subtitle,
-            onLongClick = if (!hasMenu) null else ({ press.settle(); atFinger = true; menu = true }),
-            endPadding = if (!hasMenu) 16.dp else 4.dp,
+            onLongClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onToggle(entry) },
+            onIconClick = { onToggle(entry) },
+            selected = selected,
+            endPadding = if (!hasMenu || selecting) 16.dp else 4.dp,
             trailing = {
-                if (hasMenu) {
+                if (hasMenu && !selecting) {
                     Box {
-                        IconButton(onClick = { atFinger = false; menu = true }) {
+                        IconButton(onClick = { menu = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.files_more, entry.name))
                         }
-                        if (!atFinger) DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { items() }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { items() }
                     }
                 }
             },
         )
-        if (hasMenu && atFinger) AtPress(press) { DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { items() } }
+    }
+}
+
+/**
+ * The bar of the chosen entries, in the place of the search field, as in the mail list: close, how many, Move and Delete
+ * when every chosen entry allows them, and Select all.
+ */
+@Composable
+private fun FilesSelectionBar(state: FilesState, c: FilesController) {
+    val colors = MaterialTheme.colorScheme
+    val chosen = state.chosen
+    val count = state.selection.size
+    Column(Modifier.background(colors.background).statusBarsPadding()) {
+        Surface(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth().height(52.dp),
+            shape = CircleShape,
+            color = colors.secondaryContainer,
+            contentColor = colors.onSecondaryContainer,
+        ) {
+            Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = c::clearSelection) {
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.selection_close))
+                }
+                val description = pluralStringResource(R.plurals.selection_count, count, count)
+                Text(
+                    count.toString(),
+                    modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { contentDescription = description },
+                    style = MaterialTheme.typography.titleLarge,
+                    maxLines = 1,
+                )
+                if (FileRules.canMoveAll(chosen)) {
+                    IconButton(onClick = c::askMoveSelected) {
+                        Icon(painterResource(R.drawable.ic_folder), contentDescription = stringResource(R.string.files_move))
+                    }
+                }
+                if (FileRules.canDeleteAll(chosen)) {
+                    IconButton(onClick = c::askDeleteSelected) {
+                        Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.files_delete))
+                    }
+                }
+                val shown = state.shown.orEmpty()
+                if (shown.isNotEmpty() && !shown.all { it.id in state.selection }) {
+                    var menuOpen by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.selection_select_all)) },
+                                leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    c.selectAll()
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

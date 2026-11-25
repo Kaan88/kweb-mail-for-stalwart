@@ -55,7 +55,7 @@ data class AssistantSettingsState(
     val switching: Boolean = false,
     /** The picker's sheet, when open. */
     val models: ModelsState? = null,
-    /** The last list the service gave, for the effort levels of the model; dropped when the service changes. */
+    /** The last list the service gave, for the effort levels of the model; dropped when the service or address changes. */
     val modelList: AiModelList? = null,
     val consent: ConsentAsk? = null,
     /**
@@ -164,14 +164,58 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
         stored = settings
         val form = AssistantRules.formOf(settings)
         stateFlow.update { AssistantSettingsState(phase = AssistantPhase.READY, form = form, initial = form, hasKey = settings.hasKey, tools = AssistantRules.toolsFact(settings)) }
+        learnLevels()
     }
 
-    /** Changes the form; the effort falls back to Default when the new model does not offer it. */
+    /**
+     * Asks the service for its list in the background, without the sheet, so that the effort row offers the levels it
+     * names for the model (the core keeps them, and sends an effort only where they include it). Only where a request
+     * can work: a stored key (sent only to the address it was entered for, the core sees to that) or this device or a
+     * private network, and only while the assistant is switched on (nothing is asked of a service the user has not
+     * turned on). A failure changes nothing; the picker shows it when the user asks. Once the core has the levels, an
+     * effort stored before them is sent again, so the form is built again from the stored settings when the user has not
+     * changed it yet: the screen then shows the effort that is sent, and a later Save does not write Default over it.
+     */
+    private fun learnLevels() {
+        val s = stateFlow.value
+        val form = s.form ?: return
+        val base = stored ?: return
+        if (s.phase != AssistantPhase.READY || s.switching || form.model.isBlank() || !form.enabled) return
+        if (!s.hasKey && !AssistantRules.isPrivateAddress(form.baseUrl)) return
+        modelsJob?.cancel()
+        modelsJob = viewModelScope.launch {
+            try {
+                val list = withContext(Dispatchers.IO) { session.core.aiModels(form.toSettings(base), null) }
+                stateFlow.update { cur -> if (cur.form?.provider == form.provider && cur.models == null) cur.copy(modelList = list) else cur }
+                val again = withContext(Dispatchers.IO) { session.core.aiSettings() }
+                val fresh = AssistantRules.formOf(again)
+                stateFlow.update { cur ->
+                    if (cur.form == cur.initial && cur.form?.provider == fresh.provider && !cur.switching) {
+                        stored = again
+                        cur.copy(form = fresh, initial = fresh)
+                    } else {
+                        cur
+                    }
+                }
+                edit { it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "asking for the effort levels failed: ${e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    /**
+     * Changes the form. A new address drops the loaded list (its levels were another address's); the effort falls back
+     * to Default when the model, by the loaded list, does not offer it.
+     */
     fun edit(change: (AssistantRules.Form) -> AssistantRules.Form) = stateFlow.update { s ->
         val form = s.form ?: return@update s
         val next = change(form)
-        val effort = EffortRules.normalised(next.effort, next.provider, next.model, s.modelList)
-        s.copy(form = next.copy(effort = effort), error = null)
+        val list = if (next.baseUrl.trim().trimEnd('/') == form.baseUrl.trim().trimEnd('/')) s.modelList else null
+        val effort = EffortRules.normalised(next.effort, next.model, list)
+        s.copy(form = next.copy(effort = effort), modelList = list, error = null)
     }
 
     /**
@@ -200,6 +244,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 stateFlow.update { cur ->
                     cur.copy(form = cur.form?.switchedTo(service), hasKey = service.hasKey, switching = false, modelList = null, models = null, tools = AssistantRules.toolsFact(service))
                 }
+                learnLevels()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

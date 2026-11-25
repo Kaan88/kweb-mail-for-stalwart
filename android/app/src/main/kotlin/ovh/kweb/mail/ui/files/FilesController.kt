@@ -35,13 +35,23 @@ sealed interface FilesDialog {
     data class Rename(val entry: FileEntry) : FilesDialog
     data class Delete(val entry: FileEntry) : FilesDialog
 
-    /** Choosing where [entry] goes: [trail] is the way down to the folder shown, [listing] its content (null while it loads). */
+    /** Deleting the chosen entries together. */
+    data class DeleteMany(val entries: List<FileEntry>) : FilesDialog
+
+    /**
+     * Choosing where [entries] go (one, or the chosen ones): [trail] is the way down to the folder shown, [listing] its
+     * content (null while it loads).
+     */
     data class Move(
-        val entry: FileEntry,
+        val entries: List<FileEntry>,
         val trail: List<FileEntry>,
         val listing: FileListing? = null,
         val error: UiMessage? = null,
-    ) : FilesDialog
+    ) : FilesDialog {
+        /** The first entry moved: its name is the dialog's title when it is the only one. */
+        val entry: FileEntry get() = entries.first()
+        val key: List<String> get() = entries.map { it.id }
+    }
 
     /**
      * The public links of [entry]. [links] is null while they load; [revoking] is the link the user is asked about;
@@ -104,6 +114,8 @@ data class FilesState(
     val upload: UploadState? = null,
     /** The server's limits for public links; null while unknown or when the server has none (the entry is then not offered). */
     val publicLinkLimits: PublicLinkLimits? = null,
+    /** The ids of the chosen entries (a long press or a tap on the picture starts choosing, as in the mail list). */
+    val selection: Set<String> = emptySet(),
 ) {
     /** The listing is for the top level or a folder, not the choice of spaces. */
     val atSpaceChoice: Boolean get() = space == null && (spaces?.size ?: 0) > 1
@@ -113,6 +125,14 @@ data class FilesState(
 
     /** A file or folder may be created in the place shown. */
     val mayAdd: Boolean get() = space != null && query == null && (listing?.mayAdd ?: false)
+
+    val selecting: Boolean get() = selection.isNotEmpty()
+
+    /** The entries shown now: the search's results while searching, otherwise the folder's. */
+    val shown: List<FileEntry>? get() = if (query != null) results else listing?.entries
+
+    /** The chosen entries, in the order shown. */
+    val chosen: List<FileEntry> get() = if (selection.isEmpty()) emptyList() else shown.orEmpty().filter { it.id in selection }
 }
 
 sealed interface FilesEvent {
@@ -287,7 +307,7 @@ class FilesController(
 
     fun selectSpace(space: FileSpace) {
         closeSearch()
-        flow.update { it.copy(space = space, trail = emptyList(), trailConfirmed = true, listing = null) }
+        flow.update { it.copy(space = space, trail = emptyList(), trailConfirmed = true, listing = null, selection = emptySet()) }
         load(clear = true, refreshing = false)
     }
 
@@ -298,14 +318,15 @@ class FilesController(
         if (fromSearch) closeSearch()
         // A folder from a search may be anywhere in the space: its place is only known once its listing arrives.
         flow.update {
-            if (fromSearch) it.copy(trail = listOf(folder), trailConfirmed = false, listing = null)
-            else it.copy(trail = it.trail + folder, listing = null)
+            if (fromSearch) it.copy(trail = listOf(folder), trailConfirmed = false, listing = null, selection = emptySet())
+            else it.copy(trail = it.trail + folder, listing = null, selection = emptySet())
         }
         load(clear = true, refreshing = false)
     }
 
     /** The back arrow and system back: up a folder, or from the top of a space to the choice of places. */
     fun up() {
+        clearSelection()
         val s = flow.value
         if (s.trail.isNotEmpty() && !s.trailConfirmed) {
             // We do not know where this folder is: back goes to the search it was found in.
@@ -344,6 +365,7 @@ class FilesController(
                 flow.update {
                     it.copy(
                         listing = listing,
+                        selection = if (it.query == null) FileRules.prune(it.selection, listing.entries) else it.selection,
                         trail = trailOf(listing, folderId, it.trail),
                         trailConfirmed = true,
                         loading = false,
@@ -376,14 +398,48 @@ class FilesController(
 
     fun openSearch() {
         if (flow.value.space == null) return
-        flow.update { it.copy(query = "", results = null, searching = false, searchError = null) }
+        flow.update { it.copy(query = "", results = null, searching = false, searchError = null, selection = emptySet()) }
     }
 
     fun closeSearch() {
         searchGen++
         searchJob?.cancel()
-        flow.update { it.copy(query = null, results = null, searching = false, searchError = null) }
+        flow.update { it.copy(query = null, results = null, searching = false, searchError = null, selection = emptySet()) }
     }
+
+    // ---- choosing several entries
+
+    /** [entry] chosen if it was not, let go of if it was. */
+    fun toggleSelected(entry: FileEntry) = flow.update {
+        it.copy(selection = if (entry.id in it.selection) it.selection - entry.id else it.selection + entry.id)
+    }
+
+    fun clearSelection() = flow.update { if (it.selection.isEmpty()) it else it.copy(selection = emptySet()) }
+
+    /** Every entry shown. */
+    fun selectAll() = flow.update { s -> s.copy(selection = s.shown.orEmpty().mapTo(LinkedHashSet()) { it.id }) }
+
+    fun askDeleteSelected() {
+        val chosen = flow.value.chosen
+        if (!FileRules.canDeleteAll(chosen)) return
+        // One chosen entry gets the dialog of a single one, with its name and kind.
+        val dialog = if (chosen.size == 1) FilesDialog.Delete(chosen.single()) else FilesDialog.DeleteMany(chosen)
+        flow.update { it.copy(dialog = dialog, dialogError = null) }
+    }
+
+    fun askMoveSelected() {
+        val chosen = flow.value.chosen
+        if (!FileRules.canMoveAll(chosen)) return
+        val start = if (flow.value.query != null) emptyList() else flow.value.trail
+        flow.update { it.copy(dialog = FilesDialog.Move(chosen, start), dialogError = null) }
+        moveLoad(chosen, start)
+    }
+
+    /**
+     * Deletes [entries] one after the other. Each is tried; the first failure is what the dialog says, and the listing is
+     * read again either way, so what was deleted is gone from it.
+     */
+    fun deleteMany(entries: List<FileEntry>) = change(reloadOnFailure = true) { account -> eachOf(FileRules.withoutChildren(entries)) { backend.delete(account, it.id) } }
 
     /** The search field changed: the answer comes [searchDelayMillis] after the last key; a blank text clears the results at once. */
     fun setQuery(text: String) {
@@ -398,7 +454,7 @@ class FilesController(
             val result = call { backend.search(space.accountId, text.trim()) }
             if (gen != searchGen) return@launch
             result.onSuccess { list ->
-                flow.update { it.copy(results = list, searching = false, searchError = null) }
+                flow.update { it.copy(results = list, searching = false, searchError = null, selection = FileRules.prune(it.selection, list)) }
             }.onFailure { e -> flow.update { it.copy(searching = false, searchError = FilesWords.message(e)) } }
         }
     }
@@ -603,36 +659,37 @@ class FilesController(
     /** Opens the move dialog on the folder the entry is in (the top level for a search result). */
     fun askMove(entry: FileEntry) {
         val start = if (flow.value.query != null) emptyList() else flow.value.trail
-        flow.update { it.copy(dialog = FilesDialog.Move(entry, start), dialogError = null) }
-        moveLoad(entry, start)
+        flow.update { it.copy(dialog = FilesDialog.Move(listOf(entry), start), dialogError = null) }
+        moveLoad(listOf(entry), start)
     }
 
     fun moveOpen(folder: FileEntry) {
         val d = flow.value.dialog as? FilesDialog.Move ?: return
-        moveLoad(d.entry, d.trail + folder)
+        moveLoad(d.entries, d.trail + folder)
     }
 
     fun moveUp() {
         val d = flow.value.dialog as? FilesDialog.Move ?: return
-        if (d.trail.isNotEmpty()) moveLoad(d.entry, d.trail.dropLast(1))
+        if (d.trail.isNotEmpty()) moveLoad(d.entries, d.trail.dropLast(1))
     }
 
     fun moveRetry() {
         val d = flow.value.dialog as? FilesDialog.Move ?: return
-        moveLoad(d.entry, d.trail)
+        moveLoad(d.entries, d.trail)
     }
 
-    private fun moveLoad(entry: FileEntry, trail: List<FileEntry>) {
+    private fun moveLoad(entries: List<FileEntry>, trail: List<FileEntry>) {
         val space = flow.value.space ?: return
         val gen = ++moveGen
-        flow.update { s -> if (s.dialog is FilesDialog.Move) s.copy(dialog = FilesDialog.Move(entry, trail)) else s }
+        val key = entries.map { it.id }
+        flow.update { s -> if (s.dialog is FilesDialog.Move) s.copy(dialog = FilesDialog.Move(entries, trail)) else s }
         scope.launch {
             val result = call { backend.files(space.accountId, trail.lastOrNull()?.id) }
             if (gen != moveGen) return@launch
             result.onSuccess { listing ->
                 flow.update { s ->
                     val d = s.dialog
-                    if (d is FilesDialog.Move && d.entry.id == entry.id) {
+                    if (d is FilesDialog.Move && d.key == key) {
                         s.copy(dialog = d.copy(trail = trailOf(listing, trail.lastOrNull()?.id, trail), listing = listing, error = null))
                     } else {
                         s
@@ -641,7 +698,7 @@ class FilesController(
             }.onFailure { e ->
                 flow.update { s ->
                     val d = s.dialog
-                    if (d is FilesDialog.Move && d.entry.id == entry.id) s.copy(dialog = d.copy(listing = null, error = FilesWords.message(e))) else s
+                    if (d is FilesDialog.Move && d.key == key) s.copy(dialog = d.copy(listing = null, error = FilesWords.message(e))) else s
                 }
             }
         }
@@ -669,13 +726,34 @@ class FilesController(
     fun moveHere() {
         val d = flow.value.dialog as? FilesDialog.Move ?: return
         val listing = d.listing ?: return
-        if (!FileRules.canMoveHere(d.entry, d.trail, listing.mayAdd)) return
+        if (!FileRules.canMoveHere(d.entries, d.trail, listing.mayAdd)) return
         val destination = d.trail.lastOrNull()?.id
-        change { account -> backend.move(account, d.entry.id, destination) }
+        if (d.entries.size == 1) {
+            change { account -> backend.move(account, d.entry.id, destination) }
+        } else {
+            change(reloadOnFailure = true) { account -> eachOf(FileRules.withoutChildren(d.entries)) { backend.move(account, it.id, destination) } }
+        }
     }
 
-    /** Runs a change; on success the dialog closes and the listing is read again, on failure the dialog stays and says why. */
-    private fun change(work: (account: String?) -> Unit) {
+    /** Does [work] for every entry; when any failed, the first failure is thrown after all were tried. */
+    private fun eachOf(entries: List<FileEntry>, work: (FileEntry) -> Unit) {
+        var first: Exception? = null
+        for (entry in entries) {
+            try {
+                work(entry)
+            } catch (e: Exception) {
+                if (first == null) first = e
+            }
+        }
+        first?.let { throw it }
+    }
+
+    /**
+     * Runs a change; on success the dialog closes, the selection ends and the listing is read again, on failure the dialog
+     * stays and says why ([reloadOnFailure]: a change of several entries, part of which may have been made, reads the
+     * listing again then too).
+     */
+    private fun change(reloadOnFailure: Boolean = false, work: (account: String?) -> Unit) {
         val space = flow.value.space ?: return
         if (flow.value.busy) return
         flow.update { it.copy(busy = true, dialogError = null) }
@@ -683,12 +761,13 @@ class FilesController(
             val result = call { work(space.accountId) }
             result.onSuccess {
                 moveGen++
-                flow.update { it.copy(busy = false, dialog = null, dialogError = null) }
+                flow.update { it.copy(busy = false, dialog = null, dialogError = null, selection = emptySet()) }
                 reloadAfterChange()
             }.onFailure { e ->
                 val message = FilesWords.message(e)
                 if (flow.value.dialog == null) say(message)
                 flow.update { it.copy(busy = false, dialogError = message) }
+                if (reloadOnFailure) reloadAfterChange()
             }
         }
     }

@@ -12,7 +12,6 @@ import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.BlockedAddress
 import uniffi.kweb_core.LogLine
-import uniffi.kweb_core.Maintenance
 
 data class BlockedState(
     /** The address Unblock asked about. */
@@ -120,45 +119,4 @@ class LogsController(
     }
 
     fun dismissError() = stateFlow.update { it.copy(error = null) }
-}
-
-data class MaintenanceState(
-    /** The action the user is asked to confirm. */
-    val asking: Maintenance? = null,
-    /** The action that is running. */
-    val running: Maintenance? = null,
-    val error: UiMessage? = null,
-    val info: UiMessage? = null,
-)
-
-/** The maintenance actions that reload the server's settings or certificates, each after a confirmation. */
-class MaintenanceController(
-    scope: CoroutineScope,
-    io: CoroutineDispatcher,
-    private val backend: AdminBackend,
-) {
-    private val gate = ActionGate(scope, io)
-    private val stateFlow = MutableStateFlow(MaintenanceState())
-
-    val state: StateFlow<MaintenanceState> get() = stateFlow
-
-    fun ask(what: Maintenance) = stateFlow.update { if (it.running == null) it.copy(asking = what, error = null, info = null) else it }
-
-    fun dismissDialog() = stateFlow.update { it.copy(asking = null) }
-
-    fun confirm() {
-        val what = stateFlow.value.asking ?: return
-        stateFlow.update { it.copy(asking = null) }
-        gate.run(
-            { backend.maintenance(what) },
-            { stateFlow.update { it.copy(running = what, error = null, info = null) } },
-            { e -> stateFlow.update { it.copy(running = null, error = UiMessage.of(e, R.string.admin_maintenance_failed)) } },
-        ) {
-            stateFlow.update { it.copy(running = null, info = UiMessage.Res(if (what == Maintenance.RELOAD_CERTIFICATES) R.string.admin_reload_certs_done else R.string.admin_reload_settings_done)) }
-        }
-    }
-
-    fun dismissError() = stateFlow.update { it.copy(error = null) }
-
-    fun dismissInfo() = stateFlow.update { it.copy(info = null) }
 }

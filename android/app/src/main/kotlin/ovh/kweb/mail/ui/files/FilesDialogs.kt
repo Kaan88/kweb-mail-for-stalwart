@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalResources
 import ovh.kweb.mail.ui.transfer.DownloadRules
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
@@ -80,6 +81,7 @@ internal fun FilesDialogHost(state: FilesState, c: FilesController, onCopyLink: 
             onDismiss = c::dismissDialog,
         )
         is FilesDialog.Delete -> DeleteDialog(dialog.entry, state.busy, state.dialogError, onConfirm = { c.delete(dialog.entry) }, onDismiss = c::dismissDialog)
+        is FilesDialog.DeleteMany -> DeleteManyDialog(dialog.entries, state.busy, state.dialogError, onConfirm = { c.deleteMany(dialog.entries) }, onDismiss = c::dismissDialog)
         is FilesDialog.Move -> MoveDialog(dialog, state, c)
         is FilesDialog.PublicLinks -> PublicLinksDialog(dialog, state.publicLinkLimits, c, onCopyLink, onShareLink)
     }
@@ -181,6 +183,28 @@ private fun DeleteDialog(entry: FileEntry, busy: Boolean, error: UiMessage?, onC
     )
 }
 
+/** Deleting several chosen entries; says when folders (with everything in them) are among them. */
+@Composable
+private fun DeleteManyDialog(entries: List<FileEntry>, busy: Boolean, error: UiMessage?, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val folders = entries.any { it.kind == FileKind.FOLDER }
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text(pluralStringResource(R.plurals.files_delete_many_title, entries.size, entries.size)) },
+        text = {
+            Column {
+                Text(stringResource(if (folders) R.string.files_delete_many_folders_text else R.string.files_delete_many_text))
+                ErrorLine(error)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = !busy) {
+                Text(stringResource(R.string.files_delete), color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
 @Composable
 private fun ConflictDialog(conflict: UploadConflict, c: FilesController) {
     val isFolder = conflict.existing.kind == FileKind.FOLDER
@@ -205,12 +229,17 @@ private fun ConflictDialog(conflict: UploadConflict, c: FilesController) {
 private fun MoveDialog(dialog: FilesDialog.Move, state: FilesState, c: FilesController) {
     val colors = MaterialTheme.colorScheme
     val listing = dialog.listing
-    val folders = remember(listing, dialog.entry) { listing?.let { FileRules.moveChoices(it.entries, dialog.entry) }.orEmpty() }
+    val folders = remember(listing, dialog.entries) { listing?.let { FileRules.moveChoices(it.entries, dialog.entries) }.orEmpty() }
     val spaceName = state.space?.let { spaceLabel(it) }.orEmpty()
-    val canHere = listing != null && !state.busy && FileRules.canMoveHere(dialog.entry, dialog.trail, listing.mayAdd)
+    val canHere = listing != null && !state.busy && FileRules.canMoveHere(dialog.entries, dialog.trail, listing.mayAdd)
+    val title = if (dialog.entries.size == 1) {
+        stringResource(R.string.files_move_title, dialog.entry.name)
+    } else {
+        pluralStringResource(R.plurals.files_move_many_title, dialog.entries.size, dialog.entries.size)
+    }
     AlertDialog(
         onDismissRequest = { if (!state.busy) c.dismissDialog() },
-        title = { Text(stringResource(R.string.files_move_title, dialog.entry.name), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        title = { Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column {
                 Text(

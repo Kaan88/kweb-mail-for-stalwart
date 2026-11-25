@@ -4,15 +4,17 @@ import java.util.UUID
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiModel
 import uniffi.kweb_core.AiModelList
-import uniffi.kweb_core.AiProvider
 
-/** Which effort levels the settings screen offers, and what the model list says about a model. Plain Kotlin, no Android. */
+/**
+ * Which effort levels the settings screen offers, and what the model list says about a model. Plain Kotlin, no Android.
+ * Both services follow one rule: only the levels the service itself listed for the model are offered (the core sends
+ * nothing else), and a model it named no level for has no effort row at all.
+ */
 object EffortRules {
-    /** Every level, lowest first: what is offered when the model is unknown or does not name its levels. */
-    val ALL: List<AiEffort> = listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.MEDIUM, AiEffort.HIGH, AiEffort.X_HIGH, AiEffort.MAX)
-
-    /** The effort row is shown for the Anthropic service only. */
-    fun isShown(provider: AiProvider): Boolean = provider == AiProvider.ANTHROPIC
+    /** Every level, lowest first: the order the offered ones are shown in. */
+    val ALL: List<AiEffort> = listOf(
+        AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MINIMAL, AiEffort.LOW, AiEffort.MEDIUM, AiEffort.HIGH, AiEffort.X_HIGH, AiEffort.MAX,
+    )
 
     /** The entry of [list] for [modelId] (spaces around the typed name do not matter), if the list is known and has it. */
     fun find(list: AiModelList?, modelId: String): AiModel? {
@@ -20,16 +22,22 @@ object EffortRules {
         return if (id.isEmpty()) null else list?.models?.firstOrNull { it.id == id }
     }
 
-    /** Default plus the model's own levels when the last loaded list names them, otherwise all of them. */
-    fun offered(provider: AiProvider, modelId: String, list: AiModelList?): List<AiEffort> {
-        if (!isShown(provider)) return listOf(AiEffort.DEFAULT)
-        val own = find(list, modelId)?.efforts.orEmpty().filter { it != AiEffort.DEFAULT }
-        return if (own.isEmpty()) ALL else listOf(AiEffort.DEFAULT) + own.distinct()
+    /**
+     * Default plus the model's own levels from the last loaded list. While no list is loaded yet: Default plus [current]
+     * (the core shows a stored level only where the service listed it, so it is not lost before the list comes).
+     */
+    fun offered(modelId: String, list: AiModelList?, current: AiEffort = AiEffort.DEFAULT): List<AiEffort> {
+        val own = if (list == null) listOf(current) else find(list, modelId)?.efforts.orEmpty()
+        val levels = own.filter { it != AiEffort.DEFAULT }.toSet()
+        return listOf(AiEffort.DEFAULT) + ALL.filter { it in levels }
     }
 
-    /** [effort] if it is among the offered levels, otherwise Default. */
-    fun normalised(effort: AiEffort, provider: AiProvider, modelId: String, list: AiModelList?): AiEffort =
-        if (effort in offered(provider, modelId, list)) effort else AiEffort.DEFAULT
+    /** The effort row is shown only when there is more than Default to choose from. */
+    fun isShown(offered: List<AiEffort>): Boolean = offered.size > 1
+
+    /** [effort] if it is among the offered levels, otherwise Default. Without a list it is kept. */
+    fun normalised(effort: AiEffort, modelId: String, list: AiModelList?): AiEffort =
+        if (effort in offered(modelId, list, effort)) effort else AiEffort.DEFAULT
 }
 
 /** What the model picker shows for one entry. */

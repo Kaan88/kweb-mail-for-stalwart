@@ -11,7 +11,7 @@ use crate::support::{
     MockServer, ACCOUNT_ID, USERNAME,
 };
 use kweb_core::{
-    ffi::{Core, Maintenance, ServerAccountKind},
+    ffi::{Core, DmarcCheck, Maintenance, ServerAccountKind, SpamCheck},
     secrets::{MemorySecrets, SecretStore},
     Error,
 };
@@ -909,6 +909,152 @@ fn a_key_without_the_action_permission_cannot_start_it() {
     rig.core.admin_maintenance(Maintenance::PauseQueue).unwrap();
     assert_eq!(invalid(rig.core.admin_maintenance(Maintenance::ReloadSettings)), "this key may not run that action");
     assert_eq!(rig.server.admin_actions(), ["PauseMtaQueue"]);
+}
+
+#[test]
+fn every_simple_action_is_started_by_its_variant_name() {
+    let rig = Rig::admin();
+    for what in [
+        Maintenance::ReloadLookupStores,
+        Maintenance::ReloadBlockedIps,
+        Maintenance::UpdateApps,
+        Maintenance::InvalidateCaches,
+        Maintenance::InvalidateNegativeCaches,
+    ] {
+        assert!(rig.core.admin_action(what).unwrap().warnings.is_empty());
+    }
+    assert_eq!(
+        rig.server.admin_actions(),
+        ["ReloadLookupStores", "ReloadBlockedIps", "UpdateApps", "InvalidateCaches", "InvalidateNegativeCaches"]
+    );
+    // Each was one object with only its type.
+    assert_eq!(rig.server.admin_action_bodies()[0], json!({ "@type": "ReloadLookupStores" }));
+}
+
+#[test]
+fn a_settings_reload_returns_the_warnings_of_the_server() {
+    let rig = Rig::admin();
+    let outcome = rig.core.admin_action(Maintenance::ReloadSettings).unwrap();
+    assert_eq!(outcome.warnings, ["Licence key is not valid"]);
+}
+
+#[test]
+fn the_actions_a_key_may_start_follow_its_permissions() {
+    let all = Rig::admin().core.admin_access().unwrap();
+    assert_eq!(all.allowed_actions.len(), 9);
+    assert!(all.may_dmarc_check && all.may_spam_check && all.may_maintenance);
+
+    let rig = Rig::new();
+    rig.connect_with(Some(&["sysActionCreate", "actionReloadBlockedIps", "actionClassifySpam"]));
+    let a = rig.core.admin_access().unwrap();
+    assert_eq!(a.allowed_actions, [Maintenance::ReloadBlockedIps]);
+    assert!(a.may_spam_check && !a.may_dmarc_check && a.may_maintenance && !a.may_queue_control);
+    assert_eq!(invalid(rig.core.admin_action(Maintenance::InvalidateCaches)), "this key may not run that action");
+
+    // The permission of the variant alone is not enough: the right to start actions is needed too.
+    let rig = Rig::new();
+    rig.connect_with(Some(&["actionTroubleshootDmarc", "sysLogQuery", "sysLogGet"]));
+    let a = rig.core.admin_access().unwrap();
+    assert!(!a.may_dmarc_check && !a.may_maintenance && a.allowed_actions.is_empty());
+}
+
+fn dmarc_check() -> DmarcCheck {
+    DmarcCheck {
+        remote_ip: " 192.0.2.1 ".into(),
+        ehlo_domain: "mail.example.org".into(),
+        mail_from: "a@example.org".into(),
+        spf_ehlo_domain: "mail.example.org".into(),
+        spf_mail_from_domain: "example.org".into(),
+        rcpt_to: String::new(),
+        message: String::new(),
+    }
+}
+
+fn spam_check() -> SpamCheck {
+    SpamCheck {
+        message: "Subject: x\nbuy now\n".into(),
+        remote_ip: "192.0.2.1".into(),
+        ehlo_domain: "mail.example.org".into(),
+        mail_from: "a@example.org".into(),
+        rcpt_to: "b@example.net".into(),
+        is_tls: true,
+        authenticated_as: " ".into(),
+    }
+}
+
+#[test]
+fn the_dmarc_check_sends_its_fields_and_reads_the_result() {
+    let rig = Rig::admin();
+    let result = rig.core.admin_dmarc_check(dmarc_check()).unwrap();
+    assert_eq!((result.spf_ehlo.outcome.as_str(), result.spf_ehlo.good), ("none", false));
+    assert_eq!(result.spf_mail_from.outcome, "fail");
+    assert_eq!((result.dmarc.outcome.as_str(), result.dmarc.details.as_str()), ("fail", "Policy not aligned"));
+    assert!(!result.dkim_pass && !result.dmarc_pass);
+    assert_eq!((result.dmarc_policy.as_str(), result.elapsed_ms), ("reject", 2));
+    // Optional fields that were left empty are not sent; the others are, trimmed.
+    assert_eq!(
+        rig.server.admin_action_bodies(),
+        [json!({
+            "@type": "TroubleshootDmarc", "remoteIp": "192.0.2.1", "ehloDomain": "mail.example.org",
+            "mailFrom": "a@example.org", "spfEhloDomain": "mail.example.org", "spfMailFromDomain": "example.org",
+        })]
+    );
+
+    let all = DmarcCheck {
+        rcpt_to: "b@example.net, c@example.net".into(),
+        message: "Subject: x\n\nhi\n".into(),
+        ..dmarc_check()
+    };
+    rig.core.admin_dmarc_check(all).unwrap();
+    let sent = &rig.server.admin_action_bodies()[1];
+    assert_eq!(sent["rcptTo"], json!({ "b@example.net": true, "c@example.net": true }));
+    assert_eq!(sent["message"], "Subject: x\r\n\r\nhi\r\n");
+}
+
+#[test]
+fn a_check_with_a_wrong_field_is_refused_before_it_is_sent() {
+    let rig = Rig::admin();
+    let bad_ip = DmarcCheck { remote_ip: "not an ip".into(), ..dmarc_check() };
+    assert_eq!(invalid(rig.core.admin_dmarc_check(bad_ip)), "the remote IP address is not valid");
+    let no_domain = DmarcCheck { ehlo_domain: " ".into(), ..dmarc_check() };
+    assert_eq!(invalid(rig.core.admin_dmarc_check(no_domain)), "fill in the EHLO domain");
+    let bad_from = DmarcCheck { mail_from: "nobody".into(), ..dmarc_check() };
+    assert_eq!(invalid(rig.core.admin_dmarc_check(bad_from)), "MAIL FROM is not an address");
+    let blank = SpamCheck { message: "  ".into(), ..spam_check() };
+    assert_eq!(invalid(rig.core.admin_spam_check(blank)), "paste the message first");
+    let no_rcpt = SpamCheck { rcpt_to: String::new(), ..spam_check() };
+    assert_eq!(invalid(rig.core.admin_spam_check(no_rcpt)), "fill in at least one recipient");
+    assert!(rig.server.admin_actions().is_empty());
+}
+
+#[test]
+fn the_spam_check_sends_the_message_and_orders_the_tags() {
+    let rig = Rig::admin();
+    let result = rig.core.admin_spam_check(spam_check()).unwrap();
+    assert_eq!((result.score, result.result.as_str()), (7.5, "spam"));
+    let names: Vec<&str> = result.tags.iter().map(|t| t.name.as_str()).collect();
+    // A tag that rejects first, then the biggest score, then the rest by name.
+    assert_eq!(names, ["X_HDR_FROM", "SPF_FAIL", "MISSING_DATE", "FROM_EQ_ENV_FROM"]);
+    assert!(result.ai_gate.is_empty() && result.ai_verdict.is_empty());
+    let sent = &rig.server.admin_action_bodies()[0];
+    assert_eq!(sent["@type"], "ClassifySpam");
+    assert_eq!(sent["isTls"], json!(true));
+    assert_eq!(sent["rcptTo"], json!({ "b@example.net": true }));
+    assert_eq!(sent["message"], "Subject: x\r\nbuy now\r\n");
+    assert!(sent.get("authenticatedAs").is_none());
+
+    let signed = SpamCheck { authenticated_as: "tester".into(), ..spam_check() };
+    rig.core.admin_spam_check(signed).unwrap();
+    assert_eq!(rig.server.admin_action_bodies()[1]["authenticatedAs"], "tester");
+}
+
+#[test]
+fn a_check_the_key_may_not_run_says_so_without_the_message() {
+    let rig = Rig::new();
+    rig.connect_with(Some(&["sysActionCreate", "actionTroubleshootDmarc"]));
+    let words = invalid(rig.core.admin_spam_check(SpamCheck { message: "SECRET BODY".into(), ..spam_check() }));
+    assert_eq!(words, "this key may not run that action");
+    assert!(rig.core.admin_dmarc_check(dmarc_check()).is_ok());
 }
 
 #[test]

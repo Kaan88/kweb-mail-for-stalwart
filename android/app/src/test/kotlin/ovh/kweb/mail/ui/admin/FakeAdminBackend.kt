@@ -6,9 +6,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import uniffi.kweb_core.ActionOutcome
 import uniffi.kweb_core.AdminAccess
 import uniffi.kweb_core.AdminSummary
 import uniffi.kweb_core.BlockedAddress
+import uniffi.kweb_core.AuthResult
+import uniffi.kweb_core.DmarcCheck
+import uniffi.kweb_core.DmarcCheckResult
 import uniffi.kweb_core.LogLine
 import uniffi.kweb_core.Maintenance
 import uniffi.kweb_core.QueuePage
@@ -18,6 +22,8 @@ import uniffi.kweb_core.ServerAccount
 import uniffi.kweb_core.ServerAccountKind
 import uniffi.kweb_core.ServerAccountPage
 import uniffi.kweb_core.ServerDomain
+import uniffi.kweb_core.SpamCheck
+import uniffi.kweb_core.SpamCheckResult
 
 fun access(
     connected: Boolean = true,
@@ -34,6 +40,9 @@ fun access(
     mayBlocked = all,
     mayLogs = all,
     mayMaintenance = all,
+    allowedActions = if (all) Maintenance.entries.toList() else emptyList(),
+    mayDmarcCheck = all,
+    maySpamCheck = all,
     mayDashboard = enterprise,
     mayHistory = enterprise,
     mayRecovery = enterprise,
@@ -208,6 +217,38 @@ class FakeAdminBackend : AdminBackend {
     }
 
     override fun maintenance(what: Maintenance) = check("maintenance:$what")
+
+    /** What a simple action returns: the warnings of a settings reload. */
+    var actionWarnings: List<String> = emptyList()
+    var lastDmarc: DmarcCheck? = null
+    var lastSpam: SpamCheck? = null
+    var dmarcResult = DmarcCheckResult(
+        spfEhlo = AuthResult("none", false, ""),
+        spfMailFrom = AuthResult("pass", true, ""),
+        dkimPass = true,
+        dmarc = AuthResult("pass", true, ""),
+        dmarcPass = true,
+        dmarcPolicy = "none",
+        elapsedMs = 3uL,
+    )
+    var spamResult = SpamCheckResult(score = 7.5, result = "spam", tags = emptyList(), aiGate = "", aiVerdict = "")
+
+    override fun action(what: Maintenance): ActionOutcome {
+        check("action:$what")
+        return ActionOutcome(actionWarnings)
+    }
+
+    override fun dmarcCheck(request: DmarcCheck): DmarcCheckResult {
+        check("dmarc")
+        lastDmarc = request
+        return dmarcResult
+    }
+
+    override fun spamCheck(request: SpamCheck): SpamCheckResult {
+        check("spam")
+        lastSpam = request
+        return spamResult
+    }
 
     // ---- domains, reports, tasks, cluster ----
     var domainRowList: List<uniffi.kweb_core.DomainRow> = emptyList()

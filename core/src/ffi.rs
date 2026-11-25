@@ -5,6 +5,7 @@
 //! a blocking function of [`Core`] from inside the callback.
 
 mod admin;
+mod admin_actions;
 mod admin_link;
 mod admin_more;
 mod ai_chat;
@@ -25,6 +26,7 @@ pub use admin::{
     AdminAccess, AdminSummary, BlockedAddress, LogLine, Maintenance, QueuePage, QueuedMessage, QueuedRecipient,
     ServerAccount, ServerAccountKind, ServerAccountPage, ServerDomain,
 };
+pub use admin_actions::{ActionOutcome, AuthResult, DmarcCheck, DmarcCheckResult, SpamCheck, SpamCheckResult, SpamTag};
 pub use admin_more::{
     ClusterNode, DkimKey, DomainDetail, DomainRow, ReportDetail, ReportFact, ReportGroup, ReportKind, ReportPage,
     ReportRow, TaskPage, TaskRow, TaskState,
@@ -1453,18 +1455,25 @@ impl Core {
     /// offers, for the picker. Sends no mail and needs no consent. `key`: a key the user just
     /// typed and has not saved; `None` uses the key stored for that provider, and only when the
     /// address has the scheme, host and port the stored one has (a stored key is never sent to
-    /// an address it was not entered for). Nothing is stored.
+    /// an address it was not entered for). Of the answer only the effort levels the service named
+    /// for each model are kept (for that provider and address): an effort is sent only where the
+    /// service listed it.
     ///
-    /// OpenAI-compatible: `GET {base}/models`; a service that cannot be asked is
-    /// `Error::Temporary`. Anthropic: `GET {base}/models`, all pages, with each model's effort
-    /// levels; without a key, or when the service cannot be asked, the built-in list with
-    /// `from_service` false (a refused key is still an error, so the user learns of it).
+    /// OpenAI-compatible: `GET {base}/models`, without the models that cannot answer a chat
+    /// request, with the levels the service lists (`reasoning.supported_efforts`, OpenRouter);
+    /// a service that cannot be asked is `Error::Temporary`. Anthropic: `GET {base}/models`, all
+    /// pages, without deprecated models, with each model's effort levels; without a key, or when
+    /// the service cannot be asked, the built-in list (no levels) with `from_service` false (a
+    /// refused key is still an error, so the user learns of it).
     pub fn ai_models(&self, settings: AiSettings, key: Option<String>) -> Result<AiModelList> {
         let base_url = settings.base_url.trim().trim_end_matches('/').to_string();
         // The address first: a bad one is refused before the secret store is looked at.
         assistant::settings::check_base_url(&base_url)?;
-        let key = assistant::models_key(&self.store, &*self.secrets, &self.account_id()?, &settings, key)?;
-        self.rt.block_on(assistant::models::list(settings.provider, &base_url, key.as_deref()))
+        let account_id = self.account_id()?;
+        let key = assistant::models_key(&self.store, &*self.secrets, &account_id, &settings, key)?;
+        let list = self.rt.block_on(assistant::models::list(settings.provider, &base_url, key.as_deref()))?;
+        assistant::remember_levels(&self.store, &*self.secrets, &account_id, settings.provider, &base_url, &list)?;
+        Ok(list)
     }
 
     /// Stores the settings of the service `settings.provider` and makes it the one in use; what

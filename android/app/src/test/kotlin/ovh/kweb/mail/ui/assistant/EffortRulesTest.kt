@@ -10,7 +10,6 @@ import org.junit.Test
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiModel
 import uniffi.kweb_core.AiModelList
-import uniffi.kweb_core.AiProvider
 
 class EffortRulesTest {
     private val list = AiModelList(
@@ -21,37 +20,41 @@ class EffortRulesTest {
         fromService = true,
     )
 
-    @Test fun onlyAnthropicShowsTheRow() {
-        assertTrue(EffortRules.isShown(AiProvider.ANTHROPIC))
-        assertFalse(EffortRules.isShown(AiProvider.OPEN_AI_COMPATIBLE))
+    @Test fun theRowShowsOnlyWhenThereIsMoreThanDefault() {
+        assertTrue(EffortRules.isShown(EffortRules.offered("claude-a", list)))
+        assertFalse(EffortRules.isShown(EffortRules.offered("claude-b", list)))
+        assertFalse(EffortRules.isShown(listOf(AiEffort.DEFAULT)))
     }
 
     @Test fun aModelThatNamesItsLevelsOffersDefaultAndThose() =
-        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.HIGH), EffortRules.offered(AiProvider.ANTHROPIC, "claude-a", list))
+        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.HIGH), EffortRules.offered("claude-a", list))
 
-    @Test fun aModelWithoutLevelsOffersAll() = assertEquals(EffortRules.ALL, EffortRules.offered(AiProvider.ANTHROPIC, "claude-b", list))
+    @Test fun aModelWithoutLevelsOffersOnlyDefault() = assertEquals(listOf(AiEffort.DEFAULT), EffortRules.offered("claude-b", list))
 
-    @Test fun anUnknownModelOrNoListOffersAll() {
-        assertEquals(EffortRules.ALL, EffortRules.offered(AiProvider.ANTHROPIC, "typed-by-hand", list))
-        assertEquals(EffortRules.ALL, EffortRules.offered(AiProvider.ANTHROPIC, "claude-a", null))
-        assertEquals(EffortRules.ALL, EffortRules.offered(AiProvider.ANTHROPIC, "", list))
+    @Test fun aModelTheListDoesNotHaveOffersOnlyDefault() {
+        assertEquals(listOf(AiEffort.DEFAULT), EffortRules.offered("typed-by-hand", list, AiEffort.HIGH))
+        assertEquals(listOf(AiEffort.DEFAULT), EffortRules.offered("", list))
+    }
+
+    @Test fun withoutAListTheCurrentLevelStays() {
+        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.HIGH), EffortRules.offered("claude-a", null, AiEffort.HIGH))
+        assertEquals(listOf(AiEffort.DEFAULT), EffortRules.offered("claude-a", null))
+        assertEquals(AiEffort.MAX, EffortRules.normalised(AiEffort.MAX, "anything", null))
     }
 
     @Test fun spacesAroundTheModelDoNotMatter() =
-        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.HIGH), EffortRules.offered(AiProvider.ANTHROPIC, " claude-a ", list))
+        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.HIGH), EffortRules.offered(" claude-a ", list))
 
-    @Test fun defaultIsNeverListedTwice() {
-        val odd = AiModelList(listOf(AiModel("m", "m", listOf(AiEffort.DEFAULT, AiEffort.MAX, AiEffort.MAX))), true)
-        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.MAX), EffortRules.offered(AiProvider.ANTHROPIC, "m", odd))
+    @Test fun levelsComeLowestFirstAndDefaultIsNeverListedTwice() {
+        val odd = AiModelList(listOf(AiModel("m", "m", listOf(AiEffort.MAX, AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MAX, AiEffort.MINIMAL))), true)
+        assertEquals(listOf(AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MINIMAL, AiEffort.MAX), EffortRules.offered("m", odd))
     }
 
     @Test fun aStoredLevelThatIsNotOfferedFallsBackToDefault() {
-        assertEquals(AiEffort.DEFAULT, EffortRules.normalised(AiEffort.MAX, AiProvider.ANTHROPIC, "claude-a", list))
-        assertEquals(AiEffort.HIGH, EffortRules.normalised(AiEffort.HIGH, AiProvider.ANTHROPIC, "claude-a", list))
-        assertEquals(AiEffort.MAX, EffortRules.normalised(AiEffort.MAX, AiProvider.ANTHROPIC, "claude-b", list))
+        assertEquals(AiEffort.DEFAULT, EffortRules.normalised(AiEffort.MAX, "claude-a", list))
+        assertEquals(AiEffort.HIGH, EffortRules.normalised(AiEffort.HIGH, "claude-a", list))
+        assertEquals(AiEffort.DEFAULT, EffortRules.normalised(AiEffort.MAX, "claude-b", list))
     }
-
-    @Test fun otherServicesHaveNoEffort() = assertEquals(AiEffort.DEFAULT, EffortRules.normalised(AiEffort.HIGH, AiProvider.OPEN_AI_COMPATIBLE, "gpt", null))
 
     @Test fun findIgnoresAnEmptyName() = assertNull(EffortRules.find(list, " "))
 

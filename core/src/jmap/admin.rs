@@ -15,6 +15,7 @@
 //! - Nothing here is cached.
 
 mod accounts;
+mod actions;
 mod cluster;
 mod domains;
 mod reports;
@@ -72,8 +73,12 @@ impl AdminInfo {
         // An area is offered exactly when its first screen can work: the Enterprise functions
         // (`ffi/enterprise.rs`) ask for these same permissions.
         let reads = |permissions: &[&str]| enterprise && self.has_all(permissions);
-        let actions =
-            ["actionReloadSettings", "actionReloadTlsCertificates", "actionPauseMtaQueue", "actionResumeMtaQueue"];
+        // Starting an action needs the right to create one and the permission of its own variant.
+        let may_action = |variant: &str| self.has("sysActionCreate") && self.has(&format!("action{variant}"));
+        let allowed_actions: Vec<Maintenance> =
+            actions::SIMPLE.into_iter().filter(|w| may_action(actions::variant(*w))).collect();
+        let may_dmarc_check = may_action("TroubleshootDmarc");
+        let may_spam_check = may_action("ClassifySpam");
         AdminAccess {
             connected: true,
             key_refused: false,
@@ -82,7 +87,7 @@ impl AdminInfo {
             may_accounts: self.has_all(&["sysAccountQuery", "sysAccountGet"]),
             may_blocked: self.has_all(&["sysBlockedIpQuery", "sysBlockedIpGet"]),
             may_logs: self.has_all(&["sysLogQuery", "sysLogGet"]),
-            may_maintenance: self.has("sysActionCreate") && actions.iter().any(|a| self.has(a)),
+            may_maintenance: !allowed_actions.is_empty() || may_dmarc_check || may_spam_check,
             may_dashboard: reads(&["sysMetricQuery", "sysMetricGet"]),
             may_history: reads(&["sysTraceQuery", "sysTraceGet"]),
             may_recovery: reads(&["sysArchivedItemQuery", "sysArchivedItemGet"]),
@@ -96,6 +101,9 @@ impl AdminInfo {
             may_cluster: self.has_all(&["sysClusterNodeQuery", "sysClusterNodeGet"]),
             may_queue_control: self.has("sysActionCreate")
                 && (self.has("actionPauseMtaQueue") || self.has("actionResumeMtaQueue")),
+            allowed_actions,
+            may_dmarc_check,
+            may_spam_check,
             acting_as: String::new(),
         }
     }
@@ -367,19 +375,7 @@ impl Connection {
     // ---- maintenance ----
 
     pub(crate) async fn run_maintenance(&self, what: Maintenance) -> Result<()> {
-        let kind = match what {
-            Maintenance::ReloadSettings => "ReloadSettings",
-            Maintenance::ReloadCertificates => "ReloadTlsCertificates",
-            Maintenance::PauseQueue => "PauseMtaQueue",
-            Maintenance::ResumeQueue => "ResumeMtaQueue",
-        };
-        let args = json!({ "accountId": self.account_id(), "create": { super::send::CREATE_ID: { "@type": kind } } });
-        let responses = self.admin_request("run that action", &[("x:Action/set", args)]).await?;
-        let set = response(&responses, "x:Action/set")?;
-        match set["notCreated"].get(super::send::CREATE_ID) {
-            Some(e) => Err(set_refusal("run that action", e)),
-            None => Ok(()),
-        }
+        self.run_action(what).await.map(|_| ())
     }
 
     // ---- shared by the lists ----

@@ -274,6 +274,56 @@ class FilesControllerTest {
         assertTrue("delete:f" in backend.calls)
     }
 
+    @Test fun choosingSeveralEntriesWorksAsInTheMailList() {
+        shown()
+        val (a, b, f) = c.state.value.listing!!.entries
+        c.toggleSelected(b)
+        c.toggleSelected(f)
+        assertTrue(c.state.value.selecting)
+        assertEquals(listOf("b", "f"), c.state.value.chosen.map { it.id })
+        c.toggleSelected(b)
+        assertEquals(setOf("f"), c.state.value.selection)
+        c.selectAll()
+        assertEquals(setOf("a", "b", "f"), c.state.value.selection)
+        c.clearSelection()
+        assertTrue(!c.state.value.selecting)
+        // Going into a folder lets go of what was chosen.
+        c.toggleSelected(f)
+        c.openFolder(a)
+        assertTrue(!c.state.value.selecting)
+    }
+
+    @Test fun theChosenEntriesAreDeletedTogether() {
+        shown()
+        val (_, b, f) = c.state.value.listing!!.entries
+        c.toggleSelected(b)
+        c.toggleSelected(f)
+        c.askDeleteSelected()
+        val dialog = c.state.value.dialog as FilesDialog.DeleteMany
+        c.deleteMany(dialog.entries)
+        await("done") { c.state.value.dialog == null && !c.state.value.busy }
+        assertTrue("delete:b" in backend.calls && "delete:f" in backend.calls)
+        assertTrue(!c.state.value.selecting)
+    }
+
+    @Test fun theChosenEntriesAreMovedTogetherAndNotIntoOneOfThem() {
+        shown()
+        val (a, b, f) = c.state.value.listing!!.entries
+        c.toggleSelected(b)
+        c.toggleSelected(f)
+        c.askMoveSelected()
+        await("move listing") { (c.state.value.dialog as? FilesDialog.Move)?.listing != null }
+        val d = c.state.value.dialog as FilesDialog.Move
+        // B is moved, so it is not offered as a place to go.
+        assertEquals(listOf("a"), FileRules.moveChoices(d.listing!!.entries, d.entries).map { it.id })
+        c.moveOpen(a)
+        await("A in dialog") { (c.state.value.dialog as? FilesDialog.Move)?.listing?.folder?.id == "a" }
+        c.moveHere()
+        await("closed") { c.state.value.dialog == null && !c.state.value.busy }
+        assertTrue("move:b:a" in backend.calls && "move:f:a" in backend.calls)
+        assertTrue(!c.state.value.selecting)
+    }
+
     @Test fun theMoveDialogBrowsesAndMovesHere() {
         shown()
         val f = c.state.value.listing!!.entries.last()

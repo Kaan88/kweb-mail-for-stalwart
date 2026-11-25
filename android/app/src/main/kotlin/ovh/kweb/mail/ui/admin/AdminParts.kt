@@ -264,6 +264,8 @@ internal fun AdminField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     leadingIcon: (@Composable () -> Unit)? = null,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
 ) {
     val container = MaterialTheme.colorScheme.surfaceContainerHighest
     TextField(
@@ -272,7 +274,9 @@ internal fun AdminField(
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
         label = { Text(label) },
-        singleLine = true,
+        singleLine = singleLine,
+        minLines = minLines,
+        maxLines = if (singleLine) 1 else 12,
         isError = isError,
         leadingIcon = leadingIcon,
         supportingText = supporting?.let { { Text(it) } },

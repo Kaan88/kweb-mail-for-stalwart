@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -17,7 +16,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -39,7 +37,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import ovh.kweb.mail.R
 import ovh.kweb.mail.ui.list.EmptyNote
 import ovh.kweb.mail.ui.list.Groups
-import uniffi.kweb_core.Maintenance
 
 private fun now() = System.currentTimeMillis() / 1000
 
@@ -161,43 +158,5 @@ private fun LogList(state: LogsState) {
                 },
             )
         }
-    }
-}
-
-/** Maintenance: reload the server's settings or certificates, each after a confirmation. */
-@Composable
-fun MaintenanceScreen(onBack: () -> Unit, vm: AdminMaintenanceViewModel = viewModel()) {
-    val c = vm.maintenance
-    val state by c.state.collectAsStateWithLifecycle()
-    AdminScaffold(title = stringResource(R.string.admin_area_maintenance), onBack = onBack) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
-            Notices(state.error, state.info, c::dismissError, c::dismissInfo)
-            Note(stringResource(R.string.admin_maintenance_note))
-            val actions = listOf(
-                Triple(Maintenance.RELOAD_SETTINGS, R.string.admin_reload_settings, R.string.admin_reload_settings_detail),
-                Triple(Maintenance.RELOAD_CERTIFICATES, R.string.admin_reload_certs, R.string.admin_reload_certs_detail),
-            )
-            AdminGroup {
-                actions.forEachIndexed { index, (what, title, detail) ->
-                    AdminRow(
-                        Groups.shape(index, actions.size),
-                        stringResource(title),
-                        detail = stringResource(detail),
-                        trailing = { if (state.running == what) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) },
-                        onClick = if (state.running == null) ({ c.ask(what) }) else null,
-                    )
-                }
-            }
-        }
-    }
-    state.asking?.let { what ->
-        val settings = what == Maintenance.RELOAD_SETTINGS
-        ConfirmDialog(
-            title = stringResource(if (settings) R.string.admin_reload_settings_title else R.string.admin_reload_certs_title),
-            text = stringResource(if (settings) R.string.admin_reload_settings_text else R.string.admin_reload_certs_text),
-            confirm = stringResource(R.string.admin_reload_confirm),
-            onConfirm = c::confirm,
-            onDismiss = c::dismissDialog,
-        )
     }
 }

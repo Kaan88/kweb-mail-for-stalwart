@@ -481,13 +481,19 @@ pub enum AiProvider {
     Anthropic,
 }
 
-/// How hard the model is asked to think. Only the Anthropic service takes it (as
-/// `output_config.effort`); for an OpenAI-compatible service it is stored and not sent.
+/// How hard the model is asked to think. Sent only when the service itself listed the level for
+/// the model in use (see `AiModel::efforts`): Anthropic as `output_config.effort`, an
+/// OpenAI-compatible service as `reasoning_effort` (OpenRouter: `reasoning.effort`). A level the
+/// service never named for that address and model is kept and not sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiEffort {
     /// Nothing is sent: the model's own default.
     #[default]
     Default,
+    /// Thinking switched off (`none`); only some OpenAI-compatible services list it.
+    Off,
+    /// Some OpenAI-compatible services only.
+    Minimal,
     Low,
     Medium,
     High,
@@ -502,8 +508,9 @@ pub struct AiModel {
     pub id: String,
     /// What the user reads; the id when the service gives no other name.
     pub name: String,
-    /// The effort levels the model takes, lowest first, without `Default`. Empty when the model
-    /// takes none or the service does not say (OpenAI-compatible services never say).
+    /// The effort levels the model takes, lowest first, without `Default`, as the service itself
+    /// listed them (Anthropic's `capabilities.effort`, OpenRouter's `reasoning.supported_efforts`).
+    /// Empty when the model takes none or the service does not say; nothing is then sent.
     pub efforts: Vec<AiEffort>,
 }
 

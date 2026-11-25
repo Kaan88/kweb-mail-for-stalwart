@@ -16,6 +16,8 @@ object HtmlWrapper {
         blockRemote: Boolean = false,
         flat: Boolean = false,
         layoutWidth: Int? = null,
+        /** CSS zoom for the outer tables (FitRules.tableZoom), or null. */
+        tableZoom: Float? = null,
     ): String = buildString {
         append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
         // Fit as Gmail does: the page is as wide as the window, a mail laid out for a wider one keeps its own layout and is
@@ -39,6 +41,12 @@ object HtmlWrapper {
         // pictures stay within their box with their proportions, and preformatted text and long words wrap.
         append("img{max-width:100%;height:auto}")
         append("pre{white-space:pre-wrap;overflow-wrap:break-word}")
+        // The third layout of a wide mail (FitRules.refit): outer tables are drawn at the size they had before the text
+        // zoom. Only outer ones (a nested table would be zoomed twice), and only those with no width of their own: zoom
+        // scales a set width too, so a 600-pixel table would come out narrower than the window.
+        if (tableZoom != null && tableZoom > 0f && tableZoom < 1f) {
+            append("table:not(table table):not([width]):not([style*=\"width\" i]){zoom:").append(String.format(java.util.Locale.ROOT, "%.4f", tableZoom)).append("}")
+        }
         // Folded quoted text (QuoteFolding): a quiet pill that opens the quote; works without scripts.
         append("details.kq>summary{display:inline-block;cursor:pointer;list-style:none;font:12px sans-serif;opacity:.7;border:1px solid currentColor;border-radius:10px;padding:0 8px;margin:6px 0}")
         append("details.kq>summary::-webkit-details-marker{display:none}")

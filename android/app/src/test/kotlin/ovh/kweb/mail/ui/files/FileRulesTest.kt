@@ -40,6 +40,13 @@ internal fun entry(
 class FileRulesTest {
     private val en = Locale.ENGLISH
 
+    @Test fun aChosenFolderTakesItsChosenChildrenAlong() {
+        val folder = entry(id = "f", kind = FileKind.FOLDER)
+        val child = entry(id = "c", parentId = "f")
+        val other = entry(id = "o", parentId = "x")
+        assertEquals(listOf("f", "o"), FileRules.withoutChildren(listOf(child, folder, other)).map { it.id })
+    }
+
     @Test fun smallSizesAreBytes() {
         assertEquals("0 B", FileRules.sizeText(0uL, en))
         assertEquals("999 B", FileRules.sizeText(999uL, en))

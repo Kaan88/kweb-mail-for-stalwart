@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,7 +47,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.io.FileInputStream
@@ -508,7 +516,8 @@ private fun LoadedBody(
         val inline = remember(body, account, session) { inlineLookup(context.applicationContext, session, body, account) }
         // Quoted text is wrapped in <details> (no script needed); the mail's own text is kept as it is.
         val quoteLabel = stringResource(R.string.thread_quote_label)
-        val folded = remember(html, quoteLabel, foldAll) { QuoteFolding.foldHtml(html, quoteLabel, foldAll) }
+        // Web addresses written as text become links (WebLinks).
+        val folded = remember(html, quoteLabel, foldAll) { QuoteFolding.foldHtml(WebLinks.html(html), quoteLabel, foldAll) }
         MailWebView(
             html = folded,
             allowRemote = remoteAllowed,
@@ -524,6 +533,7 @@ private fun LoadedBody(
         // On the same light inset as HTML mail, so both kinds of message look alike.
         val text = body.text.orEmpty().trimEnd()
         val parts = remember(text, foldAll) { QuoteFolding.splitText(text, foldAll) }
+        val linkColor = MaterialTheme.colorScheme.primary
         val textStyle = MaterialTheme.typography.bodyMedium.let { it.copy(fontSize = it.fontSize * size.factor, lineHeight = it.lineHeight * size.factor) }
         SelectionContainer {
             Column(
@@ -539,7 +549,7 @@ private fun LoadedBody(
             ) {
                 parts.forEachIndexed { index, part ->
                     if (!part.quoted) {
-                        Text(part.text, style = textStyle)
+                        Text(rememberLinked(part.text, linkColor, actions.onOpenLink), style = textStyle)
                     } else {
                         var open by remember(header.id, index) { mutableStateOf(false) }
                         Text(
@@ -552,7 +562,7 @@ private fun LoadedBody(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelMedium,
                         )
-                        if (open) Text(part.text, style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (open) Text(rememberLinked(part.text, linkColor, actions.onOpenLink), style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -671,3 +681,32 @@ private fun fullTime(epochSeconds: Long): String =
     DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
         .withLocale(Locale.getDefault())
         .format(Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()))
+
+/**
+ * Plain [text] with its web addresses ([WebLinks]: http and https only) as links that [open]; worked out once per text
+ * and colour, not on every recomposition, and not at all for a text too large to search.
+ */
+@Composable
+private fun rememberLinked(text: String, color: Color, open: (String) -> Unit): AnnotatedString {
+    val opener by rememberUpdatedState(open)
+    return remember(text, color) { linked(text, color) { opener(it) } }
+}
+
+private const val MAX_LINKED_TEXT = 1_000_000
+
+private fun linked(text: String, color: Color, open: (String) -> Unit): AnnotatedString {
+    if (text.length > MAX_LINKED_TEXT) return AnnotatedString(text)
+    val found = WebLinks.find(text)
+    if (found.isEmpty()) return AnnotatedString(text)
+    val style = TextLinkStyles(SpanStyle(color = color, textDecoration = TextDecoration.Underline))
+    return buildAnnotatedString {
+        var last = 0
+        for (range in found) {
+            append(text, last, range.first)
+            val href = WebLinks.href(text.substring(range))
+            withLink(LinkAnnotation.Clickable(href, style) { open(href) }) { append(text, range.first, range.last + 1) }
+            last = range.last + 1
+        }
+        append(text, last, text.length)
+    }
+}

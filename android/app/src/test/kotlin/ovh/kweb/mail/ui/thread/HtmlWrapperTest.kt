@@ -86,4 +86,11 @@ class HtmlWrapperTest {
         assertEquals(HtmlWrapper.VIEWPORT, HtmlWrapper.viewport(null))
         assertEquals(HtmlWrapper.VIEWPORT, HtmlWrapper.viewport(0))
     }
+
+    @Test fun aThirdLayoutZoomsOnlyOuterTablesBack() {
+        val third = HtmlWrapper.wrap("<table><tr><td>x</td></tr></table>", layoutWidth = 520, tableZoom = 0.7407f)
+        assertTrue(third.contains("table:not(table table):not([width]):not([style*=\"width\" i]){zoom:0.7407}"))
+        assertTrue(!page.contains("zoom:"))
+        assertTrue(!HtmlWrapper.wrap("<p>x</p>", tableZoom = 1f).contains("zoom:"))
+    }
 }

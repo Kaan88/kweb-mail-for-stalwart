@@ -53,6 +53,16 @@
     <string name="files_move_no_folders">No folders here</string>
     <string name="files_move_cannot_add">You cannot move things into this folder.</string>
     <string name="files_delete_title">Delete “%1$s”?</string>
+    <plurals name="files_delete_many_title">
+        <item quantity="one">Delete %1$d item?</item>
+        <item quantity="other">Delete %1$d items?</item>
+    </plurals>
+    <string name="files_delete_many_text">The files are deleted from the server. This cannot be undone.</string>
+    <string name="files_delete_many_folders_text">The chosen files and folders, with everything in the folders, are deleted from the server. This cannot be undone.</string>
+    <plurals name="files_move_many_title">
+        <item quantity="one">Move %1$d item</item>
+        <item quantity="other">Move %1$d items</item>
+    </plurals>
     <string name="files_delete_file_text">The file is deleted from the server. This cannot be undone.</string>
     <string name="files_delete_folder_text">The folder and everything in it are deleted from the server. This cannot be undone.</string>
     <string name="files_working">Working…</string>
