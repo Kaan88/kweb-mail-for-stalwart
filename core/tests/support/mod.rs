@@ -52,7 +52,7 @@ use state::{resolve_refs, Attachment, Mail, StreamMsg};
 
 // Only the assistant tests use the mock AI service.
 #[allow(unused_imports)]
-pub use ai::{MockAi, MockCall, ModelSpec, Models, Script, USAGE_IN, USAGE_OUT};
+pub use ai::{MockAi, MockCall, Models, Script, Vendor, USAGE_IN, USAGE_OUT};
 #[allow(unused_imports)]
 pub use enterprise::{iso, Enterprise, LiveEnd, ADMIN_KEY};
 #[allow(unused_imports)]

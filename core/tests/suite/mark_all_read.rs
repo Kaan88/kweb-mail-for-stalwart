@@ -94,6 +94,26 @@ fn unread_mail_older_than_the_window_is_marked_on_the_server() {
 }
 
 #[test]
+fn unread_mail_with_the_windows_oldest_time_is_marked_too() {
+    // Six mails share the oldest time, so some of them fall outside the window of 100 at exactly its edge.
+    const EDGE: i64 = 1_700_000_005;
+    let mut old = Vec::new();
+    let rig = Rig::with(|server| {
+        for i in 0..105i64 {
+            let id = server.deliver_at("Sam", "sam@example.test", &format!("junk {i}"), "spam", EDGE + (i - 5).max(0));
+            server.move_to(&id, "junk");
+            old.push(id);
+        }
+    });
+    let outside: Vec<&String> = old.iter().filter(|id| rig.core.message((*id).clone()).unwrap().is_none()).collect();
+    assert_eq!(outside.len(), 5);
+    rig.core.mark_all_read(vec![JUNK_ID.to_string()]).unwrap();
+    for id in outside {
+        assert!(rig.server.is_read(id), "{id} has the window's oldest time");
+    }
+}
+
+#[test]
 fn mail_that_arrived_after_the_last_pass_stays_unread() {
     let rig = Rig::new();
     // Arrived and not synced: the user has not seen it, so it is not the cache's to mark.

@@ -22,15 +22,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.clickable
@@ -85,7 +83,7 @@ import ovh.kweb.mail.ui.list.Groups
 import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiModel
-import uniffi.kweb_core.AiProvider
+import uniffi.kweb_core.AiService
 
 /**
  * The settings of the AI assistant: the main switch, the service, address, model and key, what it may do, and Save.
@@ -98,12 +96,13 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
     var confirmDiscard by rememberSaveable { mutableStateOf(false) }
     var confirmReset by rememberSaveable { mutableStateOf(false) }
     var confirmChats by rememberSaveable { mutableStateOf(false) }
+    var confirmRemove by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(vm) { vm.load() }
     LaunchedEffect(vm) { vm.saved.collect { onBack() } }
 
     // While a save runs back does nothing: leaving would cancel the coroutine that reports a failure.
-    val leave = { if (state.saving || state.resetting) Unit else if (vm.isChanged) confirmDiscard = true else onBack() }
+    val leave = { if (state.saving || state.resetting || state.removing) Unit else if (vm.isChanged) confirmDiscard = true else onBack() }
     BackHandler(onBack = leave)
 
     Scaffold(
@@ -111,7 +110,7 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
             TopAppBar(
                 title = { Text(stringResource(R.string.assistant_title)) },
                 navigationIcon = {
-                    IconButton(onClick = leave, enabled = !state.saving && !state.resetting) {
+                    IconButton(onClick = leave, enabled = !state.saving && !state.resetting && !state.removing) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
@@ -129,7 +128,15 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
             }
             val form = state.form
             when {
-                state.phase == AssistantPhase.READY && form != null -> Form(state, form, vm, onOpenHomeAttention, onDeleteChats = { confirmChats = true }) { confirmReset = true }
+                state.phase == AssistantPhase.READY && form != null -> Form(
+                    state,
+                    form,
+                    vm,
+                    onOpenHomeAttention,
+                    onDeleteChats = { confirmChats = true },
+                    onRemoveService = { confirmRemove = true },
+                    onReset = { confirmReset = true },
+                )
                 state.phase == AssistantPhase.FAILED -> Column(
                     Modifier.fillMaxSize().padding(32.dp),
                     verticalArrangement = Arrangement.Center,
@@ -178,6 +185,24 @@ fun AssistantScreen(onBack: () -> Unit, onOpenHomeAttention: () -> Unit = {}, vm
         )
     }
 
+    val removeId = state.form?.serviceId.orEmpty()
+    if (confirmRemove && removeId.isNotEmpty()) {
+        val shown = state.form
+        val label = shown?.serviceName?.trim().orEmpty().ifEmpty { AssistantRules.hostOf(shown?.baseUrl.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text(stringResource(R.string.assistant_service_remove_title, label)) },
+            text = { Text(stringResource(R.string.assistant_service_remove_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemove = false
+                    vm.removeService(removeId)
+                }) { Text(stringResource(R.string.assistant_service_remove_confirm)) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text(stringResource(R.string.assistant_keep_editing)) } },
+        )
+    }
+
     if (confirmChats) {
         AlertDialog(
             onDismissRequest = { confirmChats = false },
@@ -218,6 +243,7 @@ private fun Form(
     vm: AssistantSettingsViewModel,
     onOpenHomeAttention: () -> Unit,
     onDeleteChats: () -> Unit,
+    onRemoveService: () -> Unit,
     onReset: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -228,46 +254,48 @@ private fun Form(
             }
         }
 
-        SectionLabel(stringResource(R.string.assistant_protocol))
-        val services = listOf(
-            AiProvider.OPEN_AI_COMPATIBLE to R.string.assistant_service_openai,
-            AiProvider.ANTHROPIC to R.string.assistant_service_anthropic,
-        )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-            services.forEachIndexed { index, (provider, label) ->
-                SegmentedButton(
-                    selected = form.provider == provider,
-                    onClick = { vm.setProvider(provider) },
-                    shape = SegmentedButtonDefaults.itemShape(index, services.size),
-                    enabled = !state.saving,
-                ) { Text(stringResource(label), maxLines = 1) }
+        // The list of services: tap one to edit it; saving makes the shown one the service in use.
+        if (state.services.isNotEmpty()) {
+            SectionLabel(stringResource(R.string.assistant_services))
+            val canAdd = AssistantRules.canAddService(state.services.size)
+            val rowCount = state.services.size + (if (canAdd) 1 else 0)
+            val listEnabled = !state.saving && !state.removing && !state.resetting
+            GroupColumn {
+                state.services.forEachIndexed { index, entry ->
+                    ServiceEntryRow(Groups.shape(index, rowCount), entry, selected = entry.id == form.serviceId, enabled = listEnabled) {
+                        vm.selectService(entry.id)
+                    }
+                }
+                if (canAdd) AddServiceRow(Groups.shape(rowCount - 1, rowCount), enabled = listEnabled, onClick = vm::addService)
             }
         }
-        if (form.provider == AiProvider.OPEN_AI_COMPATIBLE) {
-            Text(
-                stringResource(R.string.assistant_service_openai_detail),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
-                color = colors.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        }
+
+        SectionLabel(stringResource(if (form.serviceId.isEmpty()) R.string.assistant_service_new else R.string.assistant_service_selected))
 
         val offeredEfforts = EffortRules.offered(form.model, state.modelList, form.effort)
         val showEffort = EffortRules.isShown(offeredEfforts)
-        val hosted = form.provider == AiProvider.OPEN_AI_COMPATIBLE
         // "Other address" stays chosen while the user types, even if what is typed is a named service's address.
-        var pickedOther by rememberSaveable { mutableStateOf(false) }
+        var pickedOther by rememberSaveable(form.serviceId) { mutableStateOf(false) }
         val service = AssistantRules.shownService(form.baseUrl, pickedOther)
-        val showAddress = !hosted || service == AssistantRules.Service.OTHER
-        val count = 2 + (if (hosted) 1 else 0) + (if (showAddress) 1 else 0) + (if (showEffort) 1 else 0)
-        val ready = !state.switching
-        GroupColumn(Modifier.padding(top = 16.dp)) {
+        val showAddress = service == AssistantRules.Service.OTHER
+        // Name, service, [address], model, [effort], key.
+        val count = 4 + (if (showAddress) 1 else 0) + (if (showEffort) 1 else 0)
+        val ready = !state.switching && !state.removing
+        GroupColumn {
             var at = 0
-            if (hosted) {
-                ServiceRow(Groups.shape(at++, count), service, ready && !state.saving) { picked ->
-                    pickedOther = picked == AssistantRules.Service.OTHER
-                    vm.edit { it.copy(baseUrl = AssistantRules.addressForService(it.baseUrl, picked)) }
-                }
+            FieldRow(
+                Groups.shape(at++, count),
+                stringResource(R.string.assistant_service_name),
+                form.serviceName,
+                { v -> vm.edit { it.copy(serviceName = v) } },
+                KeyboardType.Text,
+                ready,
+                placeholder = stringResource(R.string.assistant_service_name_hint),
+                capitalization = KeyboardCapitalization.Words,
+            )
+            ServiceRow(Groups.shape(at++, count), service, ready && !state.saving) { picked ->
+                pickedOther = picked == AssistantRules.Service.OTHER
+                vm.edit { it.copy(baseUrl = AssistantRules.addressForService(it.baseUrl, picked)) }
             }
             if (showAddress) {
                 FieldRow(Groups.shape(at++, count), stringResource(R.string.assistant_address), form.baseUrl, { v -> vm.edit { it.copy(baseUrl = v) } }, KeyboardType.Uri, ready)
@@ -286,7 +314,7 @@ private fun Form(
             )
         }
 
-        if (hosted && AssistantRules.isPrivateAddress(form.baseUrl)) {
+        if (AssistantRules.isPrivateAddress(form.baseUrl)) {
             Text(
                 stringResource(R.string.assistant_local_detail),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 8.dp),
@@ -294,7 +322,7 @@ private fun Form(
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        if (hosted && AssistantRules.isCleartext(form.baseUrl)) {
+        if (AssistantRules.isCleartext(form.baseUrl)) {
             Text(
                 stringResource(R.string.assistant_cleartext_warning),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 4.dp),
@@ -382,6 +410,21 @@ private fun Form(
             }
         }
 
+        // Only a stored service can be removed (its key and agreement go with it).
+        if (form.serviceId.isNotEmpty()) {
+            TextButton(
+                onClick = onRemoveService,
+                enabled = !state.saving && !state.switching && !state.removing && !state.resetting,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                if (state.removing) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(stringResource(R.string.assistant_service_remove), color = colors.error)
+                }
+            }
+        }
+
         // Earlier chats are kept on this phone; this removes them.
         Text(
             stringResource(R.string.assistant_chats_help),
@@ -449,6 +492,34 @@ private fun SwitchRow(shape: Shape, title: String, checked: Boolean, detail: Str
     }
 }
 
+/** One service of the list: its name, its host and model, and a mark when it is the one in use. [selected] is the one shown below. */
+@Composable
+private fun ServiceEntryRow(shape: Shape, entry: AiService, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    RowFrame(shape, Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)) {
+        Column(Modifier.weight(1f)) {
+            Text(entry.name.ifBlank { AssistantRules.hostOf(entry.baseUrl) }, style = MaterialTheme.typography.bodyLarge)
+            val detail = AssistantRules.serviceDetail(entry)
+            if (detail.isNotEmpty()) {
+                Text(detail, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        if (entry.active) {
+            Text(stringResource(R.string.assistant_service_in_use), color = colors.primary, style = MaterialTheme.typography.labelMedium)
+        }
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
+    }
+}
+
+@Composable
+private fun AddServiceRow(shape: Shape, enabled: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    RowFrame(shape, Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)) {
+        Icon(Icons.Filled.Add, contentDescription = null, tint = colors.primary)
+        Text(stringResource(R.string.assistant_service_add), style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    }
+}
+
 /** One choice of a group of which exactly one is selected. A row that is not [enabled] is shown faded and takes no tap. */
 @Composable
 private fun ChoiceRow(shape: Shape, title: String, detail: String?, selected: Boolean, enabled: Boolean = true, onSelect: () -> Unit) {
@@ -479,15 +550,25 @@ private fun fieldColors(): androidx.compose.material3.TextFieldColors {
 }
 
 @Composable
-private fun FieldRow(shape: Shape, label: String, value: String, onValue: (String) -> Unit, keyboardType: KeyboardType, enabled: Boolean = true) {
+private fun FieldRow(
+    shape: Shape,
+    label: String,
+    value: String,
+    onValue: (String) -> Unit,
+    keyboardType: KeyboardType,
+    enabled: Boolean = true,
+    placeholder: String? = null,
+    capitalization: KeyboardCapitalization = KeyboardCapitalization.None,
+) {
     TextField(
         value = value,
         onValueChange = onValue,
         label = { Text(label) },
+        placeholder = if (placeholder == null) null else { { Text(placeholder) } },
         singleLine = true,
         enabled = enabled,
         shape = shape,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = keyboardType),
+        keyboardOptions = KeyboardOptions(capitalization = capitalization, autoCorrectEnabled = false, keyboardType = keyboardType),
         colors = fieldColors(),
         modifier = Modifier.fillMaxWidth(),
     )
@@ -599,14 +680,6 @@ private fun ModelsSheet(state: ModelsState, onPick: (AiModel) -> Unit, onRetry: 
                     TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
                 }
                 is ModelsState.Loaded -> {
-                    if (ModelRules.isBuiltIn(state.list)) {
-                        Text(
-                            stringResource(R.string.assistant_models_built_in),
-                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-                            color = colors.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
                     if (state.list.models.isEmpty()) {
                         Text(
                             stringResource(R.string.assistant_models_none),
@@ -648,7 +721,7 @@ private fun switchDetail(form: AssistantRules.Form): String = when (val line = A
     AssistantRules.SwitchLine.On -> stringResource(R.string.assistant_switch_on)
     is AssistantRules.SwitchLine.Using -> {
         val name = when {
-            line.provider == AiProvider.ANTHROPIC -> stringResource(R.string.assistant_service_anthropic)
+            line.name.isNotEmpty() -> line.name
             line.service == AssistantRules.Service.OTHER -> line.host.ifEmpty { stringResource(R.string.assistant_svc_other) }
             else -> stringResource(serviceName(line.service))
         }
@@ -714,13 +787,12 @@ private fun KeyRow(shape: Shape, state: AssistantSettingsState, form: AssistantR
         view.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
         onDispose { view.importantForAutofill = before }
     }
-    val optional = form.provider == AiProvider.OPEN_AI_COMPATIBLE
     Column(Modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLow)) {
         TextField(
             value = vm.keyText,
             onValueChange = vm::setKey,
             enabled = enabled,
-            label = { Text(stringResource(if (state.hasKey) R.string.assistant_key_new else if (optional) R.string.assistant_key_optional else R.string.assistant_key)) },
+            label = { Text(stringResource(if (state.hasKey) R.string.assistant_key_new else R.string.assistant_key_optional)) },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Password),

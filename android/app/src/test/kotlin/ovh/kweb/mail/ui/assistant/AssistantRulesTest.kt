@@ -8,13 +8,14 @@ import org.junit.Test
 import ovh.kweb.mail.ui.assistant.AssistantRules.Kind
 import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
-import uniffi.kweb_core.AiProvider
+import uniffi.kweb_core.AiService
 import uniffi.kweb_core.AiSettings
 
 class AssistantRulesTest {
     private fun settings(
         enabled: Boolean = true,
-        provider: AiProvider = AiProvider.OPEN_AI_COMPATIBLE,
+        serviceId: String = "s1",
+        serviceName: String = "OpenAI",
         baseUrl: String = "https://api.openai.com/v1",
         model: String = "gpt-x",
         summaries: Boolean = true,
@@ -28,7 +29,14 @@ class AssistantRulesTest {
         chatConsented: Boolean = false,
         actions: AiActionMode = AiActionMode.ASK_FIRST,
         toolsUnsupported: Boolean = false,
-    ) = AiSettings(enabled, provider, baseUrl, model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented, allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat, chatConsented = chatConsented, actions = actions, toolsUnsupported = toolsUnsupported, instructions = "")
+    ) = AiSettings(
+        enabled = enabled, serviceId = serviceId, serviceName = serviceName, baseUrl = baseUrl, model = model, effort = AiEffort.DEFAULT, hasKey = false, consented = consented,
+        allowSummaries = summaries, allowDrafts = drafts, allowRewrites = rewrites, allowIdeas = ideas, allowExtract = extract, allowExplain = explain, allowChat = chat,
+        chatConsented = chatConsented, actions = actions, toolsUnsupported = toolsUnsupported, instructions = "", services = emptyList(),
+    )
+
+    private fun entry(id: String, name: String, baseUrl: String = "https://api.openai.com/v1", model: String = "gpt-x", active: Boolean = false) =
+        AiService(id = id, name = name, baseUrl = baseUrl, model = model, hasKey = true, consented = false, active = active)
 
     // ---- which entries show ----
 
@@ -94,39 +102,58 @@ class AssistantRulesTest {
     @Test fun theActionModeDoesNotGateTheChat() =
         assertEquals(AssistantRules.ChatGate.READY, AssistantRules.chatReady(settings(chat = true, consented = true, chatConsented = true, actions = AiActionMode.OFF)))
 
-    // ---- the default address ----
-
-    @Test fun eachServiceHasItsDefaultAddress() {
-        assertEquals("https://api.openai.com/v1", AssistantRules.defaultAddress(AiProvider.OPEN_AI_COMPATIBLE))
-        assertEquals("https://api.anthropic.com/v1", AssistantRules.defaultAddress(AiProvider.ANTHROPIC))
-    }
-
-    @Test fun anEmptyAddressGetsTheDefaultOfTheChosenService() {
-        assertEquals(AssistantRules.ANTHROPIC_ADDRESS, AssistantRules.addressAfterChoosing("", AiProvider.OPEN_AI_COMPATIBLE, AiProvider.ANTHROPIC))
-        assertEquals(AssistantRules.OPENAI_ADDRESS, AssistantRules.addressAfterChoosing("  ", AiProvider.ANTHROPIC, AiProvider.OPEN_AI_COMPATIBLE))
-    }
-
-    @Test fun theOtherServicesDefaultIsReplaced() {
-        assertEquals(AssistantRules.ANTHROPIC_ADDRESS, AssistantRules.addressAfterChoosing(AssistantRules.OPENAI_ADDRESS, AiProvider.OPEN_AI_COMPATIBLE, AiProvider.ANTHROPIC))
-        assertEquals(AssistantRules.OPENAI_ADDRESS, AssistantRules.addressAfterChoosing(AssistantRules.ANTHROPIC_ADDRESS + "/", AiProvider.ANTHROPIC, AiProvider.OPEN_AI_COMPATIBLE))
-    }
-
-    @Test fun anAddressTheUserWroteIsKept() {
-        val own = "http://192.168.1.20:11434/v1"
-        assertEquals(own, AssistantRules.addressAfterChoosing(own, AiProvider.OPEN_AI_COMPATIBLE, AiProvider.ANTHROPIC))
-    }
-
-    @Test fun choosingTheSameServiceChangesNothing() =
-        assertEquals("", AssistantRules.addressAfterChoosing("", AiProvider.ANTHROPIC, AiProvider.ANTHROPIC))
-
-    @Test fun theFormFollowsTheChoiceOfService() {
-        val form = AssistantRules.formOf(settings()).withProvider(AiProvider.ANTHROPIC)
-        assertEquals(AiProvider.ANTHROPIC, form.provider)
-        assertEquals(AssistantRules.ANTHROPIC_ADDRESS, form.baseUrl)
-    }
+    // ---- the list of services ----
 
     @Test fun anEmptyStoredAddressIsPrefilled() =
         assertEquals(AssistantRules.OPENAI_ADDRESS, AssistantRules.formOf(settings(baseUrl = "")).baseUrl)
+
+    @Test fun theFormOfANewServiceHasNoIdAndNoName() {
+        val form = AssistantRules.formOf(settings(serviceId = "", serviceName = "", baseUrl = "", model = ""))
+        assertEquals("", form.serviceId)
+        assertEquals("", form.serviceName)
+        assertEquals("", form.model)
+    }
+
+    @Test fun theNameAndIdPassThroughToTheSettings() {
+        val stored = settings(serviceId = "s1", serviceName = "Work")
+        val form = AssistantRules.formOf(stored)
+        assertEquals("Work", form.serviceName)
+        val sent = form.copy(serviceName = "  Home  ").toSettings(stored)
+        assertEquals("s1", sent.serviceId)
+        assertEquals("Home", sent.serviceName)
+    }
+
+    @Test fun anEmptyNameIsSentEmptySoTheCoreNamesItAfterTheAddress() {
+        val stored = settings(serviceId = "", serviceName = "", baseUrl = "", model = "")
+        val sent = AssistantRules.formOf(stored).toSettings(stored)
+        assertEquals("", sent.serviceId)
+        assertEquals("", sent.serviceName)
+    }
+
+    @Test fun theListOfServicesIsPassedOnAsItCame() {
+        val stored = settings().copy(services = listOf(entry("s1", "OpenAI", active = true), entry("s2", "Local")))
+        assertEquals(stored.services, AssistantRules.formOf(stored).toSettings(stored).services)
+    }
+
+    @Test fun aRenameIsAChangeButSpacesAroundTheNameAreNot() {
+        val form = AssistantRules.formOf(settings(serviceName = "Work"))
+        assertTrue(AssistantRules.isChanged(form.copy(serviceName = "Home"), form, keyTyped = false))
+        assertFalse(AssistantRules.isChanged(form.copy(serviceName = " Work "), form, keyTyped = false))
+    }
+
+    @Test fun aRowShowsTheHostAndTheModel() {
+        assertEquals("api.openai.com · gpt-x", AssistantRules.serviceDetail(entry("s1", "OpenAI")))
+        assertEquals("192.168.1.20 · llama", AssistantRules.serviceDetail(entry("s2", "Home", baseUrl = "http://192.168.1.20:11434/v1", model = " llama ")))
+        assertEquals("api.openai.com", AssistantRules.serviceDetail(entry("s3", "New", model = "")))
+        assertEquals("", AssistantRules.serviceDetail(entry("s4", "x", baseUrl = "", model = "")))
+    }
+
+    @Test fun atMostTwentyServicesMayBeKept() {
+        assertTrue(AssistantRules.canAddService(0))
+        assertTrue(AssistantRules.canAddService(19))
+        assertFalse(AssistantRules.canAddService(20))
+        assertEquals(20, AssistantRules.MAX_SERVICES)
+    }
 
     // ---- the state line ----
 
@@ -158,7 +185,7 @@ class AssistantRulesTest {
         val form = AssistantRules.formOf(stored)
         assertFalse(form.copy(model = "other").toSettings(stored).consented)
         assertFalse(form.copy(baseUrl = "https://example.org/v1").toSettings(stored).consented)
-        assertFalse(form.withProvider(AiProvider.ANTHROPIC).toSettings(stored).consented)
+        assertFalse(form.copy(serviceId = "s2").toSettings(stored).consented)
     }
 
     @Test fun savingNeverGrantsTheChatsConsentEither() {
@@ -181,7 +208,7 @@ class AssistantRulesTest {
         assertTrue(form.copy(allowIdeas = true, actions = AiActionMode.OFF).toSettings(stored).chatConsented)
         assertFalse(form.copy(model = "other").toSettings(stored).chatConsented)
         assertFalse(form.copy(baseUrl = "https://example.org/v1").toSettings(stored).chatConsented)
-        assertFalse(form.withProvider(AiProvider.ANTHROPIC).toSettings(stored).chatConsented)
+        assertFalse(form.copy(serviceId = "s2").toSettings(stored).chatConsented)
     }
 
     @Test fun theChatsConsentNeverOutlivesTheFirst() {
@@ -245,23 +272,24 @@ class AssistantRulesTest {
         assertNull(AssistantRules.keyToSend("  ", remove = false))
     }
 
-    // ---- switching the service ----
+    // ---- switching the entry shown ----
 
-    @Test fun switchingTakesTheOtherServicesOwnValues() {
-        val form = AssistantRules.formOf(settings(model = "gpt-x")).copy(model = "typed", removeKey = true)
-        val other = settings(provider = AiProvider.ANTHROPIC, baseUrl = "https://api.anthropic.com/v1", model = "claude-x").copy(effort = AiEffort.HIGH)
-        val after = form.switchedTo(other)
-        assertEquals(AiProvider.ANTHROPIC, after.provider)
-        assertEquals("claude-x", after.model)
+    @Test fun switchingTakesTheOtherEntrysOwnValues() {
+        val form = AssistantRules.formOf(settings(model = "gpt-x")).copy(model = "typed", serviceName = "typed name", removeKey = true)
+        val other = settings(serviceId = "s2", serviceName = "Local", baseUrl = "http://192.168.1.20:11434/v1", model = "llama").copy(effort = AiEffort.HIGH)
+        val after = form.showing(other)
+        assertEquals("s2", after.serviceId)
+        assertEquals("Local", after.serviceName)
+        assertEquals("llama", after.model)
         assertEquals(AiEffort.HIGH, after.effort)
-        assertEquals("https://api.anthropic.com/v1", after.baseUrl)
+        assertEquals("http://192.168.1.20:11434/v1", after.baseUrl)
         assertFalse(after.removeKey)
     }
 
     @Test fun switchingKeepsTheSwitchesThatBelongToNoService() {
         val form = AssistantRules.formOf(settings(enabled = false, summaries = false)).copy(enabled = true, allowDrafts = false)
-        val other = settings(provider = AiProvider.ANTHROPIC, enabled = false, summaries = true, drafts = true, rewrites = true)
-        val after = form.switchedTo(other)
+        val other = settings(serviceId = "s2", enabled = false, summaries = true, drafts = true, rewrites = true)
+        val after = form.showing(other)
         assertTrue(after.enabled)
         assertFalse(after.allowSummaries)
         assertFalse(after.allowDrafts)
@@ -269,7 +297,7 @@ class AssistantRulesTest {
 
     @Test fun switchingKeepsTheNewSwitchesAndTheActionModeAsShown() {
         val form = AssistantRules.formOf(settings()).copy(allowIdeas = true, allowExtract = true, allowExplain = true, allowChat = true, actions = AiActionMode.OFF)
-        val after = form.switchedTo(settings(provider = AiProvider.ANTHROPIC))
+        val after = form.showing(settings(serviceId = "s2"))
         assertTrue(after.allowIdeas)
         assertTrue(after.allowExtract)
         assertTrue(after.allowExplain)
@@ -277,13 +305,29 @@ class AssistantRulesTest {
         assertEquals(AiActionMode.OFF, after.actions)
     }
 
-    @Test fun aServiceNeverSetUpGetsItsDefaultAddress() {
-        val other = settings(provider = AiProvider.ANTHROPIC, baseUrl = "", model = "")
-        assertEquals(AssistantRules.ANTHROPIC_ADDRESS, AssistantRules.formOf(settings()).switchedTo(other).baseUrl)
+    @Test fun addingAServiceShowsAnEmptyFormThatSavesAsNew() {
+        val current = settings(serviceId = "s1", serviceName = "OpenAI", model = "gpt-x", consented = true)
+        val fresh = settings(serviceId = "", serviceName = "", baseUrl = "", model = "")
+        val after = AssistantRules.formOf(current).showing(fresh)
+        assertEquals("", after.serviceId)
+        assertEquals("", after.serviceName)
+        assertEquals("", after.model)
+        assertEquals(AssistantRules.OPENAI_ADDRESS, after.baseUrl) // prefilled, as for a first set-up
+        assertEquals("", after.toSettings(fresh).serviceId)
+        assertFalse(after.toSettings(fresh).consented)
+    }
+
+    @Test fun theFormOfTheEntryJustReadIsNotAChangeButCarriedSwitchesAre() {
+        val other = settings(serviceId = "s2", serviceName = "Local", enabled = true, summaries = true)
+        val initial = AssistantRules.formOf(other)
+        val untouched = AssistantRules.formOf(settings()).showing(other).copy(allowSummaries = true)
+        assertFalse(AssistantRules.isChanged(untouched, initial, keyTyped = false))
+        val carried = AssistantRules.formOf(settings(summaries = false)).showing(other)
+        assertTrue(AssistantRules.isChanged(carried, initial, keyTyped = false))
     }
 
     @Test fun theFormCarriesTheEffortToTheSettings() {
-        val stored = settings(provider = AiProvider.ANTHROPIC)
+        val stored = settings(serviceId = "s2")
         val form = AssistantRules.formOf(stored).copy(effort = AiEffort.MAX)
         assertEquals(AiEffort.MAX, form.toSettings(stored).effort)
         assertTrue(AssistantRules.isChanged(form, AssistantRules.formOf(stored), keyTyped = false))
@@ -351,12 +395,17 @@ class AssistantRulesTest {
         assertEquals(AssistantRules.SwitchLine.Off, AssistantRules.switchLine(form.copy(model = "gpt-x")))
         assertEquals(AssistantRules.SwitchLine.On, AssistantRules.switchLine(form.copy(enabled = true, model = " ")))
         assertEquals(
-            AssistantRules.SwitchLine.Using(AiProvider.OPEN_AI_COMPATIBLE, AssistantRules.Service.OPENAI, "api.openai.com", "gpt-x"),
+            AssistantRules.SwitchLine.Using("OpenAI", AssistantRules.Service.OPENAI, "api.openai.com", "gpt-x"),
             AssistantRules.switchLine(form.copy(enabled = true, model = " gpt-x ")),
         )
         assertEquals(
-            AssistantRules.SwitchLine.Using(AiProvider.OPEN_AI_COMPATIBLE, AssistantRules.Service.OTHER, "192.168.1.20", "llama"),
-            AssistantRules.switchLine(form.copy(enabled = true, baseUrl = "http://192.168.1.20:11434/v1", model = "llama")),
+            AssistantRules.SwitchLine.Using("Home", AssistantRules.Service.OTHER, "192.168.1.20", "llama"),
+            AssistantRules.switchLine(form.copy(enabled = true, serviceName = " Home ", baseUrl = "http://192.168.1.20:11434/v1", model = "llama")),
+        )
+        // No name yet: the screen falls back to the preset or the host.
+        assertEquals(
+            AssistantRules.SwitchLine.Using("", AssistantRules.Service.OTHER, "192.168.1.20", "llama"),
+            AssistantRules.switchLine(form.copy(enabled = true, serviceName = "", baseUrl = "http://192.168.1.20:11434/v1", model = "llama")),
         )
     }
 
@@ -369,7 +418,6 @@ class AssistantRulesTest {
         assertTrue(AssistantRules.showToolsNote(fact, form.copy(baseUrl = "http://localhost:11434/v1/", model = " small ")))
         assertFalse(AssistantRules.showToolsNote(fact, form.copy(model = "big")))
         assertFalse(AssistantRules.showToolsNote(fact, form.copy(baseUrl = "http://localhost:1234/v1")))
-        assertFalse(AssistantRules.showToolsNote(fact, form.copy(provider = AiProvider.ANTHROPIC)))
         assertNull(AssistantRules.toolsFact(settings()))
         assertFalse(AssistantRules.showToolsNote(null, form))
     }
@@ -380,5 +428,15 @@ class AssistantRulesTest {
         assertTrue(AssistantRules.isCleartext(" HTTP://10.0.0.2/v1"))
         assertFalse(AssistantRules.isCleartext("https://api.openai.com/v1"))
         assertFalse(AssistantRules.isCleartext(""))
+    }
+
+    @Test
+    fun aMoveToAnotherSchemeHostOrPortIsAnOriginChange() {
+        assertTrue(AssistantRules.originChanged("https://api.a.com/v1", "https://api.b.com/v1"))
+        assertTrue(AssistantRules.originChanged("https://a.com/v1", "http://a.com/v1"))
+        assertTrue(AssistantRules.originChanged("https://a.com/v1", "https://a.com:8443/v1"))
+        assertTrue(AssistantRules.originChanged("https://a.com/v1", ""))
+        assertFalse(AssistantRules.originChanged("https://a.com/v1", "HTTPS://A.com:443/v2"))
+        assertFalse(AssistantRules.originChanged("", "https://a.com/v1"))
     }
 }

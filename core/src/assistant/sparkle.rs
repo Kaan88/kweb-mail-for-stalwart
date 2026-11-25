@@ -463,7 +463,8 @@ mod tests {
     fn base() -> AiSettings {
         AiSettings {
             enabled: false,
-            provider: crate::model::AiProvider::OpenAiCompatible,
+            service_id: String::new(),
+            service_name: String::new(),
             base_url: String::new(),
             model: String::new(),
             effort: crate::model::AiEffort::Default,
@@ -480,6 +481,7 @@ mod tests {
             actions: AiActionMode::AskFirst,
             tools_unsupported: false,
             instructions: String::new(),
+            services: Vec::new(),
         }
     }
 

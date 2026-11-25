@@ -1,8 +1,12 @@
-//! An in-process mock of an AI service speaking both protocols over plain http on 127.0.0.1:
-//! OpenAI-style `POST /v1/chat/completions` and Anthropic-style `POST /v1/messages` (streaming,
-//! or one JSON document for `Script::Whole`) and `GET /v1/models` in either style. It records what it received, so a test can assert exactly what left the device,
-//! and it echoes whatever credentials it got into its error answers, so a test can check that
-//! the key never comes back out through an error message.
+//! An in-process mock of an AI service speaking the OpenAI protocol over plain http on 127.0.0.1:
+//! `POST /v1/chat/completions` (streaming, or one JSON document for `Script::Whole`) and
+//! `GET /v1/models`. It records what it received, so a test can assert exactly what left the
+//! device, and it echoes whatever credentials it got into its error answers, so a test can check
+//! that the key never comes back out through an error message.
+//!
+//! [`Vendor`] makes it as strict as one real service is about the request, with that service's
+//! own refusal (Gemini, Mistral, DeepSeek, OpenRouter in front of Anthropic), and makes the
+//! answers carry what that service sends with its tool calls.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -14,7 +18,7 @@ use std::{
 use axum::{
     body::{Body, Bytes},
     extract::{Request, State},
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -48,30 +52,55 @@ pub enum Script {
     Cut(Vec<String>),
     /// The pieces, then an error event that echoes the credentials.
     StreamError(Vec<String>),
-    /// An OpenAI-style service that ignores `stream` and answers with this text as one JSON
-    /// document.
+    /// A service that ignores `stream` and answers with this text as one JSON document.
     Whole(String),
-    /// The pieces, then the service's own output limit: `finish_reason: length` /
-    /// `stop_reason: max_tokens`.
+    /// The pieces, then the service's own output limit: `finish_reason: length`.
     Length(Vec<String>),
     /// Text pieces, then these tool calls (arguments streamed in two fragments), ended with
-    /// finish_reason "tool_calls" / stop_reason "tool_use". Both protocols.
+    /// finish_reason "tool_calls".
     Tools { text: Vec<String>, calls: Vec<MockCall> },
-    /// A request that carries `tools` gets a 400 whose body mentions tools (and echoes the credentials);
-    /// one without gets these pieces as a normal answer.
+    /// A request that carries `tools` gets a 400 whose body says the model does not support
+    /// tools (and echoes the credentials); one without gets these pieces as a normal answer.
     NoTools(Vec<String>),
     /// A model that takes no functions at all: every request, with tools or without, gets a 400 whose
     /// body says so (and echoes the credentials).
     NoFunctions,
 }
 
+/// How strict the mock is, and what it sends with its calls, like one real service.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Vendor {
+    /// Takes any well-formed request.
+    #[default]
+    Plain,
+    /// Gemini's OpenAI endpoint: refuses `additionalProperties` and an object without properties
+    /// in a tool's parameters, sends a thought signature with each call
+    /// (`extra_content.google.thought_signature`) and refuses a later request whose assistant
+    /// turn lost it.
+    Gemini,
+    /// Mistral: refuses a user message right after a tool message, and answers 422 to
+    /// `stream_options`.
+    Mistral,
+    /// DeepSeek in thinking mode: sends `reasoning_content` with its calls and refuses a later
+    /// request whose assistant turn with calls lost it.
+    DeepSeek,
+    /// OpenRouter in front of Anthropic: refuses an assistant turn whose content is an empty text.
+    OpenRouterAnthropic,
+}
+
+/// The thought signature the Gemini mock gives the call `id`.
+pub fn signature_of(id: &str) -> String {
+    format!("sig-{id}")
+}
+
+/// The reasoning the DeepSeek mock sends with its calls.
+pub const DEEPSEEK_REASONING: &str = "deepseek private reasoning";
+
 /// What `GET /v1/models` answers.
 #[derive(Clone, Debug)]
 pub enum Models {
-    /// OpenAI style: `{"data":[{"id":..}]}`, in this order.
+    /// `{"data":[{"id":..}]}`, in this order.
     Ids(Vec<String>),
-    /// Anthropic style, one inner list per page, paged by `after_id`.
-    Pages(Vec<Vec<ModelSpec>>),
     /// An error status; the body echoes the credentials it was sent.
     Status(u16),
     /// A redirect to this address.
@@ -84,76 +113,49 @@ pub enum Models {
     Huge,
 }
 
-/// One model of the Anthropic-style list.
-#[derive(Clone, Debug)]
-pub struct ModelSpec {
-    pub id: String,
-    pub name: String,
-    /// The effort levels it supports ("low".."max"); empty: `capabilities.effort.supported` is false.
-    pub efforts: Vec<String>,
-}
-
-impl ModelSpec {
-    pub fn new(id: &str, name: &str, efforts: &[&str]) -> ModelSpec {
-        ModelSpec { id: id.into(), name: name.into(), efforts: efforts.iter().map(|e| e.to_string()).collect() }
-    }
-}
-
 /// One request as it arrived.
 #[derive(Clone, Debug)]
 pub struct Seen {
     pub path: String,
-    /// The query string, empty when there is none.
-    pub query: String,
     pub authorization: Option<String>,
+    /// An `x-api-key` header; the app never sends one.
     pub api_key: Option<String>,
-    pub version: Option<String>,
     pub body: Value,
+    /// The mock refused it as the vendor would have.
+    pub refused: bool,
 }
 
 impl Seen {
-    /// The system prompt, in either protocol.
+    /// The system prompt.
     pub fn system(&self) -> String {
-        match self.body["system"].as_str() {
-            Some(system) => system.to_string(),
-            None => self.body["messages"][0]["content"].as_str().unwrap_or_default().to_string(),
-        }
+        self.body["messages"][0]["content"].as_str().unwrap_or_default().to_string()
     }
 
-    /// The user's message, in either protocol.
+    /// The user's message.
     pub fn user(&self) -> String {
         let last = self.body["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
         last["content"].as_str().unwrap_or_default().to_string()
     }
 
-    /// The messages of the request as they were sent (without the Anthropic `system` field).
+    /// The messages of the request as they were sent.
     pub fn messages(&self) -> Vec<Value> {
         self.body["messages"].as_array().cloned().unwrap_or_default()
     }
 
     /// The names of the tools the request offered, in order; empty when it had no `tools` key.
     pub fn tool_names(&self) -> Vec<String> {
-        let name = |tool: &Value| tool["name"].as_str().or(tool["function"]["name"].as_str()).map(str::to_string);
+        let name = |tool: &Value| tool["function"]["name"].as_str().map(str::to_string);
         self.body["tools"].as_array().into_iter().flatten().filter_map(name).collect()
     }
 
-    /// (call id, content) of every tool result in the request, either protocol.
+    /// (call id, content) of every tool result in the request.
     pub fn tool_results(&self) -> Vec<(String, String)> {
         let text = |value: &Value| value.as_str().unwrap_or_default().to_string();
-        let mut out = Vec::new();
-        for message in self.messages() {
-            if message["role"] == "tool" {
-                // OpenAI style: one message per result.
-                out.push((text(&message["tool_call_id"]), text(&message["content"])));
-            }
-            // Anthropic style: the blocks of one user message.
-            for block in message["content"].as_array().into_iter().flatten() {
-                if block["type"] == "tool_result" {
-                    out.push((text(&block["tool_use_id"]), text(&block["content"])));
-                }
-            }
-        }
-        out
+        self.messages()
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| (text(&m["tool_call_id"]), text(&m["content"])))
+            .collect()
     }
 }
 
@@ -162,6 +164,7 @@ struct Shared {
     /// Scripts that answer the next requests, one each, before `script` does.
     queue: Mutex<VecDeque<Script>>,
     models: Mutex<Models>,
+    vendor: Mutex<Vendor>,
     split_events: Mutex<bool>,
     seen: Mutex<Vec<Seen>>,
     hits: Mutex<HashMap<String, usize>>,
@@ -187,13 +190,13 @@ impl MockAi {
             script: Mutex::new(Script::Answer(vec!["ok".into()])),
             queue: Mutex::default(),
             models: Mutex::new(Models::Ids(Vec::new())),
+            vendor: Mutex::default(),
             split_events: Mutex::new(false),
             seen: Mutex::default(),
             hits: Mutex::default(),
         });
         let app = Router::new()
-            .route("/v1/chat/completions", post(openai))
-            .route("/v1/messages", post(anthropic))
+            .route("/v1/chat/completions", post(chat))
             .route("/v1/models", get(models))
             .fallback(other)
             .with_state(shared.clone());
@@ -220,6 +223,11 @@ impl MockAi {
     /// What the model list answers with.
     pub fn set_models(&self, models: Models) {
         *self.shared.models.lock().unwrap() = models;
+    }
+
+    /// Which real service the mock behaves like.
+    pub fn set_vendor(&self, vendor: Vendor) {
+        *self.shared.vendor.lock().unwrap() = vendor;
     }
 
     /// Each request takes the next script; when the queue is empty the `set` script answers.
@@ -266,51 +274,102 @@ fn credentials(headers: &HeaderMap) -> String {
     format!("{} {}", get("authorization"), get("x-api-key")).trim().to_string()
 }
 
-async fn record(s: &Shared, path: &str, query: &str, headers: &HeaderMap, body: Bytes) {
+fn record(s: &Shared, path: &str, headers: &HeaderMap, body: Value, refused: bool) {
     *s.hits.lock().unwrap().entry(path.to_string()).or_default() += 1;
     let get = |n: &str| headers.get(n).and_then(|v| v.to_str().ok()).map(str::to_string);
     s.seen.lock().unwrap().push(Seen {
         path: path.to_string(),
-        query: query.to_string(),
         authorization: get("authorization"),
         api_key: get("x-api-key"),
-        version: get("anthropic-version"),
-        body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+        body,
+        refused,
     });
 }
 
-/// The token counts the mock reports: in the last chunk of an OpenAI-style stream that asked for them
-/// (`stream_options.include_usage`), always in an Anthropic-style one.
+/// The token counts the mock reports in the last chunk of a stream that asked for them
+/// (`stream_options.include_usage`).
 pub const USAGE_IN: u32 = 123;
 pub const USAGE_OUT: u32 = 45;
 
-/// Whether the request asked for usage (`stream_options.include_usage`).
-fn asks_usage(body: &Bytes) -> bool {
-    serde_json::from_slice::<Value>(body).is_ok_and(|v| v["stream_options"]["include_usage"] == true)
+/// What the vendor would refuse in `body`: its status and the words of its answer.
+fn vendor_refusal(vendor: Vendor, body: &Value) -> Option<(StatusCode, String)> {
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    let with_calls = || messages.iter().filter(|m| m["role"] == "assistant" && m["tool_calls"].is_array());
+    let bad = |text: &str| Some((StatusCode::BAD_REQUEST, text.to_string()));
+    match vendor {
+        Vendor::Plain => None,
+        Vendor::Gemini => {
+            for (n, tool) in body["tools"].as_array().into_iter().flatten().enumerate() {
+                let parameters = &tool["function"]["parameters"];
+                if parameters.get("additionalProperties").is_some() {
+                    return bad(&format!(
+                        r#"[{{"error":{{"code":400,"message":"Invalid JSON payload received. Unknown name \"additionalProperties\" at 'tools[0].function_declarations[{n}].parameters': Cannot find field.","status":"INVALID_ARGUMENT"}}}}]"#
+                    ));
+                }
+                if parameters.is_object() && parameters["properties"].as_object().is_none_or(|p| p.is_empty()) {
+                    return bad(&format!(
+                        r#"{{"error":{{"code":400,"message":"* GenerateContentRequest.tools[0].function_declarations[{n}].parameters.properties: should be non-empty for OBJECT type","status":"INVALID_ARGUMENT"}}}}"#
+                    ));
+                }
+            }
+            for call in with_calls().flat_map(|m| m["tool_calls"].as_array().cloned().unwrap_or_default()) {
+                let id = call["id"].as_str().unwrap_or_default();
+                if call["extra_content"]["google"]["thought_signature"].as_str() != Some(signature_of(id).as_str()) {
+                    return bad(
+                        r#"{"error":{"code":400,"message":"Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly.","status":"INVALID_ARGUMENT"}}"#,
+                    );
+                }
+            }
+            None
+        }
+        Vendor::Mistral => {
+            if body.get("stream_options").is_some() {
+                return Some((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"object":"error","message":{"detail":[{"type":"extra_forbidden","loc":["body","stream_options"],"msg":"Extra inputs are not permitted"}]},"type":"invalid_request_error"}"#.into(),
+                ));
+            }
+            let after_tool = messages.windows(2).any(|w| w[0]["role"] == "tool" && w[1]["role"] == "user");
+            if after_tool {
+                return bad(
+                    r#"{"object":"error","message":"Unexpected role 'user' after role 'tool'","type":"invalid_request_message_order","code":"3230"}"#,
+                );
+            }
+            None
+        }
+        Vendor::DeepSeek => {
+            if with_calls().any(|m| m["reasoning_content"].as_str() != Some(DEEPSEEK_REASONING)) {
+                return bad(
+                    r#"{"error":{"message":"Missing `reasoning_content` field in the assistant message at message index 2.","type":"invalid_request_error"}}"#,
+                );
+            }
+            None
+        }
+        Vendor::OpenRouterAnthropic => {
+            if messages.iter().any(|m| m["role"] == "assistant" && m["content"] == "") {
+                return bad(
+                    r#"{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"messages: text content blocks must be non-empty"}}}"#,
+                );
+            }
+            None
+        }
+    }
 }
 
-/// Whether the request has a `tools` key.
-fn carries_tools(body: &Bytes) -> bool {
-    serde_json::from_slice::<Value>(body).is_ok_and(|v| v.get("tools").is_some())
+async fn chat(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
+    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let vendor = *s.vendor.lock().unwrap();
+    if let Some((status, words)) = vendor_refusal(vendor, &body) {
+        record(&s, "/v1/chat/completions", &headers, body, true);
+        return (status, format!("{words} {}", credentials(&headers))).into_response();
+    }
+    let (tools, usage) = (body.get("tools").is_some(), body["stream_options"]["include_usage"] == true);
+    record(&s, "/v1/chat/completions", &headers, body, false);
+    respond(&s, &headers, vendor, tools, usage)
 }
 
-async fn openai(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
-    let (tools, usage) = (carries_tools(&body), asks_usage(&body));
-    record(&s, "/v1/chat/completions", "", &headers, body).await;
-    respond(&s, &headers, false, tools, usage)
-}
-
-async fn anthropic(State(s): State<Arc<Shared>>, headers: HeaderMap, body: Bytes) -> Response {
-    let tools = carries_tools(&body);
-    record(&s, "/v1/messages", "", &headers, body).await;
-    respond(&s, &headers, true, tools, false)
-}
-
-async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> Response {
-    record(&s, "/v1/models", uri.query().unwrap_or_default(), &headers, Bytes::new()).await;
-    let after = uri.query().and_then(|q| {
-        url::form_urlencoded::parse(q.as_bytes()).find(|(k, _)| k == "after_id").map(|(_, v)| v.to_string())
-    });
+async fn models(State(s): State<Arc<Shared>>, headers: HeaderMap) -> Response {
+    record(&s, "/v1/models", &headers, Value::Null, false);
     let script = s.models.lock().unwrap().clone();
     let json = |value: Value| {
         Response::builder()
@@ -322,29 +381,6 @@ async fn models(State(s): State<Arc<Shared>>, uri: Uri, headers: HeaderMap) -> R
         Models::Ids(ids) => json(
             json!({"object": "list", "data": ids.iter().map(|id| json!({"id": id, "object": "model"})).collect::<Vec<_>>()}),
         ),
-        Models::Pages(pages) => {
-            let at = match &after {
-                None => 0,
-                Some(last) => {
-                    pages.iter().position(|p| p.last().is_some_and(|m| &m.id == last)).map_or(pages.len(), |i| i + 1)
-                }
-            };
-            let Some(page) = pages.get(at) else { return StatusCode::BAD_REQUEST.into_response() };
-            let level = |on: bool| json!({"supported": on});
-            let data: Vec<Value> = page
-                .iter()
-                .map(|m| {
-                    let has = |l: &str| m.efforts.iter().any(|e| e == l);
-                    json!({"type": "model", "id": m.id, "display_name": m.name, "capabilities": {"effort": {
-                        "supported": !m.efforts.is_empty(), "low": level(has("low")), "medium": level(has("medium")),
-                        "high": level(has("high")), "xhigh": level(has("xhigh")), "max": level(has("max"))}}})
-                })
-                .collect();
-            let last = page.last().map(|m| m.id.clone());
-            json(
-                json!({"data": data, "has_more": at + 1 < pages.len(), "first_id": page.first().map(|m| m.id.clone()), "last_id": last}),
-            )
-        }
         Models::Status(code) => {
             let body = json!({"error": {"message": format!("Incorrect API key provided: {}", credentials(&headers))}});
             (StatusCode::from_u16(code).unwrap(), body.to_string()).into_response()
@@ -368,7 +404,7 @@ enum Step {
     Pause,
 }
 
-fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool, usage: bool) -> Response {
+fn respond(s: &Shared, headers: &HeaderMap, vendor: Vendor, tools: bool, usage: bool) -> Response {
     let queued = s.queue.lock().unwrap().pop_front();
     let script = queued.unwrap_or_else(|| s.script.lock().unwrap().clone());
     let echoed = credentials(headers);
@@ -388,11 +424,7 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool, usage:
                 .unwrap();
         }
         Script::Whole(text) => {
-            let body = if anthropic {
-                json!({"type": "message", "role": "assistant", "content": [{"type": "thinking", "thinking": "private"}, {"type": "text", "text": text}], "stop_reason": "end_turn"})
-            } else {
-                json!({"choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]})
-            };
+            let body = json!({"choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]});
             return Response::builder()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
@@ -416,7 +448,7 @@ fn respond(s: &Shared, headers: &HeaderMap, anthropic: bool, tools: bool, usage:
             return (StatusCode::BAD_REQUEST, body.to_string()).into_response();
         }
     };
-    let events = if anthropic { anthropic_events(&pieces, &tail) } else { openai_events(&pieces, &tail, usage) };
+    let events = events(&pieces, &tail, usage, vendor);
     let split = *s.split_events.lock().unwrap();
     let mut steps = Vec::new();
     for event in events {
@@ -475,10 +507,11 @@ fn data(value: Value) -> String {
     format!("data: {value}\n\n")
 }
 
-fn openai_events(pieces: &[String], tail: &Tail, usage: bool) -> Vec<String> {
+fn events(pieces: &[String], tail: &Tail, usage: bool, vendor: Vendor) -> Vec<String> {
+    let reasoning = if vendor == Vendor::DeepSeek { DEEPSEEK_REASONING } else { "private reasoning" };
     let mut out = vec![
         data(json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]})),
-        data(json!({"choices": [{"index": 0, "delta": {"reasoning_content": "private reasoning"}}]})),
+        data(json!({"choices": [{"index": 0, "delta": {"reasoning_content": reasoning}}]})),
     ];
     out.extend(pieces.iter().map(|p| data(json!({"choices": [{"index": 0, "delta": {"content": p}}]}))));
     match tail {
@@ -497,10 +530,12 @@ fn openai_events(pieces: &[String], tail: &Tail, usage: bool) -> Vec<String> {
         Tail::Tools(calls) => {
             for (index, call) in calls.iter().enumerate() {
                 let (first, second) = fragments(call);
-                out.push(data(
-                    json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": index, "id": call.id,
-                    "type": "function", "function": {"name": call.name, "arguments": first}}]}}]}),
-                ));
+                let mut start = json!({"index": index, "id": call.id, "type": "function",
+                    "function": {"name": call.name, "arguments": first}});
+                if vendor == Vendor::Gemini {
+                    start["extra_content"] = json!({"google": {"thought_signature": signature_of(&call.id)}});
+                }
+                out.push(data(json!({"choices": [{"index": 0, "delta": {"tool_calls": [start]}}]})));
                 out.push(data(json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": index,
                     "function": {"arguments": second}}]}}]})));
             }
@@ -511,79 +546,6 @@ fn openai_events(pieces: &[String], tail: &Tail, usage: bool) -> Vec<String> {
                 ));
             }
             out.push("data: [DONE]\n\n".into());
-        }
-        Tail::Hang | Tail::Cut => {}
-    }
-    out
-}
-
-fn anthropic_events(pieces: &[String], tail: &Tail) -> Vec<String> {
-    let event = |name: &str, value: Value| format!("event: {name}\n{}", data(value));
-    let mut out = vec![
-        event(
-            "message_start",
-            json!({"type": "message_start", "message": {"id": "msg_1", "role": "assistant", "usage": {"input_tokens": USAGE_IN, "output_tokens": 1}}}),
-        ),
-        event(
-            "content_block_start",
-            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
-        ),
-        event(
-            "content_block_delta",
-            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "private reasoning"}}),
-        ),
-        event(
-            "content_block_start",
-            json!({"type": "content_block_start", "index": 1, "content_block": {"type": "text", "text": ""}}),
-        ),
-        event("ping", json!({"type": "ping"})),
-    ];
-    out.extend(pieces.iter().map(|p| {
-        event(
-            "content_block_delta",
-            json!({"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": p}}),
-        )
-    }));
-    match tail {
-        Tail::Done => {
-            out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 1})));
-            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": USAGE_OUT}})));
-            out.push(event("message_stop", json!({"type": "message_stop"})));
-        }
-        Tail::Length => {
-            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}})));
-            out.push(event("message_stop", json!({"type": "message_stop"})));
-        }
-        Tail::Error(echoed) => out.push(event(
-            "error",
-            json!({"type": "error", "error": {"type": "authentication_error", "message": format!("bad key {echoed}")}}),
-        )),
-        Tail::Tools(calls) => {
-            // The thinking block gets the signature the service wants back with it.
-            out.push(event(
-                "content_block_delta",
-                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "mock-signature"}}),
-            ));
-            out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 0})));
-            out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": 1})));
-            for (at, call) in calls.iter().enumerate() {
-                let index = at + 2;
-                let (first, second) = fragments(call);
-                out.push(event(
-                    "content_block_start",
-                    json!({"type": "content_block_start", "index": index, "content_block":
-                        {"type": "tool_use", "id": call.id, "name": call.name, "input": {}}}),
-                ));
-                for piece in [first, second] {
-                    out.push(event(
-                        "content_block_delta",
-                        json!({"type": "content_block_delta", "index": index, "delta": {"type": "input_json_delta", "partial_json": piece}}),
-                    ));
-                }
-                out.push(event("content_block_stop", json!({"type": "content_block_stop", "index": index})));
-            }
-            out.push(event("message_delta", json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": USAGE_OUT}})));
-            out.push(event("message_stop", json!({"type": "message_stop"})));
         }
         Tail::Hang | Tail::Cut => {}
     }

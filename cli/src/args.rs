@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use kweb_core::model::{AiActionMode, AiEffort, AiProvider, ShareKind, ShareLevel};
+use kweb_core::model::{AiActionMode, AiEffort, ShareKind, ShareLevel};
 
 pub const USAGE: &str = "\
 kweb: a developer tool that drives kweb-core against a Stalwart server.
@@ -132,20 +132,28 @@ Usage:
                               text (\"\") takes the signature or the reply-to away
   kweb identity default <id>  make that sender the one new messages start with (this device)
   kweb ai status              show how the AI assistant is set up (never the key)
-  kweb ai set <provider> <base-url> <model> [--effort <level>] [--yes]
+  kweb ai services            list the services you set up (id, name, address, model), the one
+                              in use marked
+  kweb ai set <base-url> <model> [--service <id> | --new] [--name <name>]
+              [--effort <level>] [--yes]
               [--ideas on|off] [--extract on|off] [--explain on|off] [--chat on|off]
               [--actions off|ask]
-                              set up that service and use it; provider is openai or anthropic,
-                              each keeps its own address, model, key and consent. The key is
-                              read from $KWEB_AI_KEY. Without --yes it only says what you agree
+                              set up a service that speaks the OpenAI protocol and use it: the
+                              one in use (a new one when there is none), the one with that id,
+                              or a new one (at most 20). Each keeps its own name, address,
+                              model, key and consent; a new one without --name is named after
+                              its address. The key is read from $KWEB_AI_KEY and only ever
+                              sent to that service's address. Without --yes it only says what you agree
                               to. Effort (default, none, minimal, low, medium, high, xhigh,
                               max) is sent only where `kweb ai models` showed that level for
                               the model; left out, the stored one is kept. The switches
                               (reply ideas, finding to-dos and dates, explaining, the chat, and
                               whether the chat may suggest changes) keep what is stored when
                               left out; all are off until switched on
-  kweb ai models [provider]   list the models of the service (the one in use, or that provider);
-                              uses $KWEB_AI_KEY if set, else the stored key
+  kweb ai use <service-id>    make that service the one in use (its own consent goes with it)
+  kweb ai remove <service-id> remove that service with its key and consent
+  kweb ai models [service-id] list the models of the service (the one in use, or that one);
+                              uses $KWEB_AI_KEY if set, else the service's stored key
   kweb ai summary <message-id>
                               summarise a message, printed as it streams
   kweb ai ideas <message-id>  up to three directions a reply to the message could take
@@ -258,16 +266,28 @@ pub enum Command {
 pub enum Ai {
     Status,
     Set {
-        provider: AiProvider,
+        service: AiTarget,
+        /// `None` keeps the stored name (a new service is named after its address).
+        name: Option<String>,
         base_url: String,
         model: String,
         effort: Option<AiEffort>,
         yes: bool,
         switches: AiSwitches,
     },
-    /// The service in use when no provider is named.
+    /// The service in use when no id is given.
     Models {
-        provider: Option<AiProvider>,
+        service: Option<String>,
+    },
+    /// The list of services.
+    Services,
+    /// Makes the service the one in use.
+    Use {
+        service: String,
+    },
+    /// Removes the service with its key and consent.
+    Remove {
+        service: String,
     },
     Summary {
         id: String,
@@ -292,6 +312,17 @@ pub enum Ai {
         about: Option<String>,
         auto: bool,
     },
+}
+
+/// Which service `kweb ai set` sets up.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AiTarget {
+    /// The one in use; a new one when none is.
+    InUse,
+    /// A new one (`--new`).
+    New,
+    /// That one (`--service <id>`).
+    Id(String),
 }
 
 /// The switches of stages 2 to 4 as `kweb ai set` was given them; `None` keeps what is stored.
@@ -873,16 +904,23 @@ fn ai(rest: &[String]) -> Result<Ai, String> {
             },
             "set" => ai_set(rest),
             "models" => match rest {
-                [] => Ok(Ai::Models { provider: None }),
-                [one] => provider_named(one).map(|p| Ai::Models { provider: Some(p) }),
+                [] => Ok(Ai::Models { service: None }),
+                [one] => Ok(Ai::Models { service: Some(one.clone()) }),
                 [_, extra, ..] => Err(format!("unexpected argument '{extra}'")),
             },
+            "services" => match rest {
+                [] => Ok(Ai::Services),
+                [extra, ..] => Err(format!("unexpected argument '{extra}'")),
+            },
+            "use" => one_arg("ai use", "service-id", rest).map(|service| Ai::Use { service }),
+            "remove" => one_arg("ai remove", "service-id", rest).map(|service| Ai::Remove { service }),
             other => Err(format!("ai takes {AI_COMMANDS}, not '{other}'")),
         },
     }
 }
 
-const AI_COMMANDS: &str = "status, set, models, summary, ideas, found, explain, chat-consent or chat";
+const AI_COMMANDS: &str =
+    "status, services, set, use, remove, models, summary, ideas, found, explain, chat-consent or chat";
 
 /// A message id, or `--text` and the words after it as one text (so quotes are optional).
 fn ai_chat(rest: &[String]) -> Result<Ai, String> {
@@ -940,14 +978,6 @@ fn actions_named(value: &str) -> Result<AiActionMode, String> {
     }
 }
 
-fn provider_named(name: &str) -> Result<AiProvider, String> {
-    match name.to_ascii_lowercase().as_str() {
-        "openai" | "openai-compatible" => Ok(AiProvider::OpenAiCompatible),
-        "anthropic" => Ok(AiProvider::Anthropic),
-        other => Err(format!("the provider is openai or anthropic, not '{other}'")),
-    }
-}
-
 fn effort_named(name: &str) -> Result<AiEffort, String> {
     match name.to_ascii_lowercase().as_str() {
         "default" => Ok(AiEffort::Default),
@@ -966,6 +996,8 @@ fn effort_named(name: &str) -> Result<AiEffort, String> {
 fn ai_set(rest: &[String]) -> Result<Ai, String> {
     let mut yes = false;
     let mut effort = None;
+    let mut service = AiTarget::InUse;
+    let mut name = None;
     let mut switches = AiSwitches::default();
     let mut words: Vec<&String> = Vec::new();
     let mut args = rest.iter();
@@ -974,40 +1006,49 @@ fn ai_set(rest: &[String]) -> Result<Ai, String> {
             yes = true;
             continue;
         }
+        if arg == "--new" {
+            if service != AiTarget::InUse {
+                return Err("give --new or --service, once".into());
+            }
+            service = AiTarget::New;
+            continue;
+        }
         if !arg.starts_with("--") {
             words.push(arg);
             continue;
         }
         // The value is the next argument, or what follows `=`. An option that is not known is
         // named without its value: someone may have tried to pass the key that way.
-        let name = option_name(arg);
-        if !["--effort", "--ideas", "--extract", "--explain", "--chat", "--actions"].contains(&name) {
-            return Err(format!("unknown option '{name}'"));
+        let option = option_name(arg);
+        if !["--effort", "--ideas", "--extract", "--explain", "--chat", "--actions", "--service", "--name"]
+            .contains(&option)
+        {
+            return Err(format!("unknown option '{option}'"));
         }
         let value = match arg.split_once('=') {
             Some((_, value)) => value,
-            None => args.next().ok_or_else(|| format!("{name} needs a value"))?.as_str(),
+            None => args.next().ok_or_else(|| format!("{option} needs a value"))?.as_str(),
         };
-        match name {
+        match option {
+            "--service" if service == AiTarget::InUse && !value.trim().is_empty() => {
+                service = AiTarget::Id(value.trim().to_string())
+            }
+            "--service" => {
+                return Err("give --new or --service, once, with a service id (see `kweb ai services`)".into())
+            }
+            "--name" => name = Some(value.to_string()),
             "--effort" => effort = Some(effort_named(value)?),
-            "--ideas" => switches.ideas = Some(on_off(name, value)?),
-            "--extract" => switches.extract = Some(on_off(name, value)?),
-            "--explain" => switches.explain = Some(on_off(name, value)?),
-            "--chat" => switches.chat = Some(on_off(name, value)?),
+            "--ideas" => switches.ideas = Some(on_off(option, value)?),
+            "--extract" => switches.extract = Some(on_off(option, value)?),
+            "--explain" => switches.explain = Some(on_off(option, value)?),
+            "--chat" => switches.chat = Some(on_off(option, value)?),
             _ => switches.actions = Some(actions_named(value)?),
         }
     }
-    let [provider, base_url, model] = words[..] else {
-        return Err("ai set needs <provider> <base-url> <model>".into());
+    let [base_url, model] = words[..] else {
+        return Err("ai set needs <base-url> <model>".into());
     };
-    Ok(Ai::Set {
-        provider: provider_named(provider)?,
-        base_url: base_url.clone(),
-        model: model.clone(),
-        effort,
-        yes,
-        switches,
-    })
+    Ok(Ai::Set { service, name, base_url: base_url.clone(), model: model.clone(), effort, yes, switches })
 }
 
 fn agenda(rest: &[String]) -> Result<Command, String> {
@@ -1169,9 +1210,10 @@ mod tests {
     fn ai_commands() {
         assert_eq!(p(&["ai", "status"]), Ok(Command::Ai(Ai::Status)));
         assert_eq!(p(&["ai", "summary", "e1"]), Ok(Command::Ai(Ai::Summary { id: "e1".into() })));
-        let set = |provider, yes| {
+        let set = |service, name: Option<&str>, yes| {
             Ok(Command::Ai(Ai::Set {
-                provider,
+                service,
+                name: name.map(String::from),
                 base_url: "https://a.example/v1".into(),
                 model: "m".into(),
                 effort: None,
@@ -1179,31 +1221,34 @@ mod tests {
                 switches: AiSwitches::default(),
             }))
         };
-        assert_eq!(p(&["ai", "set", "openai", "https://a.example/v1", "m"]), set(AiProvider::OpenAiCompatible, false));
+        assert_eq!(p(&["ai", "set", "https://a.example/v1", "m"]), set(AiTarget::InUse, None, false));
+        assert_eq!(p(&["ai", "set", "https://a.example/v1", "m", "--yes"]), set(AiTarget::InUse, None, true));
+        assert_eq!(p(&["ai", "set", "--new", "https://a.example/v1", "m"]), set(AiTarget::New, None, false));
         assert_eq!(
-            p(&["ai", "set", "Anthropic", "https://a.example/v1", "m", "--yes"]),
-            set(AiProvider::Anthropic, true)
+            p(&["ai", "set", "--service", "s2", "--name=Work", "https://a.example/v1", "m", "--yes"]),
+            set(AiTarget::Id("s2".into()), Some("Work"), true)
         );
-        assert_eq!(
-            p(&["ai", "set", "--yes", "openai", "https://a.example/v1", "m"]),
-            set(AiProvider::OpenAiCompatible, true)
-        );
+        // The protocol is no longer a word of its own.
+        assert!(p(&["ai", "set", "openai", "https://a.example/v1", "m"]).is_err());
+        assert!(p(&["ai", "set", "--new", "--service", "s1", "https://a.example/v1", "m"]).is_err());
+        assert!(p(&["ai", "set", "--service", "", "https://a.example/v1", "m"]).is_err());
         let with_effort = |args: &[&str]| match p(args) {
             Ok(Command::Ai(Ai::Set { effort, yes, .. })) => (effort, yes),
             other => panic!("{other:?}"),
         };
-        let base = ["ai", "set", "anthropic", "https://a.example/v1", "m"];
+        let base = ["ai", "set", "https://a.example/v1", "m"];
         fn plus<'a>(base: &[&'a str], more: &[&'a str]) -> Vec<&'a str> {
             [base, more].concat()
         }
         assert_eq!(with_effort(&plus(&base, &["--effort", "XHigh"])), (Some(AiEffort::XHigh), false));
         assert_eq!(with_effort(&plus(&base, &["--effort=low", "--yes"])), (Some(AiEffort::Low), true));
         assert_eq!(with_effort(&plus(&base, &["--yes", "--effort", "default"])), (Some(AiEffort::Default), true));
-        assert_eq!(p(&["ai", "models"]), Ok(Command::Ai(Ai::Models { provider: None })));
-        assert_eq!(
-            p(&["ai", "models", "Anthropic"]),
-            Ok(Command::Ai(Ai::Models { provider: Some(AiProvider::Anthropic) }))
-        );
+        assert_eq!(p(&["ai", "models"]), Ok(Command::Ai(Ai::Models { service: None })));
+        assert_eq!(p(&["ai", "models", "s1"]), Ok(Command::Ai(Ai::Models { service: Some("s1".into()) })));
+        assert_eq!(p(&["ai", "services"]), Ok(Command::Ai(Ai::Services)));
+        assert_eq!(p(&["ai", "use", "s1"]), Ok(Command::Ai(Ai::Use { service: "s1".into() })));
+        assert_eq!(p(&["ai", "remove", "openai"]), Ok(Command::Ai(Ai::Remove { service: "openai".into() })));
+        assert!(p(&["ai", "use"]).is_err() && p(&["ai", "remove", "a", "b"]).is_err());
     }
 
     #[test]
@@ -1235,7 +1280,7 @@ mod tests {
     #[test]
     fn ai_set_takes_the_new_switches_and_keeps_what_is_left_out() {
         let switches = |more: &[&str]| {
-            let args = [&["ai", "set", "openai", "https://a.example/v1", "m"], more].concat();
+            let args = [&["ai", "set", "https://a.example/v1", "m"], more].concat();
             match p(&args) {
                 Ok(Command::Ai(Ai::Set { switches, .. })) => switches,
                 other => panic!("{other:?}"),
@@ -1258,7 +1303,7 @@ mod tests {
 
     #[test]
     fn there_is_no_automatic_action_mode_and_an_unknown_option_is_named_without_its_value() {
-        let set = |more: &[&str]| p(&[&["ai", "set", "openai", "https://a.example/v1", "m"], more].concat());
+        let set = |more: &[&str]| p(&[&["ai", "set", "https://a.example/v1", "m"], more].concat());
         for bad in [
             &["--actions", "auto"][..],
             &["--actions=automatic"],
@@ -1284,14 +1329,13 @@ mod tests {
             &["ai", "summary"],
             &["ai", "summary", "a", "b"],
             &["ai", "set"],
-            &["ai", "set", "openai", "https://a.example/v1"],
+            &["ai", "set", "https://a.example/v1"],
             &["ai", "set", "gemini", "https://a.example/v1", "m"],
-            &["ai", "set", "openai", "https://a.example/v1", "m", "extra"],
-            &["ai", "set", "openai", "https://a.example/v1", "m", "--key", "sk-1"],
-            &["ai", "set", "openai", "https://a.example/v1", "m", "--key=sk-1"],
-            &["ai", "set", "openai", "https://a.example/v1", "m", "--effort"],
-            &["ai", "set", "openai", "https://a.example/v1", "m", "--effort", "huge"],
-            &["ai", "models", "gemini"],
+            &["ai", "set", "https://a.example/v1", "m", "extra"],
+            &["ai", "set", "https://a.example/v1", "m", "--key", "sk-1"],
+            &["ai", "set", "https://a.example/v1", "m", "--key=sk-1"],
+            &["ai", "set", "https://a.example/v1", "m", "--effort"],
+            &["ai", "set", "https://a.example/v1", "m", "--effort", "huge"],
             &["ai", "models", "openai", "x"],
             &["ai", "ideas"],
             &["ai", "found", "a", "b"],

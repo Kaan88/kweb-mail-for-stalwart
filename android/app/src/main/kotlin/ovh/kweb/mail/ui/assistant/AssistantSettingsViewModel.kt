@@ -24,7 +24,7 @@ import ovh.kweb.mail.background.Background
 import ovh.kweb.mail.ui.UiMessage
 import uniffi.kweb_core.AiModel
 import uniffi.kweb_core.AiModelList
-import uniffi.kweb_core.AiProvider
+import uniffi.kweb_core.AiService
 import uniffi.kweb_core.AiSettings
 
 enum class AssistantPhase { LOADING, READY, FAILED }
@@ -51,8 +51,12 @@ data class AssistantSettingsState(
     val saving: Boolean = false,
     /** The reset to the defaults is running (it removes the keys and the consents too). */
     val resetting: Boolean = false,
-    /** The other service's settings are being read: the fields wait. */
+    /** Another entry's settings are being read: the fields wait. */
     val switching: Boolean = false,
+    /** The services the user keeps, as the core last listed them. */
+    val services: List<AiService> = emptyList(),
+    /** A service is being removed. */
+    val removing: Boolean = false,
     /** The picker's sheet, when open. */
     val models: ModelsState? = null,
     /** The last list the service gave, for the effort levels of the model; dropped when the service or address changes. */
@@ -87,6 +91,9 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
 
     /** The typed key. A snapshot state of its own, so that the text field is not fed through a flow. */
     var keyText by mutableStateOf("")
+
+    /** The address [keyText] was typed at ([setKey]); see [edit]. */
+    private var keyAddress = ""
         private set
 
     val state: StateFlow<AssistantSettingsState> get() = stateFlow
@@ -125,7 +132,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
      */
     fun reset() {
         val s = stateFlow.value
-        if (s.resetting || s.saving || s.switching || s.phase != AssistantPhase.READY) return
+        if (s.resetting || s.saving || s.switching || s.removing || s.phase != AssistantPhase.READY) return
         switchJob?.cancel()
         modelsJob?.cancel()
         stateFlow.update { it.copy(resetting = true, models = null, error = null) }
@@ -163,7 +170,16 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
     private fun take(settings: AiSettings) {
         stored = settings
         val form = AssistantRules.formOf(settings)
-        stateFlow.update { AssistantSettingsState(phase = AssistantPhase.READY, form = form, initial = form, hasKey = settings.hasKey, tools = AssistantRules.toolsFact(settings)) }
+        stateFlow.update {
+            AssistantSettingsState(
+                phase = AssistantPhase.READY,
+                form = form,
+                initial = form,
+                hasKey = settings.hasKey,
+                services = settings.services,
+                tools = AssistantRules.toolsFact(settings),
+            )
+        }
         learnLevels()
     }
 
@@ -180,21 +196,24 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
         val s = stateFlow.value
         val form = s.form ?: return
         val base = stored ?: return
-        if (s.phase != AssistantPhase.READY || s.switching || form.model.isBlank() || !form.enabled) return
+        if (s.phase != AssistantPhase.READY || s.switching || s.removing || form.model.isBlank() || !form.enabled) return
         if (!s.hasKey && !AssistantRules.isPrivateAddress(form.baseUrl)) return
         modelsJob?.cancel()
         modelsJob = viewModelScope.launch {
             try {
                 val list = withContext(Dispatchers.IO) { session.core.aiModels(form.toSettings(base), null) }
-                stateFlow.update { cur -> if (cur.form?.provider == form.provider && cur.models == null) cur.copy(modelList = list) else cur }
-                val again = withContext(Dispatchers.IO) { session.core.aiSettings() }
-                val fresh = AssistantRules.formOf(again)
-                stateFlow.update { cur ->
-                    if (cur.form == cur.initial && cur.form?.provider == fresh.provider && !cur.switching) {
-                        stored = again
-                        cur.copy(form = fresh, initial = fresh)
-                    } else {
-                        cur
+                stateFlow.update { cur -> if (cur.form?.serviceId == form.serviceId && cur.models == null) cur.copy(modelList = list) else cur }
+                // A service not stored yet has no stored effort to read again.
+                if (form.serviceId.isNotEmpty()) {
+                    val again = withContext(Dispatchers.IO) { session.core.aiService(form.serviceId) }
+                    val fresh = AssistantRules.formOf(again)
+                    stateFlow.update { cur ->
+                        if (cur.form == cur.initial && cur.form?.serviceId == fresh.serviceId && !cur.switching && !cur.removing) {
+                            stored = again
+                            cur.copy(form = fresh, initial = fresh)
+                        } else {
+                            cur
+                        }
                     }
                 }
                 edit { it }
@@ -210,48 +229,99 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
      * Changes the form. A new address drops the loaded list (its levels were another address's); the effort falls back
      * to Default when the model, by the loaded list, does not offer it.
      */
-    fun edit(change: (AssistantRules.Form) -> AssistantRules.Form) = stateFlow.update { s ->
-        val form = s.form ?: return@update s
-        val next = change(form)
-        val list = if (next.baseUrl.trim().trimEnd('/') == form.baseUrl.trim().trimEnd('/')) s.modelList else null
-        val effort = EffortRules.normalised(next.effort, next.model, list)
-        s.copy(form = next.copy(effort = effort), modelList = list, error = null)
+    fun edit(change: (AssistantRules.Form) -> AssistantRules.Form) {
+        val before = stateFlow.value.form
+        stateFlow.update { s ->
+            val form = s.form ?: return@update s
+            val next = change(form)
+            val list = if (next.baseUrl.trim().trimEnd('/') == form.baseUrl.trim().trimEnd('/')) s.modelList else null
+            val effort = EffortRules.normalised(next.effort, next.model, list)
+            s.copy(form = next.copy(effort = effort), modelList = list, error = null)
+        }
+        // A key typed for one address must not go to another origin (the model picker would send it there). Measured
+        // from the address the key was typed at, not from each keystroke: a key typed before any address stays while
+        // the address is typed.
+        val after = stateFlow.value.form
+        if (before == null || after == null || keyText.isEmpty()) return
+        val now = after.baseUrl
+        when {
+            // Typing or deleting in the address field, one step at a time: the key goes with the address being typed.
+            now.startsWith(keyAddress) || keyAddress.startsWith(now) -> keyAddress = now
+            // A jump to another origin (the Service list, a paste): the key typed for the old one is dropped.
+            AssistantRules.originChanged(keyAddress, now) -> keyText = ""
+        }
     }
 
     /**
-     * The user picked a service. The other service's own stored address, model, effort, key state and consent are
+     * The user tapped an entry of the list. That entry's own stored address, model, effort, key state and consent are
      * read from the core (off the main thread); until they are there the fields wait. The typed key and unsaved
-     * address, model and effort of the service left are dropped; the switches that belong to no service stay.
+     * name, address, model and effort of the entry left are dropped; the switches that belong to no service stay.
+     * Tapping the entry already shown changes nothing.
      */
-    fun setProvider(provider: AiProvider) {
+    fun selectService(id: String) = showService(id)
+
+    /** "Add a service": the form of a new, empty entry. Saving it adds it to the list and makes it the one in use. */
+    fun addService() {
+        if (!AssistantRules.canAddService(stateFlow.value.services.size)) return
+        showService("")
+    }
+
+    private fun showService(id: String) {
         val s = stateFlow.value
-        val form = s.form ?: return
-        if (s.phase != AssistantPhase.READY || s.saving) return
-        val shown = stored?.provider ?: return
+        if (s.phase != AssistantPhase.READY || s.saving || s.removing || s.resetting) return
+        if (s.form == null) return
+        val shown = stored?.serviceId ?: return
+        if (id == shown && !s.switching) return
         switchJob?.cancel()
         modelsJob?.cancel()
-        if (provider == shown) {
-            // Back to the service whose fields are on screen (a switch that was still reading is dropped).
-            stateFlow.update { it.copy(form = form.copy(provider = provider), switching = false, models = null) }
-            return
-        }
-        stateFlow.update { it.copy(form = form.copy(provider = provider), switching = true, models = null, error = null) }
+        stateFlow.update { it.copy(switching = true, models = null, error = null) }
         switchJob = viewModelScope.launch {
             try {
-                val service = withContext(Dispatchers.IO) { session.core.aiService(provider) }
+                val service = withContext(Dispatchers.IO) { session.core.aiService(id) }
                 stored = service
-                keyText = "" // dropped only now: a failed read keeps the form of the service left, key included
+                keyText = "" // dropped only now: a failed read keeps the form of the entry left, key included
                 stateFlow.update { cur ->
-                    cur.copy(form = cur.form?.switchedTo(service), hasKey = service.hasKey, switching = false, modelList = null, models = null, tools = AssistantRules.toolsFact(service))
+                    cur.copy(
+                        form = cur.form?.showing(service),
+                        initial = AssistantRules.formOf(service),
+                        hasKey = service.hasKey,
+                        switching = false,
+                        modelList = null,
+                        models = null,
+                        tools = AssistantRules.toolsFact(service),
+                    )
                 }
                 learnLevels()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(Background.TAG, "reading a service of the assistant failed: ${e.javaClass.simpleName}")
-                stateFlow.update { cur ->
-                    cur.copy(form = cur.form?.copy(provider = shown), switching = false, error = AssistantMessages.of(e, R.string.assistant_switch_failed))
-                }
+                stateFlow.update { cur -> cur.copy(switching = false, error = AssistantMessages.of(e, R.string.assistant_switch_failed)) }
+            }
+        }
+    }
+
+    /**
+     * "Remove service": the core removes the stored entry with its key and agreement (and refuses while the assistant
+     * works). The screen then shows what the core gives back: the entry that is in use now, or an empty form.
+     */
+    fun removeService(id: String) {
+        val s = stateFlow.value
+        if (id.isEmpty() || s.removing || s.saving || s.switching || s.resetting || s.phase != AssistantPhase.READY) return
+        switchJob?.cancel()
+        modelsJob?.cancel()
+        stateFlow.update { it.copy(removing = true, models = null, error = null) }
+        viewModelScope.launch {
+            try {
+                val after = withContext(Dispatchers.IO) { session.core.aiServiceRemove(id) }
+                keyText = ""
+                take(after)
+                stateFlow.update { it.copy(info = UiMessage.Res(R.string.assistant_service_removed)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(Background.TAG, "removing a service of the assistant failed: ${e.javaClass.simpleName}")
+                stateFlow.update { it.copy(removing = false, error = AssistantMessages.of(e, R.string.assistant_service_remove_failed)) }
             }
         }
     }
@@ -259,6 +329,8 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
     fun setKey(text: String) {
         if (stateFlow.value.switching) return
         keyText = text
+        // The address the key was typed for; empty while there is none yet (then typing the address keeps the key).
+        keyAddress = stateFlow.value.form?.baseUrl.orEmpty()
         stateFlow.update { it.copy(error = null) }
     }
 
@@ -273,7 +345,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
         val s = stateFlow.value
         val form = s.form ?: return
         val base = stored ?: return
-        if (s.phase != AssistantPhase.READY || s.switching) return
+        if (s.phase != AssistantPhase.READY || s.switching || s.removing) return
         modelsJob?.cancel()
         stateFlow.update { it.copy(models = ModelsState.Loading) }
         val key = AssistantRules.keyToSend(keyText, form.removeKey)
@@ -312,7 +384,7 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
         val s = stateFlow.value
         val form = s.form ?: return
         val base = stored ?: return
-        if (s.saving || s.switching || s.phase != AssistantPhase.READY) return
+        if (s.saving || s.switching || s.removing || s.phase != AssistantPhase.READY) return
         stateFlow.update { it.copy(saving = true, error = null) }
         val key = AssistantRules.keyToSend(keyText, form.removeKey)
         viewModelScope.launch {
@@ -324,10 +396,10 @@ class AssistantSettingsViewModel(app: Application, private val session: AccountS
                 val ask = ConsentAsk(ConsentRules.hostOf(after.baseUrl), after.model)
                 when {
                     ConsentRules.isNeededAfterSave(after) -> stateFlow.update {
-                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, consent = ask, tools = AssistantRules.toolsFact(after))
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, services = after.services, saving = false, consent = ask, tools = AssistantRules.toolsFact(after))
                     }
                     ConsentRules.isChatNeededAfterSave(after) -> stateFlow.update {
-                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, saving = false, chatConsent = ask, tools = AssistantRules.toolsFact(after))
+                        it.copy(form = shown, initial = shown, hasKey = after.hasKey, services = after.services, saving = false, chatConsent = ask, tools = AssistantRules.toolsFact(after))
                     }
                     else -> doneChannel.send(Unit)
                 }

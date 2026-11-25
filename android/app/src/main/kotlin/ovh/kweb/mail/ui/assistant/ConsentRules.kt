@@ -18,7 +18,7 @@ interface AssistantWords {
 }
 
 /**
- * Consent is asked once for a service and a model: `consented` is only true for the provider, address and model it
+ * Consent is asked once for a service and a model: `consented` is only true for the service, address and model it
  * was given for ([AssistantRules.Form.toSettings] drops it when any of them changes). The dialog says what is about to be sent, from the core's preview.
  */
 object ConsentRules {
@@ -54,7 +54,7 @@ object ConsentRules {
         return if (uri.port >= 0) "$host:${uri.port}" else host
     }
 
-    /** What "Send" stores: the same provider, address and model, consent given. */
+    /** What "Send" stores: the same service, address and model, consent given. */
     fun granted(settings: AiSettings): AiSettings = settings.copy(consented = true)
 
     /** The size, rounded as the dialog says it: to two significant digits ("2,314" is "2,300"), to tens below a hundred. */

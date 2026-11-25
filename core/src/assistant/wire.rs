@@ -1,5 +1,5 @@
 //! What the provider and the chat loop pass each other: the turns of a conversation with tools,
-//! in a form that fits both protocols. Pure data. This file is the contract between
+//! as the OpenAI protocol sends them. Pure data. This file is the contract between
 //! `provider::converse` and `chat::send`; neither side changes it.
 
 use serde_json::Value;
@@ -35,7 +35,8 @@ pub struct ToolResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Turn {
     User(String),
-    /// `raw`: the service's own content blocks (Anthropic), sent back unchanged so thinking blocks survive.
+    /// `raw`: what the service sent with its calls and wants back (see `provider::chat_parts`):
+    /// reasoning and per-call fields such as Gemini's thought signatures. Never shown.
     Assistant {
         text: String,
         calls: Vec<ToolCall>,
@@ -70,10 +71,9 @@ pub fn turn_chars(turn: &Turn) -> usize {
         Turn::User(text) => chars(text),
         Turn::Assistant { text, calls, raw } => {
             let calls: usize = calls.iter().map(|c| chars(&c.id) + chars(&c.name) + chars(&c.args.to_string())).sum();
-            // Raw blocks are what is really sent when they are there; they hold the text and the
-            // calls again, plus what the service wants back unchanged.
+            // What the service wants back is sent beside the text and the calls.
             match raw {
-                Some(raw) => chars(&raw.to_string()).max(chars(text) + calls),
+                Some(raw) => chars(text) + calls + chars(&raw.to_string()),
                 None => chars(text) + calls,
             }
         }
@@ -97,10 +97,10 @@ mod tests {
         let call = ToolCall { id: "c1".into(), name: "read".into(), args: json!({"id": "m1"}) };
         let plain = Turn::Assistant { text: "ok".into(), calls: vec![call.clone()], raw: None };
         assert_eq!(turn_chars(&plain), 2 + 2 + 4 + r#"{"id":"m1"}"#.len());
-        // Raw blocks count when they are longer than the parts.
-        let raw = json!([{"type": "thinking", "thinking": "x".repeat(500), "signature": "s"}]);
+        // What goes back with the calls counts on top.
+        let raw = json!({"reasoning_content": "x".repeat(500)});
         let with_raw = Turn::Assistant { text: "ok".into(), calls: vec![call], raw: Some(raw.clone()) };
-        assert_eq!(turn_chars(&with_raw), raw.to_string().chars().count());
+        assert_eq!(turn_chars(&with_raw), turn_chars(&plain) + raw.to_string().chars().count());
         let results = Turn::Results(vec![
             ToolResult { id: "c1".into(), name: "read".into(), content: "abc".into(), is_error: false },
             ToolResult { id: "c2".into(), name: "list".into(), content: String::new(), is_error: true },

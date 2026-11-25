@@ -2,10 +2,10 @@ package ovh.kweb.mail.ui.assistant
 
 import uniffi.kweb_core.AiActionMode
 import uniffi.kweb_core.AiEffort
-import uniffi.kweb_core.AiProvider
+import uniffi.kweb_core.AiService
 import uniffi.kweb_core.AiSettings
 
-/** The rules of the AI assistant that need no Android: which entries show, the default address, the state line, the form. */
+/** The rules of the AI assistant that need no Android: which entries show, the list of services, the state line, the form. */
 object AssistantRules {
     /** The kinds of task of the sheet, each with its own switch in the settings. */
     enum class Kind { SUMMARY, DRAFT, REWRITE, IDEAS, EXTRACT, EXPLAIN }
@@ -25,7 +25,15 @@ object AssistantRules {
     }
 
     const val OPENAI_ADDRESS = "https://api.openai.com/v1"
-    const val ANTHROPIC_ADDRESS = "https://api.anthropic.com/v1"
+
+    /** The most services the user may keep (the core refuses more). */
+    const val MAX_SERVICES = 20
+
+    /** Whether another service may be added to a list of [count]. */
+    fun canAddService(count: Int): Boolean = count < MAX_SERVICES
+
+    /** The second line of a service's row: its host and its model, whichever are known. */
+    fun serviceDetail(service: AiService): String = listOf(hostOf(service.baseUrl), service.model.trim()).filter { it.isNotEmpty() }.joinToString(" · ")
 
     /** The hosted services the settings offer by name; each fills in its address. [OTHER] shows the address field. */
     enum class Service(val address: String?) {
@@ -60,6 +68,27 @@ object AssistantRules {
         serviceOf(current) != Service.OTHER -> ""
         else -> current
     }
+
+    /**
+     * Whether the address moved to another scheme, host or port, so that a key typed for the old one must not go to
+     * the new one. The first address typed (nothing before) is not a move; the case of scheme and host and a default
+     * port do not count.
+     */
+    fun originChanged(before: String, after: String): Boolean {
+        val old = originOf(before)
+        return old.isNotEmpty() && old != originOf(after)
+    }
+
+    private fun originOf(address: String): String {
+        val m = originPattern.find(address.trim()) ?: return ""
+        val scheme = m.groupValues[1].lowercase()
+        var authority = m.groupValues[2].substringAfterLast('@').lowercase()
+        val port = if (scheme == "https") ":443" else if (scheme == "http") ":80" else ""
+        if (port.isNotEmpty() && authority.endsWith(port)) authority = authority.removeSuffix(port)
+        return "$scheme://$authority"
+    }
+
+    private val originPattern = Regex("^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#]*)")
 
     /** The host of [address] (no scheme, port or path), for showing; empty when there is none. */
     fun hostOf(address: String): String {
@@ -115,8 +144,11 @@ object AssistantRules {
         /** On, no model named yet. */
         data object On : SwitchLine
 
-        /** On: the service (a named one, "Anthropic", or the host of another address) and the model. */
-        data class Using(val provider: AiProvider, val service: Service, val host: String, val model: String) : SwitchLine
+        /**
+         * On: the service and the model. [name] is what the user called the service (empty when not named yet; then a
+         * named service or the host of the address is shown).
+         */
+        data class Using(val name: String, val service: Service, val host: String, val model: String) : SwitchLine
     }
 
     fun switchLine(form: Form): SwitchLine {
@@ -125,7 +157,7 @@ object AssistantRules {
             !form.enabled && model.isEmpty() -> SwitchLine.NotSetUp
             !form.enabled -> SwitchLine.Off
             model.isEmpty() -> SwitchLine.On
-            else -> SwitchLine.Using(form.provider, serviceOf(form.baseUrl), hostOf(form.baseUrl), model)
+            else -> SwitchLine.Using(form.serviceName.trim(), serviceOf(form.baseUrl), hostOf(form.baseUrl), model)
         }
     }
 
@@ -137,7 +169,7 @@ object AssistantRules {
 
     /** Whether the note "no tool support" shows under the model: for that address and model only, so a change ends it. */
     fun showToolsNote(fact: ToolsFact?, form: Form): Boolean =
-        fact != null && form.provider == AiProvider.OPEN_AI_COMPATIBLE && sameAddress(form.baseUrl, fact.baseUrl) && form.model.trim() == fact.model
+        fact != null && sameAddress(form.baseUrl, fact.baseUrl) && form.model.trim() == fact.model
 
     /** Whether the assistant offers [kind]: it is on as a whole and that kind is switched on. No settings read yet: no. */
     fun isAllowed(settings: AiSettings?, kind: Kind): Boolean = settings != null && settings.enabled && when (kind) {
@@ -161,21 +193,6 @@ object AssistantRules {
         !settings.allowChat -> ChatGate.CHAT_OFF
         !settings.consented || !settings.chatConsented -> ChatGate.NOT_AGREED
         else -> ChatGate.READY
-    }
-
-    fun defaultAddress(provider: AiProvider): String = when (provider) {
-        AiProvider.OPEN_AI_COMPATIBLE -> OPENAI_ADDRESS
-        AiProvider.ANTHROPIC -> ANTHROPIC_ADDRESS
-    }
-
-    /**
-     * The address after the user chose [to] while [from] was chosen: the default of [to] when the field is empty
-     * or still holds the default of the other service, otherwise what the user wrote.
-     */
-    fun addressAfterChoosing(current: String, from: AiProvider, to: AiProvider): String {
-        if (from == to) return current
-        val bare = current.trim().trimEnd('/')
-        return if (bare.isEmpty() || bare == defaultAddress(from)) defaultAddress(to) else current
     }
 
     private fun sameAddress(a: String, b: String): Boolean = a.trim().trimEnd('/') == b.trim().trimEnd('/')
@@ -204,7 +221,10 @@ object AssistantRules {
     /** What the settings screen edits. The key is not part of it: it is typed, sent on Save and forgotten. */
     data class Form(
         val enabled: Boolean,
-        val provider: AiProvider,
+        /** The service shown; empty for one that is not stored yet (saving adds it). */
+        val serviceId: String,
+        /** What the user calls it; empty is named after its address by the core. */
+        val serviceName: String,
         val baseUrl: String,
         val model: String,
         val effort: AiEffort = AiEffort.DEFAULT,
@@ -226,13 +246,15 @@ object AssistantRules {
         /**
          * The settings to send: [stored] with the form's values. Consent is kept only while the service and the model
          * are the same as the stored ones (address compared without spaces and a trailing slash); saving never grants it.
-         * The same holds for the chat's own agreement, which only the core's `aiChatConsent` gives.
+         * The same holds for the chat's own agreement, which only the core's `aiChatConsent` gives. The list of services
+         * is an answer only; it is passed on as it came.
          */
         fun toSettings(stored: AiSettings): AiSettings {
-            val sameService = provider == stored.provider && sameAddress(baseUrl, stored.baseUrl) && model.trim() == stored.model.trim()
+            val sameService = serviceId == stored.serviceId && sameAddress(baseUrl, stored.baseUrl) && model.trim() == stored.model.trim()
             return stored.copy(
                 enabled = enabled,
-                provider = provider,
+                serviceId = serviceId,
+                serviceName = serviceName.trim(),
                 baseUrl = baseUrl.trim(),
                 model = model.trim(),
                 effort = effort,
@@ -250,15 +272,13 @@ object AssistantRules {
             )
         }
 
-        fun withProvider(to: AiProvider): Form = copy(provider = to, baseUrl = addressAfterChoosing(baseUrl, provider, to))
-
         /**
-         * The form after the user picked another service and the core gave that service's stored settings ([service]):
-         * address, model and effort are the service's own (unsaved input for the other one is dropped, the typed key is
-         * dropped by the caller); the switches that belong to no service (on or off, what it may do) stay as shown, and
-         * a pending key removal does not carry over.
+         * The form after the user picked another entry of the list (or "Add a service") and the core gave that entry's
+         * settings ([service]): id, name, address, model and effort are the entry's own (unsaved input for the one left is
+         * dropped, the typed key is dropped by the caller); the switches that belong to no service (on or off, what it
+         * may do) stay as shown, and a pending key removal does not carry over.
          */
-        fun switchedTo(service: AiSettings): Form = formOf(service).copy(
+        fun showing(service: AiSettings): Form = formOf(service).copy(
             enabled = enabled,
             allowSummaries = allowSummaries,
             allowDrafts = allowDrafts,
@@ -274,12 +294,13 @@ object AssistantRules {
     }
 
     /**
-     * The form for [stored]. An empty address is prefilled with the service's default, as when the service is chosen.
+     * The form for [stored]. An empty address (a service not set up yet) is prefilled with the first preset's address.
      */
     fun formOf(stored: AiSettings): Form = Form(
         enabled = stored.enabled,
-        provider = stored.provider,
-        baseUrl = stored.baseUrl.ifBlank { defaultAddress(stored.provider) },
+        serviceId = stored.serviceId,
+        serviceName = stored.serviceName,
+        baseUrl = stored.baseUrl.ifBlank { OPENAI_ADDRESS },
         model = stored.model,
         effort = stored.effort,
         allowSummaries = stored.allowSummaries,
@@ -295,7 +316,9 @@ object AssistantRules {
 
     /** Anything to lose by leaving: the form differs from [initial], or a key was typed. */
     fun isChanged(form: Form, initial: Form, keyTyped: Boolean): Boolean =
-        keyTyped || form.copy(baseUrl = form.baseUrl.trim(), model = form.model.trim()) != initial.copy(baseUrl = initial.baseUrl.trim(), model = initial.model.trim())
+        keyTyped || form.trimmed() != initial.trimmed()
+
+    private fun Form.trimmed(): Form = copy(serviceName = serviceName.trim(), baseUrl = baseUrl.trim(), model = model.trim())
 
     /**
      * What to give the core as `key`: a typed key replaces the stored one, a removal sends an empty string, otherwise

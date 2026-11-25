@@ -21,12 +21,12 @@ use kweb_core::{
     ffi::{ai_parse_findings, ai_parse_ideas, AiChatListener, AiListener, Core},
     model::{
         AiActionMode, AiChange, AiChatEnd, AiChatTurn, AiEffort, AiFinding, AiLink, AiMessageRef, AiModelList,
-        AiPreview, AiProposal, AiProvider, AiRisk, AiSettings, AiStep, AiTask, AiToolKind, EventInput,
+        AiPreview, AiProposal, AiRisk, AiSettings, AiStep, AiTask, AiToolKind, EventInput,
     },
 };
 
 use crate::{
-    args::{Ai, AiSwitches},
+    args::{Ai, AiSwitches, AiTarget},
     commands::printable,
     timefmt,
 };
@@ -40,17 +40,25 @@ pub fn run(core: &Core, what: Ai, env_key: Option<String>) -> Result<(), String>
             println!("{}", status_text(&core.ai_settings().map_err(|e| e.to_string())?));
             Ok(())
         }
-        Ai::Set { provider, base_url, model, effort, yes, switches } => {
-            // What is stored for this service, whichever is in use: its effort and its consent.
-            let current = core.ai_service(provider).map_err(|e| e.to_string())?;
-            match plan_set(&current, provider, &base_url, &model, effort, yes, env_key)? {
+        Ai::Set { service, name, base_url, model, effort, yes, switches } => {
+            // What is stored for this service: its name, effort and consent (a new one has none).
+            let id = match service {
+                AiTarget::InUse => core.ai_settings().map_err(|e| e.to_string())?.service_id,
+                AiTarget::New => String::new(),
+                AiTarget::Id(id) => id,
+            };
+            let current = core.ai_service(id).map_err(|e| e.to_string())?;
+            match plan_set(&current, name, &base_url, &model, effort, yes, env_key)? {
                 Outcome::NeedsYes(notice) => Err(notice),
                 Outcome::Store { settings, key } => {
                     let settings = with_switches(settings, &switches);
                     // A change of service clears the yes, so it is given by a second save of the
-                    // same values (what the user agreed to with `--yes`).
-                    core.set_ai_settings(settings.clone(), key.clone()).map_err(|e| e.to_string())?;
-                    let stored = core.set_ai_settings(settings, None).map_err(|e| e.to_string())?;
+                    // same values (what the user agreed to with `--yes`), to the service the
+                    // first save stored (a new one has its id only from then on).
+                    let first = core.set_ai_settings(settings.clone(), key.clone()).map_err(|e| e.to_string())?;
+                    let again =
+                        AiSettings { service_id: first.service_id, service_name: first.service_name, ..settings };
+                    let stored = core.set_ai_settings(again, None).map_err(|e| e.to_string())?;
                     if current.has_key && !stored.has_key && key.is_none() {
                         println!(
                             "The stored key was removed because the service changed; set {KEY_VARIABLE} to store one."
@@ -64,9 +72,34 @@ pub fn run(core: &Core, what: Ai, env_key: Option<String>) -> Result<(), String>
                 }
             }
         }
-        Ai::Models { provider } => {
-            let in_use = core.ai_settings().map_err(|e| e.to_string())?;
-            let service = core.ai_service(provider.unwrap_or(in_use.provider)).map_err(|e| e.to_string())?;
+        Ai::Services => {
+            println!("{}", services_text(&core.ai_settings().map_err(|e| e.to_string())?));
+            Ok(())
+        }
+        Ai::Use { service } => {
+            // Saving it with its own values makes it the one in use and keeps its own consent.
+            let shown = core.ai_service(service).map_err(|e| e.to_string())?;
+            if shown.service_id.is_empty() {
+                return Err("there is no such service; see `kweb ai services`".into());
+            }
+            let stored = core.set_ai_settings(shown, None).map_err(|e| e.to_string())?;
+            println!("{}", status_text(&stored));
+            Ok(())
+        }
+        Ai::Remove { service } => {
+            let after = core.ai_service_remove(service).map_err(|e| e.to_string())?;
+            println!("Removed, with its key and consent.\n{}", services_text(&after));
+            Ok(())
+        }
+        Ai::Models { service } => {
+            let id = match service {
+                Some(id) => id,
+                None => core.ai_settings().map_err(|e| e.to_string())?.service_id,
+            };
+            if id.is_empty() {
+                return Err("no service is set up yet: run `kweb ai set` first".into());
+            }
+            let service = core.ai_service(id).map_err(|e| e.to_string())?;
             if service.base_url.is_empty() {
                 return Err("this service has no address yet: run `kweb ai set` first".into());
             }
@@ -136,11 +169,7 @@ fn effort_name(e: AiEffort) -> &'static str {
 /// One line per model (id, name, efforts), after a line that says where the list is from.
 /// The names are the service's words: control characters are left out.
 pub fn models_text(list: &AiModelList) -> String {
-    let mut out = String::from(if list.from_service {
-        "Models from the service:"
-    } else {
-        "Built-in list (the service was not asked, or could not be):"
-    });
+    let mut out = String::from("Models from the service:");
     for m in &list.models {
         let efforts: Vec<&str> = m.efforts.iter().map(|e| effort_name(*e)).collect();
         let efforts = if efforts.is_empty() { "-".to_string() } else { efforts.join(",") };
@@ -241,28 +270,54 @@ fn ready(s: &AiSettings) -> Result<(), String> {
     if s.enabled && s.consented {
         Ok(())
     } else {
-        Err("the assistant is not set up: run `kweb ai set <provider> <base-url> <model> --yes`".into())
+        Err("the assistant is not set up: run `kweb ai set <base-url> <model> --yes`".into())
     }
 }
 
-fn provider_name(p: AiProvider) -> &'static str {
-    match p {
-        AiProvider::OpenAiCompatible => "OpenAI-compatible",
-        AiProvider::Anthropic => "Anthropic",
+/// The name of the service of `s` as the texts give it: its own, else the one made from its address.
+fn service_name(s: &AiSettings) -> String {
+    if s.service_name.trim().is_empty() {
+        rules::default_name(&s.base_url)
+    } else {
+        s.service_name.clone()
     }
+}
+
+/// The services, one line each: id, name, address and model, the one in use marked. Never a key.
+pub fn services_text(s: &AiSettings) -> String {
+    if s.services.is_empty() {
+        return "No service is set up: run `kweb ai set <base-url> <model>`.".into();
+    }
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    let mut out = String::from("Services (* in use):");
+    for entry in &s.services {
+        out.push_str(&format!(
+            "\n{} {}\t{}\t{}\t{}\tkey {}, agreed {}",
+            if entry.active { "*" } else { " " },
+            printable(&entry.id),
+            printable(&entry.name),
+            printable(&entry.base_url),
+            if entry.model.is_empty() { "(no model)".to_string() } else { printable(&entry.model) },
+            if entry.has_key { "stored" } else { "none" },
+            yes(entry.consented),
+        ));
+    }
+    out
 }
 
 /// The settings for the user to read. The key is never in them: only whether there is one.
 pub fn status_text(s: &AiSettings) -> String {
     let yes = |b: bool| if b { "yes" } else { "no" };
     let or_unset = |v: &str| if v.is_empty() { "(not set)".to_string() } else { v.to_string() };
+    let service =
+        if s.service_id.is_empty() { "(none)".to_string() } else { format!("{} [{}]", service_name(s), s.service_id) };
     format!(
         "Assistant: {}\nService:   {}, {}\nModel:     {}\nEffort:    {}\nKey:       {}\nAgreed:    {}\n\
          Allowed:   summaries {}, drafts {}, rewrites {}\n\
          \x20          reply ideas {}, to-dos and dates {}, explaining {}\n\
          Chat:      {}, agreed {}\nActions:   {}",
         if s.enabled { "on" } else { "off" },
-        provider_name(s.provider),
+        line(&service),
         or_unset(&s.base_url),
         or_unset(&s.model),
         effort_name(s.effort),
@@ -294,12 +349,13 @@ pub fn with_switches(mut s: AiSettings, switches: &AiSwitches) -> AiSettings {
 }
 
 /// What the user agrees to by adding `--yes`.
-pub fn consent_text(provider: AiProvider, host: &str, model: &str) -> String {
+pub fn consent_text(name: &str, host: &str, model: &str) -> String {
     format!(
-        "Mail you ask the assistant about is sent, as text, to {host} ({}, model {model}).\n\
+        "Mail you ask the assistant about is sent, as text, to {host} ({}, model {}).\n\
          Nothing is sent until you start a task, and then only the mail that task needs.\n\
          To agree, run the same command again with --yes.",
-        provider_name(provider)
+        line(name),
+        line(model)
     )
 }
 
@@ -319,7 +375,7 @@ pub enum Outcome {
 /// address changes and no new key is given.
 pub fn plan_set(
     current: &AiSettings,
-    provider: AiProvider,
+    name: Option<String>,
     base_url: &str,
     model: &str,
     effort: Option<AiEffort>,
@@ -332,12 +388,18 @@ pub fn plan_set(
     if model.is_empty() {
         return Err("the model name is empty".into());
     }
+    let service_name = match name {
+        Some(name) => rules::clean_name(&name).map_err(|e| e.to_string())?,
+        None => current.service_name.clone(),
+    };
     if !yes {
-        return Ok(Outcome::NeedsYes(consent_text(provider, &rules::host_label(&url), &model)));
+        let shown = if service_name.is_empty() { rules::default_name(&base_url) } else { service_name };
+        return Ok(Outcome::NeedsYes(consent_text(&shown, &rules::host_label(&url), &model)));
     }
     let key = env_key.filter(|k| !k.trim().is_empty());
     let effort = effort.unwrap_or(current.effort);
-    let settings = AiSettings { enabled: true, provider, base_url, model, effort, consented: true, ..current.clone() };
+    let settings =
+        AiSettings { enabled: true, service_name, base_url, model, effort, consented: true, ..current.clone() };
     Ok(Outcome::Store { settings, key })
 }
 
@@ -348,13 +410,13 @@ fn host_of(s: &AiSettings) -> Result<String, String> {
 
 /// What the second yes is for. It is its own text because the chat is another kind of sending:
 /// the model, not the user, picks what is read.
-pub fn chat_consent_text(provider: AiProvider, host: &str, model: &str) -> String {
+pub fn chat_consent_text(name: &str, host: &str, model: &str) -> String {
     format!(
         "In the chat the assistant itself chooses which of your mail, folders and calendar entries it\n\
          looks up, and what it looks up is sent, as text, to {} ({}, model {}).\n\
          It changes nothing by itself: a change is only suggested, shown in full, and done when you say yes.",
         line(host),
-        provider_name(provider),
+        line(name),
         line(model)
     )
 }
@@ -364,7 +426,7 @@ fn chat_consent(core: &Core, agree: Option<bool>) -> Result<(), String> {
     if agree != Some(false) {
         // Agreeing names the service and model it is for; taking the yes back needs neither.
         ready(&settings)?;
-        println!("{}", chat_consent_text(settings.provider, &host_of(&settings)?, &settings.model));
+        println!("{}", chat_consent_text(&service_name(&settings), &host_of(&settings)?, &settings.model));
     }
     match agree {
         None => println!("To agree, run `kweb ai chat-consent yes`."),
@@ -876,7 +938,8 @@ mod tests {
     fn current() -> AiSettings {
         AiSettings {
             enabled: false,
-            provider: AiProvider::OpenAiCompatible,
+            service_id: String::new(),
+            service_name: String::new(),
             base_url: String::new(),
             model: String::new(),
             effort: AiEffort::Default,
@@ -893,6 +956,7 @@ mod tests {
             actions: kweb_core::model::AiActionMode::AskFirst,
             tools_unsupported: false,
             instructions: String::new(),
+            services: Vec::new(),
         }
     }
 
@@ -901,38 +965,22 @@ mod tests {
         let s = AiSettings { has_key: true, ..current() };
         let text = status_text(&s);
         assert!(text.contains("Key:       stored") && text.contains("Assistant: off"));
-        assert!(text.contains("Service:   OpenAI-compatible, (not set)"));
+        assert!(text.contains("Service:   (none), (not set)"));
         assert!(text.contains("summaries yes, drafts no, rewrites yes"));
         assert!(status_text(&current()).contains("Key:       none"));
     }
 
     #[test]
     fn without_yes_nothing_is_stored_and_the_notice_names_the_host_and_model() {
-        let plan = plan_set(
-            &current(),
-            AiProvider::Anthropic,
-            "https://api.example.com/v1/",
-            "m-1",
-            None,
-            false,
-            Some("k".into()),
-        );
+        let plan = plan_set(&current(), None, "https://api.example.com/v1/", "m-1", None, false, Some("k".into()));
         let Ok(Outcome::NeedsYes(notice)) = plan else { panic!("{plan:?}") };
-        assert!(notice.contains("api.example.com (Anthropic, model m-1)") && notice.contains("--yes"));
+        assert!(notice.contains("api.example.com (api.example.com, model m-1)") && notice.contains("--yes"));
         assert!(!notice.contains("k\n"));
     }
 
     #[test]
     fn with_yes_it_enables_and_agrees_and_keeps_the_other_switches() {
-        let plan = plan_set(
-            &current(),
-            AiProvider::OpenAiCompatible,
-            " http://127.0.0.1:11434/v1/ ",
-            " llama ",
-            None,
-            true,
-            None,
-        );
+        let plan = plan_set(&current(), None, " http://127.0.0.1:11434/v1/ ", " llama ", None, true, None);
         let Ok(Outcome::Store { settings, key }) = plan else { panic!("{plan:?}") };
         assert!(settings.enabled && settings.consented);
         assert_eq!((settings.base_url.as_str(), settings.model.as_str()), ("http://127.0.0.1:11434/v1", "llama"));
@@ -943,18 +991,11 @@ mod tests {
     #[test]
     fn effort_is_taken_from_the_option_or_kept_from_what_is_stored() {
         let stored = AiSettings { effort: AiEffort::High, ..current() };
-        let effort = |given: Option<AiEffort>| match plan_set(
-            &stored,
-            AiProvider::Anthropic,
-            "https://a.example/v1",
-            "m",
-            given,
-            true,
-            None,
-        ) {
-            Ok(Outcome::Store { settings, .. }) => settings.effort,
-            other => panic!("{other:?}"),
-        };
+        let effort =
+            |given: Option<AiEffort>| match plan_set(&stored, None, "https://a.example/v1", "m", given, true, None) {
+                Ok(Outcome::Store { settings, .. }) => settings.effort,
+                other => panic!("{other:?}"),
+            };
         assert_eq!(effort(None), AiEffort::High);
         assert_eq!(effort(Some(AiEffort::Max)), AiEffort::Max);
         assert_eq!(effort(Some(AiEffort::Default)), AiEffort::Default);
@@ -971,11 +1012,9 @@ mod tests {
         };
         let list = AiModelList {
             models: vec![model("a", "A\u{1b}[31m", &[AiEffort::Low, AiEffort::XHigh]), model("b", "b", &[])],
-            from_service: true,
         };
         let text = models_text(&list);
         assert_eq!(text, "Models from the service:\na\tA[31m\tlow,xhigh\nb\tb\t-");
-        assert!(models_text(&AiModelList { from_service: false, ..list }).starts_with("Built-in list"));
     }
 
     #[test]
@@ -988,7 +1027,7 @@ mod tests {
     fn the_key_comes_from_the_environment_only_and_an_empty_one_is_no_key() {
         let with = |env: Option<&str>| match plan_set(
             &current(),
-            AiProvider::Anthropic,
+            None,
             "https://a.example/v1",
             "m",
             None,
@@ -1007,10 +1046,7 @@ mod tests {
     fn bad_addresses_and_models_are_refused_before_anything_else() {
         for (url, model) in [("http://api.example.com/v1", "m"), ("nonsense", "m"), ("https://a.example/v1", "  ")] {
             for yes in [false, true] {
-                assert!(
-                    plan_set(&current(), AiProvider::Anthropic, url, model, None, yes, None).is_err(),
-                    "{url} {model}"
-                );
+                assert!(plan_set(&current(), None, url, model, None, yes, None).is_err(), "{url} {model}");
             }
         }
     }
@@ -1074,9 +1110,59 @@ mod tests {
     }
 
     #[test]
+    fn the_services_are_listed_with_the_one_in_use_marked_and_never_a_key() {
+        use kweb_core::model::AiService;
+        assert!(services_text(&current()).contains("kweb ai set"));
+        let entry = |id: &str, name: &str, active| AiService {
+            id: id.into(),
+            name: name.into(),
+            base_url: "https://a.example/v1".into(),
+            model: "m\u{1b}[2J".into(),
+            has_key: active,
+            consented: active,
+            active,
+        };
+        let s = AiSettings { services: vec![entry("openai", "Work", true), entry("s1", "Home", false)], ..current() };
+        let text = services_text(&s);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "{text}");
+        assert!(lines[1].starts_with("* openai\tWork\thttps://a.example/v1\tm[2J\tkey stored, agreed yes"), "{text}");
+        assert!(lines[2].starts_with("  s1\tHome") && lines[2].ends_with("key none, agreed no"), "{text}");
+        let named = AiSettings { service_id: "s1".into(), service_name: "Home".into(), ..current() };
+        assert!(status_text(&named).contains("Service:   Home [s1], (not set)"));
+    }
+
+    #[test]
+    fn a_name_given_is_cleaned_one_left_out_keeps_the_stored_one() {
+        let stored = AiSettings { service_id: "s1".into(), service_name: "Home".into(), ..current() };
+        let name = |given: Option<&str>| match plan_set(
+            &stored,
+            given.map(String::from),
+            "https://a.example/v1",
+            "m",
+            None,
+            true,
+            None,
+        ) {
+            Ok(Outcome::Store { settings, .. }) => (settings.service_id, settings.service_name),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(name(None), ("s1".into(), "Home".into()));
+        assert_eq!(name(Some("  Work \n mail ")), ("s1".into(), "Work mail".into()));
+        assert!(plan_set(&stored, Some("x".repeat(61)), "https://a.example/v1", "m", None, true, None).is_err());
+        // Without --yes the notice names the service as it will be called.
+        let Ok(Outcome::NeedsYes(notice)) =
+            plan_set(&current(), None, "https://api.openai.com/v1", "gpt", None, false, None)
+        else {
+            panic!()
+        };
+        assert!(notice.contains("api.openai.com (OpenAI, model gpt)"), "{notice}");
+    }
+
+    #[test]
     fn the_chat_consent_names_the_host_and_model_and_says_who_chooses() {
-        let text = chat_consent_text(AiProvider::Anthropic, "api.example.com", "m-1\u{1b}[2J");
-        assert!(text.contains("api.example.com (Anthropic, model m-1[2J)"), "{text}");
+        let text = chat_consent_text("Work", "api.example.com", "m-1\u{1b}[2J");
+        assert!(text.contains("api.example.com (Work, model m-1[2J)"), "{text}");
         assert!(text.contains("itself chooses") && text.contains("when you say yes"));
     }
 

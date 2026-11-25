@@ -7,7 +7,7 @@ import uniffi.kweb_core.AiModelList
 
 /**
  * Which effort levels the settings screen offers, and what the model list says about a model. Plain Kotlin, no Android.
- * Both services follow one rule: only the levels the service itself listed for the model are offered (the core sends
+ * Every service follows one rule: only the levels the service itself listed for the model are offered (the core sends
  * nothing else), and a model it named no level for has no effort row at all.
  */
 object EffortRules {
@@ -47,9 +47,6 @@ object ModelRules {
 
     /** The title line: the name, or the id when the service gave no name. */
     fun title(model: AiModel): String = model.name.ifBlank { model.id }
-
-    /** The one-line note for a built-in list (the service was not asked, or has no key yet). */
-    fun isBuiltIn(list: AiModelList): Boolean = !list.fromService
 }
 
 /** Run ids and when a task has to be cancelled. */

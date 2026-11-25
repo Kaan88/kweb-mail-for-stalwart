@@ -1,27 +1,25 @@
-//! Talking to the service: one streamed request in either of two protocols, the answer handed
-//! out piece by piece. Nothing of the service's own words is put into an error, so the key
+//! Talking to the service: one streamed request in the OpenAI chat-completions protocol, the answer
+//! handed out piece by piece. Nothing of the service's own words is put into an error, so the key
 //! cannot come back out through one; the key itself is only ever a header of the request.
+//!
+//! The services that speak this protocol differ in what they accept and send (OpenAI, OpenRouter,
+//! Gemini's OpenAI endpoint, Mistral, DeepSeek, Groq, a model on the user's own machine). The
+//! request is shaped so that each of them takes it, and what a service wants back with its own tool
+//! calls (Gemini's thought signatures, DeepSeek's `reasoning_content`, OpenRouter's
+//! `reasoning_details`) is sent back to it unchanged and never shown.
 
 use std::{fmt, time::Duration};
 
 use reqwest::header::HeaderValue;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::time::timeout;
 
 use super::{
-    settings,
+    prompts, settings,
     sse::{SseParser, ThinkFilter, MAX_HIDDEN},
-    wire::{Reply, ToolCall, ToolSpec, ToolsRefused, Turn},
+    wire::{Reply, ToolCall, ToolResult, ToolSpec, ToolsRefused, Turn},
 };
-use crate::{
-    model::{AiEffort, AiProvider},
-    Error, Result,
-};
-
-/// The Messages API version header. We send no sampling parameters, so nothing else depends on it.
-pub const ANTHROPIC_VERSION: &str = "2026-10-21";
-/// A cap on one Anthropic answer; the field is required there, and thinking counts against it.
-const ANTHROPIC_MAX_TOKENS: u32 = 32_000;
+use crate::{model::AiEffort, Error, Result};
 
 /// The most that is read of one answer that is not a stream (a list of models, or a whole chat
 /// answer from a service that ignored `stream`).
@@ -58,7 +56,6 @@ fn declined() -> Error {
 /// Where a request goes. The key is shown by `Debug` as set or not, never as itself.
 #[derive(Clone)]
 pub struct Endpoint {
-    pub provider: AiProvider,
     pub base_url: String,
     pub model: String,
     /// Sent only when it is not `Default`; the settings make it `Default` unless the service
@@ -70,7 +67,6 @@ pub struct Endpoint {
 impl fmt::Debug for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Endpoint")
-            .field("provider", &self.provider)
             .field("base_url", &self.base_url)
             .field("model", &self.model)
             .field("effort", &self.effort)
@@ -89,60 +85,36 @@ pub struct Parts {
 
 /// Builds the request for `system` and `user`.
 pub fn request_parts(ep: &Endpoint, system: &str, user: &str) -> Parts {
-    match ep.provider {
-        AiProvider::OpenAiCompatible => Parts {
-            url: format!("{}/chat/completions", ep.base_url),
-            headers: ep.key.iter().map(|k| ("authorization", format!("Bearer {k}"))).collect(),
-            body: {
-                let mut body = json!({
-                    "model": ep.model,
-                    "stream": true,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                });
-                if let Some(level) = openai_effort_name(ep.effort) {
-                    if is_openrouter(&ep.base_url) {
-                        // OpenRouter documents its own field and maps it for each provider behind it.
-                        body["reasoning"] = json!({"effort": level});
-                    } else {
-                        body["reasoning_effort"] = json!(level);
-                    }
-                }
-                body
-            },
-        },
-        AiProvider::Anthropic => Parts {
-            url: format!("{}/messages", ep.base_url),
-            headers: ep
-                .key
-                .iter()
-                .map(|k| ("x-api-key", k.clone()))
-                .chain([("anthropic-version", ANTHROPIC_VERSION.to_string())])
-                .collect(),
-            body: {
-                let mut body = json!({
-                    "model": ep.model,
-                    "max_tokens": ANTHROPIC_MAX_TOKENS,
-                    "stream": true,
-                    "system": system,
-                    "messages": [{"role": "user", "content": user}],
-                });
-                if let Some(level) = effort_name(ep.effort) {
-                    body["output_config"] = json!({"effort": level});
-                }
-                body
-            },
-        },
+    let mut body = json!({
+        "model": ep.model,
+        "stream": true,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    });
+    if let Some(level) = effort_name(ep.effort) {
+        if is_openrouter(&ep.base_url) {
+            // OpenRouter documents its own field and maps it for each provider behind it.
+            body["reasoning"] = json!({"effort": level});
+        } else {
+            body["reasoning_effort"] = json!(level);
+        }
+    }
+    Parts {
+        url: format!("{}/chat/completions", ep.base_url),
+        headers: ep.key.iter().map(|k| ("authorization", format!("Bearer {k}"))).collect(),
+        body,
     }
 }
 
-/// The word the Messages API uses for an effort; `None` for `Default`, which is not sent, and for
-/// the levels the Messages API does not have.
+/// The word of the protocol for an effort (`reasoning_effort`, OpenRouter's `reasoning.effort`);
+/// `None` for `Default`, which is not sent.
 pub fn effort_name(effort: AiEffort) -> Option<&'static str> {
     match effort {
-        AiEffort::Default | AiEffort::Off | AiEffort::Minimal => None,
+        AiEffort::Default => None,
+        AiEffort::Off => Some("none"),
+        AiEffort::Minimal => Some("minimal"),
         AiEffort::Low => Some("low"),
         AiEffort::Medium => Some("medium"),
         AiEffort::High => Some("high"),
@@ -151,18 +123,7 @@ pub fn effort_name(effort: AiEffort) -> Option<&'static str> {
     }
 }
 
-/// The word of the OpenAI protocol (`reasoning_effort`, OpenRouter's `reasoning.effort`); `None`
-/// for `Default`, which is not sent.
-pub fn openai_effort_name(effort: AiEffort) -> Option<&'static str> {
-    match effort {
-        AiEffort::Default => None,
-        AiEffort::Off => Some("none"),
-        AiEffort::Minimal => Some("minimal"),
-        other => effort_name(other),
-    }
-}
-
-/// The level a service names with `word`, in either protocol; `None` for a word the app does not know.
+/// The level a service names with `word`; `None` for a word the app does not know.
 pub fn effort_named(word: &str) -> Option<AiEffort> {
     Some(match word {
         "none" => AiEffort::Off,
@@ -179,6 +140,20 @@ pub fn effort_named(word: &str) -> Option<AiEffort> {
 /// Whether `base_url` is OpenRouter's, which takes the effort as `reasoning.effort`.
 pub fn is_openrouter(base_url: &str) -> bool {
     host_is(base_url, "openrouter.ai")
+}
+
+/// Whether `base_url` is Gemini's OpenAI endpoint, which refuses a function whose parameters
+/// have no properties and wants the function's name with its result.
+pub fn is_gemini(base_url: &str) -> bool {
+    host_is(base_url, "generativelanguage.googleapis.com")
+}
+
+/// Whether a request goes out shaped for Gemini (see [`chat_parts`]): to Gemini's own endpoint, or
+/// for a Gemini model through another one (a proxy of the user's that passes the tools on as they
+/// are). Both changes are within the OpenAI protocol, so a service that does not need them takes
+/// them too.
+fn takes_gemini_rules(ep: &Endpoint) -> bool {
+    is_gemini(&ep.base_url) || ep.model.to_ascii_lowercase().contains("gemini")
 }
 
 /// Whether the host of `base_url` is `name` or one of its subdomains.
@@ -243,20 +218,18 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// Takes the token counts of one `data` payload of either protocol: `usage` of the event (OpenAI
-    /// style, the last chunk, or Anthropic's `message_delta`) and `message.usage` (Anthropic's
-    /// `message_start`). A later count of the same request replaces an earlier one.
+    /// Takes the token counts of one `data` payload: `usage` of the event (the last chunk of a
+    /// stream, or the whole answer). A later count of the same request replaces an earlier one.
     fn note(&mut self, data: &str) {
         if !data.contains("usage") {
             return;
         }
         let Ok(event) = serde_json::from_str::<Value>(data) else { return };
-        for usage in [&event["usage"], &event["message"]["usage"]] {
-            let count =
-                |a: &str, b: &str| usage[a].as_u64().or(usage[b].as_u64()).map(|n| n.min(u64::from(u32::MAX)) as u32);
-            self.input = count("input_tokens", "prompt_tokens").or(self.input);
-            self.output = count("output_tokens", "completion_tokens").or(self.output);
-        }
+        let usage = &event["usage"];
+        let count =
+            |a: &str, b: &str| usage[a].as_u64().or(usage[b].as_u64()).map(|n| n.min(u64::from(u32::MAX)) as u32);
+        self.input = count("prompt_tokens", "input_tokens").or(self.input);
+        self.output = count("completion_tokens", "output_tokens").or(self.output);
     }
 
     /// The sum of two requests; a field one of them did not report counts for what the other did.
@@ -279,9 +252,9 @@ pub struct Parsed {
     pub stop: bool,
 }
 
-/// One `data` payload of an OpenAI-style stream. Only `content` is read: `reasoning_content`
-/// and the like are never looked at. Payloads that are not JSON are skipped. An answer the
-/// service ended at its length limit or held back is an error, not a complete answer.
+/// One `data` payload of the stream. Only `content` is read: `reasoning_content` and the like are
+/// never looked at. Payloads that are not JSON are skipped. An answer the service ended at its
+/// length limit or held back is an error, not a complete answer.
 pub fn parse_openai(data: &str) -> Result<Parsed> {
     if data.trim() == "[DONE]" {
         return Ok(Parsed { stop: true, ..Parsed::default() });
@@ -306,36 +279,6 @@ pub fn parse_openai(data: &str) -> Result<Parsed> {
         finished: choice["finish_reason"].as_str().is_some(),
         stop: false,
     })
-}
-
-/// One `data` payload of an Anthropic stream.
-pub fn parse_anthropic(data: &str) -> Result<Parsed> {
-    let Ok(event) = serde_json::from_str::<Value>(data) else { return Ok(Parsed::default()) };
-    match event["type"].as_str() {
-        Some("content_block_delta") if event["delta"]["type"] == "text_delta" => {
-            Ok(Parsed { text: event["delta"]["text"].as_str().unwrap_or_default().to_string(), ..Parsed::default() })
-        }
-        Some("message_delta") if event["delta"]["stop_reason"] == "refusal" => Err(declined()),
-        Some("message_delta") if event["delta"]["stop_reason"] == "max_tokens" => Err(cut_off()),
-        Some("message_stop") => Ok(Parsed { stop: true, ..Parsed::default() }),
-        Some("error") => Err(stream_error()),
-        // A service that ignored `stream` answers with the whole message.
-        Some("message") if event["content"].is_array() => match event["stop_reason"].as_str() {
-            Some("refusal") => Err(declined()),
-            Some("max_tokens") => Err(cut_off()),
-            _ => {
-                let text: String = event["content"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|b| b["type"] == "text")
-                    .filter_map(|b| b["text"].as_str())
-                    .collect();
-                Ok(Parsed { text, stop: true, ..Parsed::default() })
-            }
-        },
-        _ => Ok(Parsed::default()),
-    }
 }
 
 fn stream_error() -> Error {
@@ -363,6 +306,12 @@ pub const NOT_CHAT: &str = "this model does not take chat requests; pick another
 /// A 404 from a router (OpenRouter) that has the model but no provider for this request.
 pub const NO_ROUTE: &str = "the service has no provider that can answer this request with this model \
      (for example one that takes tools, or one your account's privacy settings allow)";
+/// A refused request with tools whose body is about them, but does not say that the model takes
+/// none (a description the service did not accept, a part of the conversation it did not take).
+pub const TOOLS_NOT_ACCEPTED: &str = "the service did not accept the request with the assistant's tools \
+     (status 400); try again, or try another model";
+/// The service said the model wrote a call it could not read (Groq's `tool_use_failed`).
+pub const BROKEN_CALL: &str = "the model wrote a tool call the service could not read; try again";
 
 /// What to tell the user about a refused request. For a 404 the body is looked at for one fact
 /// only, which kind of thing was not there, and that becomes one of the fixed sentences above:
@@ -372,17 +321,21 @@ pub fn refusal(status: u16, body: &[u8]) -> Error {
         return status_error(status);
     }
     let body = body.to_ascii_lowercase();
-    let has = |word: &str| body.windows(word.len()).any(|w| w == word.as_bytes());
-    let text = if has("not a chat model") || has("v1/responses") || has("only supported in") {
+    let text = if has(&body, "not a chat model") || has(&body, "v1/responses") || has(&body, "only supported in") {
         NOT_CHAT
-    } else if has("no endpoints found") || has("no allowed providers") {
+    } else if has(&body, "no endpoints found") || has(&body, "no allowed providers") {
         NO_ROUTE
-    } else if has("model") {
+    } else if has(&body, "model") {
         UNKNOWN_MODEL
     } else {
         NOT_HERE
     };
     Error::temporary(text)
+}
+
+/// Whether the lowercased `body` holds `word`.
+fn has(body: &[u8], word: &str) -> bool {
+    body.windows(word.len()).any(|w| w == word.as_bytes())
 }
 
 /// [`refusal`] for `response`; its body is read (at most [`REFUSAL_BODY`]) only for a 404.
@@ -423,7 +376,6 @@ impl Sink<'_> {
 
 /// The state of one answer being read.
 struct Reader<'a> {
-    parse: fn(&str) -> Result<Parsed>,
     think: ThinkFilter,
     sink: Sink<'a>,
     finished: bool,
@@ -434,7 +386,7 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn event(&mut self, data: &str) -> Result<()> {
         self.usage.note(data);
-        let parsed = (self.parse)(data)?;
+        let parsed = parse_openai(data)?;
         let shown = self.think.push(&parsed.text);
         if self.think.hidden > MAX_HIDDEN {
             return Err(Error::temporary("the model kept thinking for too long and was stopped"));
@@ -444,6 +396,39 @@ impl Reader<'_> {
         self.stopped |= parsed.stop;
         Ok(())
     }
+}
+
+/// Sends one request. The status is the caller's to judge.
+async fn post(client: &reqwest::Client, parts: Parts, host: &str, timeouts: Timeouts) -> Result<reqwest::Response> {
+    let mut request = client
+        .post(&parts.url)
+        .header("content-type", "application/json")
+        .header("accept", "text/event-stream")
+        .body(parts.body.to_string());
+    for (name, value) in parts.headers {
+        request = request.header(name, sensitive(&value)?);
+    }
+    match timeout(timeouts.first, request.send()).await {
+        Err(_) => Err(Error::temporary("the service did not answer in time")),
+        Ok(Err(e)) if e.is_timeout() => Err(Error::temporary("the service did not answer in time")),
+        Ok(Err(_)) => Err(Error::temporary(format!("could not reach the service at {host}"))),
+        Ok(Ok(response)) => Ok(response),
+    }
+}
+
+/// Whether a refused request is one of those whose body is worth one look: 400, and 422, which
+/// Mistral answers for a request it cannot take.
+fn is_bad_request(status: u16) -> bool {
+    matches!(status, 400 | 422)
+}
+
+/// Whether the service ignored `stream` and sent the whole answer as one JSON document.
+fn is_one_piece(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| t.to_ascii_lowercase().contains("application/json"))
 }
 
 /// Sends the request and reads the answer. `on_text` hears each visible piece as it comes.
@@ -460,9 +445,9 @@ pub async fn complete(
     complete_with_usage(ep, system, user, timeouts, on_text, false).await.map(|(answer, _)| answer)
 }
 
-/// [`complete`], and the tokens the service reported. With `ask_usage` an OpenAI-style request also
-/// carries `stream_options.include_usage` (without it such a service usually reports nothing); the
-/// body of every other request is unchanged.
+/// [`complete`], and the tokens the service reported. With `ask_usage` the request also carries
+/// `stream_options.include_usage` (without it a service usually reports nothing); a service that
+/// refuses the request with it (400 or 422) is asked once more without it.
 pub async fn complete_with_usage(
     ep: &Endpoint,
     system: &str,
@@ -473,50 +458,31 @@ pub async fn complete_with_usage(
 ) -> Result<(String, Usage)> {
     let url = settings::check_base_url(&ep.base_url)?;
     let host = settings::host_label(&url);
-    if ep.provider == AiProvider::Anthropic && ep.key.is_none() {
-        return Err(Error::invalid("this service needs a key"));
-    }
-    let mut parts = request_parts(ep, system, user);
-    if ask_usage {
-        ask_for_usage(ep, &mut parts);
-    }
     let client = client(timeouts.connect, None)?;
-    let mut request = client
-        .post(&parts.url)
-        .header("content-type", "application/json")
-        .header("accept", "text/event-stream")
-        .body(parts.body.to_string());
-    for (name, value) in parts.headers {
-        request = request.header(name, sensitive(&value)?);
-    }
-    let mut response = match timeout(timeouts.first, request.send()).await {
-        Err(_) => return Err(Error::temporary("the service did not answer in time")),
-        Ok(Err(e)) if e.is_timeout() => return Err(Error::temporary("the service did not answer in time")),
-        Ok(Err(_)) => return Err(Error::temporary(format!("could not reach the service at {host}"))),
-        Ok(Ok(response)) => response,
+    let parts = |usage: bool| {
+        let mut parts = request_parts(ep, system, user);
+        if usage {
+            ask_for_usage(&mut parts);
+        }
+        parts
     };
+    let mut response = post(&client, parts(ask_usage), &host, timeouts).await?;
+    if ask_usage && is_bad_request(response.status().as_u16()) {
+        // The same endpoint, so the key goes where it went before, and only once more.
+        response = post(&client, parts(false), &host, timeouts).await?;
+    }
     if !response.status().is_success() {
         return Err(refused(response, timeouts.idle).await);
     }
 
     let mut reader = Reader {
-        parse: match ep.provider {
-            AiProvider::OpenAiCompatible => parse_openai,
-            AiProvider::Anthropic => parse_anthropic,
-        },
         think: ThinkFilter::default(),
         sink: Sink { answer: String::new(), chars: 0, on_text },
         finished: false,
         stopped: false,
         usage: Usage::default(),
     };
-    let one_piece = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|t| t.to_ascii_lowercase().contains("application/json"));
-    if one_piece {
-        // A service that ignored `stream` and sent the whole answer as one JSON document.
+    if is_one_piece(&response) {
         let body = match read_capped(response, MAX_BODY, timeouts.first).await {
             Ok(body) => body,
             Err(BodyError::TooLarge) => {
@@ -551,149 +517,213 @@ pub async fn complete_with_usage(
     }
     let rest = reader.think.finish();
     reader.sink.push(&rest)?;
-    let answer = reader.sink.answer.trim();
-    let answer = match ep.provider {
-        AiProvider::OpenAiCompatible => reader.think.after_orphan_close(answer),
-        AiProvider::Anthropic => answer,
-    }
-    .trim()
-    .to_string();
+    let answer = reader.think.after_orphan_close(reader.sink.answer.trim()).trim().to_string();
     if answer.is_empty() {
         return Err(Error::temporary("the service sent an empty answer"));
     }
     Ok((answer, reader.usage))
 }
 
-/// Asks an OpenAI-style service to report its token counts in the last chunk of the stream.
-fn ask_for_usage(ep: &Endpoint, parts: &mut Parts) {
-    if ep.provider == AiProvider::OpenAiCompatible {
-        parts.body["stream_options"] = json!({"include_usage": true});
-    }
+/// Asks the service to report its token counts in the last chunk of the stream.
+fn ask_for_usage(parts: &mut Parts) {
+    parts.body["stream_options"] = json!({"include_usage": true});
 }
 
 /// The most calls taken from one turn; what the model asks for beyond them is dropped.
 const MAX_CALLS: usize = 8;
 /// More than this many characters of arguments in one turn is a model that does not stop.
 const MAX_ARGS_CHARS: usize = 20_000;
-/// More content blocks than this in one turn is not an answer we understand.
-const MAX_BLOCKS: usize = 64;
 /// The most that is read of a refused request's answer, to see whether it is about the tools.
 pub const REFUSAL_BODY: usize = 64 * 1024;
 
-/// Whether the body of a refused request names tools: "tool", "tools", "tool_choice" or "function(s)"
-/// (what OpenAI-compatible servers and Ollama say). Only this one fact is taken from it.
+/// Whether the body of a refused request names tools: "tool", "tools", "tool_choice" or
+/// "function(s)". Only this one fact is taken from it.
 fn names_tools(body: &[u8]) -> bool {
     let body = body.to_ascii_lowercase();
-    [&b"tool"[..], &b"function"[..]].iter().any(|word| body.windows(word.len()).any(|w| w == *word))
+    has(&body, "tool") || has(&body, "function")
+}
+
+/// Whether the body of a refused request says that the model takes no tools at all (what Ollama,
+/// vLLM, LM Studio, Groq, DeepSeek's reasoner and others say), as opposed to a request with tools
+/// it did not like: a description it refused (Gemini's "Unknown name", a schema), a part of the
+/// conversation it did not take (an id, a role, a missing thought signature). Only this one fact
+/// is taken from it.
+fn says_no_tools(body: &[u8]) -> bool {
+    let body = body.to_ascii_lowercase();
+    if !names_tools(&body) {
+        return false;
+    }
+    const ABOUT_THE_REQUEST: [&str; 9] = [
+        "schema",
+        "properties",
+        "invalid json payload",
+        "unknown name",
+        "thought_signature",
+        "thought signature",
+        "tool_call_id",
+        "unexpected role",
+        "tool_use_failed",
+    ];
+    if ABOUT_THE_REQUEST.iter().any(|word| has(&body, word)) {
+        return false;
+    }
+    const NO_SUPPORT: [&str; 7] = [
+        "not support",
+        "not supported",
+        "unsupported",
+        "doesn't support",
+        "not available for",
+        "not enabled",
+        "enable-auto-tool-choice",
+    ];
+    NO_SUPPORT.iter().any(|word| has(&body, word))
+}
+
+/// What to say about a 400 or 422 to a request with tools that did not say the model takes none.
+fn tools_refusal(status: u16, body: &[u8]) -> Error {
+    let body = body.to_ascii_lowercase();
+    if has(&body, "tool_use_failed") || has(&body, "failed to call a function") {
+        Error::temporary(BROKEN_CALL)
+    } else if names_tools(&body) {
+        Error::temporary(TOOLS_NOT_ACCEPTED)
+    } else {
+        status_error(status)
+    }
 }
 
 fn too_much() -> Error {
     Error::temporary("the model asked for too much at once and was stopped")
 }
 
-/// The request for a conversation with tools. With `tools` empty no `tools` key is sent.
+/// What an assistant turn in a request says when the run before ended on tool results: some
+/// services refuse a user message right after a tool result (Mistral).
+pub const ENDED: &str = "[This request ended here.]";
+
+/// The request for a conversation with tools.
 ///
 /// Address, headers and the fields around the messages are those of [`request_parts`]. An
-/// Anthropic assistant turn that has `raw` is sent back from it unchanged, so that thinking
-/// blocks keep their signature; the results of one turn are one user message.
+/// assistant turn with calls has no `content` when it has no text (some services turn an empty
+/// text into an empty block they then refuse), and gets back what the service sent with it (see
+/// [`Gather::calls`]). A user message right after tool results gets an assistant turn of
+/// [`ENDED`] in front of it.
+///
+/// With `tools` empty no `tools` key is sent, and the turns are sent as plain text: a call the
+/// model made earlier is left out and its result goes in a user message, framed as data as
+/// always. A service refuses tool calls and results in a request that has no tools.
 pub fn chat_parts(ep: &Endpoint, system: &str, turns: &[Turn], tools: &[ToolSpec]) -> Parts {
     let mut parts = request_parts(ep, system, "");
-    match ep.provider {
-        AiProvider::OpenAiCompatible => {
-            let mut messages = vec![json!({"role": "system", "content": system})];
-            for turn in turns {
-                match turn {
-                    Turn::User(text) => messages.push(json!({"role": "user", "content": text})),
-                    Turn::Assistant { text, calls, .. } => {
-                        let mut message = json!({"role": "assistant", "content": text});
-                        if !calls.is_empty() {
-                            message["tool_calls"] = calls
-                                .iter()
-                                .map(|c| {
-                                    json!({
-                                        "id": c.id,
-                                        "type": "function",
-                                        "function": {"name": c.name, "arguments": c.args.to_string()},
-                                    })
-                                })
-                                .collect();
-                        }
-                        messages.push(message);
-                    }
-                    Turn::Results(results) => messages.extend(
-                        results.iter().map(|r| json!({"role": "tool", "tool_call_id": r.id, "content": r.content})),
-                    ),
-                }
+    let gemini = takes_gemini_rules(ep);
+    let mut messages = vec![json!({"role": "system", "content": system})];
+    if tools.is_empty() {
+        for turn in turns {
+            let (role, text) = match turn {
+                Turn::User(text) => ("user", text.clone()),
+                Turn::Assistant { text, .. } => ("assistant", text.clone()),
+                Turn::Results(results) => ("user", results.iter().map(plain_result).collect::<Vec<_>>().join("\n\n")),
+            };
+            if text.trim().is_empty() {
+                continue;
             }
-            parts.body["messages"] = Value::Array(messages);
-            if !tools.is_empty() {
-                parts.body["tools"] = tools
-                    .iter()
-                    .map(|t| {
-                        json!({
-                            "type": "function",
-                            "function": {"name": t.name, "description": t.description, "parameters": t.schema},
-                        })
-                    })
-                    .collect();
+            // Two turns of one side in a row become one message (never the system text).
+            let past_system = messages.len() > 1;
+            match messages.last_mut() {
+                Some(last) if past_system && last["role"] == role => {
+                    let joined = format!("{}\n\n{text}", last["content"].as_str().unwrap_or_default());
+                    last["content"] = Value::String(joined);
+                }
+                _ => messages.push(json!({"role": role, "content": text})),
             }
         }
-        AiProvider::Anthropic => {
-            let messages: Vec<Value> = turns
-                .iter()
-                .map(|turn| match turn {
-                    Turn::User(text) => json!({"role": "user", "content": text}),
-                    Turn::Assistant { raw: Some(raw), .. }
-                        if raw.as_array().is_some_and(|blocks| !blocks.is_empty()) =>
-                    {
-                        json!({"role": "assistant", "content": raw})
+    } else {
+        let mut after_results = false;
+        for turn in turns {
+            match turn {
+                Turn::User(text) => {
+                    if after_results {
+                        messages.push(json!({"role": "assistant", "content": ENDED}));
                     }
-                    Turn::Assistant { text, calls, .. } => {
-                        let mut blocks = Vec::new();
-                        if !text.is_empty() || calls.is_empty() {
-                            blocks.push(json!({"type": "text", "text": text}));
+                    messages.push(json!({"role": "user", "content": text}));
+                }
+                Turn::Assistant { text, calls, raw } => {
+                    let mut message = json!({"role": "assistant", "content": text});
+                    if !calls.is_empty() {
+                        if text.is_empty() {
+                            message["content"] = Value::Null;
                         }
-                        blocks.extend(
-                            calls
-                                .iter()
-                                .map(|c| json!({"type": "tool_use", "id": c.id, "name": c.name, "input": c.args})),
-                        );
-                        json!({"role": "assistant", "content": blocks})
-                    }
-                    Turn::Results(results) => {
-                        let blocks: Vec<Value> = results
+                        let extra = |n: usize| raw.as_ref().and_then(|r| r["extra"].get(n)).and_then(Value::as_object);
+                        message["tool_calls"] = calls
                             .iter()
-                            .map(|r| {
-                                json!({
-                                    "type": "tool_result",
-                                    "tool_use_id": r.id,
-                                    "content": r.content,
-                                    "is_error": r.is_error,
-                                })
+                            .enumerate()
+                            .map(|(n, c)| {
+                                let mut call = json!({
+                                    "id": c.id,
+                                    "type": "function",
+                                    "function": {"name": c.name, "arguments": c.args.to_string()},
+                                });
+                                for (key, value) in extra(n).into_iter().flatten() {
+                                    call[key] = value.clone();
+                                }
+                                call
                             })
                             .collect();
-                        json!({"role": "user", "content": blocks})
+                        if let Some(raw) = raw {
+                            for key in KEPT_FIELDS {
+                                if !raw[key].is_null() {
+                                    message[key] = raw[key].clone();
+                                }
+                            }
+                        }
                     }
-                })
-                .collect();
-            parts.body["messages"] = Value::Array(messages);
-            if !tools.is_empty() {
-                parts.body["tools"] = tools
-                    .iter()
-                    .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.schema}))
-                    .collect();
+                    messages.push(message);
+                }
+                Turn::Results(results) => messages.extend(results.iter().map(|r| {
+                    let mut message = json!({"role": "tool", "tool_call_id": r.id, "content": r.content});
+                    if gemini {
+                        message["name"] = Value::String(r.name.clone());
+                    }
+                    message
+                })),
             }
+            after_results = matches!(turn, Turn::Results(_));
         }
+    }
+    parts.body["messages"] = Value::Array(messages);
+    if !tools.is_empty() {
+        parts.body["tools"] = tools
+            .iter()
+            .map(|t| {
+                let mut function = json!({"name": t.name, "description": t.description, "parameters": t.schema});
+                // Gemini refuses an object without properties: a function without arguments has none.
+                if gemini && t.schema["properties"].as_object().is_none_or(Map::is_empty) {
+                    function.as_object_mut().map(|f| f.remove("parameters"));
+                }
+                json!({"type": "function", "function": function})
+            })
+            .collect();
     }
     parts
 }
+
+/// A tool result as plain text, framed as data (the results the tools give are framed already).
+fn plain_result(result: &ToolResult) -> String {
+    if result.content.starts_with(prompts::TOOL_RESULT_OPEN) {
+        result.content.clone()
+    } else {
+        prompts::tool_frame(&result.name, &result.content)
+    }
+}
+
+/// What of the assistant message a service sent is kept and sent back with its calls: the reasoning
+/// some services want back with a call (DeepSeek, Moonshot and vLLM's `reasoning_content`,
+/// OpenRouter's `reasoning_details`). Never shown, never logged, never stored.
+const KEPT_FIELDS: [&str; 2] = ["reasoning_content", "reasoning_details"];
 
 /// What the model sent as arguments, when it is a JSON object; `{}` when it is anything else.
 fn object_or_empty(text: &str) -> Value {
     serde_json::from_str::<Value>(text).ok().filter(Value::is_object).unwrap_or_else(|| json!({}))
 }
 
-/// A call of an OpenAI-style answer while its pieces come in.
+/// A call of an answer while its pieces come in.
 struct Pending {
     /// The `index` the stream names it by; a service that sends none starts a call with each
     /// entry that has an id or a name.
@@ -701,41 +731,24 @@ struct Pending {
     id: String,
     name: String,
     args: String,
+    /// The fields of the entry beside `index`, `id`, `type` and `function` (Gemini's
+    /// `extra_content` with its thought signature), sent back with the call.
+    extra: Map<String, Value>,
 }
 
-/// A content block of an Anthropic answer while its pieces come in.
-struct Block {
-    index: u64,
-    block: Value,
-    /// The arguments of a `tool_use` block as they are streamed, until the block ends.
-    partial: String,
-}
-
-impl Block {
-    /// A `tool_use` block gets the arguments that were streamed for it as its `input`.
-    fn close(&mut self) {
-        if self.block["type"] != "tool_use" {
-            return;
-        }
-        if !self.partial.is_empty() {
-            self.block["input"] = object_or_empty(&std::mem::take(&mut self.partial));
-        } else if !self.block["input"].is_object() {
-            self.block["input"] = json!({});
-        }
-    }
-}
-
-/// What one turn holds besides its visible text: the calls, and for Anthropic every content
-/// block as the service sent it.
+/// What one turn holds besides its visible text: the calls, and what goes back with them.
 #[derive(Default)]
 struct Gather {
     pending: Vec<Pending>,
     /// The newest call without an `index` was dropped, and so are its further pieces.
     overflow: bool,
-    blocks: Vec<Block>,
     /// Characters of arguments so far, of the dropped calls too.
     args_chars: usize,
-    /// Characters of thinking and signatures so far: kept for the service, never shown.
+    /// `reasoning_content` as it came, to send back with the calls.
+    reasoning: String,
+    /// `reasoning_details` as they came, pieces of one entry put together.
+    details: Vec<Value>,
+    /// Characters of reasoning kept so far; beyond [`MAX_HIDDEN`] nothing more is kept.
     private_chars: usize,
     /// A call has begun: from here on the service is held to the shorter pause.
     begun: bool,
@@ -752,9 +765,18 @@ impl Gather {
         Ok(())
     }
 
-    /// One `data` payload of an OpenAI-style stream, or the whole document of a service that
-    /// ignored `stream`. Returns the text it carried. As in [`parse_openai`] only `content` and
-    /// the calls are read.
+    /// Whether `more` characters of reasoning may still be kept.
+    fn room(&mut self, more: usize) -> bool {
+        if self.private_chars + more > MAX_HIDDEN {
+            return false;
+        }
+        self.private_chars += more;
+        true
+    }
+
+    /// One `data` payload of the stream, or the whole document of a service that ignored `stream`.
+    /// Returns the text it carried. As in [`parse_openai`] only `content` is shown; the calls are
+    /// read, and the reasoning is kept to be sent back.
     fn openai(&mut self, data: &str) -> Result<String> {
         if data.trim() == "[DONE]" {
             self.stopped = true;
@@ -775,12 +797,49 @@ impl Gather {
             for entry in said["tool_calls"].as_array().into_iter().flatten() {
                 self.openai_call(entry)?;
             }
+            if let Some(piece) = said["reasoning_content"].as_str() {
+                if self.room(piece.chars().count()) {
+                    self.reasoning.push_str(piece);
+                }
+            }
+            for item in said["reasoning_details"].as_array().into_iter().flatten() {
+                self.detail(item);
+            }
         }
         Ok(choice["delta"]["content"]
             .as_str()
             .or(choice["message"]["content"].as_str())
             .unwrap_or_default()
             .to_string())
+    }
+
+    /// One entry of `reasoning_details`: a piece of the one before it (same `index` and `type`)
+    /// is added to it, anything else is a new entry.
+    fn detail(&mut self, item: &Value) {
+        let Some(item) = item.as_object() else { return };
+        if !self.room(Value::Object(item.clone()).to_string().chars().count()) {
+            return;
+        }
+        let same = |last: &Value| {
+            last["index"] == item.get("index").cloned().unwrap_or(Value::Null)
+                && last["type"] == item.get("type").cloned().unwrap_or(Value::Null)
+        };
+        match self.details.last_mut().filter(|last| same(last)) {
+            Some(last) => {
+                for (key, value) in item {
+                    match (&mut last[key], value) {
+                        (Value::String(whole), Value::String(piece))
+                            if matches!(key.as_str(), "text" | "summary" | "data") =>
+                        {
+                            whole.push_str(piece)
+                        }
+                        (_, Value::Null) => {}
+                        (slot, value) => *slot = value.clone(),
+                    }
+                }
+            }
+            None => self.details.push(Value::Object(item.clone())),
+        }
     }
 
     /// One entry of `tool_calls`: the start of a call, a further piece of its arguments, or both.
@@ -794,12 +853,24 @@ impl Gather {
             whole @ Value::Object(_) => whole.to_string(),
             _ => String::new(),
         };
+        let extra: Map<String, Value> = entry
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, value)| !matches!(key.as_str(), "index" | "id" | "type" | "function") && !value.is_null())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         self.count_args(&piece)?;
+        if !extra.is_empty() {
+            self.count_args(&Value::Object(extra.clone()).to_string())?;
+        }
         self.begun = true;
         let at = match entry["index"].as_u64() {
-            Some(key) => match self.pending.iter().position(|p| p.key == Some(key)) {
-                Some(at) => Some(at),
-                None => self.open(Some(key)),
+            // A service that numbers every call 0 (some do, for calls that each come whole) is
+            // told apart by the new id.
+            Some(key) => match self.pending.iter().rposition(|p| p.key == Some(key)) {
+                Some(at) if id.is_empty() || self.pending[at].id.is_empty() || self.pending[at].id == id => Some(at),
+                _ => self.open(Some(key)),
             },
             None if !id.is_empty() || !name.is_empty() => self.open(None),
             None if self.overflow => None,
@@ -813,6 +884,7 @@ impl Gather {
                 call.name = name.to_string();
             }
             call.args.push_str(&piece);
+            call.extra.extend(extra);
         }
         Ok(())
     }
@@ -823,198 +895,56 @@ impl Gather {
         if self.overflow {
             return None;
         }
-        self.pending.push(Pending { key, id: String::new(), name: String::new(), args: String::new() });
+        self.pending.push(Pending {
+            key,
+            id: String::new(),
+            name: String::new(),
+            args: String::new(),
+            extra: Map::new(),
+        });
         Some(self.pending.len() - 1)
     }
 
-    fn block(&mut self, index: u64) -> Option<&mut Block> {
-        self.blocks.iter_mut().find(|b| b.index == index)
-    }
-
-    fn tool_blocks(&self) -> usize {
-        self.blocks.iter().filter(|b| b.block["type"] == "tool_use").count()
-    }
-
-    fn add_block(&mut self, index: u64, block: Value) -> Result<()> {
-        if self.blocks.len() >= MAX_BLOCKS {
-            return Err(too_much());
-        }
-        self.blocks.push(Block { index, block, partial: String::new() });
-        Ok(())
-    }
-
-    /// A piece of something the service wants back but the user never sees: thinking, or its
-    /// signature.
-    fn private(&mut self, index: u64, field: &str, piece: &str) -> Result<()> {
-        self.private_chars += piece.chars().count();
-        if self.private_chars > MAX_HIDDEN {
-            return Err(Error::temporary("the model kept thinking for too long and was stopped"));
-        }
-        if let Some(block) = self.block(index).filter(|b| b.block.is_object()) {
-            match &mut block.block[field] {
-                Value::String(whole) => whole.push_str(piece),
-                other => *other = Value::String(piece.to_string()),
-            }
-        }
-        Ok(())
-    }
-
-    /// One `data` payload of an Anthropic stream, or the whole message of a service that ignored
-    /// `stream`. Returns the text it carried. Every block is kept as it was sent.
-    fn anthropic(&mut self, data: &str) -> Result<String> {
-        let Ok(event) = serde_json::from_str::<Value>(data) else { return Ok(String::new()) };
-        let index = event["index"].as_u64().unwrap_or(0);
-        match event["type"].as_str() {
-            Some("content_block_start") if event["content_block"].is_object() => {
-                let block = event["content_block"].clone();
-                if block["type"] == "tool_use" {
-                    self.begun = true;
-                    if self.tool_blocks() >= MAX_CALLS {
-                        return Ok(String::new());
-                    }
-                }
-                let text = match block["type"].as_str() {
-                    Some("text") => block["text"].as_str().unwrap_or_default().to_string(),
-                    _ => String::new(),
-                };
-                self.add_block(index, block)?;
-                Ok(text)
-            }
-            Some("content_block_delta") => {
-                let delta = &event["delta"];
-                match delta["type"].as_str() {
-                    Some("text_delta") => {
-                        let text = delta["text"].as_str().unwrap_or_default();
-                        if self.block(index).is_none() {
-                            self.add_block(index, json!({"type": "text", "text": ""}))?;
-                        }
-                        if let Some(Value::String(whole)) = self.block(index).and_then(|b| b.block.get_mut("text")) {
-                            whole.push_str(text);
-                        }
-                        Ok(text.to_string())
-                    }
-                    Some("input_json_delta") => {
-                        let piece = delta["partial_json"].as_str().unwrap_or_default();
-                        self.count_args(piece)?;
-                        if let Some(block) = self.block(index) {
-                            block.partial.push_str(piece);
-                        }
-                        Ok(String::new())
-                    }
-                    Some("thinking_delta") => {
-                        self.private(index, "thinking", delta["thinking"].as_str().unwrap_or_default())?;
-                        Ok(String::new())
-                    }
-                    Some("signature_delta") => {
-                        self.private(index, "signature", delta["signature"].as_str().unwrap_or_default())?;
-                        Ok(String::new())
-                    }
-                    _ => Ok(String::new()),
-                }
-            }
-            Some("content_block_stop") => {
-                if let Some(block) = self.block(index) {
-                    block.close();
-                }
-                Ok(String::new())
-            }
-            Some("message_delta") => match event["delta"]["stop_reason"].as_str() {
-                Some("refusal") => Err(declined()),
-                Some("max_tokens") => Err(cut_off()),
-                Some(_) => {
-                    self.finished = true;
-                    Ok(String::new())
-                }
-                None => Ok(String::new()),
-            },
-            Some("message_stop") => {
-                self.stopped = true;
-                Ok(String::new())
-            }
-            Some("error") => Err(stream_error()),
-            Some("message") if event["content"].is_array() => {
-                match event["stop_reason"].as_str() {
-                    Some("refusal") => return Err(declined()),
-                    Some("max_tokens") => return Err(cut_off()),
-                    _ => {}
-                }
-                let mut text = String::new();
-                for (at, block) in event["content"].as_array().into_iter().flatten().enumerate() {
-                    match block["type"].as_str() {
-                        Some("text") => text.push_str(block["text"].as_str().unwrap_or_default()),
-                        Some("tool_use") => {
-                            self.begun = true;
-                            self.count_args(&block["input"].to_string())?;
-                            if self.tool_blocks() >= MAX_CALLS {
-                                continue;
-                            }
-                        }
-                        _ => {}
-                    }
-                    if block.is_object() {
-                        self.add_block(at as u64, block.clone())?;
-                    }
-                }
-                self.stopped = true;
-                Ok(text)
-            }
-            _ => Ok(String::new()),
-        }
-    }
-
-    /// The calls of the turn, and for Anthropic the blocks to send back. `prior` is how many
-    /// calls the conversation already holds: a call that came without an id is named after its
-    /// place in the conversation, so that no two share a name.
-    fn calls(&mut self, provider: AiProvider, prior: usize) -> (Vec<ToolCall>, Option<Value>) {
+    /// The calls of the turn, and what goes back with them: `{"extra": [per call, or null],
+    /// "reasoning_content": .., "reasoning_details": [..]}`, `None` when there is nothing.
+    /// `prior` is how many calls the conversation already holds: a call that came without an id is
+    /// named after its place in the conversation, so that no two share a name.
+    fn calls(&mut self, prior: usize) -> (Vec<ToolCall>, Option<Value>) {
         let made = |n: usize| format!("call_{}", prior + n + 1);
-        match provider {
-            AiProvider::OpenAiCompatible => {
-                let calls = self
-                    .pending
-                    .iter()
-                    .enumerate()
-                    .map(|(n, p)| ToolCall {
-                        id: if p.id.is_empty() { made(n) } else { p.id.clone() },
-                        name: p.name.clone(),
-                        args: object_or_empty(&p.args),
-                    })
-                    .collect();
-                (calls, None)
-            }
-            AiProvider::Anthropic => {
-                let mut calls = Vec::new();
-                for block in &mut self.blocks {
-                    block.close();
-                    if block.block["type"] != "tool_use" {
-                        continue;
-                    }
-                    if block.block["id"].as_str().is_none_or(str::is_empty) {
-                        block.block["id"] = Value::String(made(calls.len()));
-                    }
-                    calls.push(ToolCall {
-                        id: block.block["id"].as_str().unwrap_or_default().to_string(),
-                        name: block.block["name"].as_str().unwrap_or_default().to_string(),
-                        args: block.block["input"].clone(),
-                    });
-                }
-                // An empty text block is refused when it is sent back; everything else stays.
-                let raw: Vec<Value> = self
-                    .blocks
-                    .iter()
-                    .filter(|b| {
-                        b.block["type"] != "text" || !b.block["text"].as_str().unwrap_or_default().trim().is_empty()
-                    })
-                    .map(|b| b.block.clone())
-                    .collect();
-                (calls, (!raw.is_empty()).then_some(Value::Array(raw)))
-            }
+        let calls: Vec<ToolCall> = self
+            .pending
+            .iter()
+            .enumerate()
+            .map(|(n, p)| ToolCall {
+                id: if p.id.is_empty() { made(n) } else { p.id.clone() },
+                name: p.name.clone(),
+                args: object_or_empty(&p.args),
+            })
+            .collect();
+        if calls.is_empty() {
+            return (calls, None);
         }
+        let mut raw = Map::new();
+        if self.pending.iter().any(|p| !p.extra.is_empty()) {
+            let extra = self
+                .pending
+                .iter()
+                .map(|p| if p.extra.is_empty() { Value::Null } else { Value::Object(p.extra.clone()) })
+                .collect();
+            raw.insert("extra".into(), Value::Array(extra));
+        }
+        if !self.reasoning.is_empty() {
+            raw.insert("reasoning_content".into(), Value::String(std::mem::take(&mut self.reasoning)));
+        }
+        if !self.details.is_empty() {
+            raw.insert("reasoning_details".into(), Value::Array(std::mem::take(&mut self.details)));
+        }
+        (calls, (!raw.is_empty()).then_some(Value::Object(raw)))
     }
 }
 
 /// The state of one turn being read: the text goes the way of [`complete`], the rest is gathered.
 struct ChatReader<'a> {
-    provider: AiProvider,
     think: ThinkFilter,
     sink: Sink<'a>,
     gather: Gather,
@@ -1022,9 +952,8 @@ struct ChatReader<'a> {
 }
 
 impl<'a> ChatReader<'a> {
-    fn new(provider: AiProvider, on_text: &'a mut (dyn FnMut(&str) + Send)) -> ChatReader<'a> {
+    fn new(on_text: &'a mut (dyn FnMut(&str) + Send)) -> ChatReader<'a> {
         ChatReader {
-            provider,
             think: ThinkFilter::default(),
             sink: Sink { answer: String::new(), chars: 0, on_text },
             gather: Gather::default(),
@@ -1034,10 +963,7 @@ impl<'a> ChatReader<'a> {
 
     fn event(&mut self, data: &str) -> Result<()> {
         self.usage.note(data);
-        let text = match self.provider {
-            AiProvider::OpenAiCompatible => self.gather.openai(data)?,
-            AiProvider::Anthropic => self.gather.anthropic(data)?,
-        };
+        let text = self.gather.openai(data)?;
         let shown = self.think.push(&text);
         if self.think.hidden > MAX_HIDDEN {
             return Err(Error::temporary("the model kept thinking for too long and was stopped"));
@@ -1058,14 +984,8 @@ impl<'a> ChatReader<'a> {
     fn finish(mut self, prior: usize) -> Result<Reply> {
         let rest = self.think.finish();
         self.sink.push(&rest)?;
-        let text = self.sink.answer.trim();
-        let text = match self.provider {
-            AiProvider::OpenAiCompatible => self.think.after_orphan_close(text),
-            AiProvider::Anthropic => text,
-        }
-        .trim()
-        .to_string();
-        let (calls, raw) = self.gather.calls(self.provider, prior);
+        let text = self.think.after_orphan_close(self.sink.answer.trim()).trim().to_string();
+        let (calls, raw) = self.gather.calls(prior);
         if text.is_empty() && calls.is_empty() {
             return Err(Error::temporary("the service sent an empty answer"));
         }
@@ -1073,28 +993,12 @@ impl<'a> ChatReader<'a> {
     }
 }
 
-/// Sends one request of a conversation. The status is the caller's to judge.
-async fn post(client: &reqwest::Client, parts: Parts, host: &str, timeouts: Timeouts) -> Result<reqwest::Response> {
-    let mut request = client
-        .post(&parts.url)
-        .header("content-type", "application/json")
-        .header("accept", "text/event-stream")
-        .body(parts.body.to_string());
-    for (name, value) in parts.headers {
-        request = request.header(name, sensitive(&value)?);
-    }
-    match timeout(timeouts.first, request.send()).await {
-        Err(_) => Err(Error::temporary("the service did not answer in time")),
-        Ok(Err(e)) if e.is_timeout() => Err(Error::temporary("the service did not answer in time")),
-        Ok(Err(_)) => Err(Error::temporary(format!("could not reach the service at {host}"))),
-        Ok(Ok(response)) => Ok(response),
-    }
-}
-
-/// One model turn. A turn with calls may have no text. OpenAI protocol only: a 400 to a request that
-/// carried tools, whose body mentions tools, is tried once more without them on the same endpoint and
-/// reported as ToolsRefused::Yes. When that second request is refused with a 400 as well, the result
-/// is `Error::ToolsUnsupported`. Nothing of the service's words goes into an Error.
+/// One model turn. A 400 (or Mistral's 422) to a request that carried tools, whose body says that
+/// the model takes no tools, is tried once more without them on the same endpoint (the earlier
+/// calls and results then go as plain text) and reported as ToolsRefused::Yes; when that second
+/// request is refused with a 400 or 422 as well, the result is `Error::ToolsUnsupported`. A refusal
+/// that is about the tools in another way is [`TOOLS_NOT_ACCEPTED`] (or [`BROKEN_CALL`]), never a
+/// model without tools. Nothing of the service's words goes into an Error.
 ///
 /// `on_text` hears each visible piece as it comes; the text of the reply is the whole of it,
 /// trimmed, as with [`complete`]. Timeouts, the size limits and the handling of the key are
@@ -1124,53 +1028,48 @@ pub async fn converse_with_usage(
 ) -> Result<(Reply, ToolsRefused, Usage)> {
     let url = settings::check_base_url(&ep.base_url)?;
     let host = settings::host_label(&url);
-    if ep.provider == AiProvider::Anthropic && ep.key.is_none() {
-        return Err(Error::invalid("this service needs a key"));
-    }
     let client = client(timeouts.connect, None)?;
     let mut refused = ToolsRefused::No;
-    let parts = |tools: &[ToolSpec]| {
-        let mut parts = chat_parts(ep, system, turns, tools);
-        if ask_usage {
-            ask_for_usage(ep, &mut parts);
+    let (mut with_tools, mut with_usage) = (!tools.is_empty(), ask_usage);
+    let parts = |with_tools: bool, with_usage: bool| {
+        let mut parts = chat_parts(ep, system, turns, if with_tools { tools } else { &[] });
+        if with_usage {
+            ask_for_usage(&mut parts);
         }
         parts
     };
-    let mut response = post(&client, parts(tools), &host, timeouts).await?;
-    let status = response.status().as_u16();
-    if status == 400 && ep.provider == AiProvider::OpenAiCompatible && !tools.is_empty() {
-        // The only thing ever read of an error's body, and only for one word: nothing of it is
-        // kept, shown or logged.
-        let about_tools = match read_capped(response, REFUSAL_BODY, timeouts.idle).await {
-            Ok(body) => names_tools(&body),
-            Err(_) => false,
-        };
-        if !about_tools {
-            return Err(status_error(400));
+    // At most three requests, all to the same endpoint, so the key goes where it went before.
+    let mut response = post(&client, parts(with_tools, with_usage), &host, timeouts).await?;
+    loop {
+        let status = response.status().as_u16();
+        if response.status().is_success() {
+            break;
         }
-        // The same endpoint, so the key goes where it went before, and only once more.
-        response = post(&client, parts(&[]), &host, timeouts).await?;
-        if !response.status().is_success() {
-            // Still a 400 without tools: the model cannot be used for this at all, and that is the
-            // fact to report. Any other status is that status.
-            return Err(match response.status().as_u16() {
-                400 => Error::ToolsUnsupported,
-                _ => self::refused(response, timeouts.idle).await,
-            });
+        if !is_bad_request(status) || (!with_tools && !with_usage) {
+            if refused == ToolsRefused::Yes && is_bad_request(status) {
+                // Still refused without tools: the model cannot be used for this at all.
+                return Err(Error::ToolsUnsupported);
+            }
+            return Err(self::refused(response, timeouts.idle).await);
         }
-        refused = ToolsRefused::Yes;
-    } else if !response.status().is_success() {
-        return Err(self::refused(response, timeouts.idle).await);
+        // The only thing ever read of an error's body, and only for a few words: nothing of it
+        // is kept, shown or logged.
+        let body = read_capped(response, REFUSAL_BODY, timeouts.idle).await.unwrap_or_default();
+        if with_tools && says_no_tools(&body) {
+            with_tools = false;
+            refused = ToolsRefused::Yes;
+        } else if with_usage {
+            with_usage = false;
+        } else if refused == ToolsRefused::Yes {
+            return Err(Error::ToolsUnsupported);
+        } else {
+            return Err(tools_refusal(status, &body));
+        }
+        response = post(&client, parts(with_tools, with_usage), &host, timeouts).await?;
     }
 
-    let mut reader = ChatReader::new(ep.provider, on_text);
-    let one_piece = response
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|t| t.to_ascii_lowercase().contains("application/json"));
-    if one_piece {
-        // A service that ignored `stream` and sent the whole answer as one JSON document.
+    let mut reader = ChatReader::new(on_text);
+    if is_one_piece(&response) {
         let body = match read_capped(response, MAX_BODY, timeouts.first).await {
             Ok(body) => body,
             Err(BodyError::TooLarge) => {
@@ -1218,9 +1117,8 @@ pub async fn converse_with_usage(
 mod tests {
     use super::*;
 
-    fn ep(provider: AiProvider, key: Option<&str>) -> Endpoint {
+    fn ep(key: Option<&str>) -> Endpoint {
         Endpoint {
-            provider,
             base_url: "https://api.example.com/v1".into(),
             model: "m-1".into(),
             effort: AiEffort::Default,
@@ -1233,8 +1131,8 @@ mod tests {
     }
 
     #[test]
-    fn the_openai_request_has_a_bearer_header_only_when_there_is_a_key() {
-        let with = request_parts(&ep(AiProvider::OpenAiCompatible, Some("k-1")), "sys", "usr");
+    fn the_request_has_a_bearer_header_only_when_there_is_a_key() {
+        let with = request_parts(&ep(Some("k-1")), "sys", "usr");
         assert_eq!(with.url, "https://api.example.com/v1/chat/completions");
         assert_eq!(header(&with, "authorization"), Some("Bearer k-1"));
         assert_eq!(header(&with, "x-api-key"), None);
@@ -1243,58 +1141,33 @@ mod tests {
             json!({"model": "m-1", "stream": true, "messages": [
                 {"role": "system", "content": "sys"}, {"role": "user", "content": "usr"}]})
         );
-        let without = request_parts(&ep(AiProvider::OpenAiCompatible, None), "sys", "usr");
+        let without = request_parts(&ep(None), "sys", "usr");
         assert!(without.headers.is_empty());
     }
 
     #[test]
-    fn the_anthropic_request_has_the_key_the_version_and_the_system_prompt_apart() {
-        let parts = request_parts(&ep(AiProvider::Anthropic, Some("k-2")), "sys", "usr");
-        assert_eq!(parts.url, "https://api.example.com/v1/messages");
-        assert_eq!(header(&parts, "x-api-key"), Some("k-2"));
-        assert_eq!(header(&parts, "anthropic-version"), Some(ANTHROPIC_VERSION));
-        assert_eq!(header(&parts, "authorization"), None);
-        assert_eq!(
-            parts.body,
-            json!({"model": "m-1", "max_tokens": 32000, "stream": true, "system": "sys",
-                   "messages": [{"role": "user", "content": "usr"}]})
-        );
-    }
-
-    #[test]
-    fn effort_goes_into_each_protocol_in_its_own_field() {
+    fn effort_goes_into_its_field_and_openrouter_gets_its_own() {
         for (effort, word) in [
+            (AiEffort::Off, "none"),
+            (AiEffort::Minimal, "minimal"),
             (AiEffort::Low, "low"),
             (AiEffort::Medium, "medium"),
             (AiEffort::High, "high"),
             (AiEffort::XHigh, "xhigh"),
             (AiEffort::Max, "max"),
         ] {
-            let anthropic = Endpoint { effort, ..ep(AiProvider::Anthropic, Some("k")) };
-            let body = request_parts(&anthropic, "s", "u").body;
-            assert_eq!(body["output_config"], json!({"effort": word}));
-            assert!(body.get("reasoning_effort").is_none() && body.get("reasoning").is_none());
-            let openai = Endpoint { effort, ..ep(AiProvider::OpenAiCompatible, None) };
+            let openai = Endpoint { effort, ..ep(None) };
             let body = request_parts(&openai, "s", "u").body;
             assert_eq!(body["reasoning_effort"], json!(word));
-            assert!(body.get("output_config").is_none() && body.get("reasoning").is_none());
+            assert!(body.get("reasoning").is_none());
             let router = Endpoint { base_url: "https://openrouter.ai/api/v1".into(), ..openai };
             let body = request_parts(&router, "s", "u").body;
             assert_eq!(body["reasoning"], json!({"effort": word}));
             assert!(body.get("reasoning_effort").is_none());
         }
-        for provider in [AiProvider::Anthropic, AiProvider::OpenAiCompatible] {
-            let body = request_parts(&ep(provider, Some("k")), "s", "u").body;
-            for field in ["output_config", "reasoning_effort", "reasoning"] {
-                assert!(body.get(field).is_none(), "{field} sent for Default");
-            }
-        }
-        // The levels only OpenAI-style services have never reach the Messages API.
-        for (effort, word) in [(AiEffort::Off, "none"), (AiEffort::Minimal, "minimal")] {
-            let anthropic = Endpoint { effort, ..ep(AiProvider::Anthropic, Some("k")) };
-            assert!(request_parts(&anthropic, "s", "u").body.get("output_config").is_none());
-            let openai = Endpoint { effort, ..ep(AiProvider::OpenAiCompatible, None) };
-            assert_eq!(request_parts(&openai, "s", "u").body["reasoning_effort"], json!(word));
+        let body = request_parts(&ep(Some("k")), "s", "u").body;
+        for field in ["output_config", "reasoning_effort", "reasoning"] {
+            assert!(body.get(field).is_none(), "{field} sent for Default");
         }
     }
 
@@ -1302,19 +1175,21 @@ mod tests {
     fn effort_words_go_both_ways() {
         for word in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
             let effort = effort_named(word).unwrap();
-            assert_eq!(openai_effort_name(effort), Some(word));
+            assert_eq!(effort_name(effort), Some(word));
         }
         assert_eq!(effort_named("default"), None);
         assert_eq!(effort_named("HIGH"), None);
     }
 
     #[test]
-    fn openrouter_is_known_by_its_host_only() {
+    fn openrouter_and_gemini_are_known_by_their_host_only() {
         assert!(is_openrouter("https://openrouter.ai/api/v1"));
         assert!(is_openrouter("https://eu.openrouter.ai/api/v1"));
         assert!(!is_openrouter("https://notopenrouter.ai/api/v1"));
         assert!(!is_openrouter("https://openrouter.ai.example.com/v1"));
         assert!(!is_openrouter("https://example.com/openrouter.ai"));
+        assert!(is_gemini("https://generativelanguage.googleapis.com/v1beta/openai"));
+        assert!(!is_gemini("https://api.example.com/generativelanguage.googleapis.com"));
     }
 
     #[test]
@@ -1326,16 +1201,14 @@ mod tests {
     }
 
     #[test]
-    fn the_token_counts_are_read_from_either_protocol_and_nothing_else() {
+    fn the_token_counts_are_read_and_nothing_else() {
         let mut usage = Usage::default();
         usage.note(r#"{"choices":[{"delta":{"content":"hi"}}]}"#);
         assert_eq!(usage, Usage::default());
         usage.note(r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}"#);
         assert_eq!(usage, Usage { input: Some(12), output: Some(3) });
-        // Anthropic: the start gives the input, the delta the output so far (a later count replaces).
-        let mut usage = Usage::default();
-        usage.note(r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"output_tokens":1}}}"#);
-        usage.note(r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}"#);
+        // A later count of the same request replaces an earlier one.
+        usage.note(r#"{"usage":{"prompt_tokens":100,"completion_tokens":40}}"#);
         assert_eq!(usage, Usage { input: Some(100), output: Some(40) });
         usage.note("not json with usage in it");
         usage.note(r#"{"usage":null}"#);
@@ -1347,23 +1220,20 @@ mod tests {
 
     #[test]
     fn only_a_request_that_asks_gets_stream_options() {
-        let mut parts = request_parts(&ep(AiProvider::OpenAiCompatible, None), "s", "u");
+        let mut parts = request_parts(&ep(None), "s", "u");
         assert!(parts.body.get("stream_options").is_none());
-        ask_for_usage(&ep(AiProvider::OpenAiCompatible, None), &mut parts);
+        ask_for_usage(&mut parts);
         assert_eq!(parts.body["stream_options"], json!({"include_usage": true}));
-        let mut anthropic = request_parts(&ep(AiProvider::Anthropic, Some("k")), "s", "u");
-        ask_for_usage(&ep(AiProvider::Anthropic, Some("k")), &mut anthropic);
-        assert!(anthropic.body.get("stream_options").is_none());
     }
 
     #[test]
     fn debug_never_shows_the_key() {
-        let shown = format!("{:?}", ep(AiProvider::Anthropic, Some("sk-secret-123")));
+        let shown = format!("{:?}", ep(Some("sk-secret-123")));
         assert!(!shown.contains("secret") && shown.contains("set"));
     }
 
     #[test]
-    fn openai_events_give_content_and_ignore_reasoning() {
+    fn events_give_content_and_ignore_reasoning() {
         let text = |t: &str| Parsed { text: t.into(), ..Parsed::default() };
         assert_eq!(parse_openai(r#"{"choices":[{"delta":{"content":"Hi"}}]}"#).unwrap(), text("Hi"));
         assert_eq!(
@@ -1385,27 +1255,6 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_events_give_text_deltas_and_end_on_message_stop() {
-        let text = |t: &str| Parsed { text: t.into(), ..Parsed::default() };
-        let delta = r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}"#;
-        assert_eq!(parse_anthropic(delta).unwrap(), text("Hi"));
-        let thinking = r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#;
-        assert_eq!(parse_anthropic(thinking).unwrap(), text(""));
-        assert_eq!(parse_anthropic(r#"{"type":"ping"}"#).unwrap(), text(""));
-        assert_eq!(
-            parse_anthropic(r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#).unwrap(),
-            text("")
-        );
-        assert!(parse_anthropic(r#"{"type":"message_stop"}"#).unwrap().stop);
-        let err = parse_anthropic(r#"{"type":"error","error":{"type":"overloaded_error","message":"sk-leak"}}"#);
-        assert!(matches!(&err, Err(Error::Temporary { msg }) if !msg.contains("sk-leak")));
-        let refusal = parse_anthropic(r#"{"type":"message_delta","delta":{"stop_reason":"refusal"}}"#);
-        assert!(matches!(refusal, Err(Error::Temporary { .. })));
-        let max = parse_anthropic(r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"}}"#);
-        assert!(matches!(max, Err(Error::Temporary { msg }) if msg.contains("length limit")));
-    }
-
-    #[test]
     fn statuses_become_plain_messages() {
         let msg = |s| status_error(s).to_string();
         assert_eq!(msg(401), "the service refused the key");
@@ -1420,13 +1269,9 @@ mod tests {
     #[test]
     fn a_404_says_which_thing_was_not_there_and_nothing_of_the_body() {
         let msg = |body: &str| refusal(404, body.as_bytes()).to_string();
-        // Anthropic, OpenAI, Gemini: the model.
+        // OpenAI, Gemini: the model.
         assert_eq!(
-            msg(r#"{"type":"error","error":{"type":"not_found_error","message":"model: claude-x sk-SECRET"}}"#),
-            UNKNOWN_MODEL
-        );
-        assert_eq!(
-            msg(r#"{"error":{"message":"The model `gpt-x` does not exist","code":"model_not_found"}}"#),
+            msg(r#"{"error":{"message":"The model `gpt-x` does not exist sk-SECRET","code":"model_not_found"}}"#),
             UNKNOWN_MODEL
         );
         assert_eq!(
@@ -1454,9 +1299,50 @@ mod tests {
         assert_eq!(refusal(401, b"no endpoints found").to_string(), "the service refused the key");
     }
 
-    // ---- a conversation with tools --------------------------------------------------------
+    #[test]
+    fn only_a_body_that_says_the_model_takes_no_tools_counts_as_one() {
+        // What services say when the model takes none.
+        for body in [
+            r#"{"error":{"message":"registry.ollama.ai/library/gemma3:4b does not support tools"}}"#,
+            r#"{"error":{"message":"This model does not support tools."}}"#,
+            r#"{"error":{"message":"Functions are not supported by this model."}}"#,
+            r#"{"error":{"message":"deepseek-reasoner does not support Function Calling"}}"#,
+            r#"{"error":{"message":"tool calling is not supported with this model"}}"#,
+            r#"{"object":"error","message":"\"auto\" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"}"#,
+            r#"{"error":"Model does not support tool use"}"#,
+        ] {
+            assert!(says_no_tools(body.as_bytes()), "{body}");
+        }
+        // What services say about a request with tools they did not like: never "no tools".
+        for body in [
+            // Gemini: a schema feature, an object without properties, a missing thought signature.
+            r#"{"error":{"code":400,"message":"Invalid JSON payload received. Unknown name \"additionalProperties\" at 'tools[0].function_declarations[0].parameters': Cannot find field."}}"#,
+            r#"{"error":{"message":"* GenerateContentRequest.tools[0].function_declarations[4].parameters.properties: should be non-empty for OBJECT type"}}"#,
+            r#"{"error":{"message":"Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly"}}"#,
+            // Mistral: the order of the turns; OpenAI: a result without its call.
+            r#"{"object":"error","message":"Unexpected role 'user' after role 'tool'","type":"invalid_request_message_order"}"#,
+            r#"{"error":{"message":"Invalid parameter: messages with role 'tool' must be a response to a preceeding message with 'tool_calls'."}}"#,
+            r#"{"error":{"message":"Invalid 'messages[3].tool_call_id': not found"}}"#,
+            // Groq: a broken call.
+            r#"{"error":{"message":"Failed to call a function. Please adjust your prompt.","code":"tool_use_failed"}}"#,
+            // Not about tools at all.
+            r#"{"error":{"message":"max_tokens is not supported with this model"}}"#,
+            "",
+        ] {
+            assert!(!says_no_tools(body.as_bytes()), "{body}");
+        }
+        assert_eq!(tools_refusal(400, br#"{"code":"tool_use_failed"}"#).to_string(), BROKEN_CALL);
+        assert_eq!(
+            tools_refusal(400, b"Unknown name \"additionalProperties\" at 'tools[0]'").to_string(),
+            TOOLS_NOT_ACCEPTED
+        );
+        assert_eq!(
+            tools_refusal(422, b"Extra inputs are not permitted sk-SECRET").to_string(),
+            status_error(422).to_string()
+        );
+    }
 
-    use super::super::wire::ToolResult;
+    // ---- a conversation with tools --------------------------------------------------------
 
     fn tools() -> Vec<ToolSpec> {
         vec![
@@ -1495,27 +1381,27 @@ mod tests {
     }
 
     /// Reads these events as one turn; also what the listener heard.
-    fn read(provider: AiProvider, prior: usize, events: &[Value]) -> (Result<Reply>, String) {
+    fn read(prior: usize, events: &[Value]) -> (Result<Reply>, String) {
         let mut heard = String::new();
         let result = {
             let mut on_text = |piece: &str| heard.push_str(piece);
-            let mut reader = ChatReader::new(provider, &mut on_text);
+            let mut reader = ChatReader::new(&mut on_text);
             events.iter().try_for_each(|e| reader.event(&e.to_string())).and_then(|()| reader.finish(prior))
         };
         (result, heard)
     }
 
-    fn openai_delta(delta: Value) -> Value {
+    fn delta(delta: Value) -> Value {
         json!({"choices": [{"index": 0, "delta": delta}]})
     }
 
-    fn openai_end(reason: &str) -> Value {
+    fn end(reason: &str) -> Value {
         json!({"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]})
     }
 
     #[test]
-    fn the_openai_conversation_carries_calls_results_and_tools() {
-        let parts = chat_parts(&ep(AiProvider::OpenAiCompatible, Some("k-1")), "sys", &turns(None), &tools());
+    fn the_conversation_carries_calls_results_and_tools() {
+        let parts = chat_parts(&ep(Some("k-1")), "sys", &turns(None), &tools());
         assert_eq!(parts.url, "https://api.example.com/v1/chat/completions");
         assert_eq!(parts.headers, [("authorization", "Bearer k-1".to_string())]);
         assert_eq!(
@@ -1539,100 +1425,106 @@ mod tests {
                     {"type": "function", "function": {"name": "list_folders", "description": "Lists the folders.",
                         "parameters": {"type": "object"}}}]})
         );
-        // The service's own blocks are an Anthropic matter: here they change nothing.
-        let with_raw = chat_parts(
-            &ep(AiProvider::OpenAiCompatible, Some("k-1")),
-            "sys",
-            &turns(Some(json!([{"type": "text", "text": "other"}]))),
-            &tools(),
-        );
-        assert_eq!(with_raw.body, parts.body);
-        assert!(chat_parts(&ep(AiProvider::OpenAiCompatible, None), "sys", &turns(None), &tools()).headers.is_empty());
+        assert!(chat_parts(&ep(None), "sys", &turns(None), &tools()).headers.is_empty());
     }
 
     #[test]
-    fn the_anthropic_conversation_carries_calls_results_and_tools() {
-        let effort = Endpoint { effort: AiEffort::High, ..ep(AiProvider::Anthropic, Some("k-2")) };
-        let parts = chat_parts(&effort, "sys", &turns(None), &tools());
-        assert_eq!(parts.url, "https://api.example.com/v1/messages");
-        assert_eq!(header(&parts, "x-api-key"), Some("k-2"));
-        assert_eq!(header(&parts, "anthropic-version"), Some(ANTHROPIC_VERSION));
-        assert_eq!(header(&parts, "authorization"), None);
+    fn a_turn_of_calls_alone_has_no_content_and_a_question_after_results_gets_a_turn_before_it() {
+        let turns = vec![
+            Turn::User("Folders?".into()),
+            Turn::Assistant { text: String::new(), calls: vec![call("c9", "list_folders", json!({}))], raw: None },
+            Turn::Results(vec![ToolResult {
+                id: "c9".into(),
+                name: "list_folders".into(),
+                content: "step limit reached".into(),
+                is_error: true,
+            }]),
+            Turn::User("Then?".into()),
+        ];
+        let messages = chat_parts(&ep(None), "s", &turns, &tools()).body["messages"].clone();
+        assert_eq!(messages[2]["content"], Value::Null);
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "c9");
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[4], json!({"role": "assistant", "content": ENDED}));
+        assert_eq!(messages[5], json!({"role": "user", "content": "Then?"}));
+    }
+
+    #[test]
+    fn gemini_gets_no_parameters_for_a_tool_without_arguments_and_the_name_with_a_result() {
+        let gemini =
+            Endpoint { base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(), ..ep(Some("k")) };
+        let parts = chat_parts(&gemini, "sys", &turns(None), &tools());
+        let tools = &parts.body["tools"];
+        assert!(tools[0]["function"]["parameters"].is_object());
+        assert!(tools[1]["function"].get("parameters").is_none());
         assert_eq!(
-            parts.body,
-            json!({"model": "m-1", "max_tokens": 32000, "stream": true, "system": "sys",
-                "output_config": {"effort": "high"},
-                "messages": [
-                    {"role": "user", "content": "Any mail from Maria?"},
-                    {"role": "assistant", "content": [
-                        {"type": "text", "text": "Looking."},
-                        {"type": "tool_use", "id": "c1", "name": "search_mail", "input": {"query": "maria"}},
-                        {"type": "tool_use", "id": "c2", "name": "list_folders", "input": {}}]},
-                    {"role": "user", "content": [
-                        {"type": "tool_result", "tool_use_id": "c1", "content": "one hit", "is_error": false},
-                        {"type": "tool_result", "tool_use_id": "c2", "content": "no", "is_error": true}]},
-                    {"role": "assistant", "content": [{"type": "text", "text": "One."}]},
-                    {"role": "user", "content": "And today?"}],
-                "tools": [
-                    {"name": "search_mail", "description": "Searches the mail.",
-                     "input_schema": {"type": "object", "properties": {"query": {"type": "string"}},
-                                      "required": ["query"]}},
-                    {"name": "list_folders", "description": "Lists the folders.",
-                     "input_schema": {"type": "object"}}]})
+            parts.body["messages"][3],
+            json!({"role": "tool", "tool_call_id": "c1", "content": "one hit", "name": "search_mail"})
         );
-        // A turn that is only calls has no empty text block.
-        let only_calls =
-            [Turn::Assistant { text: String::new(), calls: vec![call("c9", "list_folders", json!({}))], raw: None }];
-        assert_eq!(
-            chat_parts(&ep(AiProvider::Anthropic, Some("k")), "s", &only_calls, &[]).body["messages"],
-            json!([{"role": "assistant", "content": [
-                {"type": "tool_use", "id": "c9", "name": "list_folders", "input": {}}]}])
-        );
+        // A Gemini model through another address gets the same.
+        let proxied = Endpoint { model: "Gemini-3-Flash".into(), ..ep(None) };
+        assert!(chat_parts(&proxied, "sys", &turns(None), &self::tools()).body["tools"][1]["function"]
+            .get("parameters")
+            .is_none());
+        // Elsewhere the name is not sent (OpenAI's tool messages have none).
+        assert!(chat_parts(&ep(None), "sys", &turns(None), &self::tools()).body["messages"][3].get("name").is_none());
     }
 
     #[test]
-    fn without_tools_no_tools_key_is_sent() {
-        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
-            let parts = chat_parts(&ep(provider, Some("k")), "sys", &[Turn::User("Hi".into())], &[]);
-            assert!(parts.body.get("tools").is_none(), "{provider:?}");
-            // With one user turn it is the stage 1 request.
-            assert_eq!(parts.body, request_parts(&ep(provider, Some("k")), "sys", "Hi").body, "{provider:?}");
-        }
+    fn without_tools_the_conversation_goes_as_plain_text() {
+        let parts = chat_parts(&ep(Some("k")), "sys", &[Turn::User("Hi".into())], &[]);
+        assert!(parts.body.get("tools").is_none());
+        // With one user turn it is the stage 1 request.
+        assert_eq!(parts.body, request_parts(&ep(Some("k")), "sys", "Hi").body);
+        // Earlier calls are left out and their results go as data in a user message.
+        let parts = chat_parts(&ep(None), "sys", &turns(Some(json!({"reasoning_content": "x"}))), &[]);
+        let messages = parts.body["messages"].as_array().unwrap().clone();
+        assert!(messages.iter().all(|m| m.get("tool_calls").is_none() && m["role"] != "tool"));
+        assert_eq!(messages[1], json!({"role": "user", "content": "Any mail from Maria?"}));
+        assert_eq!(messages[2], json!({"role": "assistant", "content": "Looking."}));
+        let results = messages[3]["content"].as_str().unwrap();
+        assert_eq!(messages[3]["role"], "user");
+        assert!(results.contains("<tool_result name=\"search_mail\">\none hit\n</tool_result>"), "{results}");
+        assert!(results.contains("<tool_result name=\"list_folders\">\nno\n</tool_result>"));
+        assert_eq!(messages[4], json!({"role": "assistant", "content": "One."}));
+        assert_eq!(messages[5], json!({"role": "user", "content": "And today?"}));
+        assert_eq!(messages.len(), 6);
+        // Results right before a question become one user message with it.
+        let turns = vec![
+            Turn::User("Q".into()),
+            Turn::Assistant { text: String::new(), calls: vec![call("c", "list_folders", json!({}))], raw: None },
+            Turn::Results(vec![ToolResult {
+                id: "c".into(),
+                name: "list_folders".into(),
+                content: "r".into(),
+                is_error: false,
+            }]),
+            Turn::User("Q2".into()),
+        ];
+        let messages = chat_parts(&ep(None), "sys", &turns, &[]).body["messages"].as_array().unwrap().clone();
+        assert_eq!(messages.len(), 2);
+        assert!(messages[1]["content"].as_str().unwrap().starts_with("Q\n\n<tool_result"));
+        assert!(messages[1]["content"].as_str().unwrap().ends_with("</tool_result>\n\nQ2"));
     }
 
     #[test]
-    fn the_services_own_blocks_are_sent_back_unchanged() {
-        let raw = json!([
-            {"type": "thinking", "thinking": "", "signature": "sig-abc"},
-            {"type": "redacted_thinking", "data": "opaque"},
-            {"type": "text", "text": "Looking."},
-            {"type": "tool_use", "id": "c1", "name": "search_mail", "input": {"query": "maria"}},
-            {"type": "tool_use", "id": "c2", "name": "list_folders", "input": {}}]);
-        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "sys", &turns(Some(raw.clone())), &tools());
-        assert_eq!(parts.body["messages"][1], json!({"role": "assistant", "content": raw}));
-        // An empty list of blocks is no answer to send back: the turn is built from its parts.
-        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "sys", &turns(Some(json!([]))), &tools());
-        assert_eq!(parts.body["messages"][1]["content"][0], json!({"type": "text", "text": "Looking."}));
-    }
-
-    #[test]
-    fn openai_calls_are_put_together_from_their_fragments() {
+    fn calls_are_put_together_from_their_fragments() {
         let events = [
-            openai_delta(json!({"role": "assistant", "content": ""})),
-            openai_delta(json!({"content": "Let me "})),
-            openai_delta(json!({"content": "look."})),
-            openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1", "type": "function",
+            delta(json!({"role": "assistant", "content": ""})),
+            delta(json!({"content": "Let me "})),
+            delta(json!({"content": "look."})),
+            delta(json!({"tool_calls": [{"index": 0, "id": "c1", "type": "function",
                 "function": {"name": "search_mail", "arguments": ""}}]})),
-            openai_delta(json!({"tool_calls": [{"index": 0, "function": {"arguments": "{\"que"}}]})),
-            openai_delta(json!({"tool_calls": [{"index": 1, "id": "c2", "type": "function",
+            delta(json!({"tool_calls": [{"index": 0, "function": {"arguments": "{\"que"}}]})),
+            delta(json!({"tool_calls": [{"index": 1, "id": "c2", "type": "function",
                 "function": {"name": "list_folders", "arguments": "{"}}]})),
             // Pieces of two calls in one event, and a name said again.
-            openai_delta(json!({"tool_calls": [
+            delta(json!({"tool_calls": [
                 {"index": 0, "function": {"name": "search_mail", "arguments": "ry\":\"maria\"}"}},
                 {"index": 1, "function": {"arguments": "}"}}]})),
-            openai_end("tool_calls"),
+            end("tool_calls"),
         ];
-        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        let (reply, heard) = read(0, &events);
         assert_eq!(
             reply.unwrap(),
             Reply {
@@ -1648,16 +1540,16 @@ mod tests {
     }
 
     #[test]
-    fn a_whole_openai_call_in_one_chunk_and_a_missing_id_are_taken() {
+    fn a_whole_call_in_one_chunk_a_missing_id_and_calls_that_share_an_index_are_taken() {
         // No `index`, no id: each entry with a name is a call, named after its place in the
         // conversation (three calls came before).
         let events = [
-            openai_delta(json!({"tool_calls": [{"function": {"name": "list_folders", "arguments": "{}"}}]})),
-            openai_delta(json!({"tool_calls": [{"function": {"name": "search_mail", "arguments": "{\"query\""}}]})),
-            openai_delta(json!({"tool_calls": [{"function": {"arguments": ":\"x\"}"}}]})),
-            openai_end("stop"),
+            delta(json!({"tool_calls": [{"function": {"name": "list_folders", "arguments": "{}"}}]})),
+            delta(json!({"tool_calls": [{"function": {"name": "search_mail", "arguments": "{\"query\""}}]})),
+            delta(json!({"tool_calls": [{"function": {"arguments": ":\"x\"}"}}]})),
+            end("stop"),
         ];
-        let (reply, heard) = read(AiProvider::OpenAiCompatible, 3, &events);
+        let (reply, heard) = read(3, &events);
         assert_eq!(
             reply.unwrap().calls,
             [call("call_4", "list_folders", json!({})), call("call_5", "search_mail", json!({"query": "x"}))]
@@ -1665,21 +1557,35 @@ mod tests {
         assert_eq!(heard, "");
         // Arguments sent as the object itself.
         let events = [
-            openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1",
+            delta(json!({"tool_calls": [{"index": 0, "id": "c1",
                 "function": {"name": "search_mail", "arguments": {"query": "y"}}}]})),
-            openai_end("tool_calls"),
+            end("tool_calls"),
         ];
-        let (reply, _) = read(AiProvider::OpenAiCompatible, 0, &events);
-        assert_eq!(reply.unwrap().calls, [call("c1", "search_mail", json!({"query": "y"}))]);
+        assert_eq!(read(0, &events).0.unwrap().calls, [call("c1", "search_mail", json!({"query": "y"}))]);
+        // Two whole calls, both numbered 0, in one event and in two: two calls, not one.
+        let both = json!({"tool_calls": [
+            {"index": 0, "id": "a", "function": {"name": "search_mail", "arguments": "{\"query\":\"a\"}"}},
+            {"index": 0, "id": "b", "function": {"name": "list_folders", "arguments": "{}"}}]});
+        let reply = read(0, &[delta(both), end("stop")]).0.unwrap();
+        assert_eq!(
+            reply.calls,
+            [call("a", "search_mail", json!({"query": "a"})), call("b", "list_folders", json!({}))]
+        );
+        let one = |id: &str| {
+            delta(
+                json!({"tool_calls": [{"index": 0, "id": id, "function": {"name": "list_folders", "arguments": "{}"}}]}),
+            )
+        };
+        assert_eq!(read(0, &[one("a"), one("b"), end("tool_calls")]).0.unwrap().calls.len(), 2);
     }
 
     #[test]
-    fn a_whole_document_with_calls_is_read_in_both_protocols() {
-        let openai = json!({"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+    fn a_whole_document_with_calls_is_read() {
+        let whole = json!({"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
             "role": "assistant", "content": null, "tool_calls": [
                 {"id": "c1", "type": "function", "function": {"name": "search_mail", "arguments": "{\"query\":\"a\"}"}},
                 {"id": "c2", "type": "function", "function": {"name": "list_folders", "arguments": "{}"}}]}}]});
-        let (reply, _) = read(AiProvider::OpenAiCompatible, 0, &[openai]);
+        let (reply, _) = read(0, &[whole]);
         assert_eq!(
             reply.unwrap(),
             Reply {
@@ -1688,118 +1594,74 @@ mod tests {
                 raw: None,
             }
         );
-        let content = json!([
-            {"type": "thinking", "thinking": "", "signature": "sig-1"},
-            {"type": "text", "text": "Looking."},
-            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {"query": "a"}}]);
-        let anthropic =
-            json!({"type": "message", "role": "assistant", "content": content.clone(), "stop_reason": "tool_use"});
-        let (reply, heard) = read(AiProvider::Anthropic, 0, &[anthropic]);
-        assert_eq!(
-            reply.unwrap(),
-            Reply {
-                text: "Looking.".into(),
-                calls: vec![call("t1", "search_mail", json!({"query": "a"}))],
-                raw: Some(content),
-            }
-        );
-        assert_eq!(heard, "Looking.");
-        let cut =
-            json!({"type": "message", "content": [{"type": "text", "text": "Half"}], "stop_reason": "max_tokens"});
-        assert!(
-            matches!(read(AiProvider::Anthropic, 0, &[cut]).0, Err(Error::Temporary { msg }) if msg.contains("length limit"))
-        );
     }
 
     #[test]
-    fn anthropic_calls_and_thinking_are_put_together_and_kept_for_the_service() {
-        let start =
-            |index: u64, block: Value| json!({"type": "content_block_start", "index": index, "content_block": block});
-        let delta = |index: u64, delta: Value| json!({"type": "content_block_delta", "index": index, "delta": delta});
-        let stop = |index: u64| json!({"type": "content_block_stop", "index": index});
+    fn what_a_service_sends_with_its_calls_goes_back_to_it_unchanged_and_is_never_shown() {
+        // Gemini: a thought signature on each call. DeepSeek: the reasoning of the turn.
+        // OpenRouter: reasoning details in pieces.
         let events = [
-            json!({"type": "message_start", "message": {"id": "msg_1", "role": "assistant"}}),
-            start(0, json!({"type": "thinking", "thinking": ""})),
-            delta(0, json!({"type": "thinking_delta", "thinking": "private "})),
-            delta(0, json!({"type": "thinking_delta", "thinking": "reasoning"})),
-            delta(0, json!({"type": "signature_delta", "signature": "sig-xyz"})),
-            stop(0),
-            start(1, json!({"type": "redacted_thinking", "data": "opaque"})),
-            stop(1),
-            start(2, json!({"type": "text", "text": ""})),
-            json!({"type": "ping"}),
-            delta(2, json!({"type": "text_delta", "text": "Let me "})),
-            delta(2, json!({"type": "text_delta", "text": "look."})),
-            stop(2),
-            start(3, json!({"type": "tool_use", "id": "t1", "name": "search_mail", "input": {}})),
-            delta(3, json!({"type": "input_json_delta", "partial_json": ""})),
-            delta(3, json!({"type": "input_json_delta", "partial_json": "{\"query\": \"ma"})),
-            delta(3, json!({"type": "input_json_delta", "partial_json": "ria\"}"})),
-            stop(3),
-            start(4, json!({"type": "tool_use", "id": "t2", "name": "list_folders", "input": {}})),
-            stop(4),
-            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
-            json!({"type": "message_stop"}),
+            delta(json!({"reasoning_content": "first "})),
+            delta(json!({"reasoning_content": "think", "reasoning_details": [
+                {"type": "reasoning.text", "text": "Plan ", "index": 0, "format": "x"}]})),
+            delta(
+                json!({"reasoning_details": [{"type": "reasoning.text", "text": "this.", "index": 0, "signature": "sig-1"}]}),
+            ),
+            delta(json!({"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque", "index": 1}]})),
+            delta(json!({"tool_calls": [{"index": 0, "id": "g1", "type": "function",
+                "function": {"name": "search_mail", "arguments": "{\"query\":\"a\"}"},
+                "extra_content": {"google": {"thought_signature": "c2lnbmF0dXJl"}}}]})),
+            delta(json!({"tool_calls": [{"index": 1, "id": "g2", "type": "function",
+                "function": {"name": "list_folders", "arguments": "{}"}}]})),
+            end("tool_calls"),
         ];
-        let (reply, heard) = read(AiProvider::Anthropic, 0, &events);
+        let (reply, heard) = read(0, &events);
         let reply = reply.unwrap();
-        assert_eq!(reply.text, "Let me look.");
-        assert_eq!(heard, "Let me look.", "thinking is never shown");
-        assert_eq!(
-            reply.calls,
-            [call("t1", "search_mail", json!({"query": "maria"})), call("t2", "list_folders", json!({}))]
-        );
-        let raw = json!([
-            {"type": "thinking", "thinking": "private reasoning", "signature": "sig-xyz"},
-            {"type": "redacted_thinking", "data": "opaque"},
-            {"type": "text", "text": "Let me look."},
-            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {"query": "maria"}},
-            {"type": "tool_use", "id": "t2", "name": "list_folders", "input": {}}]);
-        assert_eq!(reply.raw, Some(raw.clone()));
-        // And that is, to the letter, what the next request sends back.
-        let next = [Turn::Assistant { text: reply.text, calls: reply.calls, raw: reply.raw }];
-        let parts = chat_parts(&ep(AiProvider::Anthropic, Some("k")), "s", &next, &tools());
-        assert_eq!(parts.body["messages"][0]["content"], raw);
+        assert_eq!(heard, "", "nothing of it is shown");
+        let raw = json!({
+            "extra": [{"extra_content": {"google": {"thought_signature": "c2lnbmF0dXJl"}}}, null],
+            "reasoning_content": "first think",
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "Plan this.", "index": 0, "format": "x", "signature": "sig-1"},
+                {"type": "reasoning.encrypted", "data": "opaque", "index": 1}],
+        });
+        assert_eq!(reply.raw, Some(raw));
+        // And that is what the next request sends back with the calls.
+        let next = [
+            Turn::User("Q".into()),
+            Turn::Assistant { text: reply.text.clone(), calls: reply.calls.clone(), raw: reply.raw.clone() },
+        ];
+        let sent = chat_parts(&ep(None), "s", &next, &tools()).body["messages"][2].clone();
+        assert_eq!(sent["content"], Value::Null);
+        assert_eq!(sent["reasoning_content"], "first think");
+        assert_eq!(sent["reasoning_details"][0]["text"], "Plan this.");
+        assert_eq!(sent["tool_calls"][0]["extra_content"]["google"]["thought_signature"], "c2lnbmF0dXJl");
+        assert!(sent["tool_calls"][1].get("extra_content").is_none());
+        // A turn without calls keeps nothing of it.
+        let plain = [delta(json!({"reasoning_content": "hmm"})), delta(json!({"content": "Done."})), end("stop")];
+        assert_eq!(read(0, &plain).0.unwrap().raw, None);
     }
 
     #[test]
     fn a_turn_of_calls_alone_is_an_answer_and_one_of_nothing_is_not() {
         let events = [
-            openai_delta(json!({"role": "assistant", "content": ""})),
-            openai_delta(
+            delta(json!({"role": "assistant", "content": ""})),
+            delta(
                 json!({"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "list_folders", "arguments": "{}"}}]}),
             ),
-            openai_end("tool_calls"),
+            end("tool_calls"),
         ];
-        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        let (reply, heard) = read(0, &events);
         assert_eq!(
             reply.unwrap(),
             Reply { text: String::new(), calls: vec![call("c1", "list_folders", json!({}))], raw: None }
         );
         assert_eq!(heard, "");
-        let events = [
-            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
-            json!({"type": "content_block_start", "index": 1,
-                "content_block": {"type": "tool_use", "id": "t1", "name": "list_folders", "input": {}}}),
-            json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
-        ];
-        let reply = read(AiProvider::Anthropic, 0, &events).0.unwrap();
-        assert_eq!(reply.calls, [call("t1", "list_folders", json!({}))]);
-        // The empty text block is not sent back: the service would refuse it.
-        assert_eq!(reply.raw, Some(json!([{"type": "tool_use", "id": "t1", "name": "list_folders", "input": {}}])));
-
-        for (provider, events) in [
-            (AiProvider::OpenAiCompatible, vec![openai_delta(json!({"content": "  \n"})), openai_end("stop")]),
-            (AiProvider::OpenAiCompatible, vec![openai_delta(json!({"content": "<think>only this</think>"}))]),
-            (
-                AiProvider::Anthropic,
-                vec![
-                    json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": "x"}}),
-                    json!({"type": "message_stop"}),
-                ],
-            ),
+        for events in [
+            vec![delta(json!({"content": "  \n"})), end("stop")],
+            vec![delta(json!({"content": "<think>only this</think>"}))],
         ] {
-            let result = read(provider, 0, &events).0;
+            let result = read(0, &events).0;
             assert!(
                 matches!(&result, Err(Error::Temporary { msg }) if msg == "the service sent an empty answer"),
                 "{result:?}"
@@ -1811,130 +1673,74 @@ mod tests {
     fn arguments_that_are_not_an_object_become_an_empty_one_and_the_call_stays() {
         for arguments in ["", "[1,2]", "\"text\"", "{\"query\": \"cut", "null", "7"] {
             let events = [
-                openai_delta(json!({"tool_calls": [{"index": 0, "id": "c1",
+                delta(json!({"tool_calls": [{"index": 0, "id": "c1",
                     "function": {"name": "search_mail", "arguments": arguments}}]})),
-                openai_end("tool_calls"),
+                end("tool_calls"),
             ];
-            let reply = read(AiProvider::OpenAiCompatible, 0, &events).0.unwrap();
+            let reply = read(0, &events).0.unwrap();
             assert_eq!(reply.calls, [call("c1", "search_mail", json!({}))], "{arguments}");
-
-            let events = [
-                json!({"type": "content_block_start", "index": 0,
-                    "content_block": {"type": "tool_use", "id": "t1", "name": "search_mail", "input": {}}}),
-                json!({"type": "content_block_delta", "index": 0,
-                    "delta": {"type": "input_json_delta", "partial_json": arguments}}),
-                json!({"type": "message_delta", "delta": {"stop_reason": "tool_use"}}),
-            ];
-            let reply = read(AiProvider::Anthropic, 0, &events).0.unwrap();
-            assert_eq!(reply.calls, [call("t1", "search_mail", json!({}))], "{arguments}");
-            assert_eq!(reply.raw.unwrap()[0]["input"], json!({}), "{arguments}");
         }
-        let whole = json!({"type": "message", "stop_reason": "tool_use", "content": [
-            {"type": "tool_use", "id": "t1", "name": "search_mail", "input": "text"}, {"type": "tool_use", "name": "x"}]});
-        let reply = read(AiProvider::Anthropic, 2, &[whole]).0.unwrap();
-        assert_eq!(reply.calls, [call("t1", "search_mail", json!({})), call("call_4", "x", json!({}))]);
-        assert_eq!(reply.raw.unwrap()[1], json!({"type": "tool_use", "id": "call_4", "name": "x", "input": {}}));
     }
 
     #[test]
     fn the_first_eight_calls_are_kept_and_endless_arguments_are_an_error() {
         let many: Vec<Value> = (0..12)
             .map(|n| {
-                openai_delta(json!({"tool_calls": [{"index": n, "id": format!("c{n}"),
+                delta(json!({"tool_calls": [{"index": n, "id": format!("c{n}"),
                     "function": {"name": "list_folders", "arguments": "{}"}}]}))
             })
-            .chain([openai_delta(json!({"tool_calls": [{"index": 11, "function": {"arguments": " "}}]}))])
-            .chain([openai_end("tool_calls")])
+            .chain([delta(json!({"tool_calls": [{"index": 11, "function": {"arguments": " "}}]}))])
+            .chain([end("tool_calls")])
             .collect();
-        let reply = read(AiProvider::OpenAiCompatible, 0, &many).0.unwrap();
+        let reply = read(0, &many).0.unwrap();
         assert_eq!(
             reply.calls.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"]
         );
         // The same without `index`: the pieces of a dropped call do not land in the one before.
         let many: Vec<Value> = (0..9)
-            .map(|n| {
-                openai_delta(json!({"tool_calls": [{"id": format!("c{n}"), "function": {"name": "list_folders"}}]}))
-            })
-            .chain([openai_delta(json!({"tool_calls": [{"function": {"arguments": "[]"}}]}))])
+            .map(|n| delta(json!({"tool_calls": [{"id": format!("c{n}"), "function": {"name": "list_folders"}}]})))
+            .chain([delta(json!({"tool_calls": [{"function": {"arguments": "[]"}}]}))])
             .collect();
-        let reply = read(AiProvider::OpenAiCompatible, 0, &many).0.unwrap();
+        let reply = read(0, &many).0.unwrap();
         assert_eq!(reply.calls.len(), 8);
         assert_eq!(reply.calls[7], call("c7", "list_folders", json!({})));
 
-        let many: Vec<Value> = (0..12)
-            .flat_map(|n| {
-                [
-                    json!({"type": "content_block_start", "index": n, "content_block":
-                        {"type": "tool_use", "id": format!("t{n}"), "name": "list_folders", "input": {}}}),
-                    json!({"type": "content_block_delta", "index": n, "delta": {"type": "input_json_delta", "partial_json": "{}"}}),
-                    json!({"type": "content_block_stop", "index": n}),
-                ]
-            })
-            .collect();
-        let reply = read(AiProvider::Anthropic, 0, &many).0.unwrap();
-        assert_eq!(reply.calls.len(), 8);
-        assert_eq!(reply.calls[7].id, "t7");
-        // What is sent back holds exactly the calls that will get a result.
-        assert_eq!(reply.raw.unwrap().as_array().unwrap().len(), 8);
-
         let long = "x".repeat(MAX_ARGS_CHARS / 2 + 1);
         let piece = |n: u64| {
-            openai_delta(
+            delta(
                 json!({"tool_calls": [{"index": n, "id": "c", "function": {"name": "search_mail", "arguments": long}}]}),
             )
         };
-        let result = read(AiProvider::OpenAiCompatible, 0, &[piece(0), piece(1)]).0;
+        let result = read(0, &[piece(0), piece(1)]).0;
         assert!(
             matches!(&result, Err(Error::Temporary { msg }) if msg == "the model asked for too much at once and was stopped")
         );
-        let piece = json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": long}});
-        let result = read(AiProvider::Anthropic, 0, &[piece.clone(), piece]).0;
-        assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains("too much at once")));
-        let whole = json!({"type": "message", "content": [{"type": "tool_use", "id": "t", "name": "n", "input": {"a": long, "b": long}}]});
-        assert!(matches!(read(AiProvider::Anthropic, 0, &[whole]).0, Err(Error::Temporary { .. })));
     }
 
     #[test]
     fn a_turn_with_tools_keeps_the_rules_of_a_plain_answer() {
         // Reasoning in a `<think>` block stays hidden, also in front of a call.
         let events = [
-            openai_delta(json!({"content": "<think>secret plan</think>"})),
-            openai_delta(json!({"content": "Found it."})),
-            openai_delta(json!({"reasoning_content": "never read"})),
-            openai_end("stop"),
+            delta(json!({"content": "<think>secret plan</think>"})),
+            delta(json!({"content": "Found it."})),
+            delta(json!({"reasoning_content": "never shown"})),
+            end("stop"),
         ];
-        let (reply, heard) = read(AiProvider::OpenAiCompatible, 0, &events);
+        let (reply, heard) = read(0, &events);
         assert_eq!(reply.unwrap().text, "Found it.");
         assert_eq!(heard, "Found it.");
         // The service's own words never come out through an error.
-        for (provider, event) in [
-            (AiProvider::OpenAiCompatible, json!({"error": {"message": "sk-leak"}})),
-            (
-                AiProvider::Anthropic,
-                json!({"type": "error", "error": {"type": "overloaded_error", "message": "sk-leak"}}),
-            ),
-        ] {
-            let result = read(provider, 0, &[event]).0;
-            assert!(matches!(&result, Err(Error::Temporary { msg }) if !msg.contains("sk-leak")), "{result:?}");
-        }
-        for (provider, event, word) in [
-            (AiProvider::OpenAiCompatible, openai_end("length"), "length limit"),
-            (AiProvider::OpenAiCompatible, openai_end("content_filter"), "declined"),
-            (
-                AiProvider::Anthropic,
-                json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}}),
-                "length limit",
-            ),
-            (AiProvider::Anthropic, json!({"type": "message_delta", "delta": {"stop_reason": "refusal"}}), "declined"),
-        ] {
-            let result = read(provider, 0, &[event]).0;
+        let result = read(0, &[json!({"error": {"message": "sk-leak"}})]).0;
+        assert!(matches!(&result, Err(Error::Temporary { msg }) if !msg.contains("sk-leak")), "{result:?}");
+        for (event, word) in [(end("length"), "length limit"), (end("content_filter"), "declined")] {
+            let result = read(0, &[event]).0;
             assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains(word)), "{result:?}");
         }
         // An answer that never stops is cut at the same size.
         let chunk = "y".repeat(60_000);
-        let events = [openai_delta(json!({"content": chunk})), openai_delta(json!({"content": chunk}))];
-        let result = read(AiProvider::OpenAiCompatible, 0, &events).0;
+        let events = [delta(json!({"content": chunk})), delta(json!({"content": chunk}))];
+        let result = read(0, &events).0;
         assert!(matches!(&result, Err(Error::Temporary { msg }) if msg.contains("longer than expected")));
     }
 }

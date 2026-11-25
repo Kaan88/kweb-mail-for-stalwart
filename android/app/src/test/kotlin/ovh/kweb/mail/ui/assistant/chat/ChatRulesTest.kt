@@ -29,7 +29,6 @@ import uniffi.kweb_core.AiEffort
 import uniffi.kweb_core.AiLink
 import uniffi.kweb_core.AiMessageRef
 import uniffi.kweb_core.AiProposal
-import uniffi.kweb_core.AiProvider
 import uniffi.kweb_core.AiRisk
 import uniffi.kweb_core.AiSettings
 import uniffi.kweb_core.AiStep
@@ -84,8 +83,10 @@ class ChatRulesTest {
     }
 
     private fun settings(enabled: Boolean = true, consented: Boolean = true, allowChat: Boolean = true, chatConsented: Boolean = true) = AiSettings(
-        enabled, AiProvider.OPEN_AI_COMPATIBLE, "https://api.openai.com/v1", "gpt-x", AiEffort.DEFAULT, false, consented, true, true, true,
+        enabled = enabled, serviceId = "s1", serviceName = "OpenAI", baseUrl = "https://api.openai.com/v1", model = "gpt-x", effort = AiEffort.DEFAULT, hasKey = false, consented = consented,
+        allowSummaries = true, allowDrafts = true, allowRewrites = true,
         allowIdeas = false, allowExtract = false, allowExplain = false, allowChat = allowChat, chatConsented = chatConsented, actions = AiActionMode.ASK_FIRST, toolsUnsupported = false, instructions = "",
+        services = emptyList(),
     )
 
     private fun ref(id: String) = AiMessageRef(id, "t-$id", "Subject $id", "Ada <ada@example.org>", "Inbox")

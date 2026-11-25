@@ -5,89 +5,29 @@
 use std::time::Duration;
 
 use serde_json::Value;
-use url::Url;
 
 use super::{
-    provider::{self, effort_named, host_is, read_capped, sensitive, BodyError, ANTHROPIC_VERSION, MAX_BODY},
+    provider::{self, effort_named, host_is, read_capped, sensitive, BodyError, MAX_BODY},
     settings,
 };
 use crate::{
-    model::{AiEffort, AiModel, AiModelList, AiProvider},
+    model::{AiEffort, AiModel, AiModelList},
     Error, Result,
 };
 
-/// The most pages of models that are followed.
-const MAX_PAGES: usize = 10;
 /// To reach the service.
 const CONNECT: Duration = Duration::from_secs(10);
 /// For the whole request, the body included.
 const WHOLE: Duration = Duration::from_secs(30);
 
-/// The levels in the order the Messages API lists them.
-const LEVELS: [(&str, AiEffort); 5] = [
-    ("low", AiEffort::Low),
-    ("medium", AiEffort::Medium),
-    ("high", AiEffort::High),
-    ("xhigh", AiEffort::XHigh),
-    ("max", AiEffort::Max),
-];
-
-/// What Anthropic's picker shows when the service cannot be asked. The service did not say which
-/// effort levels these take, so they have none (nothing is sent until it does).
-pub fn builtin() -> AiModelList {
-    let models = [
-        ("claude-opus-5-5", "Claude Opus 5.5"),
-        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
-        ("claude-haiku-5-5", "Claude Haiku 5.5"),
-        ("claude-fable-5-2", "Claude Fable 5.2"),
-    ]
-    .into_iter()
-    .map(|(id, name)| AiModel { id: id.into(), name: name.into(), efforts: Vec::new() })
-    .collect();
-    AiModelList { models, from_service: false }
-}
-
-/// Why one request for a page of models failed.
-enum Failed {
-    /// Could not be reached, or the service is busy or broken: the built-in list will do.
-    Unavailable(Error),
-    /// The service answered and said no to the key (401 or 403): the user should learn of it.
-    Denied(Error),
-    /// The service answered something else that is not a list: another status, or an answer
-    /// that cannot be read.
-    Refused(Error),
-}
-
-impl Failed {
-    fn into_error(self) -> Error {
-        match self {
-            Failed::Unavailable(e) | Failed::Denied(e) | Failed::Refused(e) => e,
-        }
-    }
-}
-
-/// The models of the service at `base_url` (already trimmed, without a trailing slash).
-/// `key` is sent as the service's own header, when there is one.
-pub async fn list(provider: AiProvider, base_url: &str, key: Option<&str>) -> Result<AiModelList> {
+/// The models of the service at `base_url` (already trimmed, without a trailing slash), from its
+/// `/models`. `key` is sent as a bearer header, when there is one.
+pub async fn list(base_url: &str, key: Option<&str>) -> Result<AiModelList> {
     let url = settings::check_base_url(base_url)?;
     let host = settings::host_label(&url);
-    match provider {
-        AiProvider::OpenAiCompatible => {
-            let headers: Vec<(&str, String)> = key.iter().map(|k| ("authorization", format!("Bearer {k}"))).collect();
-            let answer = get(&format!("{base_url}/models"), &headers, &host).await.map_err(Failed::into_error)?;
-            Ok(AiModelList { models: openai_models(&answer, base_url)?, from_service: true })
-        }
-        AiProvider::Anthropic => {
-            let Some(key) = key else { return Ok(builtin()) };
-            match anthropic_models(base_url, key, &host).await {
-                Ok(models) => Ok(AiModelList { models, from_service: true }),
-                Err(Failed::Denied(e)) => Err(e),
-                // A gateway without a list, a redirect, a page that is not JSON: the service may
-                // still answer messages, so the built-in list will do.
-                Err(Failed::Unavailable(_) | Failed::Refused(_)) => Ok(builtin()),
-            }
-        }
-    }
+    let headers: Vec<(&str, String)> = key.iter().map(|k| ("authorization", format!("Bearer {k}"))).collect();
+    let answer = get(&format!("{base_url}/models"), &headers, &host).await?;
+    Ok(AiModelList { models: openai_models(&answer, base_url)? })
 }
 
 fn unreadable() -> Error {
@@ -181,74 +121,27 @@ fn openai_levels(m: &Value) -> Vec<AiEffort> {
     levels
 }
 
-/// All pages, in the order the service gives them (newest first).
-async fn anthropic_models(base_url: &str, key: &str, host: &str) -> std::result::Result<Vec<AiModel>, Failed> {
-    let headers = [("x-api-key", key.to_string()), ("anthropic-version", ANTHROPIC_VERSION.to_string())];
-    let mut models = Vec::new();
-    let mut after: Option<String> = None;
-    for _ in 0..MAX_PAGES {
-        let mut url = Url::parse(&format!("{base_url}/models")).map_err(|_| Failed::Refused(unreadable()))?;
-        url.query_pairs_mut().append_pair("limit", "1000");
-        if let Some(after) = &after {
-            url.query_pairs_mut().append_pair("after_id", after);
-        }
-        let page = get(url.as_str(), &headers, host).await?;
-        let data = page["data"].as_array().ok_or_else(|| Failed::Refused(unreadable()))?;
-        models.extend(data.iter().filter(|m| usable(m)).filter_map(anthropic_model));
-        match (page["has_more"].as_bool(), page["last_id"].as_str()) {
-            (Some(true), Some(last)) => after = Some(last.to_string()),
-            _ => break,
-        }
-    }
-    Ok(models)
-}
-
-/// Whether a model of Anthropic's list may still be chosen: the list also has `deprecated`
-/// models, which are closed to new users and answer them with an error, and `retired` ones.
-fn usable(m: &Value) -> bool {
-    !matches!(m["lifecycle"].as_str(), Some("deprecated" | "retired"))
-}
-
-fn anthropic_model(m: &Value) -> Option<AiModel> {
-    let id = m["id"].as_str()?;
-    let name = m["display_name"].as_str().filter(|n| !n.is_empty()).unwrap_or(id);
-    let effort = &m["capabilities"]["effort"];
-    let efforts = if effort["supported"].as_bool() == Some(true) {
-        LEVELS.iter().filter(|(word, _)| effort[*word]["supported"].as_bool() == Some(true)).map(|(_, e)| *e).collect()
-    } else {
-        Vec::new()
-    };
-    Some(AiModel { id: id.into(), name: name.into(), efforts })
-}
-
 /// One GET, the answer as JSON.
-async fn get(url: &str, headers: &[(&str, String)], host: &str) -> std::result::Result<Value, Failed> {
-    let unavailable = |msg: String| Failed::Unavailable(Error::temporary(msg));
-    let client = provider::client(CONNECT, Some(WHOLE)).map_err(Failed::Unavailable)?;
+async fn get(url: &str, headers: &[(&str, String)], host: &str) -> Result<Value> {
+    let client = provider::client(CONNECT, Some(WHOLE))?;
     let mut request = client.get(url).header("accept", "application/json");
     for (name, value) in headers {
-        request = request.header(*name, sensitive(value).map_err(Failed::Refused)?);
+        request = request.header(*name, sensitive(value)?);
     }
     let response = match request.send().await {
         Ok(response) => response,
-        Err(e) if e.is_timeout() => return Err(unavailable("the service did not answer in time".into())),
-        Err(_) => return Err(unavailable(format!("could not reach the service at {host}"))),
+        Err(e) if e.is_timeout() => return Err(Error::temporary("the service did not answer in time")),
+        Err(_) => return Err(Error::temporary(format!("could not reach the service at {host}"))),
     };
-    let status = response.status().as_u16();
     if !response.status().is_success() {
-        let error = provider::refused(response, WHOLE).await;
-        return Err(match status {
-            429 | 500..=599 => Failed::Unavailable(error),
-            401 | 403 => Failed::Denied(error),
-            _ => Failed::Refused(error),
-        });
+        return Err(provider::refused(response, WHOLE).await);
     }
     let body = match read_capped(response, MAX_BODY, WHOLE).await {
         Ok(body) => body,
-        Err(BodyError::TooLarge) => return Err(Failed::Refused(Error::temporary("the list of models is too long"))),
-        Err(BodyError::Broken) => return Err(unavailable("the service stopped answering".into())),
+        Err(BodyError::TooLarge) => return Err(Error::temporary("the list of models is too long")),
+        Err(BodyError::Broken) => return Err(Error::temporary("the service stopped answering")),
     };
-    serde_json::from_slice(&body).map_err(|_| Failed::Refused(unreadable()))
+    serde_json::from_slice(&body).map_err(|_| unreadable())
 }
 
 #[cfg(test)]
@@ -319,37 +212,5 @@ mod tests {
         // Elsewhere the id is taken as it is.
         let models = openai_models(&json!({"data": [{"id": "models/x"}]}), "https://llm.example/v1").unwrap();
         assert_eq!(ids(&models), ["models/x"]);
-    }
-
-    #[test]
-    fn deprecated_and_retired_anthropic_models_are_not_offered() {
-        assert!(usable(&json!({"id": "a", "lifecycle": "active"})));
-        assert!(usable(&json!({"id": "a"})));
-        assert!(!usable(&json!({"id": "a", "lifecycle": "deprecated"})));
-        assert!(!usable(&json!({"id": "a", "lifecycle": "retired"})));
-    }
-
-    #[test]
-    fn an_anthropic_model_lists_the_levels_it_supports_lowest_first() {
-        let m = json!({"id": "m", "display_name": "M", "capabilities": {"effort": {
-            "supported": true, "low": {"supported": true}, "medium": {"supported": false},
-            "high": {"supported": true}, "max": {"supported": true}}}});
-        let model = anthropic_model(&m).unwrap();
-        assert_eq!(model.efforts, [AiEffort::Low, AiEffort::High, AiEffort::Max]);
-        assert_eq!(model.name, "M");
-        let off = json!({"id": "n", "capabilities": {"effort": {"supported": false, "low": {"supported": true}}}});
-        let model = anthropic_model(&off).unwrap();
-        assert!(model.efforts.is_empty());
-        assert_eq!(model.name, "n");
-        assert!(anthropic_model(&json!({"display_name": "x"})).is_none());
-    }
-
-    #[test]
-    fn the_built_in_list_has_four_models_and_no_levels() {
-        let list = builtin();
-        assert!(!list.from_service);
-        assert_eq!(list.models.len(), 4);
-        assert!(list.models.iter().all(|m| m.efforts.is_empty()));
-        assert_eq!(list.models[3].id, "claude-fable-5-2");
     }
 }

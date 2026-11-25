@@ -464,18 +464,26 @@ request needs instead of guessing, and read no more than it needs. A tool that o
 prepares a reply only gives the user a button to tap; nothing opens by itself.";
 
 const CHAT_NO_TOOLS: &str = "\
-You have no tools in this conversation, so you cannot look anything up: no mail, no folders, no \
-calendar. Answer only from what is in this conversation, and when the user asks for something you \
-would have to look up, say that you cannot look it up here.";
+This model cannot use the app's tools, so in this conversation you cannot look anything up: no mail, \
+no folders, no calendar. Answer only from what is in this conversation, and when the user asks for \
+something you would have to look up, say that this model cannot look it up and another model may.";
 
 const CHAT_SUGGESTS: &str = "\
-A tool that changes something (archive, move, mark, star, tag, add a calendar entry) does not do it. \
-It only shows the user a suggestion, and the user decides by tapping it. After you used one, say \
-that you suggested it, never that it is done.";
+You can also get mail and the calendar changed: you have tools to archive, move, mark as read or \
+unread, star and tag mail and to add calendar entries and tasks. When the user asks for such a \
+change, use them; do not say that you can only read. Such a tool does not make the change itself: \
+it only shows the user a suggestion with exactly that change, and the user decides by tapping it. \
+After you used one, say that you suggested it, never that it is done.";
+
+const CHAT_CHANGES_OFF: &str = "\
+Suggested changes are switched off in the assistant's settings, so you have no tools to archive, \
+move, mark, star or tag mail or to add calendar entries. When the user asks for such a change, say \
+that suggestions are switched off in the assistant's settings, and that they can switch them on or \
+make the change themselves.";
 
 const CHAT_NO_CHANGES: &str = "\
-You cannot change anything: you have no way to archive, move, mark, star or tag mail or to add \
-calendar entries. Say so when the user asks for it.";
+Without tools you cannot suggest changes either (archive, move, mark, star, tag, add a calendar \
+entry). Say so when the user asks for one.";
 
 const CHAT_ABOUT: &str = "\
 The user opened this conversation from one mail conversation. Its text is at the start, in a \
@@ -514,7 +522,7 @@ pub fn chat_system(
 ) -> String {
     let (reads, changes) = match (tools_off, actions) {
         (true, _) => (CHAT_NO_TOOLS, CHAT_NO_CHANGES),
-        (false, AiActionMode::Off) => (CHAT_TOOLS, CHAT_NO_CHANGES),
+        (false, AiActionMode::Off) => (CHAT_TOOLS, CHAT_CHANGES_OFF),
         (false, AiActionMode::AskFirst) => (CHAT_TOOLS, CHAT_SUGGESTS),
     };
     let about = if about { format!("\n\n{CHAT_ABOUT}") } else { String::new() };
@@ -756,14 +764,18 @@ mod tests {
         let ask = text(AiActionMode::AskFirst, false);
         assert!(ask.contains("only shows the user a suggestion") && ask.contains("the user decides by tapping"));
         assert!(ask.contains("never that it is done") && ask.contains("You have tools that read"));
-        assert!(!ask.contains("You cannot change anything") && !ask.contains("cannot look anything up"));
+        // The model is told plainly that it can get changes made, so it does not claim to be read-only.
+        assert!(ask.contains("do not say that you can only read") && ask.contains("you have tools to archive"));
+        assert!(!ask.contains("switched off") && !ask.contains("cannot look anything up"));
         let off = text(AiActionMode::Off, false);
-        assert!(off.contains("You cannot change anything") && off.contains("You have tools that read"));
+        assert!(off.contains("Suggested changes are switched off in the assistant's settings"));
+        assert!(off.contains("You have tools that read"));
         assert!(!off.contains("only shows the user a suggestion"));
         // Without tools nothing can be looked up and nothing suggested, whatever the mode.
         for actions in [AiActionMode::AskFirst, AiActionMode::Off] {
             let none = text(actions, true);
-            assert!(none.contains("you cannot look anything up") && none.contains("You cannot change anything"));
+            assert!(none.contains("you cannot look anything up") && none.contains("cannot suggest changes either"));
+            assert!(none.contains("This model cannot use the app's tools"));
             assert!(!none.contains("You have tools that read") && !none.contains("only shows the user a suggestion"));
         }
     }

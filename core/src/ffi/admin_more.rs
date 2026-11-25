@@ -85,6 +85,9 @@ pub struct ReportRow {
 pub struct ReportPage {
     pub reports: Vec<ReportRow>,
     pub total: u32,
+    /// The server has more reports than the app reads (the newest of them may be among those left
+    /// out); `total` counts only what was read.
+    pub truncated: bool,
 }
 
 /// A labelled line of a report; a value may have several lines.

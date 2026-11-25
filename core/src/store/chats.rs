@@ -6,7 +6,7 @@
 use rusqlite::OptionalExtension;
 
 use super::Store;
-use crate::{model::AiProvider, Result};
+use crate::Result;
 
 /// The most chats kept per account; the least recently used go first.
 pub const MOST_CHATS: usize = 50;
@@ -26,7 +26,6 @@ pub struct ChatInfo {
     pub id: String,
     pub title: String,
     pub updated_at: i64,
-    pub provider: AiProvider,
     pub base_url: String,
     pub model: String,
     pub about_subject: Option<String>,
@@ -39,19 +38,9 @@ pub struct StoredChat {
     pub messages: Vec<StoredMessage>,
 }
 
-fn provider_code(p: AiProvider) -> &'static str {
-    match p {
-        AiProvider::OpenAiCompatible => "openai",
-        AiProvider::Anthropic => "anthropic",
-    }
-}
-
-fn provider_of(code: &str) -> AiProvider {
-    match code {
-        "anthropic" => AiProvider::Anthropic,
-        _ => AiProvider::OpenAiCompatible,
-    }
-}
+/// What the `provider` column holds for every new row: the one protocol there is. Rows of the
+/// Anthropic service that is gone may still say "anthropic"; the column is not read.
+const PROTOCOL: &str = "openai";
 
 fn chars(text: &str) -> usize {
     text.chars().count()
@@ -80,7 +69,6 @@ impl Store {
         id: &str,
         title: &str,
         now: i64,
-        provider: AiProvider,
         base_url: &str,
         model: &str,
         about_subject: Option<&str>,
@@ -115,7 +103,7 @@ impl Store {
                     title,
                     created,
                     now,
-                    provider_code(provider),
+                    PROTOCOL,
                     base_url,
                     model,
                     about_subject,
@@ -143,7 +131,6 @@ impl Store {
                     id: r.get(0)?,
                     title: r.get(1)?,
                     updated_at: r.get(2)?,
-                    provider: provider_of(&r.get::<_, String>(3)?),
                     base_url: r.get(4)?,
                     model: r.get(5)?,
                     about_subject: r.get(6)?,
@@ -166,7 +153,6 @@ impl Store {
                             id: r.get(0)?,
                             title: r.get(1)?,
                             updated_at: r.get(2)?,
-                            provider: provider_of(&r.get::<_, String>(3)?),
                             base_url: r.get(4)?,
                             model: r.get(5)?,
                             about_subject: r.get(6)?,
@@ -208,8 +194,7 @@ mod tests {
     }
 
     fn put(s: &Store, id: &str, now: i64, user: &str, answer: &str) {
-        s.chat_append("a", id, "Title", now, AiProvider::Anthropic, "https://api.example/v1", "m", None, user, answer)
-            .unwrap();
+        s.chat_append("a", id, "Title", now, "https://api.example/v1", "m", None, user, answer).unwrap();
     }
 
     #[test]
@@ -220,7 +205,7 @@ mod tests {
         let chat = s.chat_load("a", "c1").unwrap().unwrap();
         assert_eq!(chat.messages.len(), 4);
         assert_eq!(chat.messages[2], StoredMessage { user: true, text: "again".into() });
-        assert_eq!((chat.info.updated_at, chat.info.provider), (20, AiProvider::Anthropic));
+        assert_eq!(chat.info.updated_at, 20);
         // The title and the creation time are those of the first exchange.
         assert_eq!(s.chat_list("a").unwrap().len(), 1);
         assert!(s.chat_load("a", "other").unwrap().is_none());

@@ -1,5 +1,8 @@
 //! What the user may set for the assistant, and what a change does to the consent. Pure: the
-//! storage (the account's key/value table, and the secret store for the key) is in `mod.rs`.
+//! storage (the account's key/value table, and the secret store for the keys) is in `mod.rs`.
+//!
+//! The user keeps a list of services. Every one speaks the OpenAI chat-completions protocol and
+//! keeps its own address, model, effort, key and consent; one of them is the service in use.
 
 use std::collections::BTreeMap;
 
@@ -7,32 +10,50 @@ use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
 use crate::{
-    model::{AiActionMode, AiEffort, AiModelList, AiProvider, AiSettings, AI_INSTRUCTIONS_MAX},
+    model::{AiActionMode, AiEffort, AiModelList, AiService, AiSettings, AI_INSTRUCTIONS_MAX},
     Error, Result,
 };
 
 /// The account's key/value table holds the settings as JSON under this key (never an API key).
 pub const SETTINGS_KEY: &str = "ai_settings";
-/// Where stage 1 kept its one key in the secret store. Moved to the name of its service the
+/// Where stage 1 kept its one key in the secret store. Moved to the service it belonged to the
 /// first time the settings are read, and then removed.
 pub const LEGACY_KEY_NAME: &str = "ai_key";
-/// Where a new Anthropic profile starts.
-pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1";
+/// Where round 2 kept the key of its Anthropic service. That service is gone: the key is removed
+/// the first time the older settings are read.
+pub const ANTHROPIC_KEY_NAME: &str = "ai_key_anthropic";
+/// The id of the service that older settings had (the one OpenAI-compatible service). Its key
+/// keeps the name it had (`ai_key_openai`), so an update needs no new key.
+pub const FIRST_ID: &str = "openai";
+/// The most services one account keeps. New ones are `s1` to `s20`.
+pub const MAX_SERVICES: usize = 20;
+/// The longest name of a service (characters).
+pub const NAME_MAX: usize = 60;
 
 /// Every API key lives in the host's secret store under the name of its own service.
-pub const KEY_NAMES: [&str; 2] = ["ai_key_openai", "ai_key_anthropic"];
-
-pub fn key_name(provider: AiProvider) -> &'static str {
-    match provider {
-        AiProvider::OpenAiCompatible => KEY_NAMES[0],
-        AiProvider::Anthropic => KEY_NAMES[1],
-    }
+pub fn key_name(id: &str) -> String {
+    format!("ai_key_{id}")
 }
 
-/// What one kind of service keeps for itself.
+/// Every name a key of the assistant can have had: each service id there can be, and the names of
+/// before. Sign-out and the reset remove all of them, without reading the settings.
+pub fn all_key_names() -> Vec<String> {
+    let mut names: Vec<String> = std::iter::once(FIRST_ID.to_string())
+        .chain((1..=MAX_SERVICES).map(|n| format!("s{n}")))
+        .map(|id| key_name(&id))
+        .collect();
+    names.push(ANTHROPIC_KEY_NAME.into());
+    names.push(LEGACY_KEY_NAME.into());
+    names
+}
+
+/// What one service keeps for itself.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Profile {
+    /// [`FIRST_ID`] or `s1` to `s20`, made by the core; never empty once stored.
+    pub id: String,
+    pub name: String,
     pub base_url: String,
     pub model: String,
     pub effort: AiEffort,
@@ -84,13 +105,14 @@ impl Levels {
     }
 }
 
-/// What is stored under [`SETTINGS_KEY`]: the shared switches, the service in use, and a
-/// profile for each kind of service. No key is in here.
+/// What is stored under [`SETTINGS_KEY`]: the shared switches, the service in use, and the list of
+/// services. No key is in here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Stored {
     pub enabled: bool,
-    pub provider: AiProvider,
+    /// The id of the service in use; empty when there is none.
+    pub active: String,
     pub allow_summaries: bool,
     pub allow_drafts: bool,
     pub allow_rewrites: bool,
@@ -101,15 +123,15 @@ pub struct Stored {
     pub actions: AiActionMode,
     /// The user's own instructions (see `AiSettings::instructions`).
     pub instructions: String,
-    pub openai: Profile,
-    pub anthropic: Profile,
+    /// In the order they were added.
+    pub services: Vec<Profile>,
 }
 
 impl Default for Stored {
     fn default() -> Self {
         Stored {
             enabled: false,
-            provider: AiProvider::OpenAiCompatible,
+            active: String::new(),
             allow_summaries: true,
             allow_drafts: true,
             allow_rewrites: true,
@@ -119,43 +141,41 @@ impl Default for Stored {
             allow_chat: false,
             actions: AiActionMode::default(),
             instructions: String::new(),
-            openai: Profile::default(),
-            anthropic: Profile::default(),
+            services: Vec::new(),
         }
     }
 }
 
 impl Stored {
-    pub fn profile(&self, provider: AiProvider) -> &Profile {
-        match provider {
-            AiProvider::OpenAiCompatible => &self.openai,
-            AiProvider::Anthropic => &self.anthropic,
-        }
+    pub fn profile(&self, id: &str) -> Option<&Profile> {
+        self.services.iter().find(|p| !id.is_empty() && p.id == id)
     }
 
-    pub fn profile_mut(&mut self, provider: AiProvider) -> &mut Profile {
-        match provider {
-            AiProvider::OpenAiCompatible => &mut self.openai,
-            AiProvider::Anthropic => &mut self.anthropic,
-        }
+    pub fn profile_mut(&mut self, id: &str) -> Option<&mut Profile> {
+        self.services.iter_mut().find(|p| !id.is_empty() && p.id == id)
     }
 
-    /// The settings with `provider` as the service in use. `has_key` is left false: the secret
-    /// store says whether there is a key.
-    pub fn view(&self, provider: AiProvider) -> AiSettings {
-        let p = self.profile(provider);
-        // The Anthropic address is shown as the default until a profile is stored, but it is
-        // not the address any key was entered for (see `Profile::base_url`).
-        let base_url = match (provider, p.base_url.is_empty()) {
-            (AiProvider::Anthropic, true) => ANTHROPIC_URL.to_string(),
-            _ => p.base_url.clone(),
-        };
+    /// The id for a new service: the lowest of `s1` to `s20` no service has. `None` when the list is full.
+    pub fn new_id(&self) -> Option<String> {
+        if self.services.len() >= MAX_SERVICES {
+            return None;
+        }
+        (1..=MAX_SERVICES).map(|n| format!("s{n}")).find(|id| self.profile(id).is_none())
+    }
+
+    /// The settings with the service `id` as the one shown (the active one, or one the screen asks
+    /// for); an empty or unknown id shows a new, empty service. Every `has_key` is left false: the
+    /// secret store says whether there is a key.
+    pub fn view(&self, id: &str) -> AiSettings {
+        let blank = Profile::default();
+        let p = self.profile(id).unwrap_or(&blank);
         // A level the service never named for this address and model is not sent, so it is not shown.
-        let effort = if p.levels.allows(&base_url, &p.model, p.effort) { p.effort } else { AiEffort::Default };
+        let effort = if p.levels.allows(&p.base_url, &p.model, p.effort) { p.effort } else { AiEffort::Default };
         AiSettings {
             enabled: self.enabled,
-            provider,
-            base_url,
+            service_id: p.id.clone(),
+            service_name: p.name.clone(),
+            base_url: p.base_url.clone(),
             model: p.model.clone(),
             effort,
             has_key: false,
@@ -171,37 +191,210 @@ impl Stored {
             actions: self.actions,
             tools_unsupported: p.tools_unsupported,
             instructions: self.instructions.clone(),
+            services: self
+                .services
+                .iter()
+                .map(|s| AiService {
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    base_url: s.base_url.clone(),
+                    model: s.model.clone(),
+                    has_key: false,
+                    consented: s.consented,
+                    active: s.id == self.active,
+                })
+                .collect(),
         }
     }
 }
 
-/// Reads a stored value. Stage 1 stored the flat settings of its one service: that becomes the
-/// profile of its provider (consent included), and the provider is returned, because the old
-/// key belongs to it. `None` when the text cannot be read.
-pub fn parse(json: &str) -> Option<(Stored, Option<AiProvider>)> {
-    let value: serde_json::Value = serde_json::from_str(json).ok()?;
-    if value.get("base_url").is_none() {
-        return Some((serde_json::from_value(value).ok()?, None));
+/// What reading older settings means for the keys in the secret store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Moved {
+    /// The text was in an older form: write it again in the new one, and remove the Anthropic key.
+    pub old_form: bool,
+    /// Stage 1's one key (`ai_key`) belongs to the service [`FIRST_ID`]; otherwise it is removed.
+    pub legacy_key_is_first: bool,
+}
+
+/// The flat settings of stage 1: one service, the provider by name.
+#[derive(Deserialize)]
+#[serde(default)]
+struct Flat {
+    enabled: bool,
+    provider: String,
+    base_url: String,
+    model: String,
+    effort: AiEffort,
+    consented: bool,
+    allow_summaries: bool,
+    allow_drafts: bool,
+    allow_rewrites: bool,
+}
+
+impl Default for Flat {
+    fn default() -> Self {
+        Flat {
+            enabled: false,
+            provider: String::new(),
+            base_url: String::new(),
+            model: String::new(),
+            effort: AiEffort::Default,
+            consented: false,
+            allow_summaries: true,
+            allow_drafts: true,
+            allow_rewrites: true,
+        }
     }
-    let old: AiSettings = serde_json::from_value(value).ok()?;
-    let mut stored = Stored {
-        enabled: old.enabled,
-        provider: old.provider,
+}
+
+/// The settings of round 2: the shared switches and one profile per kind of service.
+#[derive(Deserialize)]
+#[serde(default)]
+struct Pair {
+    enabled: bool,
+    provider: String,
+    allow_summaries: bool,
+    allow_drafts: bool,
+    allow_rewrites: bool,
+    allow_ideas: bool,
+    allow_extract: bool,
+    allow_explain: bool,
+    allow_chat: bool,
+    actions: AiActionMode,
+    instructions: String,
+    openai: Profile,
+}
+
+impl Default for Pair {
+    fn default() -> Self {
+        let d = Stored::default();
+        Pair {
+            enabled: d.enabled,
+            provider: String::new(),
+            allow_summaries: d.allow_summaries,
+            allow_drafts: d.allow_drafts,
+            allow_rewrites: d.allow_rewrites,
+            allow_ideas: d.allow_ideas,
+            allow_extract: d.allow_extract,
+            allow_explain: d.allow_explain,
+            allow_chat: d.allow_chat,
+            actions: d.actions,
+            instructions: d.instructions,
+            openai: Profile::default(),
+        }
+    }
+}
+
+/// The name older settings used for the OpenAI-compatible service.
+const OPENAI_PROVIDER: &str = "OpenAiCompatible";
+
+/// The one service older settings had becomes the first of the list, with its consent. An empty
+/// one (no address) is no service.
+fn first_of(mut p: Profile) -> Vec<Profile> {
+    if p.base_url.trim().is_empty() {
+        return Vec::new();
+    }
+    p.id = FIRST_ID.into();
+    p.name = default_name(&p.base_url);
+    p.chat_consented &= p.consented;
+    vec![p]
+}
+
+/// Reads a stored value, and says what the form it was in means for the keys. Two older forms
+/// become the new one: stage 1's flat settings of one service, and round 2's two profiles (one
+/// OpenAI-compatible, one Anthropic). The OpenAI-compatible service becomes the first of the list
+/// and keeps its consent; the Anthropic one is dropped. When the Anthropic service was the one in
+/// use, the assistant is switched off, so nothing goes to the other service until the user turns
+/// it on again. `None` when the text cannot be read.
+pub fn parse(json: &str) -> Option<(Stored, Moved)> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    if !value.is_object() {
+        return None;
+    }
+    if value.get("services").is_some() {
+        let mut stored: Stored = serde_json::from_value(value).ok()?;
+        stored.services.retain(|p| !p.id.is_empty());
+        if stored.profile(&stored.active).is_none() {
+            stored.active.clear();
+        }
+        return Some((stored, Moved::default()));
+    }
+    if value.get("base_url").is_some() {
+        let old: Flat = serde_json::from_value(value).ok()?;
+        let openai = old.provider == OPENAI_PROVIDER;
+        let services = if openai {
+            first_of(Profile {
+                base_url: old.base_url,
+                model: old.model,
+                effort: old.effort,
+                consented: old.consented,
+                ..Profile::default()
+            })
+        } else {
+            Vec::new()
+        };
+        let stored = Stored {
+            enabled: old.enabled && openai,
+            active: services.first().map(|p| p.id.clone()).unwrap_or_default(),
+            allow_summaries: old.allow_summaries,
+            allow_drafts: old.allow_drafts,
+            allow_rewrites: old.allow_rewrites,
+            services,
+            ..Stored::default()
+        };
+        let first = !stored.services.is_empty();
+        return Some((stored, Moved { old_form: true, legacy_key_is_first: first }));
+    }
+    let old: Pair = serde_json::from_value(value).ok()?;
+    let openai = old.provider.is_empty() || old.provider == OPENAI_PROVIDER;
+    let services = first_of(old.openai);
+    let stored = Stored {
+        enabled: old.enabled && openai,
+        active: services.first().map(|p| p.id.clone()).unwrap_or_default(),
         allow_summaries: old.allow_summaries,
         allow_drafts: old.allow_drafts,
         allow_rewrites: old.allow_rewrites,
-        ..Stored::default()
+        allow_ideas: old.allow_ideas,
+        allow_extract: old.allow_extract,
+        allow_explain: old.allow_explain,
+        allow_chat: old.allow_chat,
+        actions: old.actions,
+        instructions: old.instructions,
+        services,
     };
-    *stored.profile_mut(old.provider) = Profile {
-        base_url: old.base_url,
-        model: old.model,
-        effort: old.effort,
-        consented: old.consented,
-        chat_consented: false,
-        tools_unsupported: false,
-        levels: Levels::default(),
-    };
-    Some((stored, Some(old.provider)))
+    Some((stored, Moved { old_form: true, legacy_key_is_first: false }))
+}
+
+/// The name of a service the user did not name: the well-known services by their name, any other
+/// by its host (and port).
+pub fn default_name(base_url: &str) -> String {
+    const KNOWN: [(&str, &str); 6] = [
+        ("api.openai.com", "OpenAI"),
+        ("openrouter.ai", "OpenRouter"),
+        ("generativelanguage.googleapis.com", "Google Gemini"),
+        ("api.mistral.ai", "Mistral"),
+        ("api.deepseek.com", "DeepSeek"),
+        ("api.groq.com", "Groq"),
+    ];
+    let Ok(url) = Url::parse(base_url.trim()) else { return "Service".into() };
+    let host = url.host_str().unwrap_or_default().trim_end_matches('.').to_ascii_lowercase();
+    match KNOWN.iter().find(|(known, _)| *known == host) {
+        Some((_, name)) => name.to_string(),
+        None if host.is_empty() => "Service".into(),
+        None => host_label(&url),
+    }
+}
+
+/// A name as it is stored: one line, surrounding blanks dropped. Longer than [`NAME_MAX`]
+/// characters is refused.
+pub fn clean_name(name: &str) -> Result<String> {
+    let line: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.chars().count() > NAME_MAX {
+        return Err(Error::invalid(format!("the name is longer than {NAME_MAX} characters")));
+    }
+    Ok(line)
 }
 
 /// The instructions as they are stored: line ends made \n, surrounding blanks dropped, nothing else changed.
@@ -215,9 +408,9 @@ pub fn clean_instructions(text: &str) -> Result<String> {
     Ok(text.to_string())
 }
 
-/// How the assistant is set up before the user has done anything: off, nothing agreed to.
+/// How the assistant is set up before the user has done anything: off, no service, nothing agreed to.
 pub fn defaults() -> AiSettings {
-    Stored::default().view(AiProvider::OpenAiCompatible)
+    Stored::default().view("")
 }
 
 /// The settings as the user gave them, made fit to store. `has_key` is left false: the secret
@@ -227,8 +420,11 @@ pub fn defaults() -> AiSettings {
 pub fn normalise(mut s: AiSettings) -> Result<AiSettings> {
     s.base_url = s.base_url.trim().trim_end_matches('/').to_string();
     s.model = s.model.trim().to_string();
+    s.service_id = s.service_id.trim().to_string();
+    s.service_name = clean_name(&s.service_name)?;
     s.has_key = false;
     s.tools_unsupported = false;
+    s.services.clear();
     s.instructions = clean_instructions(&s.instructions)?;
     if s.base_url.is_empty() {
         if s.enabled {
@@ -389,8 +585,15 @@ mod tests {
 
     #[test]
     fn normalise_trims_and_drops_trailing_slashes() {
-        let s = normalise(on("  https://api.example.com/v1//  ", "  gpt  ")).unwrap();
+        let s = normalise(AiSettings {
+            service_name: "  My \n box ".into(),
+            ..on("  https://api.example.com/v1//  ", "  gpt  ")
+        })
+        .unwrap();
         assert_eq!((s.base_url.as_str(), s.model.as_str()), ("https://api.example.com/v1", "gpt"));
+        assert_eq!(s.service_name, "My box");
+        let long = AiSettings { service_name: "x".repeat(NAME_MAX + 1), ..on("https://a.example/v1", "m") };
+        assert!(matches!(normalise(long), Err(Error::Invalid { .. })));
     }
 
     #[test]
@@ -430,89 +633,145 @@ mod tests {
     }
 
     #[test]
-    fn a_new_anthropic_profile_starts_at_its_own_address_and_the_other_is_empty() {
-        let s = Stored::default();
-        assert_eq!(s.view(AiProvider::Anthropic).base_url, ANTHROPIC_URL);
-        assert_eq!(s.view(AiProvider::OpenAiCompatible), defaults());
-        assert_eq!(defaults().base_url, "");
+    fn nothing_set_up_is_off_with_no_service() {
+        let d = defaults();
+        assert!(!d.enabled && d.service_id.is_empty() && d.base_url.is_empty() && d.services.is_empty());
+        assert!(!d.allow_ideas && !d.allow_extract && !d.allow_explain && !d.allow_chat && !d.chat_consented);
+        assert_eq!(d.actions, AiActionMode::AskFirst);
     }
 
     #[test]
-    fn stage_one_settings_become_the_profile_of_their_provider() {
-        let flat = r#"{"enabled":true,"provider":"Anthropic","base_url":"https://a.example/v1","model":"m",
-            "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":false,"allow_rewrites":true}"#;
-        let (stored, old) = parse(flat).unwrap();
-        assert_eq!(old, Some(AiProvider::Anthropic));
-        let view = stored.view(AiProvider::Anthropic);
-        assert!(view.enabled && view.consented && !view.allow_drafts);
+    fn new_ids_are_the_lowest_free_ones_up_to_twenty() {
+        let mut s = Stored::default();
+        assert_eq!(s.new_id().as_deref(), Some("s1"));
+        s.services.push(Profile { id: FIRST_ID.into(), ..Profile::default() });
+        s.services.push(Profile { id: "s1".into(), ..Profile::default() });
+        s.services.push(Profile { id: "s3".into(), ..Profile::default() });
+        assert_eq!(s.new_id().as_deref(), Some("s2"));
+        while let Some(id) = s.new_id() {
+            s.services.push(Profile { id, ..Profile::default() });
+        }
+        assert_eq!(s.services.len(), MAX_SERVICES);
+        // Every id there can be has its key's name in the list sign-out removes.
+        let names = all_key_names();
+        assert!(s.services.iter().all(|p| names.contains(&key_name(&p.id))));
+        assert!(names.contains(&key_name("s20")) && names.contains(&"ai_key_anthropic".to_string()));
+        assert!(s.profile("").is_none());
+    }
+
+    #[test]
+    fn the_view_shows_one_service_and_lists_all() {
+        let stored = Stored {
+            enabled: true,
+            active: "s1".into(),
+            services: vec![
+                Profile {
+                    id: FIRST_ID.into(),
+                    name: "OpenAI".into(),
+                    base_url: "https://api.openai.com/v1".into(),
+                    model: "a".into(),
+                    consented: true,
+                    ..Profile::default()
+                },
+                Profile {
+                    id: "s1".into(),
+                    name: "Box".into(),
+                    base_url: "http://10.0.0.2:11434/v1".into(),
+                    model: "b".into(),
+                    ..Profile::default()
+                },
+            ],
+            ..Stored::default()
+        };
+        let view = stored.view(&stored.active);
+        assert_eq!((view.service_id.as_str(), view.service_name.as_str(), view.model.as_str()), ("s1", "Box", "b"));
+        assert!(!view.consented);
         assert_eq!(
-            (view.base_url.as_str(), view.model.as_str(), view.effort),
-            ("https://a.example/v1", "m", AiEffort::Default)
+            view.services.iter().map(|s| (s.id.as_str(), s.active)).collect::<Vec<_>>(),
+            [("openai", false), ("s1", true)]
         );
-        assert_eq!(stored.openai, Profile::default());
-        // The new form round-trips and says nothing about an old key.
-        let json = serde_json::to_string(&stored).unwrap();
-        assert_eq!(parse(&json), Some((stored, None)));
-        assert_eq!(parse("{not json"), None);
+        let first = stored.view(FIRST_ID);
+        assert!(first.consented && first.service_name == "OpenAI");
+        // An unknown id is a new, empty service with the shared switches.
+        let fresh = stored.view("s9");
+        assert!(fresh.enabled && fresh.service_id.is_empty() && fresh.base_url.is_empty() && !fresh.consented);
     }
 
     #[test]
-    fn the_flat_stage_one_form_gives_none_of_the_new_things() {
-        // Also when the text claims them: stage 1 never wrote these, so they are not believed.
+    fn stage_one_openai_settings_become_the_first_service_with_their_consent() {
         let flat = r#"{"enabled":true,"provider":"OpenAiCompatible","base_url":"https://a.example/v1","model":"m",
             "has_key":true,"consented":true,"allow_summaries":false,"allow_drafts":true,"allow_rewrites":true,
             "allow_ideas":true,"allow_extract":true,"allow_explain":true,"allow_chat":true,"chat_consented":true,
             "actions":"Off"}"#;
-        let (stored, old) = parse(flat).unwrap();
-        assert_eq!(old, Some(AiProvider::OpenAiCompatible));
+        let (stored, moved) = parse(flat).unwrap();
+        assert_eq!(moved, Moved { old_form: true, legacy_key_is_first: true });
+        // Stage 1 never wrote the newer switches, so they are not believed.
         assert!(!stored.allow_ideas && !stored.allow_extract && !stored.allow_explain && !stored.allow_chat);
         assert_eq!(stored.actions, AiActionMode::AskFirst);
-        assert!(stored.openai.consented && !stored.openai.chat_consented);
-        let view = stored.view(AiProvider::OpenAiCompatible);
-        assert!(view.consented && !view.chat_consented && !view.allow_chat && !view.has_key && !view.allow_summaries);
-        assert_eq!(stored.anthropic, Profile::default());
+        let view = stored.view(&stored.active);
+        assert!(view.enabled && view.consented && !view.chat_consented && !view.allow_summaries);
+        assert_eq!((view.service_id.as_str(), view.service_name.as_str()), (FIRST_ID, "a.example"));
+        // The new form round-trips and says nothing about old keys.
+        let json = serde_json::to_string(&stored).unwrap();
+        assert_eq!(parse(&json), Some((stored, Moved::default())));
+        assert_eq!(parse("{not json"), None);
+        assert_eq!(parse("[]"), None);
     }
 
     #[test]
-    fn stored_settings_from_before_the_new_fields_read_with_them_off() {
-        let old = r#"{"enabled":true,"provider":"Anthropic","allow_summaries":true,"allow_drafts":false,
-            "allow_rewrites":true,"openai":{"base_url":"http://localhost:1/v1","model":"o","effort":"High",
-            "consented":true},"anthropic":{"base_url":"https://a.example/v1","model":"m","effort":"Default",
-            "consented":false}}"#;
-        let (stored, legacy) = parse(old).unwrap();
-        assert_eq!(legacy, None);
-        let wanted = Stored {
-            enabled: true,
-            provider: AiProvider::Anthropic,
-            allow_drafts: false,
-            openai: Profile {
-                base_url: "http://localhost:1/v1".into(),
-                model: "o".into(),
-                effort: AiEffort::High,
-                consented: true,
-                chat_consented: false,
-                tools_unsupported: false,
-                levels: Levels::default(),
-            },
-            anthropic: Profile { base_url: "https://a.example/v1".into(), model: "m".into(), ..Profile::default() },
-            ..Stored::default()
-        };
-        assert_eq!(stored, wanted);
-        assert!(!stored.allow_ideas && !stored.allow_extract && !stored.allow_explain && !stored.allow_chat);
-        assert_eq!(stored.actions, AiActionMode::AskFirst);
+    fn stage_one_anthropic_settings_leave_no_service_and_the_assistant_off() {
+        let flat = r#"{"enabled":true,"provider":"Anthropic","base_url":"https://a.example/v1","model":"m",
+            "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":false,"allow_rewrites":true}"#;
+        let (stored, moved) = parse(flat).unwrap();
+        assert_eq!(moved, Moved { old_form: true, legacy_key_is_first: false });
+        assert!(stored.services.is_empty() && stored.active.is_empty() && !stored.enabled && !stored.allow_drafts);
     }
 
     #[test]
-    fn the_new_form_round_trips_with_every_new_field() {
+    fn round_two_settings_keep_the_openai_service_and_drop_anthropic() {
+        let old = r#"{"enabled":true,"provider":"OpenAiCompatible","allow_summaries":true,"allow_drafts":false,
+            "allow_rewrites":true,"allow_chat":true,"instructions":"Be brief.","openai":{"base_url":"http://localhost:1/v1",
+            "model":"o","effort":"High","consented":true,"chat_consented":true,"levels":{"base_url":"http://localhost:1/v1",
+            "models":{"o":["High"]}}},"anthropic":{"base_url":"https://a.example/v1","model":"m","effort":"Default",
+            "consented":true}}"#;
+        let (stored, moved) = parse(old).unwrap();
+        assert_eq!(moved, Moved { old_form: true, legacy_key_is_first: false });
+        assert_eq!(stored.services.len(), 1);
+        let view = stored.view(&stored.active);
+        assert_eq!((view.service_id.as_str(), view.service_name.as_str()), (FIRST_ID, "localhost:1"));
+        assert_eq!(
+            (view.base_url.as_str(), view.model.as_str(), view.effort),
+            ("http://localhost:1/v1", "o", AiEffort::High)
+        );
+        assert!(view.enabled && view.consented && view.chat_consented && view.allow_chat && !view.allow_drafts);
+        assert_eq!(view.instructions, "Be brief.");
+
+        // With Anthropic in use the other service stays, with its consent, and the assistant is off.
+        let (stored, _) = parse(&old.replace(r#""provider":"OpenAiCompatible""#, r#""provider":"Anthropic""#)).unwrap();
+        assert!(!stored.enabled && stored.view(&stored.active).consented && stored.active == FIRST_ID);
+        // An empty OpenAI-compatible profile is no service.
+        let (stored, _) = parse(
+            r#"{"enabled":false,"provider":"Anthropic","openai":{},"anthropic":{"base_url":"https://x.example/v1"}}"#,
+        )
+        .unwrap();
+        assert!(stored.services.is_empty() && stored.active.is_empty());
+        // A stored chat yes without the first one is never taken.
+        let odd = r#"{"provider":"OpenAiCompatible","openai":{"base_url":"https://a.example/v1","model":"m","consented":false,"chat_consented":true}}"#;
+        let (stored, _) = parse(odd).unwrap();
+        assert!(!stored.services[0].chat_consented);
+    }
+
+    #[test]
+    fn the_new_form_round_trips_and_drops_what_does_not_fit() {
         let stored = Stored {
             enabled: true,
-            provider: AiProvider::Anthropic,
+            active: "s2".into(),
             allow_ideas: true,
-            allow_extract: true,
-            allow_explain: true,
             allow_chat: true,
             actions: AiActionMode::Off,
-            anthropic: Profile {
+            services: vec![Profile {
+                id: "s2".into(),
+                name: "Mine".into(),
                 base_url: "https://a.example/v1".into(),
                 model: "m".into(),
                 effort: AiEffort::Max,
@@ -523,25 +782,28 @@ mod tests {
                     base_url: "https://a.example/v1".into(),
                     models: [("m".to_string(), vec![AiEffort::Low, AiEffort::Max])].into(),
                 },
-            },
+            }],
             ..Stored::default()
         };
         let json = serde_json::to_string(&stored).unwrap();
-        assert_eq!(parse(&json), Some((stored.clone(), None)));
-        let view = stored.view(AiProvider::Anthropic);
-        assert!(view.allow_ideas && view.allow_extract && view.allow_explain && view.allow_chat && view.chat_consented);
-        assert_eq!(view.actions, AiActionMode::Off);
-        // The other service shares the switches and has no yes of its own.
-        let other = stored.view(AiProvider::OpenAiCompatible);
-        assert!(other.allow_chat && !other.consented && !other.chat_consented);
-        // A stored chat yes without the first one is never shown as one.
-        let mut odd = stored;
-        odd.anthropic.consented = false;
-        assert!(!odd.view(AiProvider::Anthropic).chat_consented);
-        // Before anything is set, everything new is off and changes ask first.
-        let d = defaults();
-        assert!(!d.allow_ideas && !d.allow_extract && !d.allow_explain && !d.allow_chat && !d.chat_consented);
-        assert_eq!(d.actions, AiActionMode::AskFirst);
+        assert_eq!(parse(&json), Some((stored.clone(), Moved::default())));
+        let view = stored.view("s2");
+        assert!(view.allow_ideas && view.allow_chat && view.chat_consented && view.effort == AiEffort::Max);
+        // A service without an id is dropped, and an active id that names none is no service in use.
+        let odd = r#"{"active":"s5","services":[{"name":"x"},{"id":"s1","base_url":"https://b.example/v1"}]}"#;
+        let (stored, _) = parse(odd).unwrap();
+        assert_eq!(stored.services.len(), 1);
+        assert!(stored.active.is_empty());
+    }
+
+    #[test]
+    fn a_service_without_a_name_is_named_after_its_address() {
+        assert_eq!(default_name("https://api.openai.com/v1"), "OpenAI");
+        assert_eq!(default_name("https://openrouter.ai/api/v1"), "OpenRouter");
+        assert_eq!(default_name("https://generativelanguage.googleapis.com/v1beta/openai"), "Google Gemini");
+        assert_eq!(default_name("https://API.Mistral.ai/v1"), "Mistral");
+        assert_eq!(default_name("http://192.168.1.20:11434/v1"), "192.168.1.20:11434");
+        assert_eq!(default_name(""), "Service");
     }
 
     #[test]
@@ -549,10 +811,7 @@ mod tests {
         use crate::model::AiModel;
         let model =
             |id: &str, efforts: &[AiEffort]| AiModel { id: id.into(), name: id.into(), efforts: efforts.to_vec() };
-        let list = AiModelList {
-            models: vec![model("a", &[AiEffort::Low, AiEffort::High]), model("plain", &[])],
-            from_service: true,
-        };
+        let list = AiModelList { models: vec![model("a", &[AiEffort::Low, AiEffort::High]), model("plain", &[])] };
         let levels = Levels::of("https://r.example/v1/ ", &list);
         assert_eq!(levels.base_url, "https://r.example/v1");
         assert_eq!(levels.models.keys().collect::<Vec<_>>(), ["a"], "a model without levels is not kept");
@@ -565,27 +824,30 @@ mod tests {
         assert!(levels.allows("https://other.example/v1", "x", AiEffort::Default));
         assert!(!Levels::default().allows("https://r.example/v1", "a", AiEffort::High));
 
-        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
-            let mut stored = Stored::default();
-            *stored.profile_mut(provider) = Profile {
+        let mut stored = Stored {
+            active: "s1".into(),
+            services: vec![Profile {
+                id: "s1".into(),
                 base_url: "https://r.example/v1".into(),
                 model: "a".into(),
                 effort: AiEffort::High,
                 levels: levels.clone(),
                 ..Profile::default()
-            };
-            assert_eq!(stored.view(provider).effort, AiEffort::High);
-            stored.profile_mut(provider).effort = AiEffort::Max;
-            assert_eq!(stored.view(provider).effort, AiEffort::Default);
-            stored.profile_mut(provider).effort = AiEffort::High;
-            stored.profile_mut(provider).model = "plain".into();
-            assert_eq!(stored.view(provider).effort, AiEffort::Default);
-            // The level itself is kept: back on a model that lists it, it shows again.
-            stored.profile_mut(provider).model = "a".into();
-            assert_eq!(stored.view(provider).effort, AiEffort::High);
-            stored.profile_mut(provider).levels = Levels::default();
-            assert_eq!(stored.view(provider).effort, AiEffort::Default);
-        }
+            }],
+            ..Stored::default()
+        };
+        assert_eq!(stored.view("s1").effort, AiEffort::High);
+        stored.profile_mut("s1").unwrap().effort = AiEffort::Max;
+        assert_eq!(stored.view("s1").effort, AiEffort::Default);
+        let profile = stored.profile_mut("s1").unwrap();
+        profile.effort = AiEffort::High;
+        profile.model = "plain".into();
+        assert_eq!(stored.view("s1").effort, AiEffort::Default);
+        // The level itself is kept: back on a model that lists it, it shows again.
+        stored.profile_mut("s1").unwrap().model = "a".into();
+        assert_eq!(stored.view("s1").effort, AiEffort::High);
+        stored.profile_mut("s1").unwrap().levels = Levels::default();
+        assert_eq!(stored.view("s1").effort, AiEffort::Default);
     }
 
     #[test]

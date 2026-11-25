@@ -687,7 +687,7 @@ private fun EntryRow(
 private fun FilesSelectionBar(state: FilesState, c: FilesController) {
     val colors = MaterialTheme.colorScheme
     val chosen = state.chosen
-    val count = state.selection.size
+    val count = chosen.size
     Column(Modifier.background(colors.background).statusBarsPadding()) {
         Surface(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp).fillMaxWidth().height(52.dp),

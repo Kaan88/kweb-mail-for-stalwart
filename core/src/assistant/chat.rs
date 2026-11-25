@@ -18,7 +18,7 @@ use super::{
     wire::{specs_chars, turn_chars, Reply, ToolCall, ToolResult, ToolSpec, ToolsRefused, Turn},
 };
 use crate::{
-    model::{AiActionMode, AiChange, AiChatEnd, AiChatTurn, AiProposal, AiProvider, AiStep, AiToolKind},
+    model::{AiActionMode, AiChange, AiChatEnd, AiChatTurn, AiProposal, AiStep, AiToolKind},
     Error, Result,
 };
 
@@ -57,7 +57,8 @@ const FRAME_SLACK: usize = 400;
 /// The service and model a conversation is held with. A chat is over when the settings name another.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Origin {
-    pub provider: AiProvider,
+    /// The id of the service entry (see `settings::Profile::id`).
+    pub service_id: String,
     pub base_url: String,
     pub model: String,
 }
@@ -748,7 +749,8 @@ mod tests {
     #[test]
     fn tools_run_and_their_results_go_back_with_the_calls() {
         let mut chat = Chat::new("c1", "a");
-        let raw = json!([{"type": "thinking", "thinking": "hm", "signature": "s"}]);
+        let raw =
+            json!({"reasoning_content": "hm", "extra": [{"extra_content": {"google": {"thought_signature": "s"}}}]});
         let first = Reply {
             text: "Looking.".into(),
             calls: vec![call("1", "look", json!({})), call("2", "link", json!({})), call("3", "unknown", json!({}))],

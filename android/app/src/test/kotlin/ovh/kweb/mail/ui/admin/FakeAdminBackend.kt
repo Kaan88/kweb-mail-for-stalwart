@@ -282,7 +282,7 @@ class FakeAdminBackend : AdminBackend {
 
     override fun reports(kind: uniffi.kweb_core.ReportKind, offset: UInt, limit: UInt): uniffi.kweb_core.ReportPage {
         check("reports:$kind:$offset:$limit")
-        return uniffi.kweb_core.ReportPage(emptyList(), 0u)
+        return uniffi.kweb_core.ReportPage(emptyList(), 0u, false)
     }
 
     override fun report(kind: uniffi.kweb_core.ReportKind, id: String): uniffi.kweb_core.ReportDetail {

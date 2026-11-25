@@ -17,7 +17,6 @@ class EffortRulesTest {
             AiModel("claude-a", "Claude A", listOf(AiEffort.LOW, AiEffort.HIGH)),
             AiModel("claude-b", "Claude B", emptyList()),
         ),
-        fromService = true,
     )
 
     @Test fun theRowShowsOnlyWhenThereIsMoreThanDefault() {
@@ -46,7 +45,7 @@ class EffortRulesTest {
         assertEquals(listOf(AiEffort.DEFAULT, AiEffort.LOW, AiEffort.HIGH), EffortRules.offered(" claude-a ", list))
 
     @Test fun levelsComeLowestFirstAndDefaultIsNeverListedTwice() {
-        val odd = AiModelList(listOf(AiModel("m", "m", listOf(AiEffort.MAX, AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MAX, AiEffort.MINIMAL))), true)
+        val odd = AiModelList(listOf(AiModel("m", "m", listOf(AiEffort.MAX, AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MAX, AiEffort.MINIMAL))))
         assertEquals(listOf(AiEffort.DEFAULT, AiEffort.OFF, AiEffort.MINIMAL, AiEffort.MAX), EffortRules.offered("m", odd))
     }
 
@@ -62,11 +61,6 @@ class EffortRulesTest {
         assertEquals("claude-a", ModelRules.subtitle(AiModel("claude-a", "Claude A", emptyList())))
         assertNull(ModelRules.subtitle(AiModel("gpt-x", "gpt-x", emptyList())))
         assertEquals("gpt-x", ModelRules.title(AiModel("gpt-x", "", emptyList())))
-    }
-
-    @Test fun aBuiltInListIsRecognised() {
-        assertTrue(ModelRules.isBuiltIn(list.copy(fromService = false)))
-        assertFalse(ModelRules.isBuiltIn(list))
     }
 
     @Test fun everyRunGetsItsOwnUuid() {

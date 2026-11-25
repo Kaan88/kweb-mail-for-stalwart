@@ -129,4 +129,11 @@ class OneTimeCodeRulesTest {
         assertEquals(listOf(Delete, MarkRead, Reply), plan.actions)
         assertTrue(OneTimeCodeRules.plan(emptyList(), true).copy)
     }
+
+    @Test
+    fun aVeryLongSubjectIsCutBeforeTheScan() {
+        val subject = "x ".repeat(400) + "verification code 482915"
+        org.junit.Assert.assertNull(find(subject))
+        assertEquals("482915", find("Your verification code 482915 " + "x".repeat(2000)))
+    }
 }

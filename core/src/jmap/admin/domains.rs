@@ -244,8 +244,35 @@ impl Connection {
             let others: BTreeSet<String> = kinds.into_iter().filter(|k| k != "DkimSignature").collect();
             return Err(Error::invalid(format!("this domain is still used by {}", kind_words(&others))));
         }
-        // Only its keys are left: they go first, in the same request as the domain.
-        let key_ids: Vec<&str> = keys.iter().map(String::as_str).collect();
+        // Only its keys are left: they go first, in the same request as the domain. The refusal may
+        // name only some of them, so every key of the domain is asked for first (and a key that may
+        // not look stops here, before anything is deleted): a domain is never left with its keys
+        // gone and some other key still holding it.
+        let mut all_keys = self
+            .all_ids(
+                "x:DkimSignature",
+                &json!({ "accountId": account, "filter": { "domainId": id } }),
+                "see the domain's DKIM keys",
+            )
+            .await?;
+        // Destroyed is only what the server itself says belongs to this domain: a server that ignored the filter
+        // would otherwise hand over every domain's keys. Any key of another domain stops the delete.
+        if !all_keys.is_empty() {
+            let args = json!({ "accountId": account, "ids": all_keys, "properties": ["id", "domainId"] });
+            let answers = self.admin_request("see the domain's DKIM keys", &[("x:DkimSignature/get", args)]).await?;
+            let list = response(&answers, "x:DkimSignature/get")?["list"].as_array().cloned().unwrap_or_default();
+            if list.len() != all_keys.len() || list.iter().any(|k| k["domainId"].as_str() != Some(id)) {
+                return Err(Error::temporary(
+                    "the server listed DKIM keys that are not this domain's; nothing was deleted",
+                ));
+            }
+        }
+        for key in keys {
+            if !all_keys.contains(&key) {
+                all_keys.push(key);
+            }
+        }
+        let key_ids: Vec<&str> = all_keys.iter().map(String::as_str).collect();
         let calls = [("x:DkimSignature/set", destroy(&key_ids)), ("x:Domain/set", destroy(&[id]))];
         let responses = self.admin_request("delete domains", &calls).await?;
         let keys_set = response(&responses, "x:DkimSignature/set")?;

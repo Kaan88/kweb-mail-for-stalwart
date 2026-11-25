@@ -471,28 +471,38 @@ pub struct AwayMessage {
     pub text: String,
 }
 
-/// Which kind of service the AI assistant talks to.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum AiProvider {
-    /// Anything that speaks the OpenAI chat-completions protocol: OpenAI itself, or a model on
-    /// the user's own machine or network (Ollama, LM Studio, vLLM). The key is optional.
-    OpenAiCompatible,
-    /// Anthropic's Messages API.
-    Anthropic,
+/// One service the AI assistant can talk to, as the settings list them (`AiSettings::services`).
+/// Every service speaks the OpenAI chat-completions protocol: a hosted one (OpenAI, OpenRouter,
+/// Gemini, Mistral, DeepSeek, Groq) or a model on the user's own machine or network (Ollama, LM
+/// Studio, vLLM). Each keeps its own address, model, effort, key and consent. The key is not in here.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiService {
+    /// Made by the core when the service is first saved; never shown.
+    pub id: String,
+    /// What the user called it (made from its address when they gave no name).
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    /// A key is stored for this service.
+    pub has_key: bool,
+    /// The user agreed to send mail to exactly this service's address and model.
+    pub consented: bool,
+    /// This is the service in use.
+    pub active: bool,
 }
 
 /// How hard the model is asked to think. Sent only when the service itself listed the level for
-/// the model in use (see `AiModel::efforts`): Anthropic as `output_config.effort`, an
-/// OpenAI-compatible service as `reasoning_effort` (OpenRouter: `reasoning.effort`). A level the
-/// service never named for that address and model is kept and not sent.
+/// the model in use (see `AiModel::efforts`), as `reasoning_effort` (OpenRouter:
+/// `reasoning.effort`). A level the service never named for that address and model is kept and
+/// not sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiEffort {
     /// Nothing is sent: the model's own default.
     #[default]
     Default,
-    /// Thinking switched off (`none`); only some OpenAI-compatible services list it.
+    /// Thinking switched off (`none`); only some services list it.
     Off,
-    /// Some OpenAI-compatible services only.
+    /// Some services only.
     Minimal,
     Low,
     Medium,
@@ -509,7 +519,7 @@ pub struct AiModel {
     /// What the user reads; the id when the service gives no other name.
     pub name: String,
     /// The effort levels the model takes, lowest first, without `Default`, as the service itself
-    /// listed them (Anthropic's `capabilities.effort`, OpenRouter's `reasoning.supported_efforts`).
+    /// listed them (OpenRouter's `reasoning.supported_efforts`).
     /// Empty when the model takes none or the service does not say; nothing is then sent.
     pub efforts: Vec<AiEffort>,
 }
@@ -518,26 +528,27 @@ pub struct AiModel {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct AiModelList {
     pub models: Vec<AiModel>,
-    /// The service was asked and answered. False: this is the built-in list (Anthropic only),
-    /// because there is no key yet or the service could not be asked.
-    pub from_service: bool,
 }
 
-/// How the AI assistant is set up: the service in use, and what is allowed. Each kind of
-/// service (`provider`) keeps its own address, model, effort, key and consent, so switching to
-/// the other and back loses nothing. The key is not in here: it lives in the secret store and
-/// never leaves the core.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+/// How the AI assistant is set up: the service in use, and what is allowed. The user keeps a list
+/// of services (`services`); each keeps its own address, model, effort, key and consent, so
+/// switching to another and back loses nothing. The fields from `service_id` to
+/// `tools_unsupported` are those of one service: the one in use, or the one asked for with
+/// `ai_service`. The key is not in here: it lives in the secret store and never leaves the core.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct AiSettings {
     /// The assistant as a whole. Off until the user sets it up; nothing is ever sent while off.
     pub enabled: bool,
-    pub provider: AiProvider,
+    /// The service these fields are of. Empty for a service that is not stored yet: saving it
+    /// adds it to the list.
+    pub service_id: String,
+    /// Its name. A save with an empty name names it after its address.
+    pub service_name: String,
     /// The service's address up to and including the version part, e.g.
-    /// `https://api.openai.com/v1`, `https://api.anthropic.com/v1`, `http://192.168.1.20:11434/v1`.
+    /// `https://api.openai.com/v1`, `http://192.168.1.20:11434/v1`.
     pub base_url: String,
     pub model: String,
     /// See [`AiEffort`]. `Default` when nothing was chosen.
-    #[serde(default)]
     pub effort: AiEffort,
     /// A key is stored for this service.
     pub has_key: bool,
@@ -548,34 +559,29 @@ pub struct AiSettings {
     pub allow_drafts: bool,
     pub allow_rewrites: bool,
     /// Reply ideas for a message.
-    #[serde(default)]
     pub allow_ideas: bool,
     /// Finding to-dos and dates in a message or conversation.
-    #[serde(default)]
     pub allow_extract: bool,
     /// Explaining a message or a piece of text.
-    #[serde(default)]
     pub allow_explain: bool,
     /// The chat, whose model itself chooses which mail, folders and calendar entries it reads.
-    #[serde(default)]
     pub allow_chat: bool,
     /// The user agreed that the chat sends what it looks up to exactly this service and model. Like
     /// `has_key` this is an answer only: `set_ai_settings` ignores what the caller puts here. Set by
     /// `ai_chat_consent`, cleared by the core with `consented` (address or model change).
-    #[serde(default)]
     pub chat_consented: bool,
     /// What the chat may do about changes. See [`AiActionMode`].
-    #[serde(default)]
     pub actions: AiActionMode,
     /// The chat found that this model takes no tools (function calling). An answer only, like
     /// `has_key`: `set_ai_settings` ignores it. Kept while the address and model stay the same.
-    #[serde(default)]
     pub tools_unsupported: bool,
     /// The user's own instructions to the assistant ("Your instructions"), per account and shared
-    /// by both services: sent as an extra system text after the app's own with every request.
+    /// by every service: sent as an extra system text after the app's own with every request.
     /// At most [`AI_INSTRUCTIONS_MAX`] characters. Never in a log or an error.
-    #[serde(default)]
     pub instructions: String,
+    /// Every service the user set up, in the order they were added, the one in use marked. An
+    /// answer only: `set_ai_settings` ignores it.
+    pub services: Vec<AiService>,
 }
 
 /// The longest the assistant instructions are (in characters).
@@ -844,7 +850,6 @@ pub struct AiChatSummary {
     pub title: String,
     /// Unix seconds of its last message.
     pub updated_at: i64,
-    pub provider: AiProvider,
     /// The service it was last held with (`host` or `host:port`) and the model.
     pub service: String,
     pub model: String,

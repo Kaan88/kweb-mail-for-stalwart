@@ -332,12 +332,18 @@ fn detail(kind: ReportKind, r: &Value) -> Option<ReportDetail> {
     })
 }
 
+/// Whether a list of `n` ids reached the most the app reads, so that the server may have more.
+fn list_was_cut(n: usize) -> bool {
+    n >= super::LIST_MAX
+}
+
 impl Connection {
     /// A page of the reports of one kind, the newest first.
     pub(crate) async fn report_page(&self, kind: ReportKind, offset: usize, limit: usize) -> Result<ReportPage> {
         let account = self.account_id();
         let what = "see the reports";
         let ids = self.all_ids(object(kind), &json!({ "accountId": account }), what).await?;
+        let truncated = list_was_cut(ids.len());
         // The order is made here: when each report came in.
         let mut dated: Vec<(Option<i64>, String)> = Vec::with_capacity(ids.len());
         for chunk in ids.chunks(self.get_batch()) {
@@ -354,7 +360,7 @@ impl Connection {
         let total = dated.len().min(u32::MAX as usize) as u32;
         let page: Vec<String> = dated.into_iter().skip(offset).take(limit.min(PAGE_MAX)).map(|(_, id)| id).collect();
         if page.is_empty() {
-            return Ok(ReportPage { reports: Vec::new(), total });
+            return Ok(ReportPage { reports: Vec::new(), total, truncated });
         }
         let args = json!({
             "accountId": account, "ids": page, "properties": ["from", "subject", "receivedAt", "report"],
@@ -364,7 +370,7 @@ impl Connection {
         let list = response(&responses, &method)?["list"].as_array().cloned().unwrap_or_default();
         let by_id: BTreeMap<&str, &Value> = list.iter().filter_map(|r| Some((r["id"].as_str()?, r))).collect();
         let reports = page.iter().filter_map(|id| by_id.get(id.as_str()).and_then(|r| row(kind, r))).collect();
-        Ok(ReportPage { reports, total })
+        Ok(ReportPage { reports, total, truncated })
     }
 
     pub(crate) async fn report_detail(&self, kind: ReportKind, id: &str) -> Result<ReportDetail> {
@@ -390,6 +396,12 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_list_that_reached_the_most_read_is_said_to_be_cut() {
+        assert!(!super::list_was_cut(super::super::LIST_MAX - 1));
+        assert!(super::list_was_cut(super::super::LIST_MAX));
+    }
+
     use super::*;
 
     #[test]

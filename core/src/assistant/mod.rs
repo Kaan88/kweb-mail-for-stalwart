@@ -8,7 +8,7 @@
 //! sent and in what words, [`provider`] and [`sse`] speak to the service, [`insights`] reads the
 //! stage 2 answers. [`wire`] is what the provider and the chat loop pass each other, [`chat`] is
 //! the loop, [`tools`] what it may read and [`changes`] what a suggestion does once the user
-//! approves it. This file keeps the settings in the cache and the key in the host's secret store,
+//! approves it. This file keeps the settings in the cache and the keys in the host's secret store,
 //! and guards the one task that may run at a time.
 
 pub mod catchup;
@@ -36,59 +36,108 @@ use std::{
 use tokio::sync::Notify;
 
 use crate::{
-    model::{AiModelList, AiProvider, AiSettings, AiTask},
+    model::{AiModelList, AiSettings, AiTask},
     secrets::SecretStore,
     store::Store,
     Error, Result,
 };
 use provider::Endpoint;
-use settings::{key_name, Levels, Profile, Stored, KEY_NAMES, LEGACY_KEY_NAME, SETTINGS_KEY};
+use settings::{
+    all_key_names, key_name, Levels, Moved, Profile, Stored, ANTHROPIC_KEY_NAME, FIRST_ID, LEGACY_KEY_NAME,
+    MAX_SERVICES, SETTINGS_KEY,
+};
 
-/// The settings as stored, with the service in use and its `has_key` read from the secret
+/// Held across every read-to-write of the stored settings (save, remove, reset, consent, levels,
+/// tools note), so that a background write of an older copy never replaces a user's Save. One lock
+/// for all accounts: these are short local calls, and nothing in them waits for the network.
+static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_settings() -> std::sync::MutexGuard<'static, ()> {
+    SETTINGS_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The settings as stored, with the service in use and every `has_key` read from the secret
 /// store. A stored value that cannot be read is the same as nothing stored: the assistant is
 /// off and nothing is agreed to.
 pub fn load(store: &Store, secrets: &dyn SecretStore, account_id: &str) -> Result<AiSettings> {
     let stored = read(store, secrets, account_id)?;
-    view(&stored, stored.provider, secrets)
+    view(&stored, &stored.active, secrets)
 }
 
-/// What [`load`] would give if `provider` were the one in use. Changes nothing.
-pub fn service(store: &Store, secrets: &dyn SecretStore, account_id: &str, provider: AiProvider) -> Result<AiSettings> {
-    view(&read(store, secrets, account_id)?, provider, secrets)
+/// What [`load`] would give if the service `service_id` were the one in use; an empty id gives a
+/// new, empty service (with the shared switches as they are), for the screen to fill in. Changes
+/// nothing. An id that names no service is `Error::Invalid`.
+pub fn service(store: &Store, secrets: &dyn SecretStore, account_id: &str, service_id: &str) -> Result<AiSettings> {
+    let stored = read(store, secrets, account_id)?;
+    if !service_id.is_empty() && stored.profile(service_id).is_none() {
+        return Err(no_such_service());
+    }
+    view(&stored, service_id, secrets)
 }
 
-fn view(stored: &Stored, provider: AiProvider, secrets: &dyn SecretStore) -> Result<AiSettings> {
-    let mut s = stored.view(provider);
-    s.has_key = stored_key(secrets, provider)?.is_some();
+fn no_such_service() -> Error {
+    Error::invalid("there is no such service; it may have been removed")
+}
+
+fn view(stored: &Stored, service_id: &str, secrets: &dyn SecretStore) -> Result<AiSettings> {
+    let mut s = stored.view(service_id);
+    s.has_key = !s.service_id.is_empty() && stored_key(secrets, &s.service_id)?.is_some();
+    for entry in &mut s.services {
+        entry.has_key = stored_key(secrets, &entry.id)?.is_some();
+    }
     Ok(s)
 }
 
-/// The stored settings. A key that stage 1 left under its one name is moved to the name of its
-/// service first.
+fn write(store: &Store, account_id: &str, stored: &Stored) -> Result<()> {
+    let json = serde_json::to_string(stored).map_err(|e| Error::store(format!("settings: {e}")))?;
+    store.kv_set(account_id, SETTINGS_KEY, &json)
+}
+
+/// The stored settings. Settings of an older form are made the new one first, and so are the
+/// keys: stage 1's one key goes to the service it belonged to (unless that has one), the key of
+/// the Anthropic service that is gone is removed, and so is a key no stored service owns. Then the
+/// new form is written, so this happens once.
 fn read(store: &Store, secrets: &dyn SecretStore, account_id: &str) -> Result<Stored> {
     let raw = store.kv_get(account_id, SETTINGS_KEY)?;
-    let (stored, old_provider) = raw.as_deref().and_then(settings::parse).unwrap_or_default();
-    move_old_key(secrets, old_provider)?;
+    let parsed = raw.as_deref().and_then(settings::parse);
+    let stored_before = parsed.is_some();
+    let (stored, moved) = parsed.unwrap_or((Stored::default(), Moved { old_form: true, legacy_key_is_first: false }));
+    move_old_key(secrets, moved.legacy_key_is_first)?;
+    if moved.old_form {
+        drop_key(secrets, ANTHROPIC_KEY_NAME)?;
+        if stored.profile(FIRST_ID).is_none() {
+            drop_key(secrets, &key_name(FIRST_ID))?;
+        }
+        if stored_before {
+            write(store, account_id, &stored)?;
+        }
+    }
     Ok(stored)
 }
 
-/// Stage 1 had one key, under one name, for the one service it stored. It goes to that
-/// service's name (unless that service already has a key), and the old name is removed. When
-/// nothing says which service it was for, it is removed and not used.
-fn move_old_key(secrets: &dyn SecretStore, old_provider: Option<AiProvider>) -> Result<()> {
+/// Removes the key under `name`, when there is one (a look first: most of the time there is none).
+fn drop_key(secrets: &dyn SecretStore, name: &str) -> Result<()> {
+    if secrets.get(name.into()).map_err(|_| key_store_error())?.is_some() {
+        secrets.delete(name.into()).map_err(|_| key_store_error())?;
+    }
+    Ok(())
+}
+
+/// Stage 1 had one key, under one name, for the one service it stored. It goes to the first
+/// service (unless that already has a key) when it was that service's, and the old name is
+/// removed. When nothing says which service it was for, it is removed and not used.
+fn move_old_key(secrets: &dyn SecretStore, belongs_to_first: bool) -> Result<()> {
     let Some(old) = secrets.get(LEGACY_KEY_NAME.into()).map_err(|_| key_store_error())? else { return Ok(()) };
-    if let Some(provider) = old_provider.filter(|_| !old.is_empty()) {
-        if stored_key(secrets, provider)?.is_none() {
-            secrets.set(key_name(provider).into(), old).map_err(|_| key_store_error())?;
-        }
+    if belongs_to_first && !old.is_empty() && stored_key(secrets, FIRST_ID)?.is_none() {
+        secrets.set(key_name(FIRST_ID), old).map_err(|_| key_store_error())?;
     }
     secrets.delete(LEGACY_KEY_NAME.into()).map_err(|_| key_store_error())
 }
 
-/// Checks and stores `new` as the settings of the service `new.provider`, which becomes the one
-/// in use, and changes that service's key as `key` says (`None` keeps it, a blank text removes
-/// it, anything else replaces it). The other service's profile, key and consent are never
-/// touched. Nothing is stored when something is wrong.
+/// Checks and stores `new` as the settings of the service `new.service_id` (an empty id adds a
+/// new service), which becomes the one in use, and changes that service's key as `key` says
+/// (`None` keeps it, a blank text removes it, anything else replaces it). Every other service's
+/// settings, key and consent are never touched. Nothing is stored when something is wrong.
 ///
 /// A change of this service's address or model clears its `consented` (the host asks again and
 /// saves once more with the same values), and a key that is kept is dropped when the scheme,
@@ -97,6 +146,8 @@ fn move_old_key(secrets: &dyn SecretStore, old_provider: Option<AiProvider>) -> 
 /// The yes for the chat is never taken from `new.chat_consented`: it stays only while it was
 /// stored and the first yes survived this save, so a new address or model, or a withdrawn yes,
 /// clears it too. Only [`chat_consent`] gives it.
+///
+/// A new service with no address is not added: only the shared switches are stored.
 pub fn save(
     store: &Store,
     secrets: &dyn SecretStore,
@@ -104,20 +155,18 @@ pub fn save(
     new: AiSettings,
     key: Option<String>,
 ) -> Result<AiSettings> {
+    let _guard = lock_settings();
     let mut stored = read(store, secrets, account_id)?;
-    let provider = new.provider;
     let mut new = settings::normalise(new)?;
-    let before = stored.profile(provider).clone();
-    new.consented = settings::consent_after(&before, &new);
-    let key = match key.map(|k| k.trim().to_string()) {
-        None if !settings::same_origin(&before.base_url, &new.base_url) => Some(String::new()),
-        key => key,
-    };
+    let adds = new.service_id.is_empty();
+    if !adds && stored.profile(&new.service_id).is_none() {
+        return Err(no_such_service());
+    }
+    let key = key.map(|k| k.trim().to_string());
     if let Some(k) = &key {
         settings::check_key(k)?;
     }
     stored.enabled = new.enabled;
-    stored.provider = provider;
     stored.allow_summaries = new.allow_summaries;
     stored.allow_drafts = new.allow_drafts;
     stored.allow_rewrites = new.allow_rewrites;
@@ -127,8 +176,32 @@ pub fn save(
     stored.allow_chat = new.allow_chat;
     stored.actions = new.actions;
     stored.instructions = new.instructions.clone();
-    let (base_url, model) = (new.base_url.clone(), new.model.clone());
-    *stored.profile_mut(provider) = Profile {
+    if adds && new.base_url.is_empty() {
+        write(store, account_id, &stored)?;
+        return load(store, secrets, account_id);
+    }
+    let id = match adds {
+        true => stored.new_id().ok_or_else(|| {
+            Error::invalid(format!("there are already {MAX_SERVICES} services; remove one before adding another"))
+        })?,
+        false => new.service_id.clone(),
+    };
+    let before = stored.profile(&id).cloned().unwrap_or_default();
+    new.consented = settings::consent_after(&before, &new);
+    // A key kept across a move to another scheme, host or port would go where it was not entered
+    // for, so it goes. A new service has no key yet (one of a removed service with its id is gone too).
+    let key = match key {
+        None if adds || !settings::same_origin(&before.base_url, &new.base_url) => Some(String::new()),
+        key => key,
+    };
+    let name = match new.service_name.is_empty() {
+        true => settings::default_name(&new.base_url),
+        false => new.service_name.clone(),
+    };
+    let same_service = (before.base_url.as_str(), before.model.as_str()) == (new.base_url.as_str(), new.model.as_str());
+    let profile = Profile {
+        id: id.clone(),
+        name,
         base_url: new.base_url,
         model: new.model,
         effort: new.effort,
@@ -136,68 +209,90 @@ pub fn save(
         // Never taken from the caller: the yes for the chat lives only as long as the first one.
         chat_consented: before.chat_consented && new.consented,
         // Only a chat finds this out; it holds for this address and model and no other.
-        tools_unsupported: before.tools_unsupported
-            && (before.base_url.as_str(), before.model.as_str()) == (base_url.as_str(), model.as_str()),
+        tools_unsupported: before.tools_unsupported && same_service,
         // What the service listed; it says for which address, so a new one simply finds nothing.
         levels: before.levels,
     };
-    let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
+    match stored.profile_mut(&id) {
+        Some(p) => *p = profile,
+        None => stored.services.push(profile),
+    }
+    stored.active = id.clone();
     match key {
-        Some(k) if k.is_empty() => secrets.delete(key_name(provider).into()).map_err(|_| key_store_error())?,
-        Some(k) => secrets.set(key_name(provider).into(), k).map_err(|_| key_store_error())?,
+        Some(k) if k.is_empty() => drop_key(secrets, &key_name(&id))?,
+        Some(k) => secrets.set(key_name(&id), k).map_err(|_| key_store_error())?,
         None => {}
     }
-    store.kv_set(account_id, SETTINGS_KEY, &json)?;
+    write(store, account_id, &stored)?;
     load(store, secrets, account_id)
 }
 
-/// Keeps the effort levels of `list`, which the service `provider` at `base_url` just gave, so that
-/// an effort is sent only where the service named it. A built-in list (the service was not asked
-/// or could not answer) changes nothing. Local; nothing else of the list is kept.
+/// Removes the service `service_id`, its key first (when that fails nothing else changes). When it
+/// was the one in use, the first that is left becomes the one in use, with its own consent as it
+/// was stored (none when the user never agreed to it); with none left there is no service in use.
+/// Local: sends nothing.
+pub fn remove(store: &Store, secrets: &dyn SecretStore, account_id: &str, service_id: &str) -> Result<AiSettings> {
+    let _guard = lock_settings();
+    let mut stored = read(store, secrets, account_id)?;
+    if stored.profile(service_id).is_none() {
+        return Err(no_such_service());
+    }
+    secrets.delete(key_name(service_id)).map_err(|_| key_store_error())?;
+    stored.services.retain(|p| p.id != service_id);
+    if stored.active == service_id {
+        stored.active = stored.services.first().map(|p| p.id.clone()).unwrap_or_default();
+    }
+    write(store, account_id, &stored)?;
+    load(store, secrets, account_id)
+}
+
+/// Keeps the effort levels of `list`, which the service `service_id` at `base_url` just gave, so
+/// that an effort is sent only where the service named it. Local; nothing else of the list is kept.
+/// A service that is not stored yet keeps nothing (saving reads the list again).
 pub fn remember_levels(
     store: &Store,
     secrets: &dyn SecretStore,
     account_id: &str,
-    provider: AiProvider,
+    service_id: &str,
     base_url: &str,
     list: &AiModelList,
 ) -> Result<()> {
-    if !list.from_service {
-        return Ok(());
-    }
+    let _guard = lock_settings();
     let mut stored = read(store, secrets, account_id)?;
     let levels = Levels::of(base_url, list);
+    let Some(profile) = stored.profile_mut(service_id) else { return Ok(()) };
     // A list for an address typed but not saved must not replace the saved address's levels: the
     // saved service would stop getting its effort. Saving reads the list again for the new address.
-    let saved = stored.profile(provider).base_url.trim().trim_end_matches('/');
+    let saved = profile.base_url.trim().trim_end_matches('/');
     if !saved.is_empty() && saved != levels.base_url {
         return Ok(());
     }
-    let before = &stored.profile(provider).levels;
+    let before = &profile.levels;
     if *before == levels || (before.models.is_empty() && levels.models.is_empty()) {
         return Ok(());
     }
-    stored.profile_mut(provider).levels = levels;
-    let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
-    store.kv_set(account_id, SETTINGS_KEY, &json)
+    profile.levels = levels;
+    write(store, account_id, &stored)
 }
 
 /// Puts the account's assistant settings back to how it is before the user has done anything
-/// (off, nothing agreed to), and removes every stored key, the stage 1 one included. The keys go
-/// first: when one cannot be removed nothing else changes and the error says so, so the screen
-/// never shows settings that look reset while a key is still stored. Local: sends nothing, and
-/// no key is read.
+/// (off, no service, nothing agreed to), and removes every stored key, the older ones included.
+/// The keys go first: when one cannot be removed nothing else changes and the error says so, so
+/// the screen never shows settings that look reset while a key is still stored. Local: sends
+/// nothing, and no key is read.
 pub fn reset(store: &Store, secrets: &dyn SecretStore, account_id: &str) -> Result<AiSettings> {
+    let _guard = lock_settings();
     forget_key(secrets)?;
     store.kv_delete(account_id, SETTINGS_KEY)?;
     load(store, secrets, account_id)
 }
 
-/// Removes every key from the secret store (sign-out), the one stage 1 used included.
+/// Removes every key of the assistant from the secret store (sign-out): every name a service's
+/// key can have and the older names, whatever the settings say.
 pub fn forget_key(secrets: &dyn SecretStore) -> Result<()> {
     let mut failed = false;
-    for name in KEY_NAMES.iter().chain([&LEGACY_KEY_NAME]) {
-        failed |= secrets.delete((*name).into()).is_err();
+    for name in all_key_names() {
+        failed |= secrets.delete(name).is_err();
     }
     if failed {
         Err(key_store_error())
@@ -206,14 +301,17 @@ pub fn forget_key(secrets: &dyn SecretStore) -> Result<()> {
     }
 }
 
-fn stored_key(secrets: &dyn SecretStore, provider: AiProvider) -> Result<Option<String>> {
-    Ok(secrets.get(key_name(provider).into()).map_err(|_| key_store_error())?.filter(|k| !k.is_empty()))
+fn stored_key(secrets: &dyn SecretStore, service_id: &str) -> Result<Option<String>> {
+    if service_id.is_empty() {
+        return Ok(None);
+    }
+    Ok(secrets.get(key_name(service_id)).map_err(|_| key_store_error())?.filter(|k| !k.is_empty()))
 }
 
 /// The key to ask a service for its models with. A key the user just typed is used as given
-/// (a blank one means none). Otherwise the stored key of that provider, and only when the
-/// address has the scheme, host and port the stored profile has: a stored key is never sent
-/// to an address it was not entered for.
+/// (a blank one means none). Otherwise the stored key of the service `asked.service_id`, and
+/// only when the address has the scheme, host and port stored for that service: a stored key is
+/// never sent to an address it was not entered for.
 pub fn models_key(
     store: &Store,
     secrets: &dyn SecretStore,
@@ -227,10 +325,11 @@ pub fn models_key(
         return Ok(Some(typed.to_string()).filter(|k| !k.is_empty()));
     }
     let stored = read(store, secrets, account_id)?;
-    if !settings::same_origin(&stored.profile(asked.provider).base_url, &asked.base_url) {
+    let Some(profile) = stored.profile(&asked.service_id) else { return Ok(None) };
+    if !settings::same_origin(&profile.base_url, &asked.base_url) {
         return Ok(None);
     }
-    stored_key(secrets, asked.provider)
+    stored_key(secrets, &profile.id)
 }
 
 fn key_store_error() -> Error {
@@ -295,23 +394,23 @@ pub fn check_chat(s: &AiSettings) -> Result<()> {
 /// settings. Giving it needs `consented` (else Invalid "you have not yet agreed to send mail to
 /// this service"). Only this function sets `Profile::chat_consented`; a save never does. Local.
 pub fn chat_consent(store: &Store, secrets: &dyn SecretStore, account_id: &str, agree: bool) -> Result<AiSettings> {
+    let _guard = lock_settings();
     let mut stored = read(store, secrets, account_id)?;
-    let provider = stored.provider;
-    let profile = stored.profile_mut(provider);
-    if agree && !profile.consented {
+    let active = stored.active.clone();
+    let consented = stored.profile(&active).is_some_and(|p| p.consented);
+    if agree && !consented {
         return Err(Error::invalid("you have not yet agreed to send mail to this service"));
     }
-    if profile.chat_consented != agree {
+    if let Some(profile) = stored.profile_mut(&active).filter(|p| p.chat_consented != agree) {
         profile.chat_consented = agree;
-        let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
-        store.kv_set(account_id, SETTINGS_KEY, &json)?;
+        write(store, account_id, &stored)?;
     }
-    view(&stored, provider, secrets)
+    view(&stored, &active, secrets)
 }
 
-/// Remembers (`unsupported`) or forgets that the model of the service `provider` takes no tools, for
-/// the address and model the chat was held with. Nothing changes when the profile has moved on to
-/// another address or model meanwhile. Local.
+/// Remembers (`unsupported`) or forgets that the model of the service the chat was held with takes
+/// no tools, for that address and model. Nothing changes when the service has moved on to another
+/// address or model meanwhile, or is gone. Local.
 pub fn note_tools(
     store: &Store,
     secrets: &dyn SecretStore,
@@ -319,26 +418,25 @@ pub fn note_tools(
     origin: &chat::Origin,
     unsupported: bool,
 ) -> Result<()> {
+    let _guard = lock_settings();
     let mut stored = read(store, secrets, account_id)?;
-    let profile = stored.profile_mut(origin.provider);
+    let Some(profile) = stored.profile_mut(&origin.service_id) else { return Ok(()) };
     if profile.base_url != origin.base_url || profile.model != origin.model || profile.tools_unsupported == unsupported
     {
         return Ok(());
     }
     profile.tools_unsupported = unsupported;
-    let json = serde_json::to_string(&stored).map_err(|e| Error::store(format!("settings: {e}")))?;
-    store.kv_set(account_id, SETTINGS_KEY, &json)
+    write(store, account_id, &stored)
 }
 
-/// Where requests go: the settings, and the key if there is one.
+/// Where requests go: the settings, and the key of their service if there is one.
 pub fn endpoint(s: &AiSettings, secrets: &dyn SecretStore) -> Result<Endpoint> {
     settings::check_base_url(&s.base_url)?;
     Ok(Endpoint {
-        provider: s.provider,
         base_url: s.base_url.clone(),
         model: s.model.clone(),
         effort: s.effort,
-        key: stored_key(secrets, s.provider)?,
+        key: stored_key(secrets, &s.service_id)?,
     })
 }
 
@@ -455,10 +553,10 @@ mod tests {
         (store, MemorySecrets::default())
     }
 
+    /// A new service, on and agreed to (as the caller says; the core decides).
     fn on() -> AiSettings {
         AiSettings {
             enabled: true,
-            provider: AiProvider::Anthropic,
             base_url: "https://api.example.com/v1".into(),
             model: "m".into(),
             consented: true,
@@ -466,68 +564,85 @@ mod tests {
         }
     }
 
+    /// Another new service.
     fn other() -> AiSettings {
-        AiSettings {
-            provider: AiProvider::OpenAiCompatible,
-            base_url: "https://llm.example.org/v1".into(),
-            model: "o".into(),
-            effort: AiEffort::High,
-            ..on()
-        }
+        AiSettings { base_url: "https://llm.example.org/v1".into(), model: "o".into(), effort: AiEffort::High, ..on() }
     }
 
     fn key(secrets: &MemorySecrets, name: &str) -> Option<String> {
         secrets.get(name.into()).unwrap()
     }
 
-    /// Saves twice, the second call being the grant.
+    /// Saves twice, the second call (with the id the first one gave) being the grant.
     fn agreed(store: &Store, secrets: &MemorySecrets, s: AiSettings, k: Option<String>) -> AiSettings {
-        save(store, secrets, "a", s.clone(), k).unwrap();
-        save(store, secrets, "a", s, None).unwrap()
+        let first = save(store, secrets, "a", s.clone(), k).unwrap();
+        save(store, secrets, "a", AiSettings { service_id: first.service_id, ..s }, None).unwrap()
     }
 
-    fn listed(model: &str, efforts: &[AiEffort], from_service: bool) -> AiModelList {
-        let models = vec![crate::model::AiModel { id: model.into(), name: model.into(), efforts: efforts.to_vec() }];
-        AiModelList { models, from_service }
+    /// `s` as the stored service `id`.
+    fn as_service(s: AiSettings, id: &str) -> AiSettings {
+        AiSettings { service_id: id.into(), ..s }
+    }
+
+    fn listed(model: &str, efforts: &[AiEffort]) -> AiModelList {
+        AiModelList {
+            models: vec![crate::model::AiModel { id: model.into(), name: model.into(), efforts: efforts.to_vec() }],
+        }
     }
 
     #[test]
     fn levels_from_the_service_survive_saves_and_go_with_a_reset() {
         let (store, secrets) = rig();
         let high = AiSettings { effort: AiEffort::High, ..other() };
-        assert_eq!(agreed(&store, &secrets, high.clone(), None).effort, AiEffort::Default);
-        // A built-in list is no word of the service.
-        let p = AiProvider::OpenAiCompatible;
-        remember_levels(&store, &secrets, "a", p, &high.base_url, &listed("o", &[AiEffort::High], false)).unwrap();
+        let first = agreed(&store, &secrets, high.clone(), None);
+        assert_eq!(first.effort, AiEffort::Default);
+        let id = first.service_id.clone();
+        let high = as_service(high, &id);
+        // A service not stored yet keeps nothing.
+        remember_levels(&store, &secrets, "a", "", &high.base_url, &listed("o", &[AiEffort::High])).unwrap();
+        remember_levels(&store, &secrets, "a", "s9", &high.base_url, &listed("o", &[AiEffort::High])).unwrap();
         assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::Default);
         // The service's own list: the stored level is shown and sent from now on, its consent untouched.
-        remember_levels(&store, &secrets, "a", p, &high.base_url, &listed("o", &[AiEffort::High], true)).unwrap();
+        remember_levels(&store, &secrets, "a", &id, &high.base_url, &listed("o", &[AiEffort::High])).unwrap();
         let now = load(&store, &secrets, "a").unwrap();
         assert!(now.effort == AiEffort::High && now.consented);
         assert_eq!(endpoint(&now, &secrets).unwrap().effort, AiEffort::High);
-        // A save keeps the levels; the other service has none of them.
+        // A save keeps the levels; another service has none of them.
         assert_eq!(save(&store, &secrets, "a", high.clone(), None).unwrap().effort, AiEffort::High);
-        let anthropic = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
-        assert_eq!(anthropic.effort, AiEffort::Default);
+        let second =
+            save(&store, &secrets, "a", AiSettings { effort: AiEffort::High, model: "o".into(), ..on() }, None)
+                .unwrap();
+        assert_eq!(second.effort, AiEffort::Default);
+        save(&store, &secrets, "a", high.clone(), None).unwrap();
         // A list for an address typed but not saved neither counts nor replaces the saved address's levels.
-        remember_levels(&store, &secrets, "a", p, "https://elsewhere.example/v1", &listed("o", &[], true)).unwrap();
+        remember_levels(&store, &secrets, "a", &id, "https://elsewhere.example/v1", &listed("o", &[])).unwrap();
         assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::High);
         let moved = AiSettings { base_url: "https://elsewhere.example/v1".into(), ..high.clone() };
         assert_eq!(save(&store, &secrets, "a", moved, None).unwrap().effort, AiEffort::Default);
-        remember_levels(
-            &store,
-            &secrets,
-            "a",
-            p,
-            "https://elsewhere.example/v1",
-            &listed("o", &[AiEffort::High], true),
-        )
-        .unwrap();
+        remember_levels(&store, &secrets, "a", &id, "https://elsewhere.example/v1", &listed("o", &[AiEffort::High]))
+            .unwrap();
         assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::High);
-        save(&store, &secrets, "a", high.clone(), None).unwrap();
         reset(&store, &secrets, "a").unwrap();
-        save(&store, &secrets, "a", high, None).unwrap();
-        assert_eq!(load(&store, &secrets, "a").unwrap().effort, AiEffort::Default);
+        let fresh = save(&store, &secrets, "a", AiSettings { effort: AiEffort::High, ..other() }, None).unwrap();
+        assert_eq!(fresh.effort, AiEffort::Default);
+    }
+
+    #[test]
+    fn a_write_of_the_settings_waits_while_another_read_to_write_is_going_on() {
+        let (store, secrets) = rig();
+        let guard = lock_settings();
+        let finished = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                save(&store, &secrets, "a", on(), None).unwrap();
+                finished.store(true, Ordering::SeqCst);
+            });
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            assert!(!finished.load(Ordering::SeqCst), "a save must wait for the lock");
+            drop(guard);
+        });
+        assert!(finished.load(Ordering::SeqCst));
+        assert!(load(&store, &secrets, "a").unwrap().enabled);
     }
 
     #[test]
@@ -542,18 +657,19 @@ mod tests {
     fn the_key_goes_to_the_secret_store_and_never_into_the_cache_a_debug_text_or_an_error() {
         let (store, secrets) = rig();
         let saved = save(&store, &secrets, "a", on(), Some(" sk-123 ".into())).unwrap();
-        assert!(saved.has_key);
-        assert_eq!(key(&secrets, ANTHROPIC).as_deref(), Some("sk-123"));
-        assert_eq!(key(&secrets, OPENAI), None);
+        assert!(saved.has_key && saved.services[0].has_key);
+        assert_eq!(saved.service_id, "s1");
+        assert_eq!(key(&secrets, "ai_key_s1").as_deref(), Some("sk-123"));
         let json = store.kv_get("a", SETTINGS_KEY).unwrap().unwrap();
         assert!(!json.contains("sk-123") && !json.contains("has_key"));
         assert!(!format!("{saved:?}").contains("sk-123"));
+        let again = as_service(on(), "s1");
         // None keeps it, a blank removes it.
-        assert!(save(&store, &secrets, "a", on(), None).unwrap().has_key);
-        assert!(!save(&store, &secrets, "a", on(), Some("  ".into())).unwrap().has_key);
-        assert_eq!(key(&secrets, ANTHROPIC), None);
+        assert!(save(&store, &secrets, "a", again.clone(), None).unwrap().has_key);
+        assert!(!save(&store, &secrets, "a", again.clone(), Some("  ".into())).unwrap().has_key);
+        assert_eq!(key(&secrets, "ai_key_s1"), None);
         // A refused key is not repeated.
-        let refused = save(&store, &secrets, "a", on(), Some("sk-bad key".into())).unwrap_err();
+        let refused = save(&store, &secrets, "a", again, Some("sk-bad key".into())).unwrap_err();
         assert!(!refused.to_string().contains("sk-bad"));
     }
 
@@ -561,71 +677,133 @@ mod tests {
     fn consent_is_granted_by_repeating_the_stored_values_and_cleared_by_a_change() {
         let (store, secrets) = rig();
         // A first setup never starts agreed, whatever the caller says.
-        assert!(!save(&store, &secrets, "a", on(), None).unwrap().consented);
+        let first = save(&store, &secrets, "a", on(), None).unwrap();
+        assert!(!first.consented);
+        let on = || as_service(on(), &first.service_id);
         // The second call repeats the stored values: that is the grant.
         assert!(save(&store, &secrets, "a", on(), None).unwrap().consented);
         // A value copied from the stored settings survives a save that changes nothing else...
-        let quiet = AiSettings { allow_drafts: false, effort: AiEffort::Max, ..on() };
-        assert!(save(&store, &secrets, "a", quiet, None).unwrap().consented);
+        let quiet = AiSettings { allow_drafts: false, effort: AiEffort::Max, service_name: "Renamed".into(), ..on() };
+        let after = save(&store, &secrets, "a", quiet, None).unwrap();
+        assert!(after.consented && after.service_name == "Renamed");
         // ...but not a change of the model or the address.
         for moved in [
             AiSettings { model: "m2".into(), ..on() },
             AiSettings { base_url: "https://other.example.com/v1".into(), ..on() },
         ] {
-            agreed(&store, &secrets, on(), None);
+            save(&store, &secrets, "a", on(), None).unwrap();
+            save(&store, &secrets, "a", on(), None).unwrap();
             assert!(!save(&store, &secrets, "a", moved, None).unwrap().consented);
         }
+        // An id that names no service is refused, and nothing is stored.
+        let stored = store.kv_get("a", SETTINGS_KEY).unwrap();
+        assert!(matches!(save(&store, &secrets, "a", as_service(on(), "s7"), None), Err(Error::Invalid { .. })));
+        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), stored);
     }
 
     #[test]
-    fn a_service_keeps_its_own_profile_key_and_consent() {
+    fn each_service_keeps_its_own_settings_key_and_consent() {
         let (store, secrets) = rig();
-        agreed(&store, &secrets, on(), Some("sk-a".into()));
-        let before = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
-        // Saving the other service changes nothing of the first.
+        let first = agreed(&store, &secrets, on(), Some("sk-a".into()));
+        let before = service(&store, &secrets, "a", &first.service_id).unwrap();
+        // Adding another one changes nothing of the first, and the new one is in use.
         let second = agreed(&store, &secrets, other(), Some("sk-o".into()));
+        assert_ne!(second.service_id, first.service_id);
         // The service never listed a level for this model, so none is shown (or sent).
         assert!(second.consented && second.has_key && second.effort == AiEffort::Default);
-        assert_eq!(load(&store, &secrets, "a").unwrap().provider, AiProvider::OpenAiCompatible);
-        let after = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
-        assert_eq!(after, AiSettings { provider: AiProvider::Anthropic, ..before.clone() });
+        let now = load(&store, &secrets, "a").unwrap();
+        assert_eq!(now.service_id, second.service_id);
+        assert_eq!(
+            now.services.iter().map(|s| (s.id.as_str(), s.active)).collect::<Vec<_>>(),
+            [("s1", false), ("s2", true)]
+        );
+        let after = service(&store, &secrets, "a", &first.service_id).unwrap();
+        assert_eq!(
+            AiSettings { services: Vec::new(), ..after.clone() },
+            AiSettings { services: Vec::new(), ..before.clone() }
+        );
         assert!(after.consented && after.has_key);
         assert_eq!(
-            (key(&secrets, ANTHROPIC).as_deref(), key(&secrets, OPENAI).as_deref()),
+            (key(&secrets, "ai_key_s1").as_deref(), key(&secrets, "ai_key_s2").as_deref()),
             (Some("sk-a"), Some("sk-o"))
         );
         // Changing the second one's model clears only its consent.
-        let moved = AiSettings { model: "o2".into(), ..other() };
+        let moved = AiSettings { model: "o2".into(), ..as_service(other(), &second.service_id) };
         assert!(!save(&store, &secrets, "a", moved, None).unwrap().consented);
-        assert!(service(&store, &secrets, "a", AiProvider::Anthropic).unwrap().consented);
-        // Switching back and forth with nothing changed keeps the consent of the first.
+        assert!(service(&store, &secrets, "a", &first.service_id).unwrap().consented);
+        // Switching back with nothing changed keeps the consent of the first.
         let back = save(&store, &secrets, "a", before.clone(), None).unwrap();
-        assert!(back.consented && back.has_key && back.provider == AiProvider::Anthropic);
-        assert!(!service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap().consented);
+        assert!(back.consented && back.has_key && back.service_id == first.service_id);
+        assert!(!service(&store, &secrets, "a", &second.service_id).unwrap().consented);
         // The shared switches are shared.
         let quiet = save(&store, &secrets, "a", AiSettings { allow_rewrites: false, ..before }, None).unwrap();
         assert!(!quiet.allow_rewrites);
-        assert!(!service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap().allow_rewrites);
+        assert!(!service(&store, &secrets, "a", &second.service_id).unwrap().allow_rewrites);
+        // An unknown id is refused; an empty one is a new, empty service.
+        assert!(matches!(service(&store, &secrets, "a", "s9"), Err(Error::Invalid { .. })));
+        let blank = service(&store, &secrets, "a", "").unwrap();
+        assert!(blank.service_id.is_empty() && blank.base_url.is_empty() && !blank.has_key && !blank.consented);
+        assert_eq!(blank.services.len(), 2);
     }
 
     #[test]
-    fn ai_service_changes_nothing_and_a_new_anthropic_profile_has_its_own_address() {
+    fn a_new_service_without_an_address_is_not_added_and_a_name_is_made_when_none_is_given() {
         let (store, secrets) = rig();
-        let fresh = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
-        assert_eq!(fresh.base_url, "https://api.anthropic.com/v1");
-        assert_eq!(
-            (fresh.provider, fresh.model.as_str(), fresh.consented, fresh.has_key),
-            (AiProvider::Anthropic, "", false, false)
-        );
-        assert_eq!(service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap().base_url, "");
-        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None);
-        assert_eq!(load(&store, &secrets, "a").unwrap(), settings::defaults());
+        let off = AiSettings { enabled: false, allow_chat: true, ..settings::defaults() };
+        let saved = save(&store, &secrets, "a", off, None).unwrap();
+        assert!(saved.services.is_empty() && saved.allow_chat && saved.service_id.is_empty());
+        let named = save(&store, &secrets, "a", on(), None).unwrap();
+        assert_eq!(named.service_name, "api.example.com");
+        let gemini = AiSettings { base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(), ..on() };
+        assert_eq!(save(&store, &secrets, "a", gemini, None).unwrap().service_name, "Google Gemini");
+        let own = AiSettings { service_name: " Work box ".into(), ..other() };
+        assert_eq!(save(&store, &secrets, "a", own, None).unwrap().service_name, "Work box");
+    }
+
+    #[test]
+    fn at_most_twenty_services_and_a_removed_ones_id_comes_back_without_its_key() {
+        let (store, secrets) = rig();
+        for n in 0..MAX_SERVICES {
+            let s = AiSettings { model: format!("m{n}"), ..on() };
+            save(&store, &secrets, "a", s, Some(format!("k{n}"))).unwrap();
+        }
+        let full = save(&store, &secrets, "a", on(), None).unwrap_err();
+        assert!(full.to_string().contains("20 services"));
+        let after = remove(&store, &secrets, "a", "s3").unwrap();
+        assert_eq!(after.services.len(), MAX_SERVICES - 1);
+        assert_eq!(key(&secrets, "ai_key_s3"), None);
+        let again = save(&store, &secrets, "a", on(), None).unwrap();
+        assert!(again.service_id == "s3" && !again.has_key);
+    }
+
+    #[test]
+    fn removing_a_service_drops_its_key_and_the_first_left_takes_over_with_its_own_consent() {
+        let (store, secrets) = rig();
+        let first = agreed(&store, &secrets, on(), Some("sk-a".into()));
+        let second = save(&store, &secrets, "a", other(), Some("sk-o".into())).unwrap();
+        assert!(!second.consented);
+        // Removing one that is not in use changes nothing else.
+        let kept = remove(&store, &secrets, "a", &first.service_id).unwrap();
+        assert_eq!(kept.service_id, second.service_id);
+        assert_eq!(key(&secrets, "ai_key_s1"), None);
+        assert_eq!(key(&secrets, "ai_key_s2").as_deref(), Some("sk-o"));
+        // Removing the one in use: the first left takes over, as it was stored.
+        let third = agreed(&store, &secrets, AiSettings { model: "x".into(), ..on() }, None);
+        assert!(third.consented);
+        let after = remove(&store, &secrets, "a", &third.service_id).unwrap();
+        assert!(after.service_id == second.service_id && !after.consented);
+        // The last one: no service in use, nothing sent.
+        let none = remove(&store, &secrets, "a", &second.service_id).unwrap();
+        assert!(none.service_id.is_empty() && none.services.is_empty() && !none.consented);
+        assert!(matches!(remove(&store, &secrets, "a", "s2"), Err(Error::Invalid { .. })));
+        assert!(endpoint(&none, &secrets).is_err());
     }
 
     #[test]
     fn a_kept_key_does_not_follow_a_change_of_address() {
         let (store, secrets) = rig();
-        save(&store, &secrets, "a", on(), Some("sk-1".into())).unwrap();
+        let id = save(&store, &secrets, "a", on(), Some("sk-1".into())).unwrap().service_id;
+        let on = || as_service(on(), &id);
         // The same host with another path or model keeps it.
         let path = AiSettings { base_url: "https://api.example.com/other".into(), model: "m2".into(), ..on() };
         assert!(save(&store, &secrets, "a", path, None).unwrap().has_key);
@@ -634,25 +812,34 @@ mod tests {
         for url in ["https://api.other.com/v1", "https://api.example.com:8443/v1", "http://127.0.0.1:1/v1"] {
             save(&store, &secrets, "a", on(), Some("sk-1".into())).unwrap();
             assert!(!save(&store, &secrets, "a", moved(url), None).unwrap().has_key, "{url}");
-            assert_eq!(key(&secrets, ANTHROPIC), None);
+            assert_eq!(key(&secrets, "ai_key_s1"), None);
         }
         save(&store, &secrets, "a", on(), Some("sk-1".into())).unwrap();
         let fresh = save(&store, &secrets, "a", moved("https://api.other.com/v1"), Some("sk-2".into())).unwrap();
         assert!(fresh.has_key);
-        assert_eq!(key(&secrets, ANTHROPIC).as_deref(), Some("sk-2"));
-        // Another service's key is not the one that goes.
-        save(&store, &secrets, "a", other(), Some("sk-o".into())).unwrap();
-        save(&store, &secrets, "a", AiSettings { base_url: "https://x.example/v1".into(), ..other() }, None).unwrap();
-        assert_eq!(key(&secrets, OPENAI), None);
-        assert_eq!(key(&secrets, ANTHROPIC).as_deref(), Some("sk-2"));
+        assert_eq!(key(&secrets, "ai_key_s1").as_deref(), Some("sk-2"));
+        // Another service's key is not the one that goes, and a new one has none.
+        let o = save(&store, &secrets, "a", other(), Some("sk-o".into())).unwrap().service_id;
+        save(
+            &store,
+            &secrets,
+            "a",
+            AiSettings { base_url: "https://x.example/v1".into(), ..as_service(other(), &o) },
+            None,
+        )
+        .unwrap();
+        assert_eq!(key(&secrets, &key_name(&o)), None);
+        assert_eq!(key(&secrets, "ai_key_s1").as_deref(), Some("sk-2"));
+        assert!(!save(&store, &secrets, "a", on(), None).unwrap().services.iter().any(|s| s.id == o && s.has_key));
     }
 
     #[test]
     fn a_refused_change_stores_nothing() {
         let (store, secrets) = rig();
-        save(&store, &secrets, "a", on(), Some("old".into())).unwrap();
-        save(&store, &secrets, "a", other(), Some("old-o".into())).unwrap();
+        let a = save(&store, &secrets, "a", on(), Some("old".into())).unwrap().service_id;
+        let o = save(&store, &secrets, "a", other(), Some("old-o".into())).unwrap().service_id;
         let stored = store.kv_get("a", SETTINGS_KEY).unwrap();
+        let on = || as_service(on(), &a);
         let bad = AiSettings { base_url: "http://api.example.com".into(), ..on() };
         assert!(matches!(save(&store, &secrets, "a", bad, Some("new".into())), Err(Error::Invalid { .. })));
         assert!(matches!(save(&store, &secrets, "a", on(), Some("bad key".into())), Err(Error::Invalid { .. })));
@@ -660,41 +847,80 @@ mod tests {
             save(&store, &secrets, "a", AiSettings { model: " ".into(), ..on() }, Some("new".into())),
             Err(Error::Invalid { .. })
         ));
-        assert_eq!(key(&secrets, ANTHROPIC).as_deref(), Some("old"));
-        assert_eq!(key(&secrets, OPENAI).as_deref(), Some("old-o"));
+        assert_eq!(key(&secrets, &key_name(&a)).as_deref(), Some("old"));
+        assert_eq!(key(&secrets, &key_name(&o)).as_deref(), Some("old-o"));
         assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), stored);
     }
 
     #[test]
-    fn stage_one_data_moves_to_the_provider_it_had_and_its_consent_survives() {
-        for (provider, name, flat_name) in [
-            (AiProvider::Anthropic, ANTHROPIC, "Anthropic"),
-            (AiProvider::OpenAiCompatible, OPENAI, "OpenAiCompatible"),
-        ] {
-            let (store, secrets) = rig();
-            let flat = format!(
-                r#"{{"enabled":true,"provider":"{flat_name}","base_url":"https://api.example.com/v1","model":"m",
-                "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":true,"allow_rewrites":true}}"#
-            );
-            store.kv_set("a", SETTINGS_KEY, &flat).unwrap();
-            secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
-            let loaded = load(&store, &secrets, "a").unwrap();
-            assert_eq!(loaded, AiSettings { has_key: true, provider, ..on() });
-            assert_eq!(key(&secrets, LEGACY_KEY_NAME), None);
-            assert_eq!(key(&secrets, name).as_deref(), Some("sk-old"));
-            let rest = if provider == AiProvider::Anthropic { OPENAI } else { ANTHROPIC };
-            assert_eq!(key(&secrets, rest), None);
-            // A save keeps the migrated profile and writes the new form.
-            let saved = save(&store, &secrets, "a", loaded.clone(), None).unwrap();
-            assert_eq!(saved, loaded);
-            let json = store.kv_get("a", SETTINGS_KEY).unwrap().unwrap();
-            assert_eq!(settings::parse(&json).map(|(_, old)| old), Some(None), "written in the new form");
-        }
+    fn stage_one_openai_data_becomes_the_first_service_and_keeps_its_key_and_consent() {
+        let (store, secrets) = rig();
+        let flat = r#"{"enabled":true,"provider":"OpenAiCompatible","base_url":"https://api.example.com/v1","model":"m",
+            "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":true,"allow_rewrites":true}"#;
+        store.kv_set("a", SETTINGS_KEY, flat).unwrap();
+        secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
+        secrets.set(ANTHROPIC.into(), "sk-anthropic".into()).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert!(loaded.enabled && loaded.consented && loaded.has_key);
+        assert_eq!(
+            (loaded.service_id.as_str(), loaded.base_url.as_str(), loaded.model.as_str()),
+            (FIRST_ID, "https://api.example.com/v1", "m")
+        );
+        assert_eq!(key(&secrets, LEGACY_KEY_NAME), None);
+        assert_eq!(key(&secrets, ANTHROPIC), None, "the Anthropic key goes");
+        assert_eq!(key(&secrets, OPENAI).as_deref(), Some("sk-old"));
+        // Written in the new form right away; a save keeps it as it was.
+        let json = store.kv_get("a", SETTINGS_KEY).unwrap().unwrap();
+        assert_eq!(settings::parse(&json).map(|(_, moved)| moved), Some(Moved::default()));
+        assert_eq!(save(&store, &secrets, "a", loaded.clone(), None).unwrap(), loaded);
         // An old key with nothing to say which service it was for is removed, not used.
         let (store, secrets) = rig();
         secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
         assert!(!load(&store, &secrets, "a").unwrap().has_key);
         assert_eq!(key(&secrets, LEGACY_KEY_NAME), None);
+        // A stage 1 Anthropic setup: no service, the assistant off, its key gone.
+        let (store, secrets) = rig();
+        store.kv_set("a", SETTINGS_KEY, &flat.replace("OpenAiCompatible", "Anthropic")).unwrap();
+        secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert!(!loaded.enabled && loaded.services.is_empty() && !loaded.has_key);
+        assert!(key(&secrets, LEGACY_KEY_NAME).is_none() && key(&secrets, OPENAI).is_none());
+    }
+
+    #[test]
+    fn round_two_settings_load_as_one_service_with_the_key_where_it_was() {
+        let old = r#"{"enabled":true,"provider":"OpenAiCompatible","allow_summaries":true,"allow_drafts":false,
+            "allow_rewrites":true,"allow_chat":true,"openai":{"base_url":"https://openrouter.ai/api/v1","model":"x/y",
+            "effort":"Default","consented":true,"chat_consented":true},
+            "anthropic":{"base_url":"https://api.anthropic.com/v1","model":"c","effort":"Default","consented":true}}"#;
+        let (store, secrets) = rig();
+        store.kv_set("a", SETTINGS_KEY, old).unwrap();
+        secrets.set(OPENAI.into(), "sk-or".into()).unwrap();
+        secrets.set(ANTHROPIC.into(), "sk-ant".into()).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert!(loaded.enabled && loaded.consented && loaded.chat_consented && loaded.has_key && !loaded.allow_drafts);
+        assert_eq!((loaded.service_id.as_str(), loaded.service_name.as_str()), (FIRST_ID, "OpenRouter"));
+        assert_eq!(loaded.services.len(), 1);
+        assert_eq!(key(&secrets, OPENAI).as_deref(), Some("sk-or"), "the key stays where it was");
+        assert_eq!(key(&secrets, ANTHROPIC), None);
+        assert_eq!(endpoint(&loaded, &secrets).unwrap().key.as_deref(), Some("sk-or"));
+        assert!(check_chat(&loaded).is_ok());
+        // Anthropic in use: the assistant is off until the user turns it on; the other service stays agreed.
+        let (store, secrets) = rig();
+        store
+            .kv_set("a", SETTINGS_KEY, &old.replace(r#""provider":"OpenAiCompatible""#, r#""provider":"Anthropic""#))
+            .unwrap();
+        secrets.set(ANTHROPIC.into(), "sk-ant".into()).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert!(!loaded.enabled && loaded.consented && loaded.service_id == FIRST_ID && !loaded.has_key);
+        assert_eq!(key(&secrets, ANTHROPIC), None);
+        // Only Anthropic was set up: nothing is left, and a key under the first service's name is not taken.
+        let (store, secrets) = rig();
+        store.kv_set("a", SETTINGS_KEY, r#"{"enabled":true,"provider":"Anthropic","openai":{"base_url":""},"anthropic":{"base_url":"https://api.anthropic.com/v1","model":"c","consented":true}}"#).unwrap();
+        secrets.set(OPENAI.into(), "stray".into()).unwrap();
+        let loaded = load(&store, &secrets, "a").unwrap();
+        assert!(!loaded.enabled && loaded.services.is_empty());
+        assert_eq!(key(&secrets, OPENAI), None);
     }
 
     #[test]
@@ -704,18 +930,15 @@ mod tests {
         agreed(&store, &secrets, AiSettings { allow_ideas: true, allow_chat: true, ..on() }, Some("sk-a".into()));
         chat_consent(&store, &secrets, "a", true).unwrap();
         secrets.set(LEGACY_KEY_NAME.into(), "sk-old".into()).unwrap();
+        secrets.set(OPENAI.into(), "sk-first".into()).unwrap();
         assert!(load(&store, &secrets, "a").unwrap().chat_consented);
 
         let after = reset(&store, &secrets, "a").unwrap();
         assert_eq!(after, settings::defaults());
-        for name in [OPENAI, ANTHROPIC, LEGACY_KEY_NAME] {
+        for name in [OPENAI, ANTHROPIC, LEGACY_KEY_NAME, "ai_key_s1", "ai_key_s2"] {
             assert_eq!(key(&secrets, name), None, "{name}");
         }
-        // Both services are back to empty, with no consent left on either.
-        for provider in [AiProvider::OpenAiCompatible, AiProvider::Anthropic] {
-            let s = service(&store, &secrets, "a", provider).unwrap();
-            assert!(!s.has_key && !s.consented && !s.chat_consented && s.model.is_empty(), "{provider:?}");
-        }
+        assert!(matches!(service(&store, &secrets, "a", "s1"), Err(Error::Invalid { .. })));
         assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None);
         // Doing it again changes nothing and is not an error.
         assert_eq!(reset(&store, &secrets, "a").unwrap(), settings::defaults());
@@ -724,17 +947,19 @@ mod tests {
     #[test]
     fn sign_out_removes_every_key() {
         let (_store, secrets) = rig();
-        for name in [OPENAI, ANTHROPIC, LEGACY_KEY_NAME] {
+        let names = [OPENAI, ANTHROPIC, LEGACY_KEY_NAME, "ai_key_s1", "ai_key_s20"];
+        for name in names {
             secrets.set(name.into(), "k".into()).unwrap();
         }
         forget_key(&secrets).unwrap();
-        assert!([OPENAI, ANTHROPIC, LEGACY_KEY_NAME].iter().all(|n| key(&secrets, n).is_none()));
+        assert!(names.iter().all(|n| key(&secrets, n).is_none()));
     }
 
     #[test]
     fn the_key_for_the_model_list_is_a_typed_one_or_the_stored_one_for_the_same_origin() {
         let (store, secrets) = rig();
-        agreed(&store, &secrets, on(), Some("sk-a".into()));
+        let id = agreed(&store, &secrets, on(), Some("sk-a".into())).service_id;
+        let on = || as_service(on(), &id);
         let ask = |s: AiSettings, typed: Option<&str>| {
             models_key(&store, &secrets, "a", &s, typed.map(String::from)).unwrap()
         };
@@ -744,8 +969,9 @@ mod tests {
         for url in ["https://elsewhere.example/v1", "http://api.example.com/v1", "https://api.example.com:8443/v1"] {
             assert_eq!(ask(AiSettings { base_url: url.into(), ..on() }, None), None, "{url}");
         }
-        // The other provider's key is not this one's.
-        assert_eq!(ask(AiSettings { provider: AiProvider::OpenAiCompatible, ..on() }, None), None);
+        // Another service's key, or none for a service not stored yet, is not this one's.
+        assert_eq!(ask(AiSettings { service_id: String::new(), ..on() }, None), None);
+        assert_eq!(ask(AiSettings { service_id: "s5".into(), ..on() }, None), None);
         // A typed key is used as given, wherever it goes; blank is none.
         let elsewhere = AiSettings { base_url: "https://elsewhere.example/v1".into(), ..on() };
         assert_eq!(ask(elsewhere.clone(), Some(" sk-t ")).as_deref(), Some("sk-t"));
@@ -753,6 +979,180 @@ mod tests {
         assert!(models_key(&store, &secrets, "a", &elsewhere, Some("sk bad".into())).is_err());
     }
 
+    /// The yes for the chat, for the service in use.
+    fn chat_yes(store: &Store, secrets: &MemorySecrets) -> AiSettings {
+        chat_consent(store, secrets, "a", true).unwrap()
+    }
+
+    fn said(result: Result<AiSettings>) -> String {
+        match result {
+            Err(Error::Invalid { msg }) => msg,
+            other => panic!("expected Invalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_new_switches_are_stored_shared_and_off_until_set() {
+        let (store, secrets) = rig();
+        let first = agreed(&store, &secrets, on(), None);
+        assert!(!first.allow_ideas && !first.allow_extract && !first.allow_explain && !first.allow_chat);
+        assert_eq!(first.actions, AiActionMode::AskFirst);
+        let wanted = AiSettings {
+            allow_ideas: true,
+            allow_extract: true,
+            allow_explain: true,
+            allow_chat: true,
+            actions: AiActionMode::Off,
+            ..first.clone()
+        };
+        let saved = save(&store, &secrets, "a", wanted.clone(), None).unwrap();
+        assert_eq!(saved, wanted, "switching them on changes nothing else, and keeps the consent");
+        assert_eq!(load(&store, &secrets, "a").unwrap(), wanted);
+        // Shared by every service.
+        let second = save(
+            &store,
+            &secrets,
+            "a",
+            AiSettings {
+                allow_ideas: true,
+                allow_extract: true,
+                allow_explain: true,
+                allow_chat: true,
+                actions: AiActionMode::Off,
+                ..other()
+            },
+            None,
+        )
+        .unwrap();
+        let there = service(&store, &secrets, "a", &first.service_id).unwrap();
+        assert!(there.allow_ideas && there.allow_extract && there.allow_explain && there.allow_chat);
+        assert_eq!(there.actions, AiActionMode::Off);
+        // Each is its own switch.
+        let one = save(
+            &store,
+            &secrets,
+            "a",
+            AiSettings { allow_extract: true, ..as_service(other(), &second.service_id) },
+            None,
+        )
+        .unwrap();
+        assert!(one.allow_extract && !one.allow_ideas && !one.allow_explain && !one.allow_chat);
+        assert_eq!(one.actions, AiActionMode::AskFirst);
+    }
+
+    #[test]
+    fn the_chat_yes_needs_the_first_yes_and_only_its_own_call_gives_it() {
+        let (store, secrets) = rig();
+        // Nothing set up, and set up but not agreed: refused with the stage 1 sentence.
+        let sentence = "you have not yet agreed to send mail to this service";
+        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
+        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None, "a refusal stores nothing");
+        let id = save(&store, &secrets, "a", on(), None).unwrap().service_id;
+        let on = || as_service(on(), &id);
+        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
+        // A save that says yes for the chat does not give it, before or after the first yes.
+        let claims = AiSettings { chat_consented: true, allow_chat: true, ..on() };
+        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
+        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
+        let waiting = load(&store, &secrets, "a").unwrap();
+        assert!(waiting.consented && waiting.allow_chat);
+        assert_eq!(
+            check_chat(&waiting).unwrap_err().to_string().split(": ").last(),
+            Some("you have not yet agreed to let the chat read your mail and calendar")
+        );
+        // Its own call does, and it is what the next load says.
+        let given = chat_yes(&store, &secrets);
+        assert!(given.chat_consented && given.consented && given.allow_chat);
+        assert_eq!(load(&store, &secrets, "a").unwrap(), given);
+        assert!(check_chat(&given).is_ok());
+        // A save that leaves the service alone keeps it, whatever the caller puts in the field.
+        let quiet = AiSettings { chat_consented: false, allow_drafts: false, effort: AiEffort::High, ..claims };
+        assert!(save(&store, &secrets, "a", quiet, None).unwrap().chat_consented);
+        // Taking it back is always possible, and is no refusal when there is nothing to take.
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(load(&store, &secrets, "a").unwrap().consented, "the first yes stays");
+    }
+
+    #[test]
+    fn the_chat_yes_goes_with_a_new_model_a_new_address_and_a_withdrawn_yes() {
+        for change in 0..3 {
+            let (store, secrets) = rig();
+            let id = agreed(&store, &secrets, on(), None).service_id;
+            let on = || as_service(on(), &id);
+            let changed = match change {
+                0 => AiSettings { model: "m2".into(), ..on() },
+                1 => AiSettings { base_url: "https://other.example.com/v1".into(), ..on() },
+                _ => AiSettings { consented: false, ..on() },
+            };
+            assert!(chat_yes(&store, &secrets).chat_consented);
+            // The caller copies the old yes for the chat: it does not count.
+            let changed = AiSettings { chat_consented: true, ..changed };
+            let after = save(&store, &secrets, "a", changed.clone(), None).unwrap();
+            assert!(!after.chat_consented && !after.consented, "{changed:?}");
+            // Agreeing to the service again does not bring the chat's yes back...
+            let again = save(&store, &secrets, "a", AiSettings { consented: true, ..changed.clone() }, None).unwrap();
+            assert!(again.consented && !again.chat_consented, "{changed:?}");
+            // ...and neither does going back to the old values.
+            save(&store, &secrets, "a", AiSettings { chat_consented: true, ..on() }, None).unwrap();
+            assert!(
+                !save(&store, &secrets, "a", AiSettings { chat_consented: true, ..on() }, None).unwrap().chat_consented
+            );
+        }
+    }
+
+    #[test]
+    fn the_chat_yes_belongs_to_one_service_and_another_keeps_its_own() {
+        let (store, secrets) = rig();
+        let first = agreed(&store, &secrets, on(), None).service_id;
+        chat_yes(&store, &secrets);
+        // Another service becomes the one in use: it has no yes for the chat of its own.
+        let second = agreed(&store, &secrets, other(), None);
+        assert!(second.consented && !second.chat_consented);
+        assert!(service(&store, &secrets, "a", &first).unwrap().chat_consented);
+        // Giving it here is for this service only; changing this one's model clears only its own.
+        assert!(chat_yes(&store, &secrets).chat_consented);
+        let moved = save(
+            &store,
+            &secrets,
+            "a",
+            AiSettings { model: "o2".into(), ..as_service(other(), &second.service_id) },
+            None,
+        )
+        .unwrap();
+        assert!(!moved.chat_consented);
+        let back = service(&store, &secrets, "a", &first).unwrap();
+        assert!(back.chat_consented && back.consented);
+        // Taking it back in the one in use leaves the other alone too.
+        let other_back = as_service(other(), &second.service_id);
+        save(&store, &secrets, "a", other_back.clone(), None).unwrap();
+        save(&store, &secrets, "a", other_back, None).unwrap();
+        chat_yes(&store, &secrets);
+        assert!(save(&store, &secrets, "a", as_service(on(), &first), None).unwrap().chat_consented);
+        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
+        assert!(service(&store, &secrets, "a", &second.service_id).unwrap().chat_consented);
+    }
+
+    #[test]
+    fn tools_found_missing_belong_to_one_service_address_and_model() {
+        let (store, secrets) = rig();
+        let first = agreed(&store, &secrets, on(), None);
+        let origin = |s: &AiSettings| chat::Origin {
+            service_id: s.service_id.clone(),
+            base_url: s.base_url.clone(),
+            model: s.model.clone(),
+        };
+        note_tools(&store, &secrets, "a", &origin(&first), true).unwrap();
+        assert!(load(&store, &secrets, "a").unwrap().tools_unsupported);
+        // Another service with the same address and model is another service.
+        let second = agreed(&store, &secrets, on(), None);
+        assert!(!second.tools_unsupported);
+        note_tools(&store, &secrets, "a", &chat::Origin { model: "zzz".into(), ..origin(&second) }, true).unwrap();
+        assert!(!load(&store, &secrets, "a").unwrap().tools_unsupported, "the model moved on");
+        // A new model forgets it.
+        let moved = save(&store, &secrets, "a", AiSettings { model: "m2".into(), ..first.clone() }, None).unwrap();
+        assert!(!moved.tools_unsupported);
+    }
     #[test]
     fn each_refusal_has_its_own_words() {
         let task = |t: AiTask| check_allowed(&on(), &t).map_err(|e| e.to_string());
@@ -862,144 +1262,6 @@ mod tests {
             .ends_with("the chat is switched off in the settings"));
         assert!(refused(AiSettings { chat_consented: false, ..ready })
             .ends_with("you have not yet agreed to let the chat read your mail and calendar"));
-    }
-
-    /// The yes for the chat, for the service in use.
-    fn chat_yes(store: &Store, secrets: &MemorySecrets) -> AiSettings {
-        chat_consent(store, secrets, "a", true).unwrap()
-    }
-
-    fn said(result: Result<AiSettings>) -> String {
-        match result {
-            Err(Error::Invalid { msg }) => msg,
-            other => panic!("expected Invalid, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn the_new_switches_are_stored_shared_and_off_until_set() {
-        let (store, secrets) = rig();
-        let first = agreed(&store, &secrets, on(), None);
-        assert!(!first.allow_ideas && !first.allow_extract && !first.allow_explain && !first.allow_chat);
-        assert_eq!(first.actions, AiActionMode::AskFirst);
-        let wanted = AiSettings {
-            allow_ideas: true,
-            allow_extract: true,
-            allow_explain: true,
-            allow_chat: true,
-            actions: AiActionMode::Off,
-            ..on()
-        };
-        let saved = save(&store, &secrets, "a", wanted.clone(), None).unwrap();
-        assert_eq!(saved, wanted, "switching them on changes nothing else, and keeps the consent");
-        assert_eq!(load(&store, &secrets, "a").unwrap(), wanted);
-        // Shared by both services, like the stage 1 switches.
-        let there = service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap();
-        assert!(there.allow_ideas && there.allow_extract && there.allow_explain && there.allow_chat);
-        assert_eq!(there.actions, AiActionMode::Off);
-        // Each is its own switch.
-        let one = save(&store, &secrets, "a", AiSettings { allow_extract: true, ..on() }, None).unwrap();
-        assert!(one.allow_extract && !one.allow_ideas && !one.allow_explain && !one.allow_chat);
-        assert_eq!(one.actions, AiActionMode::AskFirst);
-    }
-
-    #[test]
-    fn stored_settings_from_before_the_chat_read_with_everything_new_off() {
-        // What the app stored before stage 2: profiles, and none of the new fields.
-        let (store, secrets) = rig();
-        let old = r#"{"enabled":true,"provider":"Anthropic","allow_summaries":true,"allow_drafts":false,
-            "allow_rewrites":true,"openai":{"base_url":"","model":"","effort":"Default","consented":false},
-            "anthropic":{"base_url":"https://api.example.com/v1","model":"m","effort":"Default","consented":true}}"#;
-        store.kv_set("a", SETTINGS_KEY, old).unwrap();
-        let loaded = load(&store, &secrets, "a").unwrap();
-        assert_eq!(loaded, AiSettings { allow_drafts: false, ..on() });
-        assert!(!loaded.chat_consented && !loaded.allow_chat);
-        // The flat stage 1 form, even one that claims the new things, gives none of them.
-        let flat = r#"{"enabled":true,"provider":"Anthropic","base_url":"https://api.example.com/v1","model":"m",
-            "has_key":false,"consented":true,"allow_summaries":true,"allow_drafts":true,"allow_rewrites":true,
-            "allow_chat":true,"chat_consented":true,"allow_ideas":true,"actions":"Off"}"#;
-        store.kv_set("a", SETTINGS_KEY, flat).unwrap();
-        assert_eq!(load(&store, &secrets, "a").unwrap(), on());
-        assert!(check_chat(&load(&store, &secrets, "a").unwrap()).is_err());
-    }
-
-    #[test]
-    fn the_chat_yes_needs_the_first_yes_and_only_its_own_call_gives_it() {
-        let (store, secrets) = rig();
-        // Nothing set up, and set up but not agreed: refused with the stage 1 sentence.
-        let sentence = "you have not yet agreed to send mail to this service";
-        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
-        assert_eq!(store.kv_get("a", SETTINGS_KEY).unwrap(), None, "a refusal stores nothing");
-        save(&store, &secrets, "a", on(), None).unwrap();
-        assert_eq!(said(chat_consent(&store, &secrets, "a", true)), sentence);
-        // A save that says yes for the chat does not give it, before or after the first yes.
-        let claims = AiSettings { chat_consented: true, allow_chat: true, ..on() };
-        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
-        assert!(!save(&store, &secrets, "a", claims.clone(), None).unwrap().chat_consented);
-        let waiting = load(&store, &secrets, "a").unwrap();
-        assert!(waiting.consented && waiting.allow_chat);
-        assert_eq!(
-            check_chat(&waiting).unwrap_err().to_string().split(": ").last(),
-            Some("you have not yet agreed to let the chat read your mail and calendar")
-        );
-        // Its own call does, and it is what the next load says.
-        let given = chat_yes(&store, &secrets);
-        assert!(given.chat_consented && given.consented && given.allow_chat);
-        assert_eq!(load(&store, &secrets, "a").unwrap(), given);
-        assert!(check_chat(&given).is_ok());
-        // A save that leaves the service alone keeps it, whatever the caller puts in the field.
-        let quiet = AiSettings { chat_consented: false, allow_drafts: false, effort: AiEffort::High, ..claims };
-        assert!(save(&store, &secrets, "a", quiet, None).unwrap().chat_consented);
-        // Taking it back is always possible, and is no refusal when there is nothing to take.
-        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
-        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
-        assert!(load(&store, &secrets, "a").unwrap().consented, "the first yes stays");
-    }
-
-    #[test]
-    fn the_chat_yes_goes_with_a_new_model_a_new_address_and_a_withdrawn_yes() {
-        let changes = [
-            AiSettings { model: "m2".into(), ..on() },
-            AiSettings { base_url: "https://other.example.com/v1".into(), ..on() },
-            AiSettings { consented: false, ..on() },
-        ];
-        for changed in changes {
-            let (store, secrets) = rig();
-            agreed(&store, &secrets, on(), None);
-            assert!(chat_yes(&store, &secrets).chat_consented);
-            // The caller copies the old yes for the chat: it does not count.
-            let changed = AiSettings { chat_consented: true, ..changed };
-            let after = save(&store, &secrets, "a", changed.clone(), None).unwrap();
-            assert!(!after.chat_consented && !after.consented, "{changed:?}");
-            // Agreeing to the service again does not bring the chat's yes back...
-            let again = save(&store, &secrets, "a", AiSettings { consented: true, ..changed.clone() }, None).unwrap();
-            assert!(again.consented && !again.chat_consented, "{changed:?}");
-            // ...and neither does going back to the old values.
-            assert!(!agreed(&store, &secrets, AiSettings { chat_consented: true, ..on() }, None).chat_consented);
-        }
-    }
-
-    #[test]
-    fn the_chat_yes_belongs_to_one_service_and_the_other_keeps_its_own() {
-        let (store, secrets) = rig();
-        agreed(&store, &secrets, on(), None);
-        chat_yes(&store, &secrets);
-        // The other service becomes the one in use: it has no yes for the chat of its own.
-        let second = agreed(&store, &secrets, other(), None);
-        assert!(second.consented && !second.chat_consented);
-        assert!(service(&store, &secrets, "a", AiProvider::Anthropic).unwrap().chat_consented);
-        // Giving it here is for this service only; changing this one's model clears only its own.
-        assert!(chat_yes(&store, &secrets).chat_consented);
-        let moved = save(&store, &secrets, "a", AiSettings { model: "o2".into(), ..other() }, None).unwrap();
-        assert!(!moved.chat_consented);
-        let first = service(&store, &secrets, "a", AiProvider::Anthropic).unwrap();
-        assert!(first.chat_consented && first.consented);
-        // Taking it back in the one in use leaves the other alone too.
-        agreed(&store, &secrets, other(), None);
-        chat_yes(&store, &secrets);
-        assert!(save(&store, &secrets, "a", on(), None).unwrap().chat_consented);
-        assert!(!chat_consent(&store, &secrets, "a", false).unwrap().chat_consented);
-        assert!(service(&store, &secrets, "a", AiProvider::OpenAiCompatible).unwrap().chat_consented);
     }
 
     #[test]

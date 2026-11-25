@@ -62,13 +62,12 @@ use crate::{
     jmap::{self, is_unauthorized, Connection},
     model::{
         Account, AccountFeatures, AccountSecurity, Action, Address, AddressBook, Agenda, AiModelList, AiPreview,
-        AiProvider, AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail,
-        ContactList, ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace,
-        FilterRule, Filters, Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses,
-        MessageBody, MessageHeader, MessageLabels, NewSecret, Notice, PendingSend, Person, PublicLink,
-        PublicLinkLimits, Quota, RefusedRecipient, Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel,
-        SharedAccount, SharedAction, SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup,
-        Unsubscribe,
+        AiSettings, AiTask, Attachment, AwayMessage, Calendar, ConnectionStatus, Contact, ContactDetail, ContactList,
+        ContactRow, Draft, DraftKind, EventDetail, EventInput, FileEntry, FileListing, FileSpace, FilterRule, Filters,
+        Identity, IdentityDetail, Label, ListFilter, Mailbox, MaskedAddress, MaskedAddresses, MessageBody,
+        MessageHeader, MessageLabels, NewSecret, Notice, PendingSend, Person, PublicLink, PublicLinkLimits, Quota,
+        RefusedRecipient, Reminder, ScheduledSend, SearchResult, Share, ShareKind, ShareLevel, SharedAccount,
+        SharedAction, SharedMailbox, SharedMessage, SharedMessages, Snippet, ThreadRow, TwoStepSetup, Unsubscribe,
     },
     notify::{self, OnScreen, Plan},
     push::{self, Deps, Listener, Timing},
@@ -413,10 +412,23 @@ impl Core {
         check_mailbox_set(&mailbox_ids)?;
         let account_id = self.account_id()?;
         let cached = self.store.unread_ids_in(&account_id, &mailbox_ids)?;
-        let actions: Vec<Action> = cached.iter().map(|id| Action::MarkRead { message_id: id.clone() }).collect();
-        let result = actions::submit_all(&self.store, &account_id, &actions);
+        // One by one, so that an error part-way still says which were marked: Undo must cover them.
+        let mut done = Vec::with_capacity(cached.len());
+        let mut failure = None;
+        for id in &cached {
+            match actions::submit(&self.store, &account_id, &Action::MarkRead { message_id: id.clone() }) {
+                Ok(()) => done.push(id.clone()),
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
         self.poke();
-        result?;
+        if let Some(e) = failure {
+            // Nothing done: the error. Some done: those ids (the rest stay unread), so Undo is offered.
+            return if done.is_empty() { Err(e) } else { Ok(done) };
+        }
         let (store, account) = (&self.store, &account_id);
         let mailboxes = &mailbox_ids;
         let _ = self.with_connection_within(Some(Duration::from_secs(30)), |conn| async move {
@@ -424,7 +436,9 @@ impl Core {
             for mailbox in mailboxes {
                 // No window: the cache holds the whole folder, so there is nothing older to mark.
                 let Some(oldest) = store.get_window(account, mailbox)? else { continue };
-                let before = crate::compose::rules::iso_utc(oldest);
+                // `before` is strict: one second more also takes the mail with the window's own oldest
+                // time that the cache does not hold (a cached one is skipped below).
+                let before = crate::compose::rules::iso_utc(oldest + 1);
                 for id in conn.unread_ids_before(mailbox, &before, MARK_ALL_SERVER_CAP).await? {
                     // A cached message is the cache's and the queue's business.
                     if store.get_message(account, &id)?.is_none() && !rest.contains(&id) {
@@ -1441,54 +1455,72 @@ impl Core {
         assistant::load(&self.store, &*self.secrets, &self.account_id()?)
     }
 
-    /// What [`Core::ai_settings`] would be if `provider` were the service in use: that
-    /// service's own stored address, model, effort, `has_key` and `consented` (empty and false
-    /// when it was never set up; the Anthropic service then starts with
-    /// `https://api.anthropic.com/v1`), with `enabled` and the three `allow_` switches as they
-    /// are now. Changes nothing. The settings screen calls this when the user picks the other
+    /// What [`Core::ai_settings`] would be if the service `service_id` were the one in use: that
+    /// service's own stored name, address, model, effort, `has_key` and `consented`, with
+    /// `enabled`, the `allow_` switches, the actions and the instructions as they are now, and
+    /// the list of services. An empty `service_id` gives a new, empty service (`service_id`
+    /// empty, nothing agreed to) for the screen to fill in. Changes nothing. An id that names no
+    /// service is `Error::Invalid`. The settings screen calls this when the user picks another
     /// service, so each one shows what was entered for it.
-    pub fn ai_service(&self, provider: AiProvider) -> Result<AiSettings> {
-        assistant::service(&self.store, &*self.secrets, &self.account_id()?, provider)
+    pub fn ai_service(&self, service_id: String) -> Result<AiSettings> {
+        assistant::service(&self.store, &*self.secrets, &self.account_id()?, &service_id)
     }
 
-    /// The models the service in `settings` (provider and address; nothing else is read)
-    /// offers, for the picker. Sends no mail and needs no consent. `key`: a key the user just
-    /// typed and has not saved; `None` uses the key stored for that provider, and only when the
-    /// address has the scheme, host and port the stored one has (a stored key is never sent to
-    /// an address it was not entered for). Of the answer only the effort levels the service named
-    /// for each model are kept (for that provider and address): an effort is sent only where the
-    /// service listed it.
-    ///
-    /// OpenAI-compatible: `GET {base}/models`, without the models that cannot answer a chat
-    /// request, with the levels the service lists (`reasoning.supported_efforts`, OpenRouter);
-    /// a service that cannot be asked is `Error::Temporary`. Anthropic: `GET {base}/models`, all
-    /// pages, without deprecated models, with each model's effort levels; without a key, or when
-    /// the service cannot be asked, the built-in list (no levels) with `from_service` false (a
-    /// refused key is still an error, so the user learns of it).
+    /// The models the service at `settings.base_url` offers, for the picker (`settings.service_id`
+    /// and the address are read, nothing else). Sends no mail and needs no consent. `key`: a key
+    /// the user just typed and has not saved; `None` uses the key stored for the service
+    /// `settings.service_id`, and only when the address has the scheme, host and port stored for
+    /// it (a stored key is never sent to an address it was not entered for, nor to another
+    /// service's). `GET {base}/models`, without the models that cannot answer a chat request,
+    /// with the effort levels the service lists (`reasoning.supported_efforts`, OpenRouter); of
+    /// the answer only those levels are kept (for that service and address), so an effort is
+    /// sent only where the service listed it. A service that cannot be asked is
+    /// `Error::Temporary`.
     pub fn ai_models(&self, settings: AiSettings, key: Option<String>) -> Result<AiModelList> {
         let base_url = settings.base_url.trim().trim_end_matches('/').to_string();
         // The address first: a bad one is refused before the secret store is looked at.
         assistant::settings::check_base_url(&base_url)?;
         let account_id = self.account_id()?;
         let key = assistant::models_key(&self.store, &*self.secrets, &account_id, &settings, key)?;
-        let list = self.rt.block_on(assistant::models::list(settings.provider, &base_url, key.as_deref()))?;
-        assistant::remember_levels(&self.store, &*self.secrets, &account_id, settings.provider, &base_url, &list)?;
+        let list = self.rt.block_on(assistant::models::list(&base_url, key.as_deref()))?;
+        let service_id = settings.service_id.trim();
+        assistant::remember_levels(&self.store, &*self.secrets, &account_id, service_id, &base_url, &list)?;
         Ok(list)
     }
 
-    /// Stores the settings of the service `settings.provider` and makes it the one in use; what
-    /// is stored for the other service (address, model, effort, key, consent) stays as it is.
-    /// `key`: `None` keeps this service's stored key, an empty string removes it, any other
-    /// text replaces it (it goes to the secret store, never to the cache or a log).
-    /// `consented` is stored as true only when this service's address and model are the ones
-    /// already stored for it: a call that changes either clears it, and the host grants it by
-    /// saving again with the same values after it showed what goes where. Switching to a
-    /// service that was agreed to before, with its values unchanged, keeps its consent. A key
-    /// that is kept (`None`) is removed when the scheme, host or port of this service's address
-    /// changes. An address that is not https (or plain http to this device or a private network
-    /// address) is `Error::Invalid`. Returns the settings as stored.
+    /// Stores the settings of the service `settings.service_id` and makes it the one in use; an
+    /// empty `service_id` adds a new service (at most 20; a new one with no address stores only
+    /// the shared switches). What is stored for every other service (name, address, model,
+    /// effort, key, consent) stays as it is. `key`: `None` keeps this service's stored key, an
+    /// empty string removes it, any other text replaces it (it goes to the secret store, never
+    /// to the cache or a log). `consented` is stored as true only when this service's address
+    /// and model are the ones already stored for it: a call that changes either clears it, and
+    /// the host grants it by saving again with the same values after it showed what goes where.
+    /// Switching to a service that was agreed to before, with its values unchanged, keeps its
+    /// consent. A key that is kept (`None`) is removed when the scheme, host or port of this
+    /// service's address changes. An empty name becomes one made from the address. An address
+    /// that is not https (or plain http to this device or a private network address) and an id
+    /// that names no service are `Error::Invalid`. Returns the settings as stored.
     pub fn set_ai_settings(&self, settings: AiSettings, key: Option<String>) -> Result<AiSettings> {
         assistant::save(&self.store, &*self.secrets, &self.account_id()?, settings, key)
+    }
+
+    /// Removes the service `service_id` with its key and its consent. When it was the one in use,
+    /// the first service that is left becomes the one in use, with its own stored consent; with
+    /// none left no service is in use. The conversation in memory is dropped when it was held
+    /// with this service. Sends nothing. Refused with `Error::Invalid` while a task or the chat
+    /// runs ("the assistant is working on something: stop it first"), and for an id that names no
+    /// service. When the key cannot be removed from the secret store nothing changes. Returns
+    /// the settings as they are now.
+    pub fn ai_service_remove(&self, service_id: String) -> Result<AiSettings> {
+        let account_id = self.account_id()?;
+        let _slot = self
+            .ai
+            .begin("remove")
+            .map_err(|_| Error::invalid("the assistant is working on something: stop it first"))?;
+        let after = assistant::remove(&self.store, &*self.secrets, &account_id, &service_id)?;
+        self.ai_chat_forget_service(&service_id);
+        Ok(after)
     }
 
     /// What `task` would send, without sending anything. Reads the cache, and the server for a
@@ -1553,7 +1585,7 @@ impl Core {
     }
 
     /// Puts the assistant's settings of this account back to their defaults (off, no service,
-    /// nothing agreed to) and removes both stored keys and every consent, the chat's included.
+    /// nothing agreed to) and removes every service with its key and every consent, the chat's included.
     /// The conversation in memory is dropped too. Sends nothing. Refused with `Error::Invalid`
     /// ("the assistant is working on something: stop it first") while a task or the chat runs:
     /// the reset holds the slot meanwhile, so nothing can start in the middle of it. When a key

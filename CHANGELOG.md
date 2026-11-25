@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Assistant: Anthropic as a protocol of its own is gone; every service speaks the OpenAI protocol, and you can keep several, each with its own name, address, model, key and agreement, and pick the one in use. Your OpenAI-compatible service is carried over with its key; an Anthropic setup is removed, and if it was in use the assistant is switched off.
+- Assistant: the chat works the same with Gemini, Mistral, DeepSeek, Groq and OpenRouter: a refused request is no longer taken for a model without tools, what a service sends with its tool calls (Gemini's signatures, reasoning) goes back to it, and the model no longer claims it can only read when it can suggest changes.
+
 ## 0.2.9
 
 - Reading: a mail whose table of short cells grew with the text no longer wraps its running text at two thirds of the screen; tables without a width of their own are drawn back at their size. Web addresses written as plain text are links, in HTML and plain-text mail.

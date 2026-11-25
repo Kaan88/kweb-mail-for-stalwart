@@ -175,7 +175,9 @@ fn description(kind: AiToolKind) -> &'static str {
              user's calendars."
         }
         AiToolKind::ListTasks => {
-            "Lists the user's open tasks (not done) between two local dates, with their ids, titles and due \n             times, and says whether a due time has a time of day. At most 62 days; 30 days back and 30 ahead \n             if the dates are left out. Own calendars only."
+            "Lists the user's open tasks (not done) between two local dates, with their ids, titles and due \
+             times, and says whether a due time has a time of day. At most 62 days; 30 days back and 30 ahead \
+             if the dates are left out. Own calendars only."
         }
         AiToolKind::ReadEvent => "Gives one calendar entry or task in full.",
         AiToolKind::OpenMessage => {
@@ -204,7 +206,8 @@ fn description(kind: AiToolKind) -> &'static str {
              The user sees a card and decides; nothing is changed until the user approves it."
         }
         AiToolKind::AddTask => {
-            "Suggests a new task (a to-do) with a title and, if there is one, a due date or time. It does not \n             repeat. The user sees a card and decides; nothing is added until the user approves it."
+            "Suggests a new task (a to-do) with a title and, if there is one, a due date or time. It does not \
+             repeat. The user sees a card and decides; nothing is added until the user approves it."
         }
         AiToolKind::AddEvent => {
             "Suggests a new calendar entry or task. Nobody is invited and it does not repeat. The user sees a \
@@ -314,7 +317,13 @@ fn schema(kind: AiToolKind) -> Value {
             &["title", "start"],
         ),
     };
-    json!({ "type": "object", "properties": properties, "required": required, "additionalProperties": false })
+    // Only what every service takes: Gemini refuses `additionalProperties`, and an empty
+    // `required` is left out. Arguments the tool does not know are ignored when it runs.
+    let mut schema = json!({ "type": "object", "properties": properties });
+    if !required.is_empty() {
+        schema["required"] = json!(required);
+    }
+    schema
 }
 
 /// What a tool call gave.
@@ -1347,8 +1356,11 @@ mod tests {
                 assert!(!spec.name.contains(word), "{} must not be a tool", spec.name);
             }
             assert_eq!(spec.schema["type"], "object", "{}", spec.name);
-            assert!(spec.schema["properties"].is_object() && spec.schema["required"].is_array(), "{}", spec.name);
-            for key in spec.schema["required"].as_array().unwrap() {
+            assert!(spec.schema["properties"].is_object(), "{}", spec.name);
+            // What some service refuses is not in it (Gemini: `additionalProperties`, an empty list).
+            assert!(spec.schema.get("additionalProperties").is_none(), "{}", spec.name);
+            assert!(spec.schema.get("required").is_none_or(|r| r.as_array().is_some_and(|r| !r.is_empty())));
+            for key in spec.schema["required"].as_array().into_iter().flatten() {
                 assert!(spec.schema["properties"].get(key.as_str().unwrap()).is_some(), "{} {key}", spec.name);
             }
             assert!(!spec.description.is_empty());

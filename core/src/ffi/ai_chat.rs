@@ -283,7 +283,17 @@ fn service_label(base_url: &str) -> String {
 }
 
 pub(super) fn origin_of(settings: &AiSettings) -> Origin {
-    Origin { provider: settings.provider, base_url: settings.base_url.clone(), model: settings.model.clone() }
+    Origin {
+        service_id: settings.service_id.clone(),
+        base_url: settings.base_url.clone(),
+        model: settings.model.clone(),
+    }
+}
+
+/// Whether a kept chat, which remembers the address and model it was held with, was held with the
+/// service and model in use now.
+fn held_here(current: Option<&Origin>, base_url: &str, model: &str) -> bool {
+    current.is_some_and(|o| !o.service_id.is_empty() && o.base_url == base_url && o.model == model)
 }
 
 /// Hears one chat send. Called on a core thread; must not call a blocking Core fn.
@@ -471,18 +481,14 @@ impl Core {
             .store
             .chat_list(&account_id)?
             .into_iter()
-            .map(|c| {
-                let origin = Origin { provider: c.provider, base_url: c.base_url.clone(), model: c.model.clone() };
-                AiChatSummary {
-                    id: c.id,
-                    title: c.title,
-                    updated_at: c.updated_at,
-                    provider: c.provider,
-                    service: service_label(&c.base_url),
-                    model: c.model,
-                    about_subject: c.about_subject,
-                    current_service: current.as_ref() == Some(&origin),
-                }
+            .map(|c| AiChatSummary {
+                current_service: held_here(current.as_ref(), &c.base_url, &c.model),
+                id: c.id,
+                title: c.title,
+                updated_at: c.updated_at,
+                service: service_label(&c.base_url),
+                model: c.model,
+                about_subject: c.about_subject,
             })
             .collect())
     }
@@ -501,11 +507,7 @@ impl Core {
             .chat_load(&account_id, &chat_id)?
             .ok_or_else(|| Error::invalid("this chat is no longer kept"))?;
         let current = assistant::load(&self.store, &*self.secrets, &account_id).ok().map(|s| origin_of(&s));
-        let held = Origin {
-            provider: stored.info.provider,
-            base_url: stored.info.base_url.clone(),
-            model: stored.info.model.clone(),
-        };
+        let (held_url, held_model) = (stored.info.base_url.clone(), stored.info.model.clone());
         let mut chat = Chat::new(&chat_id, &account_id);
         let mut shown = Vec::new();
         for message in stored.messages {
@@ -529,13 +531,13 @@ impl Core {
         }
         // Text of mail may have reached the model in this chat: see `Chat::in_view`.
         chat.mail_seen = true;
-        let changed = current.as_ref() != Some(&held);
+        let changed = !held_here(current.as_ref(), &held_url, &held_model);
         *self.chat_lock() = Some(chat);
         Ok(AiChatOpened {
             messages: shown,
             about_subject: stored.info.about_subject,
-            service: service_label(&held.base_url),
-            model: held.model,
+            service: service_label(&held_url),
+            model: held_model,
             service_changed: changed,
         })
     }
@@ -694,7 +696,6 @@ impl Core {
             chat_id,
             &chat_title(user_text),
             now(),
-            settings.provider,
             &settings.base_url,
             &settings.model,
             about_subject,
@@ -830,5 +831,14 @@ impl Core {
         *self.chat_lock() = None;
         *self.runs_lock() = None;
         *self.batches.lock().unwrap_or_else(|e| e.into_inner()) = Default::default();
+    }
+
+    /// The service `service_id` was removed: a conversation held with it goes (its next send would
+    /// be "this conversation is over" anyway, and no suggestion of it can be applied any more).
+    pub(super) fn ai_chat_forget_service(&self, service_id: &str) {
+        let mut chat = self.chat_lock();
+        if chat.as_ref().is_some_and(|c| c.origin.as_ref().is_some_and(|o| o.service_id == service_id)) {
+            *chat = None;
+        }
     }
 }

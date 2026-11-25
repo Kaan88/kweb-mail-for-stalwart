@@ -11,7 +11,7 @@ use crate::{
 };
 use kweb_core::{
     ffi::AiChatListener,
-    model::{AiChatTurn, AiProvider, AiSettings, AiStep},
+    model::{AiChatTurn, AiSettings, AiStep},
     Error,
 };
 
@@ -27,7 +27,7 @@ impl AiChatListener for Quiet {
 
 fn ready() -> Rig {
     let rig = Rig::new();
-    rig.save_agreed(AiSettings { allow_chat: true, ..rig.settings(AiProvider::OpenAiCompatible) }, Some(KEY.into()));
+    rig.save_agreed(AiSettings { allow_chat: true, ..rig.settings() }, Some(KEY.into()));
     rig.core.ai_chat_consent(true).unwrap();
     rig
 }
@@ -139,8 +139,7 @@ fn a_chat_held_with_another_model_says_so_and_the_next_message_needs_that_models
     rig.ai.answer(&["Hi."]);
     say(&rig, "c1", "Hello").unwrap();
 
-    let other =
-        AiSettings { model: "other-model".into(), allow_chat: true, ..rig.settings(AiProvider::OpenAiCompatible) };
+    let other = AiSettings { model: "other-model".into(), allow_chat: true, ..rig.settings() };
     rig.core.set_ai_settings(other.clone(), None).unwrap();
     let list = rig.core.ai_chats().unwrap();
     assert!(!list[0].current_service);
@@ -206,7 +205,7 @@ fn number_of(request: &str, subject: &str) -> usize {
 
 fn catchup_rig() -> Rig {
     let rig = Rig::new();
-    rig.save_agreed(rig.settings(AiProvider::OpenAiCompatible), Some(KEY.into()));
+    rig.save_agreed(rig.settings(), Some(KEY.into()));
     rig
 }
 
@@ -277,7 +276,7 @@ fn a_catch_up_needs_the_consent_and_the_summaries_switch_and_an_unreadable_answe
     assert!((rig.core.ai_catchup_since().unwrap() - since).abs() <= 2, "an unreadable answer moves nothing");
 
     // Summaries off: refused before anything is sent.
-    let off = AiSettings { allow_summaries: false, ..rig.settings(AiProvider::OpenAiCompatible) };
+    let off = AiSettings { allow_summaries: false, ..rig.settings() };
     rig.core.set_ai_settings(off.clone(), None).unwrap();
     let before = rig.ai.requests();
     refused(rig.core.ai_catchup_run(TODAY.into(), ZONE.into(), fresh_id()));

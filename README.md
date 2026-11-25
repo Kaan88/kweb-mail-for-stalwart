@@ -36,7 +36,7 @@ Made for Stalwart 1.1 and later. It speaks JMAP only: no IMAP, POP3 or SMTP. Oth
 - An optional Home tab that points out overlapping events, open invitations, overdue tasks and dates in mail, without any AI.
 
 **An assistant, if you want one**
-- Bring your own AI service (OpenAI-compatible or Anthropic). Off by default.
+- Bring your own AI service: any that speaks the OpenAI protocol (OpenAI, OpenRouter, Gemini, Mistral, DeepSeek, Groq, or a model on your own machine), several side by side. Off by default.
 - Summaries, reply ideas, to-dos and dates, a chat that can look things up in your mail, and Catch me up.
 - Nothing is sent without your agreement to that service and model, and no change is made without your tap unless you switch that on for one chat.
 

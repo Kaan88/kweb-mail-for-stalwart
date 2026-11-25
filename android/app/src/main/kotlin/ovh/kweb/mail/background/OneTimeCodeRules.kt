@@ -13,6 +13,7 @@ import java.util.regex.Pattern
 object OneTimeCodeRules {
     /** How many characters of the preview are looked at. */
     private const val MAX_PREVIEW = 1000
+    private const val MAX_SUBJECT = 300
 
     /** The most characters between a cue word and a numeric code, and between a cue word and a mixed letters-and-digits code. */
     private const val NEAR_DIGITS = 60
@@ -77,7 +78,7 @@ object OneTimeCodeRules {
      * gives "123456"); a mixed one as written.
      */
     fun find(subject: String, preview: String): String? {
-        val text = subject + "\n" + preview.take(MAX_PREVIEW)
+        val text = subject.take(MAX_SUBJECT) + "\n" + preview.take(MAX_PREVIEW)
         val cues = cueSpans(text)
         if (cues.isEmpty()) return null
         var best: Candidate? = null
