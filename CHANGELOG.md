@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.9
+
+- Reading: a mail whose table of short cells grew with the text no longer wraps its running text at two thirds of the screen; tables without a width of their own are drawn back at their size. Web addresses written as plain text are links, in HTML and plain-text mail.
+- Files: choose several entries with a long press (as in the mail list), then move or delete them together.
+- Server administration: an Actions screen, as in Stalwart's own: reload settings, certificates, lookup stores and blocked addresses, update apps, empty caches, pause and resume the outgoing queue, a DMARC check and a spam check.
+- Assistant: models that cannot chat are left out of the model list, and "the service does not know this model or address" now says which of four things went wrong; the effort levels come from the service itself, for OpenAI-compatible services and Anthropic alike, and are sent only where the service offers them.
+
 ## 0.2.8
 
 - Writing: the assistant's "Draft a reply" has nine choices to tap before it starts (accept, decline, ask for details, propose a meeting, thanks, short, formal, friendly, a named language), at most one of each kind; what you type still wins.

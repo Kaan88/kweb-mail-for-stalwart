@@ -1,0 +1,4 @@
+- Mail with a table no longer wraps its text at two thirds of the screen; plain web addresses are links.
+- Files: choose several entries and move or delete them together.
+- Server administration: an Actions screen (reloads, caches, queue, DMARC and spam checks).
+- Assistant: clearer errors, only models that can chat, effort levels from the service.
