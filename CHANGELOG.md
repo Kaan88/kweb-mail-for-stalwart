@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+- Writing: the assistant's "Draft a reply" has nine choices to tap before it starts (accept, decline, ask for details, propose a meeting, thanks, short, formal, friendly, a named language), at most one of each kind; what you type still wins.
+- Menus: a long press in the folder drawer, the Files list and the Delivery and Queue screens opens the menu at your finger, not at the far edge of the row.
+- Reading: a mail with one wide fixed element (an Outlook-style signature table) is no longer shrunk to unreadable text; the page is laid out again at the mail's width with the text size scaled back up.
+
 ## 0.2.7
 
 - Writing: "Draft a reply" in the assistant menu of a reply or forward, with an optional hint; "Put in reply" puts it above the quote, with Undo. Translate lists every language by its own name, with search and the recent ones first.

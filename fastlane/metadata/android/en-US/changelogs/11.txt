@@ -1,0 +1,3 @@
+- Draft a reply: nine choices to tap first (accept, decline, short, formal, a language and more).
+- Long-press menus open at your finger.
+- Mail with a wide signature table is no longer shrunk to tiny text.
