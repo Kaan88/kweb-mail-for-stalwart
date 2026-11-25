@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
+- Reading: a mail with a table much wider than the screen now shows its text at full size; only the table is made smaller, as in Gmail, and a wide table in a folded quote is fitted when the quote is opened.
 - Assistant: Anthropic as a protocol of its own is gone; every service speaks the OpenAI protocol, and you can keep several, each with its own name, address, model, key and agreement, and pick the one in use. Your OpenAI-compatible service is carried over with its key; an Anthropic setup is removed, and if it was in use the assistant is switched off.
 - Assistant: the chat works the same with Gemini, Mistral, DeepSeek, Groq and OpenRouter: a refused request is no longer taken for a model without tools, what a service sends with its tool calls (Gemini's signatures, reasoning) goes back to it, and the model no longer claims it can only read when it can suggest changes.
+- Fixes from a review of the week: Undo stays for the mail already marked when Mark all as read fails part-way, and mail in the oldest second of the loaded part is marked too; deleting a domain removes only the DKIM keys the server says are that domain's; the Files bar counts exactly what Delete and Move act on; a key typed for one assistant service is not sent to another address.
 
 ## 0.2.9
 

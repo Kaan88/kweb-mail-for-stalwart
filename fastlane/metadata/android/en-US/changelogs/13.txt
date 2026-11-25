@@ -1,0 +1,3 @@
+- Mail with a very wide table keeps its text at full size; only the table is made smaller.
+- Assistant: keep several services, all on the OpenAI protocol (Anthropic is gone); the chat works the same with Gemini, Mistral, DeepSeek, Groq and OpenRouter.
+- Fixes from a review: Mark all as read keeps its Undo when it fails part-way, safer domain delete, Files selection count.
