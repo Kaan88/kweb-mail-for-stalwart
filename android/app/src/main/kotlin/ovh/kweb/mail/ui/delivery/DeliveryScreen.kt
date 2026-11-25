@@ -147,16 +147,19 @@ fun DeliveryScreen(onBack: () -> Unit, onSignInAgain: () -> Unit, vm: DeliveryVi
                     }
                 },
                 actions = {
-                    IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(if (AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) R.string.accounts_remove else R.string.sign_out)) },
-                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
-                            enabled = !state.signingOut,
-                            onClick = { menuOpen = false; vm.askSignOut() },
-                        )
+                    // In a Box with its button, so the menu hangs from the dots.
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                        }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(if (AccountRows.showsAccountNames(LocalAccountsUi.current.rows.size)) R.string.accounts_remove else R.string.sign_out)) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
+                                enabled = !state.signingOut,
+                                onClick = { menuOpen = false; vm.askSignOut() },
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),

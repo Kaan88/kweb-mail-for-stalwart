@@ -135,6 +135,16 @@
     <string name="assistant_nothing_found">Nothing found.</string>
     <string name="assistant_findings_hint">Tap one to open it as a new calendar entry. It is saved only when you save it.</string>
     <string name="assistant_instruction">What should it say?</string>
+    <!-- Ready-made wishes for a reply draft (chips above "What should it say?") -->
+    <string name="assistant_preset_accept">Accept</string>
+    <string name="assistant_preset_decline">Decline politely</string>
+    <string name="assistant_preset_ask">Ask for details</string>
+    <string name="assistant_preset_meeting">Suggest a meeting</string>
+    <string name="assistant_preset_thanks">Thank and confirm</string>
+    <string name="assistant_preset_short">Short</string>
+    <string name="assistant_preset_formal">Formal</string>
+    <string name="assistant_preset_friendly">Friendly</string>
+    <string name="assistant_preset_language">In %1$s</string>
     <string name="assistant_write_draft">Write draft</string>
     <string name="assistant_stop">Stop</string>
     <string name="assistant_stopped">Stopped.</string>

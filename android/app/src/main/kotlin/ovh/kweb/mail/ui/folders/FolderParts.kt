@@ -22,6 +22,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.PressPoint
+import ovh.kweb.mail.ui.notePress
 import uniffi.kweb_core.Mailbox
 
 /**
@@ -62,13 +64,15 @@ fun FolderMenu(folder: Mailbox, withBell: Boolean, expanded: Boolean, onDismiss:
 /**
  * A long press on this element calls [onLongPress] and keeps the element's own click from firing for that touch. It
  * looks at the touch before the element does (the initial pass), because an element with a click of its own, such as
- * a drawer item, would take the release otherwise.
+ * a drawer item, would take the release otherwise. [point] learns where the finger went down, so the menu can open
+ * there ([ovh.kweb.mail.ui.AtPress]) and not at the row's far edge; the accessibility action puts it below the row's start.
  */
 @Composable
-fun Modifier.longPressMenu(label: String, onLongPress: () -> Unit): Modifier {
+fun Modifier.longPressMenu(label: String, point: PressPoint, onLongPress: () -> Unit): Modifier {
     val timeout = LocalViewConfiguration.current.longPressTimeoutMillis
     return this
-        .semantics { onLongClick(label) { onLongPress(); true } }
+        .semantics { onLongClick(label) { point.underStart(); onLongPress(); true } }
+        .notePress(point)
         .pointerInput(onLongPress, timeout) {
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)

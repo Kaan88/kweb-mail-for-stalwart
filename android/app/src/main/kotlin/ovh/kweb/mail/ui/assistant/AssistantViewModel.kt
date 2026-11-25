@@ -30,6 +30,7 @@ import uniffi.kweb_core.AiListener
 import uniffi.kweb_core.AiPreview
 import uniffi.kweb_core.AiSettings
 import uniffi.kweb_core.AiTask
+import uniffi.kweb_core.ReplyPreset
 import uniffi.kweb_core.DraftKind
 import uniffi.kweb_core.aiParseFindings
 import uniffi.kweb_core.aiParseIdeas
@@ -165,11 +166,14 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
         if (phase == AssistPhase.Checking) check(id)
     }
 
-    /** A reply draft: start with what the user wants it to say (may be empty). Also "Try again" after a stop or a failure. */
-    fun start(instruction: String) {
+    /**
+     * A reply draft: start with what the user wants it to say (may be empty) and the presets tapped (the app's own
+     * words, see [ReplyPresetRules]). Also "Try again" after a stop or a failure.
+     */
+    fun start(instruction: String, presets: List<ReplyPreset> = emptyList()) {
         val s = stateFlow.value.session ?: return
         if (s.phase != AssistPhase.Input && s.phase != AssistPhase.Stopped && s.phase !is AssistPhase.Failed) return
-        val task = (s.task as? AiTask.DraftReply)?.copy(instruction = instruction.trim()) ?: s.task
+        val task = (s.task as? AiTask.DraftReply)?.copy(instruction = instruction.trim(), presets = presets) ?: s.task
         // A new id: whatever the stopped or failed run still delivers belongs to the old one and is dropped.
         val id = ++counter
         stateFlow.update { state ->
@@ -181,7 +185,8 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
     /** Runs the same task again after a failure or a stop. */
     fun retry() {
         val s = stateFlow.value.session ?: return
-        start((s.task as? AiTask.DraftReply)?.instruction.orEmpty())
+        val draft = s.task as? AiTask.DraftReply
+        start(draft?.instruction.orEmpty(), draft?.presets.orEmpty())
     }
 
     /** Reads the settings and what would be sent; asks for consent if it was not given, otherwise runs. */
@@ -364,7 +369,7 @@ class AssistantViewModel(app: Application, private val session: AccountSession) 
         if (s.kind != Kind.IDEAS || s.phase != AssistPhase.Done || s.busy || idea.isBlank()) return
         when (InsightRules.ideaTap(AssistantRules.isAllowed(stateFlow.value.settings, Kind.DRAFT))) {
             InsightRules.IdeaTap.WRITE_DRAFT -> {
-                open(s.owner, Kind.DRAFT, AiTask.DraftReply(task.messageId, idea.trim()))
+                open(s.owner, Kind.DRAFT, AiTask.DraftReply(task.messageId, idea.trim(), emptyList()))
                 start(idea)
             }
             InsightRules.IdeaTap.USE_AS_TEXT -> makeReply(s, task.messageId, idea)

@@ -138,6 +138,8 @@ import ovh.kweb.mail.ui.folders.FolderMenuItem
 import ovh.kweb.mail.ui.folders.FolderRules
 import ovh.kweb.mail.ui.folders.SpamRules
 import ovh.kweb.mail.ui.folders.longPressMenu
+import ovh.kweb.mail.ui.AtPress
+import ovh.kweb.mail.ui.rememberPressPoint
 import ovh.kweb.mail.ui.mailextras.DeleteLabelDialog
 import ovh.kweb.mail.ui.mailextras.LabelRules
 import ovh.kweb.mail.ui.sharing.LocalOpenShare
@@ -793,14 +795,14 @@ private fun DrawerContent(
                 val markAll = MarkAllRules.offered(allFolders, folder.id, folder.id in withSubfolders)
                 val hasMenu = shareable || subfolders || markAll || FolderRules.menu(folder, withBell = true).isNotEmpty()
                 val shareName = folderName(folder)
-                Box {
+                val press = rememberPressPoint()
+                // The indent is the Box's, so the row and the menu's point share one set of pixels.
+                Box(Modifier.padding(start = (16 * entry.depth).dp)) {
                     NavigationDrawerItem(
                         label = { Text(folderName(folder), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                         selected = folder.id == currentId,
                         onClick = { onFolder(folder.id) },
-                        modifier = Modifier
-                            .padding(start = (16 * entry.depth).dp)
-                            .then(if (hasMenu) Modifier.longPressMenu(stringResource(R.string.folders_options_for, folderName(folder))) { menuOpen = true } else Modifier),
+                        modifier = if (hasMenu) Modifier.longPressMenu(stringResource(R.string.folders_options_for, folderName(folder)), press) { menuOpen = true } else Modifier,
                         icon = { FolderIcon(folder.role) },
                         badge = if (unread > 0 || bell) {
                             {
@@ -822,8 +824,8 @@ private fun DrawerContent(
                             null
                         },
                     )
-                    if (hasMenu) {
-                        // One menu: the folder entries of the folders feature, and Share (sharing feature) when the folder can be shared.
+                    if (hasMenu) AtPress(press) {
+                        // One menu, at the finger: the folder entries of the folders feature, and Share (sharing feature) when the folder can be shared.
                         FolderMenu(
                             folder,
                             withBell = true,
@@ -980,20 +982,23 @@ private fun DrawerLabels(labels: List<Label>, onLabel: (Label) -> Unit, onDelete
     )
     labels.forEach { label ->
         var menuOpen by remember(label.id) { mutableStateOf(false) }
+        val press = rememberPressPoint()
         Box {
             NavigationDrawerItem(
                 label = { Text(label.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 icon = { Icon(painterResource(R.drawable.ic_label), contentDescription = null) },
                 selected = false,
                 onClick = { onLabel(label) },
-                modifier = Modifier.longPressMenu(stringResource(R.string.folders_options_for, label.name)) { menuOpen = true },
+                modifier = Modifier.longPressMenu(stringResource(R.string.folders_options_for, label.name), press) { menuOpen = true },
             )
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.action_delete)) },
-                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                    onClick = { menuOpen = false; onDelete(label) },
-                )
+            AtPress(press) {
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.action_delete)) },
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                        onClick = { menuOpen = false; onDelete(label) },
+                    )
+                }
             }
         }
     }

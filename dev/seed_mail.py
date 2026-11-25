@@ -5,6 +5,7 @@
     python dev/seed_mail.py one        # one new plain mail (to watch a notification arrive)
     python dev/seed_mail.py bulk 200   # 200 short mails, for lists and search
     python dev/seed_mail.py wide       # a 640-pixel newsletter of fixed-width tables (fit and zoom)
+    python dev/seed_mail.py signature  # an Outlook reply: running text and a 550-pixel signature table (text size)
 
 See dev/README.md for the server itself.
 """
@@ -135,6 +136,30 @@ def wide():
     return html("Wide Weekly <wide@example.com>", "Wide Weekly, issue 12 (fixed 640 px)", "Plain part.\n", markup)
 
 
+def signature():
+    """An Outlook reply as the owner's example (2026-11-24): running text that wraps anywhere, 11 pt Calibri, and a
+    signature table of a fixed 550 pixels, which used to scale the whole mail to about 60 %."""
+    span = "<span style='font-size:11.0pt;font-family:\"Calibri\",sans-serif'>{}</span>"
+    para = "<p class=MsoNormal style='margin:0'>" + span + "</p>"
+    long = ("Thanks for sending the figures over. I went through them this morning and the totals for the second "
+            "quarter match what we had, so I think we can go ahead with the order as planned next week.")
+    cell = "<td width={w} valign=top style='width:{w}px;padding:0 8px'>{body}</td>"
+    sig = ("<table border=0 cellspacing=0 cellpadding=0 width=550 style='width:412.5pt;border-top:2px solid #8b1a1a'><tr>"
+           + cell.format(w=120, body="<div style='width:100px;height:60px;background:#8b1a1a'></div>")
+           + cell.format(w=230, body=para.format("<b>Jane Example</b>") + para.format("Head of Purchasing")
+                         + para.format("Example Trading Ltd."))
+           + cell.format(w=200, body=para.format("+44 20 7946 0000") + para.format("jane@example.com")
+                         + para.format("www.example.com"))
+           + "</tr></table>")
+    markup = (f"<html><head><style>p.MsoNormal{{margin:0}}</style></head><body lang=EN-GB>"
+              f"<div class=WordSection1>{para.format('Hi,')}{para.format('&nbsp;')}{para.format(long)}"
+              f"{para.format('&nbsp;')}{para.format('Best regards,')}{para.format('Jane')}{para.format('&nbsp;')}{sig}"
+              f"<div style='border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0'>"
+              f"{para.format('<b>From:</b> Tester &lt;tester@kweb.test&gt;<br><b>Sent:</b> Monday<br><b>Subject:</b> Figures')}"
+              f"</div>{para.format('Here are the figures for the second quarter.')}</div></body></html>")
+    return html("Jane Example <jane@example.com>", "RE: Figures (550 px signature)", long + "\n", markup)
+
+
 def credentials():
     """`user:password` of the test user, written by the set-up (see dev/README.md)."""
     path = os.environ.get("KWEB_TEST_CREDS") or os.path.expanduser("~/tools/stalwart-test/etc/tester.txt")
@@ -188,6 +213,8 @@ if __name__ == "__main__":
         send([plain("Ada Lovelace <ada@example.org>", f"Test at {time.strftime('%H:%M:%S')}", "A single new mail.\n")])
     elif mode == "wide":
         send([wide()])
+    elif mode == "signature":
+        send([signature()])
     elif mode == "bulk":
         send(bulk(int(sys.argv[2]) if len(sys.argv) > 2 else 100))
     else:

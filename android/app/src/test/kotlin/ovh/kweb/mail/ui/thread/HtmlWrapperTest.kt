@@ -76,4 +76,14 @@ class HtmlWrapperTest {
         assertTrue(page.contains(meta))
         assertTrue(page.indexOf(meta) < page.indexOf("<body>"))
     }
+
+    @Test fun aSecondLayoutIsAsWideAsTheMail() {
+        val wide = HtmlWrapper.wrap("<p>x</p>", layoutWidth = 560)
+        assertTrue(wide.contains("<meta name=\"viewport\" content=\"width=560, maximum-scale=5, user-scalable=yes\">"))
+        assertTrue(!wide.contains("initial-scale") && !wide.contains("minimum-scale"))
+        // Neither layout touches the mail's own text-size-adjust: the size comes from the view's text zoom.
+        assertTrue(!wide.contains("text-size-adjust") && !page.contains("text-size-adjust"))
+        assertEquals(HtmlWrapper.VIEWPORT, HtmlWrapper.viewport(null))
+        assertEquals(HtmlWrapper.VIEWPORT, HtmlWrapper.viewport(0))
+    }
 }

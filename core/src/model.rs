@@ -598,6 +598,31 @@ pub enum RewriteStyle {
     },
 }
 
+/// A ready-made wish for a reply draft, tapped by the user. Each says what the reply should do
+/// (accept, decline, ask, ...), how it should sound (short, formal, friendly) or which language
+/// it is written in. The words sent for it are the app's own (`assistant::prompts::preset_line`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum ReplyPreset {
+    /// Agree to or accept what the message asks or proposes.
+    Accept,
+    /// Decline politely.
+    Decline,
+    /// Ask for the details that are missing before answering.
+    AskDetails,
+    /// Suggest finding a time to meet or talk.
+    ProposeMeeting,
+    /// Thank the sender and confirm receipt.
+    Thanks,
+    /// Two or three sentences.
+    Short,
+    Formal,
+    Friendly,
+    /// Written in this language, named as the user would ("Turkish", "English"), whatever the mail's.
+    InLanguage {
+        language: String,
+    },
+}
+
 /// One thing the assistant is asked to do. Mail goes to the service only for the task the
 /// user started, and only the parts the task needs.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
@@ -610,9 +635,12 @@ pub enum AiTask {
         thread_id: String,
     },
     /// A reply to this message. `instruction` is what the user wants it to say; may be empty.
+    /// `presets` are the app's own ready-made wishes the user tapped (at most one of each group,
+    /// see `assistant::prompts::preset_group`); their words are the app's, never mail.
     DraftReply {
         message_id: String,
         instruction: String,
+        presets: Vec<ReplyPreset>,
     },
     /// The user's own text, changed as asked. No mail is sent with it.
     Rewrite {

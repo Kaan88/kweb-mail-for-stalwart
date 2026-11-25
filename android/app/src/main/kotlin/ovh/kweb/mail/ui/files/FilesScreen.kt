@@ -89,6 +89,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.ZoneId
 import kotlinx.coroutines.launch
 import ovh.kweb.mail.R
+import ovh.kweb.mail.ui.AtPress
+import ovh.kweb.mail.ui.notePress
+import ovh.kweb.mail.ui.rememberPressPoint
 import ovh.kweb.mail.ui.account.rememberCopier
 import ovh.kweb.mail.ui.accounts.AccountAvatarButton
 import ovh.kweb.mail.ui.contacts.SearchPill
@@ -550,6 +553,9 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
     val openShare = LocalOpenShare.current
     val shareable = ShareRules.fileFolderShareable(entry)
     var menu by remember { mutableStateOf(false) }
+    // Opened by a long press the menu hangs at the finger; opened by the dots, from the dots.
+    var atFinger by remember { mutableStateOf(false) }
+    val press = rememberPressPoint()
     val labels = mapOf(
         RowAction.Open to R.string.files_open,
         RowAction.Save to R.string.files_save,
@@ -558,7 +564,30 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
         RowAction.PublicLink to R.string.files_public_link,
         RowAction.Delete to R.string.files_delete,
     )
-    run {
+    val hasMenu = actions.isNotEmpty() || shareable
+    val items: @Composable () -> Unit = {
+        for (action in actions) {
+            DropdownMenuItem(
+                text = { Text(stringResource(labels.getValue(action))) },
+                leadingIcon = { Icon(actionIcon(action), contentDescription = null) },
+                onClick = {
+                    menu = false
+                    onAction(entry, action)
+                },
+            )
+        }
+        if (shareable) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.share_menu)) },
+                leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                onClick = {
+                    menu = false
+                    openShare(ShareKind.FILE_FOLDER, entry.id, entry.name)
+                },
+            )
+        }
+    }
+    Box(Modifier.notePress(press)) {
         GroupRow(
             index = index,
             count = count,
@@ -566,41 +595,20 @@ private fun EntryRow(entry: FileEntry, index: Int, count: Int, subtitle: String,
             icon = FileRules.iconFor(entry.kind, entry.mediaType, entry.name),
             title = entry.name,
             subtitle = subtitle,
-            onLongClick = if (actions.isEmpty() && !shareable) null else ({ menu = true }),
-            endPadding = if (actions.isEmpty() && !shareable) 16.dp else 4.dp,
+            onLongClick = if (!hasMenu) null else ({ press.settle(); atFinger = true; menu = true }),
+            endPadding = if (!hasMenu) 16.dp else 4.dp,
             trailing = {
-                if (actions.isNotEmpty() || shareable) {
-                    // The menu hangs from the dots (and from a long press on the row), not from the row's left edge.
+                if (hasMenu) {
                     Box {
-                        IconButton(onClick = { menu = true }) {
+                        IconButton(onClick = { atFinger = false; menu = true }) {
                             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.files_more, entry.name))
                         }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            for (action in actions) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(labels.getValue(action))) },
-                                    leadingIcon = { Icon(actionIcon(action), contentDescription = null) },
-                                    onClick = {
-                                        menu = false
-                                        onAction(entry, action)
-                                    },
-                                )
-                            }
-                            if (shareable) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.share_menu)) },
-                                    leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
-                                    onClick = {
-                                        menu = false
-                                        openShare(ShareKind.FILE_FOLDER, entry.id, entry.name)
-                                    },
-                                )
-                            }
-                        }
+                        if (!atFinger) DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { items() }
                     }
                 }
             },
         )
+        if (hasMenu && atFinger) AtPress(press) { DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) { items() } }
     }
 }
 

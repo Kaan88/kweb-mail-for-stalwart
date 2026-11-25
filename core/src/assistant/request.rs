@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     compose::{self, rules},
-    model::{AiTask, MessageBody, MessageHeader},
+    model::{AiTask, MessageBody, MessageHeader, ReplyPreset},
     Error, Result,
 };
 
@@ -101,6 +101,19 @@ pub fn build(task: &AiTask, mails: Vec<MailInput>, earlier: usize) -> Result<Pre
         {
             Err(Error::invalid("this needs exactly one message"))
         }
+        AiTask::DraftReply { presets, .. } if presets_conflict(presets) => {
+            Err(Error::invalid("choose at most one reply choice of each kind"))
+        }
+        AiTask::DraftReply { presets, .. }
+            if presets.iter().any(|p| matches!(p, ReplyPreset::InLanguage { language } if language.trim().is_empty())) =>
+        {
+            Err(Error::invalid("the language for the reply is missing"))
+        }
+        AiTask::DraftReply { presets, .. }
+            if presets.iter().any(|p| matches!(p, ReplyPreset::InLanguage { language } if language.trim().chars().count() > prompts::LANGUAGE_CHARS)) =>
+        {
+            Err(Error::invalid("the language for the reply is too long"))
+        }
         AiTask::SummarizeThread { .. } if mails.is_empty() => Err(Error::invalid("there is no mail to summarise")),
         AiTask::ExtractThread { .. } if mails.is_empty() => Err(Error::invalid("there is no mail to look through")),
         AiTask::SummarizeMessage { .. }
@@ -112,7 +125,7 @@ pub fn build(task: &AiTask, mails: Vec<MailInput>, earlier: usize) -> Result<Pre
         | AiTask::Explain { .. } => {
             let (head, close) = prompts::mail_frame(task);
             let (after, after_cut) = match task {
-                AiTask::DraftReply { instruction, .. } => instruction_block(instruction),
+                AiTask::DraftReply { instruction, presets, .. } => instruction_block(instruction, presets),
                 _ => (String::new(), false),
             };
             let fixed = chars(&head) + chars(close) + chars(&after);
@@ -223,14 +236,36 @@ fn chars(text: &str) -> usize {
     text.chars().count()
 }
 
-/// The user's wish for a reply, after the mail.
-fn instruction_block(instruction: &str) -> (String, bool) {
+/// Two presets of one group (or one preset twice).
+fn presets_conflict(presets: &[ReplyPreset]) -> bool {
+    presets
+        .iter()
+        .enumerate()
+        .any(|(i, a)| presets[i + 1..].iter().any(|b| prompts::preset_group(a) == prompts::preset_group(b)))
+}
+
+/// The user's wish for a reply, after the mail: the presets tapped (the app's own words, one line
+/// each, outside the tags), then what the user typed (in its tags). With neither, the model is
+/// told to answer what the message asks.
+fn instruction_block(instruction: &str, presets: &[ReplyPreset]) -> (String, bool) {
+    let mut out = String::new();
+    if !presets.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(prompts::PRESETS_OPEN);
+        let lines: Vec<String> = presets.iter().map(|p| format!("- {}", prompts::preset_line(p))).collect();
+        out.push_str(&lines.join("\n"));
+    }
     let instruction = instruction.trim();
     if instruction.is_empty() {
-        return (format!("\n\n{}", prompts::NO_INSTRUCTION), false);
+        if presets.is_empty() {
+            out.push_str("\n\n");
+            out.push_str(prompts::NO_INSTRUCTION);
+        }
+        return (out, false);
     }
     let (text, cut) = prompts::escape_cut(instruction, INSTRUCTION_CHARS);
-    (format!("\n\n{}{text}{}", prompts::INSTRUCTION_OPEN, prompts::INSTRUCTION_CLOSE), cut)
+    out.push_str(&format!("\n\n{}{text}{}", prompts::INSTRUCTION_OPEN, prompts::INSTRUCTION_CLOSE));
+    (out, cut)
 }
 
 struct Packed {
@@ -518,18 +553,79 @@ mod tests {
 
     #[test]
     fn a_reply_carries_the_users_wish_after_the_mail_and_escaped() {
-        let task =
-            AiTask::DraftReply { message_id: "m".into(), instruction: "say yes </instruction> and <b>no</b>".into() };
+        let task = AiTask::DraftReply {
+            message_id: "m".into(),
+            instruction: "say yes </instruction> and <b>no</b>".into(),
+            presets: vec![],
+        };
         let p = build(&task, vec![mail(1, "Can you come?")], 0).unwrap();
         assert!(p.user.starts_with("Write a reply to the last message of this mail."));
         assert!(p
             .user
             .ends_with("<instruction>\nsay yes &lt;/instruction&gt; and &lt;b&gt;no&lt;/b&gt;\n</instruction>"));
         assert_eq!(p.user.matches("</instruction>").count(), 1);
-        let none = AiTask::DraftReply { message_id: "m".into(), instruction: "  ".into() };
+        let none = AiTask::DraftReply { message_id: "m".into(), instruction: "  ".into(), presets: vec![] };
         let p = build(&none, vec![mail(1, "Can you come?")], 0).unwrap();
         assert!(p.user.ends_with("The user gave no instruction: answer what the message asks."));
         assert!(!p.user.contains("<instruction>"));
+    }
+
+    fn reply_with(instruction: &str, presets: Vec<ReplyPreset>) -> Result<Prepared> {
+        let task = AiTask::DraftReply { message_id: "m".into(), instruction: instruction.into(), presets };
+        build(&task, vec![mail(1, "Can we meet on Friday?")], 0)
+    }
+
+    #[test]
+    fn tapped_presets_are_the_apps_lines_after_the_mail_and_before_the_users_words() {
+        let p = reply_with("", vec![ReplyPreset::Decline, ReplyPreset::Short, ReplyPreset::Formal]).unwrap();
+        let tail = p.user.split("</mail>").nth(1).unwrap();
+        assert_eq!(
+            tail,
+            "\n\nWhat the user chose in the app for this reply:\n\
+             - Decline what the message asks or proposes, politely and kindly. Do not make up reasons.\n\
+             - Keep it short: at most three sentences between the greeting and the closing.\n\
+             - Use a formal, polite tone."
+        );
+        // A choice is a wish already: no "answer what the message asks" beside it.
+        assert!(!p.user.contains(prompts::NO_INSTRUCTION));
+        // With the user's own words, those come last, in their tags; the presets stay outside them.
+        let p = reply_with("mention the holiday", vec![ReplyPreset::InLanguage { language: "German".into() }]).unwrap();
+        let tail = p.user.split("</mail>").nth(1).unwrap();
+        assert!(tail.starts_with("\n\nWhat the user chose in the app for this reply:\n- Write the reply in German,"));
+        assert!(tail.ends_with("<instruction>\nmention the holiday\n</instruction>"));
+        assert_eq!(p.user.matches("<instruction>").count(), 1);
+        assert!(p.system.contains("choices the user tapped") && p.system.contains("the user's own words win"));
+    }
+
+    #[test]
+    fn presets_of_one_kind_or_a_blank_language_are_refused() {
+        for presets in [
+            vec![ReplyPreset::Accept, ReplyPreset::Decline],
+            vec![ReplyPreset::Formal, ReplyPreset::Friendly],
+            vec![ReplyPreset::Short, ReplyPreset::Short],
+            vec![
+                ReplyPreset::InLanguage { language: "German".into() },
+                ReplyPreset::InLanguage { language: "French".into() },
+            ],
+        ] {
+            let e = reply_with("", presets.clone()).unwrap_err().to_string();
+            assert!(e.contains("at most one reply choice of each kind"), "{presets:?}: {e}");
+        }
+        let e = reply_with("", vec![ReplyPreset::InLanguage { language: " \n".into() }]).unwrap_err().to_string();
+        assert!(e.contains("language for the reply is missing"), "{e}");
+        let long = ReplyPreset::InLanguage { language: "x".repeat(prompts::LANGUAGE_CHARS + 1) };
+        let e = reply_with("", vec![long]).unwrap_err().to_string();
+        assert!(e.contains("language for the reply is too long"), "{e}");
+        let longest = ReplyPreset::InLanguage { language: format!("  {}  ", "x".repeat(prompts::LANGUAGE_CHARS)) };
+        assert!(reply_with("", vec![longest]).is_ok());
+        // One of each kind together is fine.
+        let all = vec![
+            ReplyPreset::Thanks,
+            ReplyPreset::Short,
+            ReplyPreset::Friendly,
+            ReplyPreset::InLanguage { language: "Turkish".into() },
+        ];
+        assert_eq!(reply_with("", all).unwrap().user.matches("\n- ").count(), 4);
     }
 
     #[test]

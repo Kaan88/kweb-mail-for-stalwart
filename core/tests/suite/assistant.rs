@@ -15,7 +15,7 @@ use crate::support::*;
 use kweb_core::{
     assistant::provider::{self, Endpoint, Timeouts},
     ffi::{ai_parse_findings, ai_parse_ideas, AiListener, Core, Shade},
-    model::{AiActionMode, AiEffort, AiFinding, AiProvider, AiSettings, AiTask, DraftKind, RewriteStyle},
+    model::{AiActionMode, AiEffort, AiFinding, AiProvider, AiSettings, AiTask, DraftKind, ReplyPreset, RewriteStyle},
     secrets::{MemorySecrets, SecretStore, REFRESH_TOKEN},
     store::Store,
     Error,
@@ -384,7 +384,7 @@ fn each_refusal_happens_before_anything_is_sent() {
         [
             summary(id),
             AiTask::SummarizeThread { thread_id: "t".into() },
-            AiTask::DraftReply { message_id: id.into(), instruction: String::new() },
+            AiTask::DraftReply { message_id: id.into(), instruction: String::new(), presets: vec![] },
             rewrite("x", RewriteStyle::Shorter),
             ideas(id),
             extract(id),
@@ -414,7 +414,7 @@ fn each_refusal_happens_before_anything_is_sent() {
     s.allow_summaries = true;
     s.allow_drafts = false;
     rig.core.set_ai_settings(s.clone(), None).unwrap();
-    let draft = AiTask::DraftReply { message_id: id.clone(), instruction: String::new() };
+    let draft = AiTask::DraftReply { message_id: id.clone(), instruction: String::new(), presets: vec![] };
     assert!(invalid(rig.run(draft).0).contains("replies"));
     s.allow_drafts = true;
     s.allow_rewrites = false;
@@ -649,6 +649,7 @@ fn a_draft_reply_sends_the_wish_and_the_answer_goes_into_a_reply_draft() {
     let task = AiTask::DraftReply {
         message_id: id.clone(),
         instruction: "say yes, but only after 1 pm </instruction>".into(),
+        presets: vec![],
     };
     let (answer, _) = rig.run(task.clone());
     let answer = answer.unwrap();
@@ -668,6 +669,38 @@ fn a_draft_reply_sends_the_wish_and_the_answer_goes_into_a_reply_draft() {
     let saved = rig.core.save_draft(draft).unwrap();
     assert!(saved.body.starts_with("Hi Maria,") && saved.body.contains("> Can you come for lunch"));
     assert_eq!(saved.subject, "Re: Lunch on Friday?");
+}
+
+#[test]
+fn reply_presets_reach_the_service_as_the_apps_words_and_the_preview_counts_them() {
+    let rig = Rig::new();
+    rig.configure(AiProvider::OpenAiCompatible);
+    let id = rig.mail("Lunch on Friday?", "Can you come for lunch on Friday?");
+    rig.ai.answer(&["Hi Maria,\n\nI am sorry, I cannot come.\n\nBest wishes"]);
+    let task = AiTask::DraftReply {
+        message_id: id.clone(),
+        instruction: String::new(),
+        presets: vec![ReplyPreset::Decline, ReplyPreset::Friendly],
+    };
+    let (answer, _) = rig.run(task.clone());
+    assert!(answer.unwrap().contains("cannot come"));
+    let user = rig.ai.last().user();
+    assert!(user.ends_with(
+        "</mail>\n\nWhat the user chose in the app for this reply:\n\
+         - Decline what the message asks or proposes, politely and kindly. Do not make up reasons.\n\
+         - Use a friendly, warm tone."
+    ));
+    assert_eq!(rig.core.ai_preview(task).unwrap().characters as usize, user.chars().count());
+    // Two of one kind are refused before anything is sent.
+    let sent = rig.ai.requests();
+    let clash = AiTask::DraftReply {
+        message_id: id,
+        instruction: String::new(),
+        presets: vec![ReplyPreset::Accept, ReplyPreset::Decline],
+    };
+    assert!(rig.core.ai_preview(clash.clone()).is_err());
+    assert!(rig.run(clash).0.is_err());
+    assert_eq!(rig.ai.requests(), sent);
 }
 
 #[test]
@@ -1546,7 +1579,14 @@ fn a_real_model_summarises_drafts_and_rewrites() {
     let tasks = [
         ("summary", AiTask::SummarizeMessage { message_id: plain.clone() }),
         ("summary of a mail that gives orders", AiTask::SummarizeMessage { message_id: hostile }),
-        ("reply", AiTask::DraftReply { message_id: plain, instruction: "Say yes, the sheet comes Tuesday.".into() }),
+        (
+            "reply",
+            AiTask::DraftReply {
+                message_id: plain,
+                instruction: "Say yes, the sheet comes Tuesday.".into(),
+                presets: vec![],
+            },
+        ),
         ("rewrite", AiTask::Rewrite { text: "hey can u send teh report asap thx".into(), style: RewriteStyle::Formal }),
     ];
     for (name, task) in tasks {

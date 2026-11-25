@@ -3,6 +3,7 @@ package ovh.kweb.mail.ui.admin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -68,20 +69,23 @@ fun QueueScreen(onBack: () -> Unit, onOpen: (AdminScreen) -> Unit, vm: AdminQueu
         onBack = onBack,
         actions = {
             if (!state.paused && state.mayControl) TextButton(onClick = c::askPause, enabled = !state.busy) { Text(stringResource(R.string.admin_pause)) }
-            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                if (state.mayControl) {
+            // In a Box with its button: in the bar's row the menu would hang from the row's start, not from the dots.
+            Box {
+                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options)) }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    if (state.mayControl) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.admin_resume_menu)) },
+                            leadingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                            onClick = { menu = false; c.resume() },
+                        )
+                    }
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.admin_resume_menu)) },
-                        leadingIcon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
-                        onClick = { menu = false; c.resume() },
+                        text = { Text(stringResource(R.string.admin_refresh)) },
+                        leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                        onClick = { menu = false; c.refresh() },
                     )
                 }
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.admin_refresh)) },
-                    leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
-                    onClick = { menu = false; c.refresh() },
-                )
             }
         },
     ) { padding ->

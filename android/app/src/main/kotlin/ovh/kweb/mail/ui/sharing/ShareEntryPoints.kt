@@ -2,9 +2,6 @@ package ovh.kweb.mail.ui.sharing
 
 import android.app.Application
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,12 +32,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import ovh.kweb.mail.R
 import ovh.kweb.mail.background.Background
@@ -54,60 +49,6 @@ typealias OpenShare = (kind: ShareKind, id: String, name: String) -> Unit
 
 /** Provided once by the app; every "Share" entry (folder, calendar, address book, file folder) calls it. A no-op where nothing provides it. */
 val LocalOpenShare = compositionLocalOf<OpenShare> { { _, _, _ -> } }
-
-/**
- * A long press on a row whose own click must keep working (a drawer item has no long-press callback). The row
- * takes [interactionSource] and passes its click through [guard]: a click that ends a long press is swallowed.
- */
-class LongPress(val interactionSource: MutableInteractionSource) {
-    var fired = false
-    var menuOpen by mutableStateOf(false)
-
-    fun guard(onClick: () -> Unit): () -> Unit = {
-        if (fired) fired = false else onClick()
-    }
-
-    fun dismiss() {
-        menuOpen = false
-    }
-}
-
-/** A long press of [enabled] rows opens [LongPress.menuOpen] once the system's long-press time has passed. */
-@Composable
-fun rememberLongPress(enabled: Boolean): LongPress {
-    val press = remember { LongPress(MutableInteractionSource()) }
-    val pressed by press.interactionSource.collectIsPressedAsState()
-    // A press that ends without a click (cancelled by a scroll or drag) must not swallow the next tap.
-    LaunchedEffect(press) {
-        press.interactionSource.interactions.collect { if (it is PressInteraction.Cancel) press.fired = false }
-    }
-    val timeout = LocalViewConfiguration.current.longPressTimeoutMillis
-    LaunchedEffect(pressed, enabled) {
-        if (pressed) {
-            press.fired = false
-            if (enabled) {
-                delay(timeout)
-                press.fired = true
-                press.menuOpen = true
-            }
-        }
-    }
-    return press
-}
-
-/**
- * The menu a long press on a drawer folder opens. It holds "Share" and has [extra] for the entries of others
- * (put inside the same menu); [shareable] false (Drafts, Trash, Junk) leaves out Share.
- */
-@Composable
-fun FolderLongPressMenu(press: LongPress, shareable: Boolean, onShare: () -> Unit, extra: @Composable (close: () -> Unit) -> Unit = {}) {
-    DropdownMenu(expanded = press.menuOpen, onDismissRequest = press::dismiss) {
-        if (shareable) {
-            DropdownMenuItem(text = { Text(stringResource(R.string.share_menu)) }, leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) }, onClick = { press.dismiss(); onShare() })
-        }
-        extra(press::dismiss)
-    }
-}
 
 /** The kinds that are chosen from a list of the user's own things. */
 enum class PickKind { CALENDAR, ADDRESS_BOOK }

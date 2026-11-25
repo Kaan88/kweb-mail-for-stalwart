@@ -679,7 +679,7 @@ mod tests {
     fn each_refusal_has_its_own_words() {
         let task = |t: AiTask| check_allowed(&on(), &t).map_err(|e| e.to_string());
         let summary = AiTask::SummarizeMessage { message_id: "m".into() };
-        let draft = AiTask::DraftReply { message_id: "m".into(), instruction: String::new() };
+        let draft = AiTask::DraftReply { message_id: "m".into(), instruction: String::new(), presets: vec![] };
         let rewrite = AiTask::Rewrite { text: "x".into(), style: crate::model::RewriteStyle::Improve };
         assert!([&summary, &draft, &rewrite].iter().all(|t| task((*t).clone()).is_ok()));
 
@@ -932,7 +932,7 @@ mod tests {
             (AiTask::SummarizeMessage { message_id: "m".into() }, "summaries are switched off in the settings"),
             (AiTask::SummarizeThread { thread_id: "t".into() }, "summaries are switched off in the settings"),
             (
-                AiTask::DraftReply { message_id: "m".into(), instruction: String::new() },
+                AiTask::DraftReply { message_id: "m".into(), instruction: String::new(), presets: vec![] },
                 "drafting replies is switched off in the settings",
             ),
             (

@@ -641,7 +641,7 @@ fun ThreadScreen(
                                 null
                             },
                             onDraftReply = if (AssistantRules.Kind.DRAFT in offered) {
-                                { assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(header.id, "")) }
+                                { assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(header.id, "", emptyList())) }
                             } else {
                                 null
                             },

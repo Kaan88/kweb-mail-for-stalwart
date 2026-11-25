@@ -27,10 +27,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -89,6 +91,12 @@ fun MailWebView(
         rules.openLink = openLink
         rules.onGone = Runnable { if (generation == 0) generation = 1 else dead = true }
     }
+    // The second layout of a mail that came out wider than the window ([FitRules]); null for the first. Measured again
+    // when the window's width or the user's text size changes (a rotation, a folding phone, split screen).
+    val windowWidth = LocalWindowInfo.current.containerSize.width
+    var fit by remember(html, allowRemote, flat, windowWidth, textZoom) { mutableStateOf<FitRules.Fit?>(null) }
+    // The first layout of a page is not shown until it was measured: a page laid out again would flash small first.
+    var ready by remember(html, allowRemote, flat, windowWidth, textZoom) { mutableStateOf(false) }
     if (dead) {
         Text(
             stringResource(R.string.thread_cannot_display),
@@ -125,12 +133,15 @@ fun MailWebView(
         AndroidView(
             modifier = modifier
                 .fillMaxWidth()
+                .graphicsLayer { alpha = if (ready) 1f else 0f }
                 .nestedScroll(edge)
                 .scrollable(pan, Orientation.Horizontal, enabled = wide)
                 .scrollable(panDown, Orientation.Vertical, enabled = tall),
             factory = { context ->
                 PanWebView(context).apply {
                     panView[0] = this
+                    onReady = { ready = true }
+                    onHide = { ready = false }
                     onWide = { wide = it }
                     onTall = { tall = it }
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -166,12 +177,30 @@ fun MailWebView(
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) view.settings.isAlgorithmicDarkeningAllowed = dark
                 // A second lock behind the request filter: the network is off unless the user said yes.
                 view.settings.blockNetworkLoads = !allowRemote
-                view.settings.textZoom = textZoom
-                val shown = listOf(html, allowRemote, textColor, flat)
+                // A page laid out at the window's width is measured once it is drawn; one that came out wider is laid out
+                // again at its own width (see FitRules), and its text is made larger by as much as the page is scaled down.
+                view.onFit = { content, window ->
+                    val next = if (fit == null) FitRules.fit(content, window) else null
+                    if (next != null) fit = next
+                    next != null
+                }
+                val wide = fit
+                view.settings.textZoom = FitRules.textZoom(textZoom, wide)
+                // Until the page is shown it takes no touch (a link would open unseen) and is not read out.
+                view.interactive = ready
+                view.importantForAccessibility =
+                    if (ready) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                val shown = listOf(html, allowRemote, textColor, flat, wide?.width, windowWidth, textZoom)
                 if (view.tag != shown) {
                     view.tag = shown
-                    view.newPage()
-                    view.loadDataWithBaseURL(null, HtmlWrapper.wrap(html, textColor, imageNote, blockRemote = !allowRemote, flat = flat), "text/html", "utf-8", null)
+                    view.newPage(measure = wide == null)
+                    view.loadDataWithBaseURL(
+                        null,
+                        HtmlWrapper.wrap(html, textColor, imageNote, blockRemote = !allowRemote, flat = flat, layoutWidth = wide?.width),
+                        "text/html",
+                        "utf-8",
+                        null,
+                    )
                 }
             },
             onRelease = { view ->
@@ -183,6 +212,9 @@ fun MailWebView(
         )
     }
 }
+
+/** How long a page waits to be measured before it is shown anyway. */
+private const val SHOW_ANYWAY_MS = 1500L
 
 /** A WebView that can be moved sideways from outside; how far is its own business (its range, its zoom). */
 private class PanWebView(context: Context) : WebView(context) {
@@ -209,10 +241,58 @@ private class PanWebView(context: Context) : WebView(context) {
     private var fitScale = Float.MAX_VALUE
     private var fitHeight = 0
 
-    /** A new document is about to be loaded: its fitted scale and height are not known yet. */
-    fun newPage() {
+    /**
+     * Told (on the main thread) how wide the page came out and how wide the view is, both in CSS pixels; answers whether
+     * the page will be loaded again (it then stays hidden until that one is drawn).
+     */
+    var onFit: (contentWidth: Float, windowWidth: Float) -> Boolean = { _, _ -> false }
+
+    /** Told (on the main thread) that the page may be shown. */
+    var onReady: () -> Unit = {}
+
+    /** Told (on the main thread) that a page already shown is about to be loaded again, so it is hidden until that is drawn. */
+    var onHide: () -> Unit = {}
+
+    /** Whether the page takes touches: not while it is hidden. */
+    var interactive = true
+
+    /** Which load may be shown when ([PageReveal]); the callbacks are read when called, so they may be set later. */
+    private val reveal = PageReveal(show = { onReady() }, hide = { onHide() })
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean = interactive && super.dispatchTouchEvent(event)
+
+    /** A new document is about to be loaded: its fitted scale and height are not known yet. [measure]: report its width. */
+    fun newPage(measure: Boolean = false) {
         fitScale = Float.MAX_VALUE
         fitHeight = 0
+        val now = reveal.newPage(measure)
+        postDelayed({ reveal.timedOut(now) }, SHOW_ANYWAY_MS)
+    }
+
+    /** The page finished loading: once it has been drawn it is measured (while it is to be) or shown. */
+    fun pageFinished() {
+        val now = reveal.finished()
+        postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+            override fun onComplete(requestId: Long) {
+                reveal.drawn(now) { reportFit() }
+            }
+        })
+    }
+
+    /**
+     * Whether the page will be loaded again at its own width; it is then hidden until that layout is drawn. A page that
+     * was shown before it could be measured (by the fallback, or a neighbour in the pager that did not report until it
+     * was on screen) has been seen at its small first layout for that moment, and goes blank until the second is drawn.
+     */
+    private fun reportFit(): Boolean {
+        @Suppress("DEPRECATION") // getScale: the only way to read the current zoom without JavaScript.
+        val now = scale
+        val density = resources.displayMetrics.density
+        if (now <= 0f || width <= 0 || density <= 0f) return false
+        // Shown already (see PageReveal.timedOut) and moved or zoomed by the user: left as it is.
+        if (zoomed() || scrollX != 0) return false
+        // The range is the page's width in view pixels at the current scale, whether or not it was fitted yet.
+        return onFit(maxOf(computeHorizontalScrollRange(), width) / now, width / density)
     }
 
     @Suppress("DEPRECATION") // getScale: the only way to read the current zoom without JavaScript.
@@ -326,6 +406,10 @@ private class RulesClient(private val rules: PageRules) : WebViewClient() {
                 empty()
             }
         }
+
+    override fun onPageFinished(view: WebView, url: String?) {
+        (view as? PanWebView)?.pageFinished()
+    }
 
     /** The view never navigates. A link the user tapped opens outside the app; a page that moves itself on is ignored. */
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {

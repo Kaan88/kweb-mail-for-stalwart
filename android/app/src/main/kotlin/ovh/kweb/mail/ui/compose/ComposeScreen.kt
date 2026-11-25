@@ -203,7 +203,7 @@ fun ComposeScreen(draftId: String, prefillTo: Address?, onLeave: () -> Unit, onS
         val body = vm.state.body
         val span = DraftText.target(body, 0, 0)
         val target = if (span == null) RewriteTarget(Span(0, 0), "") else RewriteTarget(span, body.substring(span.start, span.end))
-        assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(messageId, ""), target)
+        assistant.open(owner, AssistantRules.Kind.DRAFT, AiTask.DraftReply(messageId, "", emptyList()), target)
     }
 
     /** "Replace" in the sheet: swaps exactly the part that was sent, and offers one Undo. */

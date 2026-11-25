@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -20,6 +22,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -101,6 +104,13 @@ private fun Body(session: AssistSession, vm: AssistantViewModel, onReplace: ((St
     if (phase == AssistPhase.Input) {
         // The wish is the user's own text and not a secret; it survives a rotation.
         var instruction by rememberSaveable(session.id) { mutableStateOf((session.task as? AiTask.DraftReply)?.instruction.orEmpty()) }
+        // The presets tapped, kept as names so they survive a rotation.
+        var chosenNames by rememberSaveable(session.id) {
+            mutableStateOf(ReplyPresetRules.choices((session.task as? AiTask.DraftReply)?.presets.orEmpty()).map { it.name })
+        }
+        val chosen = chosenNames.mapNotNull { name -> ReplyPresetRules.Choice.entries.firstOrNull { it.name == name } }.toSet()
+        val locale = rememberLocale()
+        PresetChips(chosen, locale) { choice -> chosenNames = ReplyPresetRules.toggle(chosen, choice).map { it.name } }
         OutlinedTextField(
             value = instruction,
             onValueChange = { instruction = it },
@@ -112,7 +122,7 @@ private fun Body(session: AssistSession, vm: AssistantViewModel, onReplace: ((St
         )
         Buttons(
             secondary = stringResource(R.string.cancel) to vm::close,
-            main = stringResource(R.string.assistant_write_draft) to { vm.start(instruction) },
+            main = stringResource(R.string.assistant_write_draft) to { vm.start(instruction, ReplyPresetRules.presets(chosen, locale)) },
         )
         return
     }
@@ -177,6 +187,34 @@ private fun Body(session: AssistSession, vm: AssistantViewModel, onReplace: ((St
             secondary = stringResource(if (session.kind == Kind.REWRITE) R.string.cancel else R.string.assistant_close) to vm::close,
             main = stringResource(if (phase is AssistPhase.Failed) R.string.retry else R.string.assistant_try_again) to vm::retry,
         )
+    }
+}
+
+/**
+ * The ready-made wishes for the draft as chips: what the reply does, then how it sounds and its language. A tap
+ * switches one; another of the same group replaces it. They only steer the draft; nothing is sent from here.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PresetChips(chosen: Set<ReplyPresetRules.Choice>, locale: java.util.Locale, onToggle: (ReplyPresetRules.Choice) -> Unit) {
+    val ownLanguage = remember(locale) { ReplyPresetRules.ownLanguageName(locale) }
+    val hasLanguage = remember(locale) { ReplyPresetRules.languageName(locale) != null }
+    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (choice in ReplyPresetRules.Choice.entries) {
+            if (choice == ReplyPresetRules.Choice.MY_LANGUAGE && !hasLanguage) continue
+            val label = when (choice) {
+                ReplyPresetRules.Choice.ACCEPT -> stringResource(R.string.assistant_preset_accept)
+                ReplyPresetRules.Choice.DECLINE -> stringResource(R.string.assistant_preset_decline)
+                ReplyPresetRules.Choice.ASK_DETAILS -> stringResource(R.string.assistant_preset_ask)
+                ReplyPresetRules.Choice.MEETING -> stringResource(R.string.assistant_preset_meeting)
+                ReplyPresetRules.Choice.THANKS -> stringResource(R.string.assistant_preset_thanks)
+                ReplyPresetRules.Choice.SHORT -> stringResource(R.string.assistant_preset_short)
+                ReplyPresetRules.Choice.FORMAL -> stringResource(R.string.assistant_preset_formal)
+                ReplyPresetRules.Choice.FRIENDLY -> stringResource(R.string.assistant_preset_friendly)
+                ReplyPresetRules.Choice.MY_LANGUAGE -> stringResource(R.string.assistant_preset_language, ownLanguage)
+            }
+            FilterChip(selected = choice in chosen, onClick = { onToggle(choice) }, label = { Text(label) })
+        }
     }
 }
 

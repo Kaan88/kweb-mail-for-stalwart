@@ -9,12 +9,20 @@ object HtmlWrapper {
      * [html] (as sent, unchanged) in a small page: a viewport so the text is readable, the
      * content security policy, and style that makes wide mail fit the screen and long words wrap.
      */
-    fun wrap(html: String, textColor: String = "#000000", imageNote: String = "Image not loaded", blockRemote: Boolean = false, flat: Boolean = false): String = buildString {
+    fun wrap(
+        html: String,
+        textColor: String = "#000000",
+        imageNote: String = "Image not loaded",
+        blockRemote: Boolean = false,
+        flat: Boolean = false,
+        layoutWidth: Int? = null,
+    ): String = buildString {
         append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
         // Fit as Gmail does: the page is as wide as the window, a mail laid out for a wider one keeps its own layout and is
         // scaled down until it fits (overview mode in MailWebView), and the user may pinch in up to five times. No
-        // initial-scale and no minimum-scale: either would stop the view from starting at the scale that fits.
-        append("<meta name=\"viewport\" content=\"${VIEWPORT}\">")
+        // initial-scale and no minimum-scale: either would stop the view from starting at the scale that fits. A mail
+        // that came out wider is laid out again as wide as it is ([layoutWidth], see FitRules), so its text fills the window.
+        append("<meta name=\"viewport\" content=\"").append(viewport(layoutWidth)).append("\">")
         append("<meta http-equiv=\"Content-Security-Policy\" content=\"").append(POLICY).append("\">")
         append("<meta http-equiv=\"x-dns-prefetch-control\" content=\"off\">")
         append("<style>")
@@ -41,6 +49,10 @@ object HtmlWrapper {
 
     /** The page's viewport: see [wrap]. */
     const val VIEWPORT = "width=device-width, maximum-scale=5, user-scalable=yes"
+
+    /** [VIEWPORT], or the same with a width in CSS pixels (a whole number, so nothing else can get into the tag). */
+    fun viewport(layoutWidth: Int?): String =
+        if (layoutWidth == null || layoutWidth <= 0) VIEWPORT else "width=$layoutWidth, maximum-scale=5, user-scalable=yes"
 
     /** The mail's own viewport tag would override the one above (the last wins): fit and zoom are the app's to decide. */
     fun stripViewport(html: String): String = META_TAG.replace(html) { if (VIEWPORT_NAME.containsMatchIn(it.value)) "" else it.value }
